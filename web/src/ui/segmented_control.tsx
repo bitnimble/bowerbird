@@ -1,9 +1,18 @@
-import { Toggle } from '@base-ui-components/react/toggle';
-import { ToggleGroup } from '@base-ui-components/react/toggle-group';
+import { Radio } from '@base-ui-components/react/radio';
+import { RadioGroup } from '@base-ui-components/react/radio-group';
 import type { Option } from './option';
 
 // One-of-N. The buttons are `.ui-btn`s like any other, so a filter chip and a
 // toolbar button cannot drift apart in height or type.
+//
+// **A radio group and not a toggle group.** They look identical and do not sound it: a toggle
+// group is a row of independent pressed/unpressed buttons, which is what a screen reader
+// announced - "Crop, toggle button, not pressed" beside two more, with nothing saying the three
+// are one choice or which of them is current. A radio group says one of three, names the group,
+// and moves the selection with the arrow keys rather than only the focus.
+//
+// The pressed item cannot be unpressed, which is what a one-of-N means and what a radio gives
+// for free; the toggle group had to ignore the empty selection by hand.
 export function SegmentedControl<T extends string>({
   options,
   value,
@@ -18,19 +27,16 @@ export function SegmentedControl<T extends string>({
   stretch?: boolean;
 }): JSX.Element {
   return (
-    <ToggleGroup
+    <RadioGroup
       className={`ui-seg${stretch ? ' ui-seg--stretch' : ''}`}
       aria-label={label}
-      value={value == null ? [] : [value]}
+      value={value}
       onValueChange={(next) => {
-        const picked = next[next.length - 1];
-        // Pressing the pressed item yields an empty array; a one-of-N control has
-        // no "none", so that press is simply ignored.
-        if (typeof picked === 'string') onChange(picked as T);
+        if (typeof next === 'string') onChange(next as T);
       }}
     >
       {options.map((option) => (
-        <Toggle
+        <Radio.Root
           key={option.value}
           value={option.value}
           aria-label={option.iconOnly === true ? option.label : undefined}
@@ -43,8 +49,8 @@ export function SegmentedControl<T extends string>({
           {option.icon}
           {option.iconOnly === true ? null : option.label}
           {option.hint != null && <span className="ui-btn__hint">{option.hint}</span>}
-        </Toggle>
+        </Radio.Root>
       ))}
-    </ToggleGroup>
+    </RadioGroup>
   );
 }

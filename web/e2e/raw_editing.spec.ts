@@ -343,3 +343,45 @@ async function open(page: Page): Promise<void> {
     )
     .toBe('live');
 }
+
+/**
+ * The loupe, which is the part of it that needs a browser.
+ *
+ * Which pixels it magnifies is arithmetic and lives in `raw_edit_presenter.test.ts`. What only a
+ * real one can say is that a pointer moving over a real element puts a second WebGPU canvas on
+ * the page, and that a wheel over it reaches the magnification rather than the page's scroll.
+ */
+test('the loupe follows a real pointer and takes a real wheel', async ({ page }) => {
+  await open(page);
+
+  await page.getByTestId('raw-edit-loupe-tool').click();
+  const loupe = page.getByTestId('raw-edit-loupe');
+  const scale = page.getByTestId('raw-edit-loupe-scale');
+
+  // Nothing to magnify until the pointer is over the picture.
+  await expect(loupe).toHaveCSS('visibility', 'hidden');
+
+  const stage = page.locator('.raw-edit-stage .stage__viewport');
+  const box = await stage.boundingBox();
+  const centre = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+  await page.mouse.move(centre.x, centre.y);
+
+  await expect(loupe).toBeVisible();
+  await expect(scale).toHaveText('2.0x');
+  // The glass is a canvas of its own, drawn by the same pipeline rather than a scaled copy.
+  await expect(loupe.locator('canvas.loupe__glass')).toBeVisible();
+
+  // It rides the pointer: the box is centred on wherever the cursor is.
+  const before = await loupe.boundingBox();
+  await page.mouse.move(centre.x + 120, centre.y);
+  const after = await loupe.boundingBox();
+  expect(after!.x).toBeGreaterThan(before!.x + 100);
+
+  // And the wheel is the magnification's, not the page's.
+  await page.mouse.wheel(0, -120);
+  await expect(scale).not.toHaveText('2.0x');
+
+  // Leaving the tool puts the glass away.
+  await page.getByTestId('raw-edit-cursor').click();
+  await expect(loupe).toBeHidden();
+});

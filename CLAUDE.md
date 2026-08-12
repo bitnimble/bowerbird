@@ -5,6 +5,14 @@
 The e2e suite takes about five minutes; the native and unit suites take seconds. Start a long
 run in the background and then **do something else or wait for the completion notification**.
 
+**Run e2e once, at the end.** It is the final check before handing work back, not a step between
+edits: five minutes an iteration is most of an afternoon spent watching a browser start. The fast
+suites - `bun run test:native`, `bun run test`, `bun run typecheck`, `bun run lint` - answer
+almost everything and answer it in seconds, so iterate against those and let e2e confirm the
+finished thing. The exception is a change *to* an e2e spec or to the machinery it drives, where
+the suite is the only thing that can say whether the change works; even then, run the one spec
+(`bun run test:e2e -- <name>`) rather than all of them.
+
 **Never poll a background job's output file.** Re-reading it in a loop tells you nothing the
 notification would not, and the output is piped through `tail` in any case, so the file stays
 empty until the run ends - every read of it returns the same nothing. If there is genuinely

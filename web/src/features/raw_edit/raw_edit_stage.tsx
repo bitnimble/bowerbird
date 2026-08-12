@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { ZoomControl } from '../photos/zoom_control';
 import { CropOverlay } from './crop_overlay';
 import { KeystoneOverlay } from './keystone_overlay';
+import { LoupeOverlay } from './loupe_overlay';
 import { NO_SIZE, regionOf, useZoomPan } from '../photos/zoom_pan';
 import type { RawEditPresenter } from './raw_edit_presenter';
 import type { RawEditStore } from './raw_edit_store';
@@ -24,6 +25,21 @@ import type { RawEditStore } from './raw_edit_store';
  * view becomes a region and the frame is redrawn at it. Which is the better end of the deal,
  * since the redraw is at the stage's own resolution rather than a magnified raster.
  */
+/**
+ * How far a finger may travel and still have been a tap, in CSS pixels.
+ *
+ * A thumb resting on glass wanders a few pixels before it lifts, and every one of those would
+ * otherwise be a drag that moved the loupe off the thing it was placed on.
+ */
+const TAP_SLOP = 8;
+
+/** How far apart the two fingers of a pinch are. */
+function spread(touches: Map<number, { x: number; y: number }>): number {
+  const [first, second] = [...touches.values()];
+  if (first == null || second == null) return 0;
+  return Math.hypot(first.x - second.x, first.y - second.y);
+}
+
 export const RawEditStage = observer(function RawEditStage({
   store,
   presenter,
@@ -54,8 +70,10 @@ export const RawEditStage = observer(function RawEditStage({
   // to the frame would letterbox the crop inside it.
   const natural = store.width === 0 ? NO_SIZE : store.output;
   // Zoom and pan are off under both geometry tools: each lays something out on the picture where
-  // a fitted view puts it, and a pan would slide the photograph out from under it.
-  const still = store.cropping || store.keystoning;
+  // a fitted view puts it, and a pan would slide the photograph out from under it. The loupe is
+  // there too - its wheel is its own magnification, and a drag under it would slide the frame
+  // out from under the thing being examined.
+  const still = store.cropping || store.keystoning || store.loupeOpen;
   const zoom = useZoomPan(viewport, stage, natural, undefined, !still);
   const { view, box, handlers, zoomed, reset } = zoom;
 
@@ -87,10 +105,138 @@ export const RawEditStage = observer(function RawEditStage({
   // and a perspective are judged from.
   const tools = still ? null : <ZoomControl zoom={zoom} variant={toolsInto == null ? 'ghost' : 'default'} />;
 
+  // Where the viewport starts on the page, read when the pointer arrives and not while it
+  // moves. `box` carries the size but no origin, and a pointer move is as hot as a path here
+  // gets - `getBoundingClientRect` in one is the reason that rule exists. Nothing scrolls the
+  // stage under a loupe, since zoom and pan are off while it is open.
+  const origin = useRef({ left: 0, top: 0 });
+
+  // A native listener rather than React's `onWheel`, which is passive: the page would scroll
+  // under the reader while the magnification changed.
+  useEffect(() => {
+    const element = viewport.current;
+    if (element == null || !store.loupeOpen) return;
+    const onWheel = (event: WheelEvent): void => {
+      event.preventDefault();
+      presenter.zoomLoupe(Math.sign(event.deltaY), box);
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => element.removeEventListener('wheel', onWheel);
+  }, [presenter, store.loupeOpen, box]);
+
+  /**
+   * The touches currently down, which is what makes a pinch tellable from a drag.
+   *
+   * A mouse never lands here: it moves the loupe by hovering, having nothing to hold down.
+   */
+  const touches = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ apart: number; magnification: number } | null>(null);
+  /**
+   * Where the drag began and where the glass was when it did.
+   *
+   * **A finger moves the loupe the way it moves a map, not the way a mouse does.** Dragging the
+   * glass to the finger would put it under the finger, which is the one place its reader cannot
+   * see; and jumping it there on touch-down would make every reposition a jolt. So a drag is a
+   * displacement applied to where the glass already was, and the finger stays clear of it - a
+   * tap, which is a drag that went nowhere, is what places it somewhere new.
+   */
+  const drag = useRef<{ from: { x: number; y: number }; loupe: { x: number; y: number } } | null>(
+    null,
+  );
+
+  const measure = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    origin.current = { left: bounds.left, top: bounds.top };
+  };
+  const at = (event: React.PointerEvent<HTMLDivElement>) => ({
+    x: event.clientX - origin.current.left,
+    y: event.clientY - origin.current.top,
+  });
+
+  const loupeHandlers = store.loupeOpen
+    ? {
+        // A mouse arrives by hovering and reports where it is; a finger arrives by landing.
+        onPointerEnter: measure,
+        onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => {
+          measure(event);
+          if (event.pointerType === 'mouse') return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          const here = at(event);
+          touches.current.set(event.pointerId, here);
+          // A second finger stops being a place and starts being a distance.
+          if (touches.current.size === 2) {
+            pinch.current = {
+              apart: spread(touches.current),
+              magnification: store.loupeMagnification,
+            };
+            drag.current = null;
+            return;
+          }
+          // Nothing moves yet. Where this ends up depends on whether the finger travels.
+          drag.current = { from: here, loupe: store.loupeAt ?? here };
+        },
+        onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => {
+          if (event.pointerType === 'mouse') {
+            presenter.moveLoupe(at(event), box);
+            return;
+          }
+          if (!touches.current.has(event.pointerId)) return;
+          const here = at(event);
+          touches.current.set(event.pointerId, here);
+          const pinching = pinch.current;
+          if (pinching != null && touches.current.size === 2) {
+            // The same ratio the fingers moved, so the magnification tracks the gesture rather
+            // than counting notches it has no wheel to count.
+            presenter.setLoupeMagnification(
+              (pinching.magnification * spread(touches.current)) / Math.max(pinching.apart, 1),
+              box,
+            );
+            return;
+          }
+          const dragging = drag.current;
+          if (dragging == null) return;
+          presenter.moveLoupe(
+            {
+              x: dragging.loupe.x + (here.x - dragging.from.x),
+              y: dragging.loupe.y + (here.y - dragging.from.y),
+            },
+            box,
+          );
+        },
+        onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => {
+          const here = touches.current.get(event.pointerId);
+          touches.current.delete(event.pointerId);
+          if (touches.current.size < 2) pinch.current = null;
+          const dragging = drag.current;
+          drag.current = null;
+          // A tap is a drag that went nowhere, and it is the gesture that *places* the glass.
+          // Anything further than a thumb's own wobble was a drag, and has already moved it.
+          if (dragging == null || here == null) return;
+          const travelled = Math.hypot(here.x - dragging.from.x, here.y - dragging.from.y);
+          if (travelled <= TAP_SLOP) presenter.moveLoupe(here, box);
+        },
+        onPointerCancel: (event: React.PointerEvent<HTMLDivElement>) => {
+          touches.current.delete(event.pointerId);
+          pinch.current = null;
+          drag.current = null;
+        },
+        // Only a mouse. A finger that lifts leaves the glass where it put it, which is what
+        // makes a tap a placement rather than a flash.
+        onPointerLeave: (event: React.PointerEvent<HTMLDivElement>) => {
+          if (event.pointerType === 'mouse') presenter.moveLoupe(null, box);
+        },
+      }
+    : {};
+
   return (
     <div ref={stage} className={`stage raw-edit-stage${zoomed ? ' stage--zoomed' : ''}`}>
       {toolsInto == null ? <div className="stage__tools">{tools}</div> : createPortal(tools, toolsInto)}
-      <div ref={viewport} className="stage__viewport" {...handlers}>
+      <div
+        ref={viewport}
+        className={`stage__viewport${store.loupeOpen ? ' stage__viewport--loupe' : ''}`}
+        {...handlers}
+        {...loupeHandlers}
+      >
         <canvas ref={canvas} className="stage__content is-ready raw-edit__stage" />
         {/* Only while the slider is under a finger. A horizon is levelled against something
             straight, and the picture rarely offers one where it is needed - so the tool
@@ -104,6 +250,7 @@ export const RawEditStage = observer(function RawEditStage({
         )}
         <CropOverlay store={store} presenter={presenter} viewport={box} />
         <KeystoneOverlay store={store} presenter={presenter} viewport={box} />
+        <LoupeOverlay store={store} presenter={presenter} />
       </div>
       {!store.live && store.status !== 'failed' && (
         <div className="stage__busy">

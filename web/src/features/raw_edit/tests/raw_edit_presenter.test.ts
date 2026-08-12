@@ -94,6 +94,19 @@ class Pipeline {
     this.frames.push({ region, output: this.geometry.output, stage: { ...canvas } });
   }
 
+  /** What the loupe was last asked to magnify, and how many times it was asked. */
+  loupeRegion: Region | null = null;
+  loupeDraws = 0;
+
+  renderLoupe(_exposure: number, region: Region): void {
+    this.loupeRegion = region;
+    this.loupeDraws += 1;
+  }
+
+  attachLoupe(): void {
+    /* the canvas is the component's, and nothing here has one */
+  }
+
   /** The words the shader would be handed for the last frame asked for. */
   uniform(): { floats: Float32Array; ints: Uint32Array; at: ReturnType<typeof editOffsets>['at'] } {
     const words = edits(
@@ -589,5 +602,113 @@ describe('cropping to what the geometry left', () => {
     const doc = store.doc!;
     expect((doc.cropRight - doc.cropLeft) * (doc.cropBottom - doc.cropTop)).toBeLessThan(1);
     expect((doc.cropRight - doc.cropLeft) * (doc.cropBottom - doc.cropTop)).toBeGreaterThan(0.3);
+  });
+});
+
+/**
+ * The loupe, which is arithmetic on a region and so belongs here.
+ *
+ * What a Playwright test would add is that a pointer really moved and a canvas really drew;
+ * what it could not say is *which pixels* the reader is looking at, and that is the whole of
+ * what a magnifier is for.
+ */
+describe('the loupe', () => {
+  const BOX = { width: 1000, height: 750 };
+
+  /** The view the loupe is held over: the whole 4000x3000 picture, fitted. */
+  function fitted(): void {
+    presenter.showRegion({ x: 0, y: 0, width: 4000, height: 3000 });
+    drawn();
+  }
+
+  test('magnifies the point under the pointer, not the middle of the picture', () => {
+    fitted();
+    presenter.setLoupe(true);
+    // A quarter across and a quarter down the stage is a quarter into the region.
+    presenter.moveLoupe({ x: 250, y: 187.5 }, BOX);
+
+    const region = pipeline.loupeRegion!;
+    expect(region.x + region.width / 2).toBeCloseTo(1000, 0);
+    expect(region.y + region.height / 2).toBeCloseTo(750, 0);
+  });
+
+  test('shows a square of source pixels the magnification decides', () => {
+    fitted();
+    presenter.setLoupe(true);
+    presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+
+    // 400 screen pixels at 2x is 200 of the photograph's own, and the box is square whatever
+    // shape the stage is.
+    const region = pipeline.loupeRegion!;
+    expect(region.width).toBeCloseTo(200, 5);
+    expect(region.height).toBeCloseTo(200, 5);
+  });
+
+  test('a wheel notch narrows the window, and the ends hold', () => {
+    fitted();
+    presenter.setLoupe(true);
+    presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+    const before = pipeline.loupeRegion!.width;
+
+    // Away from the reader is more magnification, which is fewer source pixels.
+    presenter.zoomLoupe(-1, BOX);
+    expect(pipeline.loupeRegion!.width).toBeLessThan(before);
+
+    for (let notch = 0; notch < 40; notch++) presenter.zoomLoupe(-1, BOX);
+    expect(store.loupeMagnification).toBe(16);
+    for (let notch = 0; notch < 80; notch++) presenter.zoomLoupe(1, BOX);
+    expect(store.loupeMagnification).toBe(1);
+  });
+
+  test('magnifies what the reader is already zoomed into', () => {
+    // Half the picture on the stage, so one stage pixel is half a source pixel - and the loupe
+    // still answers in the photograph's own pixels rather than the view's.
+    presenter.showRegion({ x: 1000, y: 750, width: 2000, height: 1500 });
+    drawn();
+    presenter.setLoupe(true);
+    presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+
+    const region = pipeline.loupeRegion!;
+    expect(region.x + region.width / 2).toBeCloseTo(2000, 0);
+    expect(region.y + region.height / 2).toBeCloseTo(1500, 0);
+    expect(region.width).toBeCloseTo(200, 5);
+  });
+
+  test('draws nothing once the pointer has left, and forgets where it was on close', () => {
+    fitted();
+    presenter.setLoupe(true);
+    presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+    const drew = pipeline.loupeDraws;
+
+    presenter.moveLoupe(null, BOX);
+    expect(pipeline.loupeDraws).toBe(drew);
+    expect(store.loupeAt).toBeNull();
+
+    presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+    presenter.setLoupe(false);
+    expect(store.loupeAt).toBeNull();
+  });
+
+  test('parks against the edge rather than magnifying past it', () => {
+    fitted();
+    presenter.setLoupe(true);
+    // A drag that ran off the corner: the glass stops on the picture, which is all there is to
+    // magnify.
+    presenter.moveLoupe({ x: -300, y: 2000 }, BOX);
+
+    expect(store.loupeAt).toEqual({ x: 0, y: 750 });
+    const region = pipeline.loupeRegion!;
+    expect(region.x + region.width / 2).toBeCloseTo(0, 0);
+    expect(region.y + region.height / 2).toBeCloseTo(3000, 0);
+  });
+
+  test('is one tool among the others, so opening it puts the geometry tools away', () => {
+    presenter.setTool('crop');
+    expect(store.tool).toBe('crop');
+
+    presenter.setTool('loupe');
+    expect(store.tool).toBe('loupe');
+    expect(store.cropping).toBe(false);
+    expect(store.keystoning).toBe(false);
   });
 });

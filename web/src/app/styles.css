@@ -277,6 +277,9 @@ p.ui-text--mono {
   border-right: 0;
 }
 
+/* `data-checked` is the radio group's, `data-pressed` the toggle's: the segmented control is a
+   one-of-N and says so to a screen reader now, while `.ui-btn--toggle` is still a real toggle. */
+.ui-btn--seg[data-checked],
 .ui-btn--seg[data-pressed],
 .ui-btn--toggle[data-pressed] {
   background: var(--satin);
@@ -3373,5 +3376,51 @@ p.ui-text--mono {
   background-image:
     repeating-linear-gradient(to right, rgb(255 255 255 / 22%) 0 1px, transparent 1px 10%),
     repeating-linear-gradient(to bottom, rgb(255 255 255 / 22%) 0 1px, transparent 1px 10%);
+}
+
+
+/* The loupe: a fixed square of magnified frame that follows the pointer.
+
+   Centred on the cursor with a translate rather than by subtracting half a side from the
+   position the presenter stores - the store holds where the reader is pointing, and how the box
+   is hung off that point is presentation. */
+.stage__viewport--loupe {
+  /* The pointer is hidden because the loupe stands where it would be, and an arrow drawn over
+     the middle of the magnification covers the pixels being judged. */
+  cursor: none;
+}
+
+.loupe {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  /* Over the picture and under nothing: the overlays that share this stage are the geometry
+     tools, and neither is open while the loupe is. */
+  z-index: 3;
+  /* The box follows the pointer, so it must never become the pointer's target - a hit test that
+     landed on the glass would stop the moves that move it. */
+  pointer-events: none;
+}
+
+.loupe__glass {
+  display: block;
+  border: 1px solid rgb(255 255 255 / 65%);
+  /* Dark rather than the page's, for the reason the stage gives: a magnified frame is judged
+     against what surrounds it, and a light surround shifts what the eye calls noise. */
+  background: #000;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 55%);
+}
+
+/* Outside the box, bottom right, so the number never covers the pixels it describes. */
+.loupe__scale {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 70%);
+  color: #fff;
+  font: 11px/1.4 var(--mono, ui-monospace, monospace);
+  white-space: nowrap;
 }
 

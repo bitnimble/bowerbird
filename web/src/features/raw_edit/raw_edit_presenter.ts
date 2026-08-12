@@ -15,12 +15,29 @@ import {
   EditPipeline,
   type PreparedHeader,
   type Region,
+  editCanvasConfiguration,
   stageResolution,
   editFeatures,
   editLimits,
 } from './gpu/edit_pipeline';
 import { readSetting, writeSetting } from '../../app/local_setting';
-import type { EditTool, GuideKind, RawEditStore, SaveStatus } from './raw_edit_store';
+import {
+  LOUPE_MAX_MAGNIFICATION,
+  LOUPE_MIN_MAGNIFICATION,
+  LOUPE_SIZE,
+  type EditTool,
+  type GuideKind,
+  type RawEditStore,
+  type SaveStatus,
+} from './raw_edit_store';
+
+/**
+ * What one wheel notch multiplies the loupe's magnification by.
+ *
+ * A quarter more each notch: eight notches to double, which is a comfortable sweep of a wheel
+ * for a range that spans four doublings end to end.
+ */
+const LOUPE_STEP = 1.25;
 
 const CROP_TO_FIT_KEY = 'bowerbird.edit.cropToFit';
 
@@ -260,16 +277,7 @@ export class RawEditPresenter {
       // pipeline the GPU will not have is a validation error rather than an exception, and
       // the open is the one place that can still say so before the reader is told `live`.
       device.pushErrorScope('validation');
-      context.configure({
-        device,
-        format: 'rgba16float',
-        colorSpace: 'display-p3',
-        alphaMode: 'opaque',
-        // Values above 1 reach the panel only with this, and it is measured working in
-        // Chromium and in Safari 26 (§7). A browser that ignores the member shows an SDR
-        // picture rather than failing, which is why the probe page exists.
-        toneMapping: { mode: 'extended' },
-      } as GPUCanvasConfiguration);
+      context.configure(editCanvasConfiguration(device));
 
       this.pipeline = new EditPipeline(device, context, header, samples);
       const refused = await device.popErrorScope();
@@ -426,6 +434,105 @@ export class RawEditPresenter {
   setTool(tool: EditTool): void {
     this.setCropping(tool === 'crop');
     this.setKeystoning(tool === 'perspective');
+    this.setLoupe(tool === 'loupe');
+  }
+
+  /**
+   * Opens or closes the loupe.
+   *
+   * Closing forgets where it was, so re-opening it does not flash the magnifier at wherever the
+   * pointer happened to leave the stage a minute ago. The magnification survives, being a habit
+   * rather than a place.
+   */
+  @action.bound
+  setLoupe(open: boolean): void {
+    if (this.store.loupeOpen === open) return;
+    this.store.loupeOpen = open;
+    if (!open) this.store.loupeAt = null;
+  }
+
+  /**
+   * Where the pointer is over the stage, in its own CSS pixels, or null once it leaves.
+   *
+   * The region to draw is worked out here rather than passed in: the component knows where the
+   * pointer is and this knows what the loupe is for, and putting the arithmetic on the presenter
+   * is what lets a test ask "what does the loupe show at this corner" without a browser.
+   */
+  @action.bound
+  moveLoupe(at: { x: number; y: number } | null, box: { width: number; height: number }): void {
+    // Held inside the picture, so a drag that runs past the edge parks the glass against it
+    // rather than magnifying somewhere the photograph is not.
+    this.store.loupeAt =
+      at == null
+        ? null
+        : {
+            x: Math.min(Math.max(at.x, 0), box.width),
+            y: Math.min(Math.max(at.y, 0), box.height),
+          };
+    this.drawLoupe(box);
+  }
+
+  /**
+   * A wheel notch over the loupe: magnification up or down a step.
+   *
+   * Geometric rather than linear, because what a reader wants next from 8x is 11x and not 9x -
+   * and the same notch has to be worth something at 1x, where linear steps of one would be a
+   * doubling.
+   */
+  @action.bound
+  zoomLoupe(notches: number, box: { width: number; height: number }): void {
+    this.setLoupeMagnification(this.store.loupeMagnification * Math.pow(LOUPE_STEP, -notches), box);
+  }
+
+  /**
+   * The magnification itself, for a gesture that names it rather than stepping it.
+   *
+   * A pinch is a ratio and not a count of notches: the fingers say how much bigger, so what
+   * reaches here is the answer rather than a direction.
+   */
+  @action.bound
+  setLoupeMagnification(magnification: number, box: { width: number; height: number }): void {
+    this.store.loupeMagnification = Math.min(
+      LOUPE_MAX_MAGNIFICATION,
+      Math.max(LOUPE_MIN_MAGNIFICATION, magnification),
+    );
+    this.drawLoupe(box);
+  }
+
+  /**
+   * The loupe's own draw, at the region under the pointer.
+   *
+   * `box` is the stage's CSS size, which is what the pointer's position is a fraction of. The
+   * region on screen is the store's, so the loupe magnifies whatever the reader is already
+   * looking at - a zoomed view included.
+   */
+  private drawLoupe(box: { width: number; height: number }): void {
+    const at = this.store.loupeAt;
+    const region = this.store.region;
+    const pipeline = this.pipeline;
+    if (at == null || region == null || pipeline == null || box.width === 0 || box.height === 0) {
+      return;
+    }
+    // Where the pointer is in the frame's own pixels, then a window of the frame around it. The
+    // window is the loupe's side divided by the magnification, so a bigger number is fewer
+    // source pixels stretched over the same square.
+    const centre = {
+      x: region.x + (at.x / box.width) * region.width,
+      y: region.y + (at.y / box.height) * region.height,
+    };
+    const span = LOUPE_SIZE / this.store.loupeMagnification;
+    pipeline.renderLoupe(this.store.exposureEv, {
+      x: centre.x - span / 2,
+      y: centre.y - span / 2,
+      width: span,
+      height: span,
+    });
+  }
+
+  /** The loupe's canvas, handed over once React has mounted it. */
+  @action.bound
+  attachLoupe(canvas: HTMLCanvasElement | null): void {
+    this.pipeline?.attachLoupe(canvas);
   }
 
   /**

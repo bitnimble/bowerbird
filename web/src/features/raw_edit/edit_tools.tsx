@@ -1,4 +1,4 @@
-import { Crop, MousePointer2, Move3d, RotateCcw, RotateCw } from 'lucide-react';
+import { Crop, MousePointer2, Move3d, RotateCcw, RotateCw, Search } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { Button } from '../../ui/button';
 import { ICON } from '../../ui/icon';
@@ -24,6 +24,14 @@ const TOOLS: Option<EditTool>[] = [
     icon: <MousePointer2 size={ICON} />,
     iconOnly: true,
     testId: 'raw-edit-cursor',
+  },
+  {
+    value: 'loupe',
+    label: 'Loupe',
+    icon: <Search size={ICON} />,
+    iconOnly: true,
+    // Not `raw-edit-loupe`, which is the glass the overlay puts on the stage.
+    testId: 'raw-edit-loupe-tool',
   },
   { value: 'crop', label: 'Crop', icon: <Crop size={ICON} />, iconOnly: true, testId: 'raw-edit-crop' },
   {

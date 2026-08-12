@@ -252,6 +252,27 @@ export function denoiseSupported(device: GPUDevice): boolean {
   return device.limits.maxComputeWorkgroupStorageSize >= DENOISE_WORKGROUP_STORAGE;
 }
 
+/**
+ * How every canvas the editor draws on is configured.
+ *
+ * One function because there is more than one canvas now - the stage and the loupe - and a
+ * loupe configured differently would tone map differently, which is the one thing a loupe held
+ * over a picture must not do.
+ *
+ * Values above 1 reach the panel only with `toneMapping: extended`, and it is measured working
+ * in Chromium and in Safari 26 (§7). A browser that ignores the member shows an SDR picture
+ * rather than failing, which is why the probe page exists.
+ */
+export function editCanvasConfiguration(device: GPUDevice): GPUCanvasConfiguration {
+  return {
+    device,
+    format: 'rgba16float',
+    colorSpace: 'display-p3',
+    alphaMode: 'opaque',
+    toneMapping: { mode: 'extended' },
+  } as GPUCanvasConfiguration;
+}
+
 export class EditPipeline {
   /**
    * One buffer, written once per submit and read by every pass in it.
@@ -932,6 +953,49 @@ export class EditPipeline {
   }
 
   /**
+   * A second canvas for the loupe, or `null` to let it go.
+   *
+   * Its own context, and no second pipeline: what a second `EditPipeline` would duplicate is
+   * the frame, and at 61MP that is the largest allocation in the process. A context is a
+   * swapchain and a few descriptors.
+   */
+  attachLoupe(canvas: HTMLCanvasElement | null): void {
+    if (canvas == null) {
+      this.loupe = null;
+      return;
+    }
+    const context = canvas.getContext('webgpu');
+    if (context == null) return;
+    context.configure(editCanvasConfiguration(this.device));
+    this.loupe = context;
+  }
+
+  /**
+   * The same grade, at `region`, onto the loupe's canvas.
+   *
+   * A submit of its own rather than a second attachment on the tick's: the two canvases are
+   * different sizes and the uniform carries the size, so one write cannot serve both.
+   *
+   * **No peak measurement.** It reads the whole frame at a fixed stride whatever is on screen
+   * (`render` says why), so measuring it again through a 400px window would move the highlight
+   * roll-off as the reader swept the pointer - the loupe would grade differently from the
+   * picture it is held over, which is the one thing it exists not to do.
+   */
+  renderLoupe(ev: number, region: Region): void {
+    const loupe = this.loupe;
+    if (loupe == null) return;
+    const encoder = this.device.createCommandEncoder();
+    this.writeUniform({ exposure: ev, region, into: loupe });
+    this.writeBalance(encoder);
+    this.draw(encoder, region, loupe);
+    this.device.queue.submit([encoder.finish()]);
+    // Nothing restores the tick's uniform, and nothing has to: `render` writes it before every
+    // draw, and the peak - the only other reader - runs inside that same call.
+  }
+
+  private loupe: GPUCanvasContext | null = null;
+
+  /**
    * The reader's temperature and tint, solved into the matrix the grade reads.
    *
    * In every submit that grades rather than once, because the pair moves with a slider and one
@@ -1148,9 +1212,11 @@ export class EditPipeline {
    * function so that `tests/edits.test.ts` can hold it against the native writer without a
    * GPU - `output` among the rest, which stays as it arrived and is PQ.
    */
-  private writeUniform(over: { exposure?: number; region?: Region } = {}): void {
+  private writeUniform(
+    over: { exposure?: number; region?: Region; into?: GPUCanvasContext } = {},
+  ): void {
     if (over.exposure != null) this.exposure = over.exposure;
-    const canvas = this.context.canvas;
+    const canvas = (over.into ?? this.context).canvas;
     const words = edits(
       this.header.edits,
       this.adjust,
@@ -1414,11 +1480,11 @@ export class EditPipeline {
     ]);
   }
 
-  private draw(encoder: GPUCommandEncoder, region: Region): void {
+  private draw(encoder: GPUCommandEncoder, region: Region, into = this.context): void {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: this.context.getCurrentTexture().createView(),
+          view: into.getCurrentTexture().createView(),
           loadOp: 'clear',
           storeOp: 'store',
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
@@ -1428,7 +1494,7 @@ export class EditPipeline {
     });
     // The same ratio `covered` takes its level from: below two, the frame's own pixels are
     // what the taps want, and the pyramid does not hold them.
-    const canvas = this.context.canvas;
+    const canvas = into.canvas;
     const ratio = Math.max(
       region.width / Math.max(canvas.width, 1),
       region.height / Math.max(canvas.height, 1),
