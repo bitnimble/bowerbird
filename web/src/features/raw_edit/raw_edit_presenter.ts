@@ -1,5 +1,5 @@
 import { action } from 'mobx';
-import { ApiError, api, preparedPath, type EditDoc, type EditState } from '../../api/client';
+import { ApiError, api, preparedPath, tilePath, type EditDoc, type EditState } from '../../api/client';
 import { send } from '../../api/transport';
 import { describe } from '../../errors';
 import {
@@ -10,6 +10,7 @@ import {
   type CropRect,
 } from './crop_turn';
 import { insetCrop } from './crop_to_bounds';
+import { LoupeTiles, tileFor, type TileRect } from './loupe_tiles';
 import { keystoneFromGuides, type KeystoneGuide } from './keystone';
 import {
   EditPipeline,
@@ -448,7 +449,21 @@ export class RawEditPresenter {
   setLoupe(open: boolean): void {
     if (this.store.loupeOpen === open) return;
     this.store.loupeOpen = open;
-    if (!open) this.store.loupeAt = null;
+    if (open) {
+      const photoId = this.photoId;
+      if (photoId != null && this.tiles == null) {
+        this.tiles = new LoupeTiles(
+          photoId,
+          fetchTile,
+          // A tile landing is not a state change anything renders from directly - the glass is
+          // a canvas - so this asks for the draw that will put it there.
+          () => this.drawLoupe(this.store.loupeBox),
+        );
+      }
+      return;
+    }
+    this.store.loupeAt = null;
+    this.store.loupeTile = null;
   }
 
   /**
@@ -462,6 +477,9 @@ export class RawEditPresenter {
   moveLoupe(at: { x: number; y: number } | null, box: { width: number; height: number }): void {
     // Held inside the picture, so a drag that runs past the edge parks the glass against it
     // rather than magnifying somewhere the photograph is not.
+    // Kept, so a tile arriving later can be drawn against the same box the move used: the
+    // fetch answers on its own schedule and nothing there may read layout.
+    this.store.loupeBox = box;
     this.store.loupeAt =
       at == null
         ? null
@@ -521,13 +539,46 @@ export class RawEditPresenter {
       y: region.y + (at.y / box.height) * region.height,
     };
     const span = LOUPE_SIZE / this.store.loupeMagnification;
+
+    // **The editor's own render, always, and the rendition's tile over it when one has
+    // arrived.** The tick's denoise is the sRGB one, which is cruder than what an export gets;
+    // a loupe is where that difference is worth seeing, so the server renders the crop through
+    // the rendition pipeline. That takes about a tenth of a second, which is a seam if the
+    // glass waits for it and a sharpening if it does not - so this draws what it can now and
+    // the tile lands on top when it can.
     pipeline.renderLoupe(this.store.exposureEv, {
       x: centre.x - span / 2,
       y: centre.y - span / 2,
       width: span,
       height: span,
     });
+
+    const frame = { width: this.store.width, height: this.store.height };
+    const tiles = this.tiles;
+    if (tiles == null || frame.width === 0) return;
+    tiles.invalidate(this.tileRevision());
+    const held = tiles.covering(centre, span, frame);
+    if (held != null) {
+      this.store.loupeTile = { tile: held, centre, span };
+      return;
+    }
+    this.store.loupeTile = null;
+    tiles.want(tileFor(centre, span, frame));
   }
+
+  /**
+   * What the held tiles were rendered against.
+   *
+   * A tile is the export's pixels for the reader's *current* settings, so anything that would
+   * change an export changes every tile at once. The document's revision is exactly that - the
+   * server stamps it on every write - so one string answers for all of it.
+   */
+  private tileRevision(): string {
+    return `${this.photoId}:${this.store.rev}`;
+  }
+
+  /** The tiles for the photo on screen, built with the first loupe that wants one. */
+  private tiles: LoupeTiles | null = null;
 
   /** The loupe's canvas, handed over once React has mounted it. */
   @action.bound
@@ -986,6 +1037,20 @@ export class RawEditPresenter {
  * A view over those bytes rather than a copy of them. Both transports pad the JSON to four
  * for exactly this reason, so at 61MP the open holds one 361MB array rather than three.
  */
+/**
+ * One loupe tile, as a blob the browser can decode.
+ *
+ * Over the same transport everything else uses, so the desktop shell's IPC answers it too - the
+ * loupe is not a browser feature and the bytes are JPEG either way.
+ */
+async function fetchTile(photoId: string, rect: TileRect): Promise<Blob> {
+  const reply = await send('get:tile', 'GET', tilePath(photoId, rect));
+  if (reply.status < 200 || reply.status >= 300) {
+    throw new Error(`could not render that tile: ${reply.status}`);
+  }
+  return new Blob([reply.bytes as BlobPart], { type: 'image/jpeg' });
+}
+
 async function fetchPrepared(
   photoId: string,
   longEdge: number,

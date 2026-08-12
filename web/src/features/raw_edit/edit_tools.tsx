@@ -50,7 +50,11 @@ export const EditToolbar = observer(function EditToolbar({
   store: RawEditStore;
   presenter: RawEditPresenter;
 }): JSX.Element {
-  return <SegmentedControl label="Tool" options={TOOLS} value={store.tool} onChange={presenter.setTool} />;
+  // A radio group: what the pointer is for is one of four, and the stage under it has no cursor
+  // for the arrow keys to walk - so they can move the selection, which is what they mean here.
+  return (
+    <SegmentedControl as="radio" label="Tool" options={TOOLS} value={store.tool} onChange={presenter.setTool} />
+  );
 });
 
 /**

@@ -362,6 +362,22 @@ export function preparedPath(photoId: string, longEdge: number): string {
   return `/image/${photoId}/prepared?longEdge=${Math.round(longEdge)}`;
 }
 
+/**
+ * One tile of a photograph at rendition quality, for the loupe.
+ *
+ * A path, like the prepared frame beside it, because these bytes are fetched and decoded into a
+ * bitmap rather than handed to an `<img>`. Rendered per request and cached by nobody but the
+ * client, so nothing here carries a version: a tile is a pure function of the photo, the
+ * rectangle and the reader's current edits.
+ */
+export function tilePath(
+  photoId: string,
+  rect: { left: number; top: number; width: number; height: number },
+): string {
+  const at = [rect.left, rect.top, rect.width, rect.height].map(Math.round);
+  return `/image/${photoId}/tile?left=${at[0]}&top=${at[1]}&width=${at[2]}&height=${at[3]}`;
+}
+
 // What the viewer shows for one of its three choices: the camera's JPEG served
 // directly, or a stored rendition.
 export function viewerUrl(photoId: string, rendition: ViewerRendition, version = 0): string {

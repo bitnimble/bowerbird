@@ -3424,3 +3424,11 @@ p.ui-text--mono {
   white-space: nowrap;
 }
 
+
+/* The rendition tile sits exactly over the tick's own render of the same place, so the reader
+   sees one picture that sharpens rather than two that swap. */
+.loupe__glass--tile {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}

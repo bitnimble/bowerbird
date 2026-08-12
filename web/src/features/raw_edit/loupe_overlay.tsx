@@ -41,6 +41,10 @@ export const LoupeOverlay = observer(function LoupeOverlay({
       // and a mount per pointer move would rebuild the canvas and its swapchain with it.
       style={at == null ? { visibility: 'hidden' } : { left: `${at.x}px`, top: `${at.y}px` }}
     >
+      {/* The rendition's own pixels, over the tick's, once they have arrived. Two canvases
+          rather than one because they are drawn by different things - the tick by WebGPU and
+          this by the 2D context - and a context is claimed for the life of an element. */}
+      <TileGlass store={store} />
       <canvas
         ref={canvas}
         className="loupe__glass"
@@ -56,6 +60,58 @@ export const LoupeOverlay = observer(function LoupeOverlay({
         {formatMagnification(store.loupeMagnification)}
       </span>
     </div>
+  );
+});
+
+/**
+ * The tile, drawn over the tick's own render of the same place.
+ *
+ * **The two agree about geometry or the reader sees the picture jump.** The glass is showing a
+ * `span`-wide window of the frame centred on the pointer; the tile holds some larger rectangle
+ * around it. So what is drawn is the part of the tile that window covers, scaled to the glass -
+ * which is the same arithmetic the tick's own draw does with its region, arrived at from the
+ * other side.
+ *
+ * Absent until a tile has arrived, so the first look at any part of a photograph is the tick's
+ * render and the sharpening comes a tenth of a second later.
+ */
+const TileGlass = observer(function TileGlass({ store }: { store: RawEditStore }): JSX.Element | null {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const showing = store.loupeTile;
+
+  useEffect(() => {
+    const element = canvas.current;
+    const context = element?.getContext('2d');
+    if (element == null || context == null || showing == null) return;
+    const { tile, centre, span } = showing;
+    context.clearRect(0, 0, element.width, element.height);
+    // Nearest, not smoothed: a magnifier that interpolated would be showing its own guesses
+    // where the reader is looking for the photograph's grain.
+    context.imageSmoothingEnabled = false;
+    context.drawImage(
+      tile.bitmap,
+      centre.x - span / 2 - tile.rect.left,
+      centre.y - span / 2 - tile.rect.top,
+      span,
+      span,
+      0,
+      0,
+      element.width,
+      element.height,
+    );
+  }, [showing]);
+
+  if (showing == null) return null;
+  const dpr = globalThis.devicePixelRatio || 1;
+  return (
+    <canvas
+      ref={canvas}
+      className="loupe__glass loupe__glass--tile"
+      data-testid="raw-edit-loupe-tile"
+      width={LOUPE_SIZE * dpr}
+      height={LOUPE_SIZE * dpr}
+      style={{ width: `${LOUPE_SIZE}px`, height: `${LOUPE_SIZE}px` }}
+    />
   );
 });
 

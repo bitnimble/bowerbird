@@ -14,6 +14,8 @@ export type EditStatus = 'idle' | 'fetching' | 'preparing' | 'live' | 'failed';
  * One value rather than the two booleans below it because that is what the header's selector
  * is: a one-of-N, where "neither" is a choice a reader makes rather than a state they fall into.
  */
+import type { LoupeTile } from './loupe_tiles';
+
 export type EditTool = 'cursor' | 'crop' | 'perspective' | 'loupe';
 
 /** The loupe's side, in CSS pixels. Square, and the same square wherever it is held. */
@@ -140,6 +142,26 @@ export class RawEditStore {
    * that moved with how far the reader happened to be zoomed out would not be one.
    */
   @observable accessor loupeMagnification = LOUPE_DEFAULT_MAGNIFICATION;
+
+  /**
+   * The rendition-quality tile under the glass, once one has arrived, and what it is showing.
+   *
+   * Null while the editor's own render is all there is - which is every first look at a part of
+   * the photograph, since a tile is about a tenth of a second away.
+   */
+  @observable.ref accessor loupeTile: {
+    tile: LoupeTile;
+    centre: { x: number; y: number };
+    span: number;
+  } | null = null;
+
+  /**
+   * The stage's CSS box, as the component last measured it.
+   *
+   * Held so a tile arriving can be drawn without one: the fetch answers on its own schedule,
+   * long after the pointer move that asked for it, and nothing may read layout there.
+   */
+  @observable.ref accessor loupeBox = { width: 0, height: 0 };
 
   @computed get tool(): EditTool {
     if (this.cropping) return 'crop';
