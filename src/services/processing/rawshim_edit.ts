@@ -26,6 +26,13 @@ export interface EditStrengths {
 
 export interface EditRequest {
   rawFilePath: string;
+  /**
+   * This photograph's camera match, where one has been kept.
+   *
+   * Half a second of the open, and it depends on nothing but the file - so an open that has
+   * been through this before skips the fit entirely.
+   */
+  cameraMatch?: Uint8Array;
   /** Longest edge the decode is fitted to, which is the size every tick then grades. */
   longEdge: number;
   grade: JobGrade;
@@ -78,6 +85,12 @@ export interface PreparedHeader {
   matched: boolean;
   colour: ColourPayload | null;
   noise: NoisePayload;
+  /**
+   * The camera match this open had to fit, as bytes, for the caller to keep.
+   *
+   * Absent where the request carried a usable one, so its presence means "new, store it".
+   */
+  cameraMatch?: number[];
   samplesLen: number;
 }
 

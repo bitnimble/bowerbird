@@ -24,6 +24,13 @@ pub struct EditRequest {
     pub long_edge: u32,
     pub grade: hdr::Grade,
     pub strengths: Strengths,
+    /// This photograph's camera match, where the caller has kept one.
+    ///
+    /// Half a second of fitting that depends on nothing but the file, so an open that is handed
+    /// one skips it. A blob this build cannot read is ignored and the fit happens as it always
+    /// did (`crate::camera_match`).
+    #[serde(default)]
+    pub camera_match: Option<Vec<u8>>,
 }
 
 /// The camera match, flattened into what a shader can index.
@@ -116,6 +123,13 @@ pub struct PreparedHeader {
     /// estimator reduces every block in the frame before the first pixel can be denoised, which
     /// is a whole-frame pass the tick would otherwise repeat on every slider move.
     pub noise: crate::noise::Noise,
+    /// The camera match this open had to fit, for the caller to keep beside the photograph.
+    ///
+    /// Absent where the caller supplied a usable one, so its presence means "this is new" and a
+    /// caller can store it without first asking whether it already had it. About 5kB, and it is
+    /// half a second off every later open, render and loupe tile of this photograph.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera_match: Option<Vec<u8>>,
     /// Bytes of `u16` little-endian RGB following the header.
     pub samples_len: usize,
 }
@@ -264,7 +278,18 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
         let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
         let source = hdr::Source { samples, width: frame.width, height: frame.height };
 
-        let matched = fit(bytes, &source, request);
+        // The caller's stored match where it has one. Fitting is about half a second and
+        // depends on nothing but the file, so an open that has been through this before is that
+        // much faster to first pixel (`crate::camera_match`).
+        let stored = request.camera_match.as_deref().and_then(crate::camera_match::decode);
+        let had_one = stored.is_some();
+        let matched = stored.or_else(|| fit(bytes, &source, request));
+        // Reported back only where this open had to fit it, so its presence means "keep this"
+        // rather than "here is the one you gave me".
+        let keep = match had_one {
+            true => None,
+            false => matched.as_ref().map(crate::camera_match::encode),
+        };
         let mut prepared = hdr::prepare(&source, None, &request.grade);
 
         // The same refusal `tone::grade` makes, and for the same reason: the grade divides
@@ -317,7 +342,7 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
             }
         }
         filter(&mut prepared, Strengths { sharpen: request.strengths.sharpen, ..Default::default() });
-        Ok(payload(prepared, matched.as_ref(), frame.as_shot, request))
+        Ok(payload(prepared, matched.as_ref(), frame.as_shot, request, keep))
     }
 }
 
@@ -379,6 +404,8 @@ fn payload(
     matched: Option<&crate::hdr_fit::HdrMatch>,
     as_shot: Option<crate::white_balance::AsShot>,
     request: &EditRequest,
+    // The match this open fitted, or None where the request carried a usable one.
+    camera_match: Option<Vec<u8>>,
 ) -> Prepared {
     // The frame's own half of the uniform, in the units and the order the shader reads. At rest
     // on everything a tick moves: no gain, no adjustment, and the region and canvas the editor
@@ -418,6 +445,7 @@ fn payload(
         // Last, on the buffer as it will be sent: the warp resamples and the sharpen amplifies,
         // and a tick denoises what comes out of both rather than what went into them.
         noise: crate::noise::measure(&prepared.samples, prepared.width, prepared.height),
+        camera_match,
         samples_len: prepared.samples.len() * 2,
     };
     Prepared { header, samples: prepared.samples }
@@ -496,6 +524,7 @@ mod tests {
             detail: crate::gpu::detail_size(pixels, 1),
             colour: None,
             noise: crate::noise::measure(&samples, pixels, 1),
+            camera_match: None,
             samples_len: samples.len() * 2,
         };
         encode(&Prepared { header, samples }).expect("encoding a frame")

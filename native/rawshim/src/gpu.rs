@@ -218,6 +218,21 @@ impl Gpu {
             .ok()?,
         };
 
+        // **Said once, because which GPU this is decides how everything here performs and
+        // nothing else reports it.** A machine can offer several - an integrated one with a
+        // mature driver beside a discrete one reachable only through an immature or a software
+        // stack - and `HighPerformance` above asks for the discrete card without knowing which
+        // driver it will arrive through. A container that is missing a vendor's ICD gets the
+        // fallback silently, and the only symptom is renders that take twice as long as the
+        // same code on the same hardware outside it.
+        {
+            let info = adapter.get_info();
+            eprintln!(
+                "rawshim gpu: {} ({:?}, {:?}) via {}",
+                info.name, info.device_type, info.backend, info.driver,
+            );
+        }
+
         // The adapter's own limits, not `downlevel_defaults`. Those are WebGPU's portable
         // floor and cap a storage binding at 128MB, which a real frame is nowhere near
         // fitting: the frame and `counts` are six bytes a pixel each, so 144MB at 24MP and

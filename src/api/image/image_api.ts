@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { AppError } from '../../errors';
+import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
-import { getOriginalPath, getRenditionPath } from '../../utils/paths';
+import { getDataPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
-import { prepareEditAsync } from '../../services/processing/rawshim_edit';
+import { headerOf, prepareEditAsync } from '../../services/processing/rawshim_edit';
+import { readCameraMatch, writeCameraMatch } from '../../services/processing/camera_match_store';
 import { transcodeJpeg } from '../../services/processing/rawshim_job';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
@@ -35,6 +37,8 @@ type TileRenderer = (
 ) => Uint8Array;
 
 const JPEG_QUALITY = 92;
+
+const log = new Logger('image');
 
 // What the editor asks for when the client names nothing: the sensor, whatever it is.
 //
@@ -170,7 +174,18 @@ export class ImageApi {
     // Through the processing service, which is where the reader's stored edits already become
     // job fields: a loupe showing anything else would be magnifying a photograph nobody is
     // about to export.
+    // **Timed separately from the request, because the two answer different questions.** The
+    // access log measures arrival to response, so a tile that waited behind another reads as a
+    // slow render - and this handler is synchronous, so during a pointer sweep several arrive
+    // at once and every one of them reports the queue as its own cost. When these two numbers
+    // disagree, the gap is the wait and not the renderer.
+    const started = Bun.nanoseconds();
     const jpeg = this.processing.renderTile(original, photoId, library, [left, top, width, height]);
+    log.info('rendered a loupe tile', {
+      photoId,
+      tile: `${width}x${height}+${left}+${top}`,
+      renderMs: Math.round((Bun.nanoseconds() - started) / 1e6),
+    });
 
     return new Response(new Uint8Array(jpeg), {
       headers: {
@@ -219,8 +234,11 @@ export class ImageApi {
     // server answers comes off the same thread. It runs on one the native side owns and
     // reports back through a callback (`rawshim_edit.ts`), so a reader opening the editor no
     // longer stops the grid loading for anybody, themselves included.
+    const dataPath = getDataPath(library);
     const prepared = await prepareEditAsync({
       rawFilePath: original,
+      // Half a second of the open, kept from whatever fitted it first (`camera_match_store`).
+      cameraMatch: readCameraMatch(dataPath, photoId),
       longEdge,
       grade: {
         peakNits: settings.hdr_peak_nits,
@@ -234,6 +252,12 @@ export class ImageApi {
         defringe: settings.raw_defringe,
       },
     });
+
+    // Kept if this open had to fit it, which is half a second off every later open, render and
+    // loupe tile of this photograph. Reading the header back costs one JSON parse of a few
+    // kilobytes in front of a frame that is hundreds of megabytes.
+    const fitted = headerOf(prepared).cameraMatch;
+    if (fitted != null) writeCameraMatch(dataPath, photoId, Uint8Array.from(fitted));
 
     return new Response(prepared, {
       headers: {
