@@ -31,8 +31,11 @@ export interface EditRequest {
    *
    * Half a second of the open, and it depends on nothing but the file - so an open that has
    * been through this before skips the fit entirely.
+   *
+   * Bytes as numbers because this whole struct crosses as JSON: a `Uint8Array` here stringifies
+   * to an object of numeric keys, which the far side rejects as a malformed request.
    */
-  cameraMatch?: Uint8Array;
+  cameraMatch?: number[];
   /** Longest edge the decode is fitted to, which is the size every tick then grades. */
   longEdge: number;
   grade: JobGrade;

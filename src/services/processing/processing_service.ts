@@ -282,8 +282,8 @@ export class ProcessingService {
    * Synchronous, like `runJob` beside it: a tile is ~110ms where a rendition is seconds, and
    * the caller is one request rather than an import queue.
    *
-   * PNG rather than AVIF: the reader is judging noise and sharpness at 1:1, which is the one
-   * place a lossy encoder is answering a different question from the one being asked.
+   * An HDR AVIF, as every other picture served here is: a loupe held over the stage has to tone
+   * map the way the stage does, which an SDR encode with the roll-off already baked in cannot.
    */
   renderTile(
     rawFilePath: string,

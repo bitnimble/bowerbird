@@ -180,16 +180,16 @@ export class ImageApi {
     // at once and every one of them reports the queue as its own cost. When these two numbers
     // disagree, the gap is the wait and not the renderer.
     const started = Bun.nanoseconds();
-    const jpeg = this.processing.renderTile(original, photoId, library, [left, top, width, height]);
+    const tile = this.processing.renderTile(original, photoId, library, [left, top, width, height]);
     log.info('rendered a loupe tile', {
       photoId,
       tile: `${width}x${height}+${left}+${top}`,
       renderMs: Math.round((Bun.nanoseconds() - started) / 1e6),
     });
 
-    return new Response(new Uint8Array(jpeg), {
+    return new Response(new Uint8Array(tile), {
       headers: {
-        'Content-Type': 'image/jpeg',
+        'Content-Type': 'image/avif',
         // The client caches these itself, keyed on the same values this is a function of, so
         // there is nothing for a shared cache to get wrong or to hold.
         'Cache-Control': 'no-store',

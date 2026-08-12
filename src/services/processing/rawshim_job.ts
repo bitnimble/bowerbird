@@ -60,8 +60,11 @@ export interface Job {
    * Half a second of fitting that depends on nothing but the file, so every path that has one
    * hands it over rather than paying again. A blob the library cannot read is ignored and
    * refitted, so an older one is never a wrong picture.
+   *
+   * Bytes as numbers because this whole struct crosses as JSON: a `Uint8Array` here stringifies
+   * to an object of numeric keys, which the far side rejects as a malformed job.
    */
-  cameraMatch?: Uint8Array;
+  cameraMatch?: number[];
   /**
    * The Detail panel's two sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
    *

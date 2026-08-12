@@ -1125,14 +1125,14 @@ export class RawEditPresenter {
  * One loupe tile, as a blob the browser can decode.
  *
  * Over the same transport everything else uses, so the desktop shell's IPC answers it too - the
- * loupe is not a browser feature and the bytes are JPEG either way.
+ * loupe is not a browser feature and the bytes are an HDR AVIF either way.
  */
 async function fetchTile(photoId: string, rect: TileRect, signal: AbortSignal): Promise<Blob> {
   const reply = await send('get:tile', 'GET', tilePath(photoId, rect), undefined, signal);
   if (reply.status < 200 || reply.status >= 300) {
     throw new Error(`could not render that tile: ${reply.status}`);
   }
-  return new Blob([reply.bytes as BlobPart], { type: 'image/jpeg' });
+  return new Blob([reply.bytes as BlobPart], { type: 'image/avif' });
 }
 
 async function fetchPrepared(

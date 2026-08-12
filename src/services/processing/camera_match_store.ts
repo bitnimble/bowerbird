@@ -19,9 +19,11 @@ const log = new Logger('processing');
  * of a photo nobody has rendered yet, and a match that cannot be written is a slow next render
  * rather than a lost photograph - so both swallow, and the fit simply happens again.
  */
-export function readCameraMatch(dataPath: string, photoId: string): Uint8Array | undefined {
+export function readCameraMatch(dataPath: string, photoId: string): number[] | undefined {
   try {
-    return readFileSync(cameraMatchPathFor(dataPath, photoId));
+    // Numbers, not the `Buffer` this reads: every caller puts it straight into a job that
+    // crosses as JSON, and a `Buffer` stringifies to `{"type":"Buffer",...}` there.
+    return Array.from(readFileSync(cameraMatchPathFor(dataPath, photoId)));
   } catch {
     return undefined;
   }

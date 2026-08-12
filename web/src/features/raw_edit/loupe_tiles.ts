@@ -41,10 +41,17 @@ export interface TileRect {
   height: number;
 }
 
-/** A tile that has arrived, and the part of the frame it holds. */
+/**
+ * A tile that has arrived, and the part of the frame it holds.
+ *
+ * An object URL for an `<img>` rather than an `ImageBitmap` for a canvas, because the tile is an
+ * HDR AVIF: a 2D canvas composites in SDR, so drawing it there would clip exactly the highlights
+ * a loupe is held over the stage to inspect. An `<img>` is the same path the grid shows its
+ * renditions through, and the browser tone maps it the way it tone maps those.
+ */
 export interface LoupeTile {
   rect: TileRect;
-  bitmap: ImageBitmap;
+  url: string;
 }
 
 /**
@@ -194,21 +201,22 @@ export class LoupeTiles {
     // and what comes back then describes a photograph nobody is looking at any more.
     const against = this.revision;
     void this.fetchTile(this.photoId, rect, stop.signal)
-      .then(async (blob) => createImageBitmap(blob))
-      .then((bitmap) => {
+      .then(async (blob) => decoded(URL.createObjectURL(blob)))
+      .then((url) => {
         // Superseded while it was decoding, which the abort cannot reach: whatever is in flight
         // now is the answer, and this one is a picture of the wrong place.
         if (this.asking?.at !== at || against !== this.revision) {
-          bitmap.close();
+          URL.revokeObjectURL(url);
           return;
         }
         this.asking = null;
         this.settle();
-        this.held.set(at, { rect, bitmap });
+        this.held.set(at, { rect, url });
         while (this.held.size > KEPT) {
           const oldest = this.held.keys().next().value;
           if (oldest == null) break;
-          this.held.get(oldest)?.bitmap.close();
+          const going = this.held.get(oldest);
+          if (going != null) URL.revokeObjectURL(going.url);
           this.held.delete(oldest);
         }
         this.onArrived();
@@ -236,7 +244,7 @@ export class LoupeTiles {
   }
 
   clear(): void {
-    for (const tile of this.held.values()) tile.bitmap.close();
+    for (const tile of this.held.values()) URL.revokeObjectURL(tile.url);
     this.held.clear();
     this.asking?.stop.abort();
     this.asking = null;
@@ -246,4 +254,23 @@ export class LoupeTiles {
 
 function key(rect: TileRect): string {
   return `${rect.left},${rect.top},${rect.width},${rect.height}`;
+}
+
+/**
+ * The URL back, once the picture behind it is decoded and ready to paint.
+ *
+ * Held here rather than left to the `<img>` in the glass: the tile replaces a picture already on
+ * screen, and an element that is handed an undecoded `src` paints nothing until it is ready -
+ * which is a blink of the editor's own render at the moment the sharper one arrives.
+ */
+async function decoded(url: string): Promise<string> {
+  const image = new Image();
+  image.src = url;
+  try {
+    await image.decode();
+  } catch (failed) {
+    URL.revokeObjectURL(url);
+    throw failed;
+  }
+  return url;
 }

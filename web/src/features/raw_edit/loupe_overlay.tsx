@@ -80,44 +80,39 @@ export const LoupeOverlay = observer(function LoupeOverlay({
  *
  * Absent until a tile has arrived, so the first look at any part of a photograph is the tick's
  * render and the sharpening comes a tenth of a second later.
+ *
+ * **An `<img>` rather than a canvas, and that is what keeps it HDR.** The tile is a PQ AVIF; a
+ * 2D canvas composites in SDR, so drawing it there clipped the highlights the loupe exists to
+ * show and made the glass disagree with the stage underneath it. An `<img>` goes through the
+ * same compositing path the grid's renditions do, so the two tone map alike.
  */
 const TileGlass = observer(function TileGlass({ store }: { store: RawEditStore }): JSX.Element | null {
-  const canvas = useRef<HTMLCanvasElement>(null);
   const showing = store.loupeTile;
-
-  useEffect(() => {
-    const element = canvas.current;
-    const context = element?.getContext('2d');
-    if (element == null || context == null || showing == null) return;
-    const { tile, centre, span } = showing;
-    context.clearRect(0, 0, element.width, element.height);
-    // Nearest, not smoothed: a magnifier that interpolated would be showing its own guesses
-    // where the reader is looking for the photograph's grain.
-    context.imageSmoothingEnabled = false;
-    context.drawImage(
-      tile.bitmap,
-      centre.x - span / 2 - tile.rect.left,
-      centre.y - span / 2 - tile.rect.top,
-      span,
-      span,
-      0,
-      0,
-      element.width,
-      element.height,
-    );
-  }, [showing]);
-
   if (showing == null) return null;
-  const dpr = globalThis.devicePixelRatio || 1;
+
+  const { tile, centre, span } = showing;
+  const scale = LOUPE_SIZE / span;
   return (
-    <canvas
-      ref={canvas}
+    <div
       className="loupe__glass loupe__glass--tile"
       data-testid="raw-edit-loupe-tile"
-      width={LOUPE_SIZE * dpr}
-      height={LOUPE_SIZE * dpr}
-      style={{ width: `${LOUPE_SIZE}px`, height: `${LOUPE_SIZE}px` }}
-    />
+      style={{ width: `${LOUPE_SIZE}px`, height: `${LOUPE_SIZE}px`, overflow: 'hidden' }}
+    >
+      <img
+        src={tile.url}
+        alt=""
+        style={{
+          position: 'absolute',
+          width: `${tile.rect.width * scale}px`,
+          height: `${tile.rect.height * scale}px`,
+          left: `${-(centre.x - span / 2 - tile.rect.left) * scale}px`,
+          top: `${-(centre.y - span / 2 - tile.rect.top) * scale}px`,
+          // Nearest, not smoothed: a magnifier that interpolated would be showing its own
+          // guesses where the reader is looking for the photograph's grain.
+          imageRendering: 'pixelated',
+        }}
+      />
+    </div>
   );
 });
 

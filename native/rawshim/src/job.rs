@@ -341,7 +341,7 @@ impl Base {
 }
 
 /// This photograph's camera match: the caller's, if it kept one, and otherwise a fresh fit for
-/// it to keep.
+/// it to keep - except for a tile, which can only be handed one.
 ///
 /// **The fit costs half a second and depends on nothing but the file.** It decodes the embedded
 /// JPEG, resamples it and fits a curve per channel against the render, and every path that
@@ -367,6 +367,14 @@ fn matched_for(
             return (Some(matched), None);
         }
     }
+    // A crop cannot fit one, and must not try: `fit_all` resamples the whole embedded JPEG to
+    // the frame it is given, so fitting against a tile compares a squashed picture of the entire
+    // scene with a 400px piece of it. That produces a different match for every tile position -
+    // the loupe changing grade as it moves - on top of matching neither the rendition nor the
+    // editor. Ungraded is wrong in one consistent way, which is recoverable; this is not.
+    if job.tile.is_some() {
+        return (None, None);
+    }
     let fitted = crate::fit_hdr_for(
         frame,
         &job.raw_file_path,
@@ -378,17 +386,30 @@ fn matched_for(
     (fitted, keep)
 }
 
+/// A loupe is judging grain at 1:1, so it is encoded at the quality the `max` rendition is
+/// rather than the one the viewing sizes are: the artefacts a reader is looking for have to be
+/// the photograph's rather than the encoder's.
+const TILE_QUANTIZER: i32 = 4;
+
+// Fastest libaom will go. A tile is looked at once and thrown away, and it is on the reader's
+// critical path where a rendition's encode is not - at 400px the quantizer above is what decides
+// how it looks, and the speed only decides how long they waited for it.
+const TILE_SPEED: i32 = 10;
+
 /// One tile, graded and encoded, without a target or a file.
 ///
 /// The same `Base` every rendition is cut from, with `job.tile` restricting the decode - so the
 /// pixels a reader magnifies are the pixels their export would have, through the same fit, the
 /// same mosaic denoise and the same grade shaders.
 ///
-/// **JPEG at 96 rather than AVIF.** A loupe is looked at once and thrown away, so the encode is
-/// on the reader's critical path where a rendition's is not: measured on a 400px tile, AVIF at
-/// the shipping quantizer is most of the tile's own cost again, and at 1:1 neither encoder is
-/// what the reader would notice. Quality is high enough that the artefacts they *are* looking
-/// for - grain, ringing, smearing - are the photograph's rather than the encoder's.
+/// PQ Rec.2020 in an HDR AVIF, which is what every other picture this library serves is. A
+/// loupe held over the stage has to tone map the way the stage does, and an SDR encode cannot:
+/// it has already had the roll-off baked into it and the highlights clipped, so the one thing a
+/// reader opens a loupe to check - what the export actually does up there - is the thing it
+/// could not show.
+///
+/// 4:4:4, and that is the part worth being deliberate about: subsampled chroma would halve the
+/// resolution of the colour noise the Colour slider is being set against.
 ///
 /// No size fitting: a magnifier that resampled would be answering a different question.
 pub fn tile(job: &Job) -> Option<Vec<u8>> {
@@ -411,12 +432,19 @@ pub fn tile(job: &Job) -> Option<Vec<u8>> {
         matched.as_ref().map(|m| &m.lens),
         crate::hdr_args::Size { width: width as u32, height: height as u32 },
         job.grade.peak_nits,
-        crate::gpu::Output::Srgb,
+        crate::gpu::Output::Pq,
     );
-    let bytes: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
-    crate::jpeg::encode(
-        crate::rgb::RgbRef { width: out_width, height: out_height, data: &bytes },
-        96,
+    let (primaries, transfer, matrix) = crate::hdr_args::cicp();
+    crate::avif::encode_still(
+        std::borrow::Cow::Owned(coded),
+        out_width,
+        out_height,
+        &crate::avif::StillOptions {
+            cicp: crate::avif::Cicp { primaries, transfer, matrix },
+            format: crate::hdr_args::Chroma::Yuv444.avif_format(),
+            quantizer: TILE_QUANTIZER,
+            speed: TILE_SPEED,
+        },
     )
     .ok()
 }
