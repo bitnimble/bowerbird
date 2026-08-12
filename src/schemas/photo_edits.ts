@@ -69,8 +69,8 @@ export const EditDocSchema = z
     // failure on that side is grain and on the other side is smearing, and grain is the one
     // that still reads as a photograph. Grain in luma is worth keeping some of where colour
     // mottle has no such defence, which is why the two are separate at all.
-    luminanceNoise: z.number().int().min(0).max(100).default(40),
-    colourNoise: z.number().int().min(0).max(100).default(40),
+    luminanceNoise: z.number().int().min(0).max(100).default(20),
+    colourNoise: z.number().int().min(0).max(100).default(30),
 
     // White balance. The mode is an open enum in the file - `As Shot`, `Auto`,
     // `Daylight`, `Custom` and a user preset name are all legal - so it is a string.

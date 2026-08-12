@@ -86,13 +86,17 @@ const EFFECTS: readonly SliderSpec[] = [
  *
  * **0 to 100 rather than -100 to 100**, unlike every slider above: there is no such thing as
  * negative noise reduction, and a detent in the middle of a track whose left half does not
- * exist would invite one. Their default is 40 and not 0, so the reset arrow on these two
- * returns to a denoised picture rather than to a raw one - and the track's landmark is its
- * middle, where the denoise removes exactly the noise the frame was measured to have.
+ * exist would invite one. Neither starts at 0, so the reset arrow on these two returns to a
+ * denoised picture rather than a raw one - and the track's landmark is its middle, where the
+ * denoise removes exactly the noise the frame was measured to have.
+ *
+ * **Colour starts further along than luminance**, because the failures are not symmetric:
+ * grain in luma still reads as a photograph and the over-reach that removes it smears texture,
+ * where colour mottle has no such defence and nothing is lost by taking more of it.
  */
 const DETAIL: readonly SliderSpec[] = [
-  { key: 'luminanceNoise', label: 'Luminance', min: 0, max: 100, step: 1, neutral: 40 },
-  { key: 'colourNoise', label: 'Colour', min: 0, max: 100, step: 1, neutral: 40 },
+  { key: 'luminanceNoise', label: 'Luminance', min: 0, max: 100, step: 1, neutral: 20 },
+  { key: 'colourNoise', label: 'Colour', min: 0, max: 100, step: 1, neutral: 30 },
 ];
 
 /// Signed only where the track has a negative half; `+33` on a 0-to-100 slider states a
@@ -513,7 +517,7 @@ export const RawEditPanel = observer(function RawEditPanel({
               <EditSlider key={spec.key} store={store} presenter={presenter} spec={spec} />
             ))}
           </Group>
-          <Group title="Detail">
+          <Group title="Noise removal">
             {DETAIL.map((spec) => (
               <EditSlider key={spec.key} store={store} presenter={presenter} spec={spec} />
             ))}

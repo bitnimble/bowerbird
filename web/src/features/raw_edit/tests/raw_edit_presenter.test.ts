@@ -318,19 +318,29 @@ describe('a slider reaching the picture', () => {
     expect(floats[at.tint]).toBe(11);
   });
 
-  test('sends the Detail pair to the denoise, and only when one of them moves', () => {
-    presenter.preview({ luminanceNoise: 60, colourNoise: 20 });
+  test('holds the denoise while the slider moves, and settles it on release', () => {
+    // **Nothing while the pointer is down.** The chain is eight dispatches over the whole
+    // frame and takes the detail blur with it, so running it per position spends the frame
+    // budget on pictures nobody sees and makes the control itself sticky.
+    presenter.preview({ luminanceNoise: 55 });
+    presenter.preview({ luminanceNoise: 58 });
+    presenter.preview({ luminanceNoise: 60 });
+    expect(pipeline.denoises).toBe(0);
+
+    // The release is the reader looking at it, so it runs then - once, at where they stopped.
+    presenter.settle({ luminanceNoise: 60, colourNoise: 20 });
+    expect(pipeline.denoises).toBe(1);
     expect(pipeline.denoise).toEqual({ luminance: 60, colour: 20 });
 
-    // Every other slider goes through the same `preview`, so the guard against re-running
-    // thirteen whole-frame passes has to be the *value*, not the call.
+    // Every other slider goes through the same `preview`, so the guard against re-running it
+    // has to be the *value*, not the call.
     const ran = pipeline.denoises;
-    presenter.preview({ exposure: 1.2 });
-    presenter.preview({ contrast: 40 });
+    presenter.settle({ exposure: 1.2 });
+    presenter.settle({ contrast: 40 });
     presenter.settleStraighten(3);
     expect(pipeline.denoises).toBe(ran);
 
-    presenter.preview({ colourNoise: 21 });
+    presenter.settle({ colourNoise: 21 });
     expect(pipeline.denoises).toBe(ran + 1);
     expect(pipeline.denoise).toEqual({ luminance: 60, colour: 21 });
   });

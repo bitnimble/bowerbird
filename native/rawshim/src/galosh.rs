@@ -924,11 +924,13 @@ mod tests {
         assert!((calibrated.luma - 1.0).abs() < 1e-6, "luma {}", calibrated.luma);
         assert!((calibrated.colour - 1.0).abs() < 1e-6, "colour {}", calibrated.colour);
 
-        // The document's default is four fifths of that, deliberately short: the failure
-        // below the mark is grain and above it is smearing, and only grain reads as a
-        // photograph.
-        let shipped = Amounts::from_sliders(40.0, 40.0);
-        assert!((shipped.luma - 0.8).abs() < 1e-6, "luma {}", shipped.luma);
+        // The document's defaults sit well short of the mark, and differ from each other: 20
+        // for luminance, 30 for colour. The failures are not symmetric - grain in luma still
+        // reads as a photograph where colour mottle never does, so the colour slider can afford
+        // to start further along than the one whose over-reach smears texture.
+        let shipped = Amounts::from_sliders(20.0, 30.0);
+        assert!((shipped.luma - 0.4).abs() < 1e-6, "luma {}", shipped.luma);
+        assert!((shipped.colour - 0.6).abs() < 1e-6, "colour {}", shipped.colour);
 
         // And the top is headroom against the fit reading low, not a limit to stop at.
         assert!((Amounts::from_sliders(100.0, 100.0).luma - 2.0).abs() < 1e-6);

@@ -69,26 +69,35 @@ export const RawEditStage = observer(function RawEditStage({
   // The *picture*, not the frame: a cropped photo is a different shape, and fitting the stage
   // to the frame would letterbox the crop inside it.
   const natural = store.width === 0 ? NO_SIZE : store.output;
-  // Zoom and pan are off under both geometry tools: each lays something out on the picture where
-  // a fitted view puts it, and a pan would slide the photograph out from under it. The loupe is
-  // there too - its wheel is its own magnification, and a drag under it would slide the frame
-  // out from under the thing being examined.
-  const still = store.cropping || store.keystoning || store.loupeOpen;
+  /**
+   * Whether the view has to be *fitted*, which only the geometry tools need.
+   *
+   * Both lay something out on the picture where a fitted view puts it, so a zoomed frame under
+   * a crop rectangle or a keystone guide would have it naming somewhere else.
+   */
+  const fitted = store.cropping || store.keystoning;
+  /**
+   * Whether the stage's own zoom and pan take gestures.
+   *
+   * The loupe is here and not above: it needs the wheel for its magnification and the drag for
+   * where the glass sits, so neither can also be the stage's - but it lays nothing out on the
+   * picture, so **the reader's zoom is theirs to keep**. Magnifying part of an already-enlarged
+   * frame is the ordinary way to use one.
+   */
+  const still = fitted || store.loupeOpen;
   const zoom = useZoomPan(viewport, stage, natural, undefined, !still);
   const { view, box, handlers, zoomed, reset } = zoom;
 
   // **Back to a fitted view whenever the picture's shape changes**, and whenever either geometry
   // tool opens. A turn or a straighten is a different picture, so a view held over from the last
-  // one is a window somewhere outside it; and both overlays lay themselves out on the *contained*
-  // canvas, which is only where the canvas is when the view is fitted - a rectangle or a guide
-  // drawn over a zoomed frame would name something other than what the reader is looking at.
+  // one is a window somewhere outside it.
   //
   // Here rather than on the presenter, and this is the only place: the region follows the view
   // through the effect below, so a presenter that set the region itself would have this
   // overwrite it on the next render - a straighten drag wrote two regions per move, alternating.
   useEffect(() => {
     reset();
-  }, [still, natural.width, natural.height, reset]);
+  }, [fitted, natural.width, natural.height, reset]);
 
   // The gesture is state in React and the region is state in the store, so one has to follow
   // the other. An effect rather than a call inside the handler, because the view settles

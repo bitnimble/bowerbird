@@ -163,6 +163,9 @@ export class RawEditStore {
    */
   @observable.ref accessor loupeBox = { width: 0, height: 0 };
 
+  /** Whether a rendition tile is on its way, which the glass says beside its magnification. */
+  @observable accessor loupeRendering = false;
+
   @computed get tool(): EditTool {
     if (this.cropping) return 'crop';
     if (this.keystoning) return 'perspective';

@@ -987,7 +987,7 @@ export class EditPipeline {
     const encoder = this.device.createCommandEncoder();
     this.writeUniform({ exposure: ev, region, into: loupe });
     this.writeBalance(encoder);
-    this.draw(encoder, region, loupe);
+    this.draw(encoder, region, loupe, false);
     this.device.queue.submit([encoder.finish()]);
     // Nothing restores the tick's uniform, and nothing has to: `render` writes it before every
     // draw, and the peak - the only other reader - runs inside that same call.
@@ -1480,7 +1480,21 @@ export class EditPipeline {
     ]);
   }
 
-  private draw(encoder: GPUCommandEncoder, region: Region, into = this.context): void {
+  /**
+   * `timed` is false for the loupe, and has to be.
+   *
+   * The timer hands out a slot per pass and only `begin` gives them back, so a draw outside a
+   * tick's own submit takes one and never returns it - sixteen loupe draws in and the query set
+   * is exhausted, which arrives as "beginningOfPassWriteIndex exceeds the number of queries" and
+   * a dead editor. The readout is the tick's anyway: a loupe is not one of the passes it is
+   * accounting for.
+   */
+  private draw(
+    encoder: GPUCommandEncoder,
+    region: Region,
+    into = this.context,
+    timed = true,
+  ): void {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -1490,7 +1504,7 @@ export class EditPipeline {
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
         },
       ],
-      timestampWrites: this.timer?.writes('draw'),
+      timestampWrites: timed ? this.timer?.writes('draw') : undefined,
     });
     // The same ratio `covered` takes its level from: below two, the frame's own pixels are
     // what the taps want, and the pyramid does not hold them.

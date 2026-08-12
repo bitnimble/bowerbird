@@ -111,7 +111,13 @@ export function tileFor(
 export class LoupeTiles {
   /** Insertion-ordered, which a `Map` gives, so the oldest key is the first one. */
   private readonly held = new Map<string, LoupeTile>();
-  private readonly asking = new Set<string>();
+  /**
+   * The one request in flight, and the handle that stops it.
+   *
+   * One rather than a set: see `want`. A pointer outruns the renderer, so anything more than
+   * one is a backlog of pictures of places nobody is looking at any more.
+   */
+  private asking: { at: string; stop: AbortController } | null = null;
   /**
    * What the tiles were rendered against.
    *
@@ -124,9 +130,20 @@ export class LoupeTiles {
 
   constructor(
     private readonly photoId: string,
-    private readonly fetchTile: (photoId: string, rect: TileRect) => Promise<Blob>,
+    private readonly fetchTile: (
+      photoId: string,
+      rect: TileRect,
+      signal: AbortSignal,
+    ) => Promise<Blob>,
     private readonly onArrived: () => void,
+    /** Whether anything is in flight, so the reader can be told the glass is still sharpening. */
+    private readonly onBusy: (busy: boolean) => void = () => {},
   ) {}
+
+  /** Whether anything is in flight, which is all a spinner needs. */
+  private settle(): void {
+    this.onBusy(this.asking != null);
+  }
 
   /**
    * A tile already here that holds everything the glass is showing, if any.
@@ -152,26 +169,41 @@ export class LoupeTiles {
   }
 
   /**
-   * Asks for `rect` unless it is held or already in flight.
+   * Asks for `rect`, replacing whatever was being asked for before.
+   *
+   * **One request at a time, and a new area supersedes the old one rather than queueing behind
+   * it.** A pointer crosses tile boundaries far faster than a tile renders, so a queue is a
+   * backlog of pictures of places the reader has already left - and the server renders each in
+   * turn whether anyone still wants it, which is 110ms of its time per abandoned tile. The one
+   * in flight is aborted when it is superseded, so what is being rendered is always where the
+   * glass currently is.
    *
    * Fire and forget: the caller draws whatever it has now, and `onArrived` brings it back when
    * there is something better to draw.
    */
   want(rect: TileRect): void {
     const at = key(rect);
-    if (this.held.has(at) || this.asking.has(at)) return;
-    this.asking.add(at);
+    if (this.held.has(at) || this.asking?.at === at) return;
+    // Whatever was in flight is for somewhere the glass has left.
+    this.asking?.stop.abort();
+
+    const stop = new AbortController();
+    this.asking = { at, stop };
+    this.settle();
     // What it is being rendered against, captured now: an edit can land while it is in flight,
     // and what comes back then describes a photograph nobody is looking at any more.
     const against = this.revision;
-    void this.fetchTile(this.photoId, rect)
+    void this.fetchTile(this.photoId, rect, stop.signal)
       .then(async (blob) => createImageBitmap(blob))
       .then((bitmap) => {
-        this.asking.delete(at);
-        if (against !== this.revision) {
+        // Superseded while it was decoding, which the abort cannot reach: whatever is in flight
+        // now is the answer, and this one is a picture of the wrong place.
+        if (this.asking?.at !== at || against !== this.revision) {
           bitmap.close();
           return;
         }
+        this.asking = null;
+        this.settle();
         this.held.set(at, { rect, bitmap });
         while (this.held.size > KEPT) {
           const oldest = this.held.keys().next().value;
@@ -182,9 +214,12 @@ export class LoupeTiles {
         this.onArrived();
       })
       .catch(() => {
-        // A tile that will not render is not worth reporting: the editor's own draw is
-        // underneath it and the reader sees the picture either way.
-        this.asking.delete(at);
+        // An abort lands here too, and neither it nor a tile that will not render is worth
+        // reporting: the editor's own draw is underneath and the reader sees the picture either
+        // way. Only the request that is still the current one may clear the slot.
+        if (this.asking?.at !== at) return;
+        this.asking = null;
+        this.settle();
       });
   }
 
@@ -203,7 +238,9 @@ export class LoupeTiles {
   clear(): void {
     for (const tile of this.held.values()) tile.bitmap.close();
     this.held.clear();
-    this.asking.clear();
+    this.asking?.stop.abort();
+    this.asking = null;
+    this.settle();
   }
 }
 

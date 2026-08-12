@@ -65,20 +65,36 @@ describe('which tile the loupe asks for', () => {
 
 describe('the tiles held', () => {
   /** A fetch that never settles, so nothing arrives unless a test lets it. */
-  function pending(): { tiles: LoupeTiles; asked: string[] } {
+  function pending(): { tiles: LoupeTiles; asked: string[]; signals: AbortSignal[] } {
     const asked: string[] = [];
+    const signals: AbortSignal[] = [];
     const tiles = new LoupeTiles(
       'photo',
-      async (_photo, rect) => {
+      async (_photo, rect, signal) => {
         asked.push(`${rect.left},${rect.top}`);
+        signals.push(signal);
         return new Promise<Blob>(() => {});
       },
       () => {},
     );
-    return { tiles, asked };
+    return { tiles, asked, signals };
   }
 
-  test('asks once for a tile already in flight', () => {
+  test('a new area supersedes the one in flight rather than queueing behind it', () => {
+    const { tiles, asked, signals } = pending();
+    tiles.want(tileFor({ x: 3000, y: 2000 }, 400, FRAME));
+    // Far enough that the first tile cannot cover it, so it is genuinely somewhere else.
+    tiles.want(tileFor({ x: 5000, y: 2000 }, 400, FRAME));
+
+    // **Both were asked for, and only the second is still wanted.** A pointer crosses tiles
+    // faster than one renders, so a queue is a backlog of places the reader has left - and the
+    // server spends 110ms on each of them whether or not anyone is still looking.
+    expect(asked).toHaveLength(2);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+  });
+
+  test('coming back to the area in flight does not restart it', () => {
     const { tiles, asked } = pending();
     const rect = tileFor({ x: 3000, y: 2000 }, 400, FRAME);
     tiles.want(rect);
@@ -94,6 +110,23 @@ describe('the tiles held', () => {
     tiles.invalidate('rev-2');
     tiles.want(rect);
     expect(asked).toHaveLength(2);
+  });
+
+  test('says when it is fetching, so the glass can show it is still sharpening', () => {
+    const busy: boolean[] = [];
+    const tiles = new LoupeTiles(
+      'photo',
+      async () => new Promise<Blob>(() => {}),
+      () => {},
+      (is) => busy.push(is),
+    );
+    tiles.want(tileFor({ x: 3000, y: 2000 }, 400, FRAME));
+    expect(busy.at(-1)).toBe(true);
+
+    // An edit throws the in-flight request away with everything else, and nothing is pending
+    // afterwards - a spinner left running is a worse lie than none.
+    tiles.invalidate('rev-2');
+    expect(busy.at(-1)).toBe(false);
   });
 
   test('has nothing before anything arrives, which is what the fallback is for', () => {

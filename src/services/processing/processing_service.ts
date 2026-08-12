@@ -28,8 +28,8 @@ export const AS_METERED = {
   exposure: 0,
   // The document's own defaults rather than zero. A photo nobody has edited is denoised, as
   // it was when this was a library-wide setting; "as metered" is about the *grade*.
-  denoiseLuminance: 40,
-  denoiseColour: 40,
+  denoiseLuminance: 20,
+  denoiseColour: 30,
   adjust: {
     contrast: 0,
     highlights: 0,

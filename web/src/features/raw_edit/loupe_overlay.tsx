@@ -55,9 +55,15 @@ export const LoupeOverlay = observer(function LoupeOverlay({
         height={LOUPE_SIZE * (globalThis.devicePixelRatio || 1)}
         style={{ width: `${LOUPE_SIZE}px`, height: `${LOUPE_SIZE}px` }}
       />
-      {/* Outside the box, so the number never covers the pixels it describes. */}
+      {/* Outside the box, so neither the number nor the spinner covers the pixels they
+          describe. The spinner says the glass is still showing the tick's own render and the
+          export's is on its way - which is worth saying, because the two differ in exactly the
+          thing a reader opens a loupe to judge. */}
       <span className="loupe__scale" data-testid="raw-edit-loupe-scale">
         {formatMagnification(store.loupeMagnification)}
+        {store.loupeRendering && (
+          <span className="loupe__spinner" data-testid="raw-edit-loupe-spinner" aria-label="Rendering" />
+        )}
       </span>
     </div>
   );

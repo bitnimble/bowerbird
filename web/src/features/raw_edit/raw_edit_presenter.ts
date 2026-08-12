@@ -40,6 +40,14 @@ import {
  */
 const LOUPE_STEP = 1.25;
 
+/**
+ * How long the Detail sliders may be still before the denoise runs.
+ *
+ * Long enough that a drag is a handful of renders rather than one per position, short enough
+ * that a reader who pauses mid-drag sees the answer before they wonder whether it is coming.
+ */
+const DENOISE_QUIET_MS = 120;
+
 const CROP_TO_FIT_KEY = 'bowerbird.edit.cropToFit';
 
 /**
@@ -352,13 +360,11 @@ export class RawEditPresenter {
       temperature: next.temperature,
       tint: next.tint,
     });
-    // Not part of the uniform: the denoise is a chain of passes over the whole frame, so
-    // this re-runs it only when one of its two sliders has actually moved. Every other
-    // control reaches the picture through `setAdjust` above and costs nothing here.
-    this.pipeline?.setDenoise({
-      luminance: next.luminanceNoise,
-      colour: next.colourNoise,
-    });
+    // Not part of the uniform, and not per move. Every other control reaches the picture
+    // through `setAdjust` above and costs nothing; this one is eight dispatches over the whole
+    // frame and a rebuild of the blur the presence sliders read, which at 24MP is far more than
+    // a pointer emits positions for.
+    this.wantDenoise({ luminance: next.luminanceNoise, colour: next.colourNoise });
     this.request(this.store.exposureEv);
   }
 
@@ -458,6 +464,9 @@ export class RawEditPresenter {
           // A tile landing is not a state change anything renders from directly - the glass is
           // a canvas - so this asks for the draw that will put it there.
           () => this.drawLoupe(this.store.loupeBox),
+          action((busy: boolean) => {
+            this.store.loupeRendering = busy;
+          }),
         );
       }
       return;
@@ -803,8 +812,46 @@ export class RawEditPresenter {
   @action.bound
   settle(patch: Partial<EditDoc>): void {
     this.preview(patch);
+    // The drag is over, so whatever the denoise still owes is owed now rather than in a tenth
+    // of a second: a reader who has let go is looking at the picture.
+    this.flushDenoise();
     void this.commit();
   }
+
+  /**
+   * Asks for a denoise, once the slider has stopped moving.
+   *
+   * **The picture lags the slider here, on purpose.** The chain is eight dispatches over the
+   * whole frame and takes the detail blur with it, where every other control is a word in a
+   * uniform - so running it per pointer position spends the whole frame budget on a picture
+   * that is replaced before it is looked at, and the control itself goes sticky under the hand.
+   * A short quiet period turns a drag into a handful of renders, and the release settles it.
+   */
+  @action.bound
+  private wantDenoise(next: { luminance: number; colour: number }): void {
+    if (this.denoiseWanted?.luminance === next.luminance && this.denoiseWanted.colour === next.colour) {
+      return;
+    }
+    this.denoiseWanted = next;
+    if (this.denoiseTimer != null) clearTimeout(this.denoiseTimer);
+    this.denoiseTimer = setTimeout(() => this.flushDenoise(), DENOISE_QUIET_MS);
+  }
+
+  /** Runs whatever the sliders last asked for, now. */
+  private flushDenoise(): void {
+    if (this.denoiseTimer != null) {
+      clearTimeout(this.denoiseTimer);
+      this.denoiseTimer = null;
+    }
+    const wanted = this.denoiseWanted;
+    if (wanted == null) return;
+    this.denoiseWanted = null;
+    this.pipeline?.setDenoise(wanted);
+    this.request(this.store.exposureEv);
+  }
+
+  private denoiseWanted: { luminance: number; colour: number } | null = null;
+  private denoiseTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Sends the document, one save at a time, coalescing whatever arrived meanwhile.
@@ -915,6 +962,11 @@ export class RawEditPresenter {
 
   close(): void {
     if (this.closed) return;
+    // A denoise owed to a slider nobody is holding any more, on a pipeline about to be
+    // destroyed: cancelled rather than flushed.
+    if (this.denoiseTimer != null) clearTimeout(this.denoiseTimer);
+    this.denoiseTimer = null;
+    this.denoiseWanted = null;
     // Before the flag, and only where something was actually stored: this is what asks
     // the server to build the picture the reader ended up with. No write above rebuilds
     // anything, because a slider release says nothing about whether they are finished -
@@ -1043,8 +1095,8 @@ export class RawEditPresenter {
  * Over the same transport everything else uses, so the desktop shell's IPC answers it too - the
  * loupe is not a browser feature and the bytes are JPEG either way.
  */
-async function fetchTile(photoId: string, rect: TileRect): Promise<Blob> {
-  const reply = await send('get:tile', 'GET', tilePath(photoId, rect));
+async function fetchTile(photoId: string, rect: TileRect, signal: AbortSignal): Promise<Blob> {
+  const reply = await send('get:tile', 'GET', tilePath(photoId, rect), undefined, signal);
   if (reply.status < 200 || reply.status >= 300) {
     throw new Error(`could not render that tile: ${reply.status}`);
   }
