@@ -3,6 +3,7 @@ import path from 'node:path';
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { API_URL, CULL_PHOTOS_DIR, PHOTO_NAMES, libraryDataDir } from './fixture_library';
 import {
+  FIRST_FRAME,
   addLibrary,
   bulkAction,
   openLibrary,
@@ -36,12 +37,6 @@ async function renditionPath(request: APIRequestContext, rendition: string, phot
   const dir = library!.rendition_hdr ? `${rendition}-hdr` : rendition;
   return path.join(libraryDataDir(library!.id), 'renditions', dir, `${photoId}.avif`);
 }
-
-// The first frame a stage shows is a rendition read off disk and decoded, on a machine
-// running the rest of the suite beside it. The configured `expect` default is 15s, which is
-// what this suite flakes against; the tests that had already been bitten carried their own
-// number, which left the rest waiting to be. One name, so raising it raises all of them.
-const FIRST_FRAME = { timeout: 45_000 };
 
 
 test('sync indexes the cull library', async ({ page }) => {
@@ -397,8 +392,11 @@ test('a neighbour rebuilt while it was warmed is painted at the URL it was warme
   const warmed = page.locator(`.stage__viewport img[aria-hidden="true"][src*="${secondId}"]`);
   await expect(warmed).toHaveCount(1);
 
-  // Rebuilt from under the reader while they are still on its neighbour.
-  await page.request.post(`${API_URL}/api/photos/${secondId}/renditions/full?force=true`);
+  // Rebuilt from under the reader while they are still on its neighbour. The request does not
+  // answer until the render has, so it carries its own budget rather than the default.
+  await page.request.post(`${API_URL}/api/photos/${secondId}/renditions/full?force=true`, {
+    timeout: 180_000,
+  });
   await expect(warmed).toHaveAttribute('src', /\?v=/, { timeout: 60_000 });
   const warmedSrc = await warmed.getAttribute('src');
 
@@ -459,7 +457,8 @@ test("a selection's grid tiles can be rebuilt from the bulk bar", async ({ page 
 
   await selectPhoto(page);
   await bulkAction(page, 'Rebuild thumbnails');
-  await expect(page.getByText(/Rebuilt 1 thumbnail/)).toBeVisible();
+  // The toast reports the rebuild once it is done, so this waits on a decode.
+  await expect(page.getByText(/Rebuilt 1 thumbnail/)).toBeVisible(FIRST_FRAME);
 
   // What the viewer is served is recorded per photo and a tile rebuild says
   // nothing about it, so the detail view reads the same afterwards.

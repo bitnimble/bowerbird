@@ -234,11 +234,14 @@ test('the viewer steps through every member of a stack, not just its tile', asyn
   // And it is a step in the animation's eyes too, not just the arrows': the
   // direction is read off the run, so a member with no row in the listing still
   // slides in from the side the reader is heading towards.
-  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-next')).toBeVisible({ timeout: 60_000 });
+  //
+  // A class, so it takes the default: the frame it rides on is one this decoded, and the
+  // decode is what `toHaveURL` above already waited through.
+  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-next')).toBeVisible();
   const after = openPhotoId(page);
   await previous.click();
   await expect(page).toHaveURL(new RegExp(middle));
-  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-prev')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-prev')).toBeVisible();
   await previous.click();
   const before = openPhotoId(page);
 

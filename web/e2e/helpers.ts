@@ -1,5 +1,17 @@
 import { expect, type Page } from '@playwright/test';
 
+/**
+ * How long to wait on work the server does with pixels.
+ *
+ * A decode, a rendition build, a thumbnail rebuild: seconds on this fixture, on a machine
+ * running the rest of the suite beside it. Everything else takes the config's five seconds,
+ * because everything else is a class toggling or a route resolving - which either happens
+ * immediately or is broken, and waiting on it only makes a failing suite slow.
+ *
+ * One name, so raising it raises all of them.
+ */
+export const FIRST_FRAME = { timeout: 45_000 };
+
 // Navigation the specs share. Libraries are added in Settings and then live
 // permanently in the rail, so there is no "pick a library" screen to go through.
 export function libraryRow(page: Page, rootPath: string) {
@@ -24,7 +36,9 @@ export async function addLibrary(
   // The dialog's own button carries the same name as the one that opened it, so
   // the confirm has to be scoped to the dialog.
   await page.locator('.ui-modal').getByRole('button', { name: 'Add library' }).click();
-  await expect(libraryRow(page, rootPath)).toBeVisible();
+  // Creating a library walks the folder before the row can be re-read, so this one is a real
+  // wait rather than a render.
+  await expect(libraryRow(page, rootPath)).toBeVisible({ timeout: 30_000 });
   // The fixture is the same ARW copied under several names, so every frame in it
   // is identical to every other and automatic stacking - correctly - collapses
   // the whole library into one tile. That is a property of the fixture rather
@@ -99,7 +113,10 @@ async function stopSync(page: Page, rootPath: string): Promise<void> {
   // the button takes a tick to appear. Not an assertion: a run short enough to be
   // over before the first poll needs no stopping.
   await stop.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
-  if (await stop.isVisible()) await stop.click();
+  // The run can end between the check and the click, and Stop is replaced by Sync now when it
+  // does - so a click that misses reaches the same place as one that lands, and only the
+  // assertion below decides whether it did.
+  if (await stop.isVisible()) await stop.click().catch(() => {});
   await expect(libraryRow(page, rootPath).getByRole('button', { name: 'Sync now' })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -133,13 +150,12 @@ export async function addShoot(page: Page, name: string): Promise<void> {
 // the same message whether the page was slow, the library was never created, or an earlier
 // test removed it - and under load this is where the suite lands when it lands anywhere.
 //
-// `timeout: 0` so the budget is the test's, which is what it already was. `use.actionTimeout`
-// is unset, so the click this replaced waited the whole test timeout; `expect` would otherwise
-// cap it at the config's 15s and make a slow rail fail *earlier* than it used to. The change
-// is meant to be the message and nothing else.
+// The wait is the slow half and says so; the click that follows takes the default, because by
+// then the element is on the page and a click that cannot land in five seconds is a broken
+// test rather than a slow one.
 export async function openLibrary(page: Page, rootPath: string): Promise<void> {
   const link = page.locator(`.rail__link[title="${rootPath}"]`);
-  await expect(link, `the rail should list ${rootPath}`).toBeVisible({ timeout: 0 });
+  await expect(link, `the rail should list ${rootPath}`).toBeVisible({ timeout: 30_000 });
   await link.click();
 }
 
