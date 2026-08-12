@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { API_URL, STACK_PHOTO_NAMES, STACK_PHOTOS_DIR } from './fixture_library';
-import { addLibrary, bulkAction, openLibrary, openPhotoId, syncLibrary, waitForSyncSettled } from './helpers';
+import { FIRST_FRAME, addLibrary, bulkAction, openLibrary, openPhotoId, syncLibrary, waitForSyncSettled } from './helpers';
 
 /** The one stack in this spec's library, found through the collapsed listing. */
 async function stackIdOfLibrary(page: Page): Promise<string> {
@@ -210,6 +210,10 @@ test('expanding all stacks puts every frame in the grid, and keeps what was sele
 // skipped every member the stack did not stand for - and a member opened from a
 // band had no row at all, which left both arrows dead with no way on.
 test('the viewer steps through every member of a stack, not just its tile', async ({ page }) => {
+  // Four decodes in one test - the way in, then a step either side and back - and each is a
+  // rendition read off disk on a machine running the rest of the suite beside it. The default
+  // sixty seconds is the one budget here that is not generous.
+  test.setTimeout(240_000);
   await page.goto('/settings');
   await openLibrary(page, STACK_PHOTOS_DIR);
   await expect(page.locator('.tile__stack')).toBeVisible({ timeout: 45_000 });
@@ -235,13 +239,13 @@ test('the viewer steps through every member of a stack, not just its tile', asyn
   // direction is read off the run, so a member with no row in the listing still
   // slides in from the side the reader is heading towards.
   //
-  // A class, so it takes the default: the frame it rides on is one this decoded, and the
-  // decode is what `toHaveURL` above already waited through.
-  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-next')).toBeVisible();
+  // `is-ready` and not just the class: the direction is recorded when the frame decodes, so
+  // this waits on a decode however fast the URL moved.
+  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-next')).toBeVisible(FIRST_FRAME);
   const after = openPhotoId(page);
   await previous.click();
   await expect(page).toHaveURL(new RegExp(middle));
-  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-prev')).toBeVisible();
+  await expect(page.locator('.stage__viewport img.is-ready.is-stepping-prev')).toBeVisible(FIRST_FRAME);
   await previous.click();
   const before = openPhotoId(page);
 
