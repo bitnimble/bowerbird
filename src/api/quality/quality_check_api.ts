@@ -76,8 +76,8 @@ export class QualityCheckApi {
           // The document's defaults, for the same reason the exposure below is neutral:
           // this page compares quantizers, and a denoise that varied with the library's
           // settings would be a second variable in that measurement.
-          denoiseLuminance: 40,
-          denoiseColour: 40,
+          denoiseLuminance: 50,
+          denoiseColour: 50,
           sharpen: settings.raw_sharpen,
           defringe: settings.raw_defringe,
           // The scene as metered, deliberately. This page compares encoder settings

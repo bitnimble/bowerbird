@@ -59,13 +59,16 @@ export const EditDocSchema = z
     // editor's reads them as its cheaper sRGB-domain twin, so a single physical unit here
     // would be a unit belonging to one of the two.
     //
-    // **They default to on, at 40.** That is exactly the reference denoiser's own defaults
-    // on the rendition path - a luma shrinkage of 0.5 and a colour walk of 1.0 - and it sits
-    // in the middle of what an ISO 25600 frame can take in the editor, measured rather than
-    // guessed. Grain in luma reads as a photograph and is worth keeping some of, where
-    // colour mottle has no such defence, which is why the two are separate at all.
-    luminanceNoise: z.number().int().min(0).max(100).default(40),
-    colourNoise: z.number().int().min(0).max(100).default(40),
+    // **They default to on, at 50, which is half the noise the frame was measured to have.**
+    // The scale is not arbitrary: the shrinkage normalises the plane to its own measured
+    // sigma, so 100 is the calibrated point where exactly that much is treated as noise, and
+    // a position on the track is the fraction of it to remove. 50 is also exactly the
+    // reference denoiser's own tuning on the rendition path.
+    //
+    // Grain in luma reads as a photograph and is worth keeping some of, where colour mottle
+    // has no such defence, which is why the two are separate at all.
+    luminanceNoise: z.number().int().min(0).max(100).default(50),
+    colourNoise: z.number().int().min(0).max(100).default(50),
 
     // White balance. The mode is an open enum in the file - `As Shot`, `Auto`,
     // `Daylight`, `Custom` and a user preset name are all legal - so it is a string.

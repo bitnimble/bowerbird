@@ -406,7 +406,7 @@ impl NoiseModel {
     pub fn suggested_amount(&self) -> f64 {
         const GATE: f32 = 0.004;
         const RAMP: f32 = 0.004;
-        const SETTLED: f64 = 40.0;
+        const SETTLED: f64 = 50.0;
         let sigma = self.at_mid_grey();
         if sigma < GATE {
             return 0.0;
@@ -420,14 +420,14 @@ impl NoiseModel {
 impl Amounts {
     /// The Detail panel's two sliders, 0 to 100, in the units the kernels read.
     ///
-    /// Scaled so the document's default of 40 lands on exactly the denoise the reference
-    /// ships - a luma shrinkage of 0.5 and a colour walk of 1.0 - rather than putting that
-    /// at a third of the way along and leaving the rest of the track to overshoot it. The
-    /// top is 1.25 and 2.5, which is inside the range the reference tuned over.
+    /// Scaled so the document's default of 50 lands on exactly the denoise the reference
+    /// ships - a luma shrinkage of 0.5 and a colour walk of 1.0 - and so the top of the
+    /// luma track is 1.0, the calibrated point where the shrinkage treats exactly the
+    /// measured noise as noise. Past it is signal, so it is not offered.
     pub fn from_sliders(luminance: f64, colour: f64) -> Amounts {
         Amounts {
-            luma: (luminance.clamp(0.0, 100.0) / 100.0 * 1.25) as f32,
-            colour: (colour.clamp(0.0, 100.0) / 100.0 * 2.5) as f32,
+            luma: (luminance.clamp(0.0, 100.0) / 100.0) as f32,
+            colour: (colour.clamp(0.0, 100.0) / 100.0 * 2.0) as f32,
         }
     }
 
