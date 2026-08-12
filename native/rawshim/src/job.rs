@@ -95,6 +95,13 @@ pub struct Job {
     /// a tile a pure function of this job: there is no cache to invalidate when a slider moves.
     #[serde(default)]
     pub tile: Option<[usize; 4]>,
+    /// This photograph's camera match, if the caller has one stored (`crate::camera_match`).
+    ///
+    /// Fitting it is half a second and depends on nothing but the file, so a caller that keeps
+    /// it hands it back rather than paying again. A blob this build cannot read is ignored and
+    /// the fit is done the slow way, which is what every job did before this existed.
+    #[serde(default)]
+    pub camera_match: Option<Vec<u8>>,
     /// The Detail panel's two sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
     ///
     /// They drive the denoise on the *mosaic*, inside the decode (`crate::galosh`), which
@@ -164,6 +171,13 @@ impl Job {
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Outcome {
+    /// The camera match this job fitted, where it had to fit one.
+    ///
+    /// Absent when the caller supplied a usable one, so its presence means "this is new, keep
+    /// it" rather than "here it is again". Bytes for the same reason the descriptor beside it
+    /// is: `serde_json` renders them as numbers, and 5kB saves a base64 decode on the far side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera_match: Option<Vec<u8>>,
     /// Only from a grid tile, that being the one pass every photo makes exactly once
     /// whatever its library builds from (19.3). Bytes rather than a string, which
     /// `serde_json` renders as an array of numbers - small enough at 2.6kB, and it
@@ -260,6 +274,8 @@ struct Base {
     /// the samples above were coded against.
     levels: tone::Anchored,
     matched: Option<crate::hdr_fit::HdrMatch>,
+    /// The match this build had to fit, for the caller to keep. None where it supplied one.
+    fitted_now: Option<Vec<u8>>,
     /// The illuminant the decode balanced against, which the stored temperature and tint move
     /// away from. Read off the processor and carried, because the decode is the only place it
     /// exists.
@@ -298,15 +314,9 @@ impl Base {
         // when there was an 8-bit render to fit against. It reads the frame *before* the
         // filter below, because the geometry search runs `image::finish` on its own
         // downscaled render - calibrated at that scale, which this frame is not at.
-        let matched = match job.match_embedded_jpeg {
-            true => crate::fit_hdr_for(
-                &frame,
-                &job.raw_file_path,
-                job.grade.white_quantile,
-                None,
-                job.strengths().before_the_fit(),
-            ),
-            false => None,
+        let (matched, fitted_now) = match job.match_embedded_jpeg {
+            true => matched_for(job, &frame),
+            false => (None, None),
         };
 
         let as_shot = frame.as_shot;
@@ -326,16 +336,48 @@ impl Base {
         // pixels of the frame they read, so this is the one size at which they mean what they
         // were tuned to mean.
         hdr::filter_base(&mut samples, width, height, job.strengths().before_the_fit());
-        Ok(Base { samples, width, height, levels, matched, as_shot })
+        Ok(Base { samples, width, height, levels, matched, as_shot, fitted_now })
     }
 }
 
-/// Everything one photo owes, in the order that shares the most work.
+/// This photograph's camera match: the caller's, if it kept one, and otherwise a fresh fit for
+/// it to keep.
 ///
-/// Ordinary Rust scoping does what the worker's `open` list and its `finally` used
-/// to: a decode lives in a local, is borrowed by whatever needs it, and is dropped
-/// when nothing does. There is no list to forget to add to and no `finally` to skip,
-/// which were two of the three ways the old shape could leak a 366MB frame.
+/// **The fit costs half a second and depends on nothing but the file.** It decodes the embedded
+/// JPEG, resamples it and fits a curve per channel against the render, and every path that
+/// wants one pays for the same answer: a rendition job, a rebuild after an edit, the editor's
+/// open, and worst of all the loupe, which asks for a tile every time the reader moves.
+/// Measured on a 24MP CR3, a 400px tile is 660ms fitting it and 105ms handed one.
+///
+/// Nothing an edit touches is an input to it - not a crop, an exposure or a denoise amount -
+/// so a stored match can only go stale by the photograph itself changing, and keying it is the
+/// caller's business rather than this one's.
+///
+/// The second return is the blob to keep, and it is `None` when the caller supplied a usable
+/// one: its presence means "this is new" rather than "here it is again", so a caller can write
+/// it back without first asking whether it already had it.
+fn matched_for(
+    job: &Job,
+    frame: &crate::frame::Frame,
+) -> (Option<crate::hdr_fit::HdrMatch>, Option<Vec<u8>>) {
+    // What the caller kept, if it kept one. Nothing is reported back in that case: the answer
+    // it already has is the answer.
+    if let Some(stored) = job.camera_match.as_deref() {
+        if let Some(matched) = crate::camera_match::decode(stored) {
+            return (Some(matched), None);
+        }
+    }
+    let fitted = crate::fit_hdr_for(
+        frame,
+        &job.raw_file_path,
+        job.grade.white_quantile,
+        None,
+        job.strengths().before_the_fit(),
+    );
+    let keep = fitted.as_ref().map(crate::camera_match::encode);
+    (fitted, keep)
+}
+
 /// One tile, graded and encoded, without a target or a file.
 ///
 /// The same `Base` every rendition is cut from, with `job.tile` restricting the decode - so the
@@ -350,7 +392,10 @@ impl Base {
 ///
 /// No size fitting: a magnifier that resampled would be answering a different question.
 pub fn tile(job: &Job) -> Option<Vec<u8>> {
-    let Base { samples, width, height, levels, matched, as_shot } = Base::build(job, 0).ok()?;
+    // A tile discards the match it may have fitted: the caller keeps one off the paths that
+    // build a whole photograph, and a loupe is not the place to be writing to a catalogue.
+    let Base { samples, width, height, levels, matched, as_shot, fitted_now: _ } =
+        Base::build(job, 0).ok()?;
     let source = crate::hdr::Source { samples: &samples, width, height };
     let scene = crate::tone::SceneGrade::new(
         matched.as_ref().map(|m| &m.colour),
@@ -376,6 +421,12 @@ pub fn tile(job: &Job) -> Option<Vec<u8>> {
     .ok()
 }
 
+/// Everything one photo owes, in the order that shares the most work.
+///
+/// Ordinary Rust scoping does what the worker's `open` list and its `finally` used
+/// to: a decode lives in a local, is borrowed by whatever needs it, and is dropped
+/// when nothing does. There is no list to forget to add to and no `finally` to skip,
+/// which were two of the three ways the old shape could leak a 366MB frame.
 pub fn run(job: &Job) -> Result<Outcome, String> {
     let mut outcome = Outcome::default();
 
@@ -406,8 +457,9 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         return Ok(outcome);
     }
 
-    let Base { samples, width, height, levels, matched, as_shot } =
+    let Base { samples, width, height, levels, matched, as_shot, fitted_now } =
         Base::build(job, largest_size(&rendered))?;
+    outcome.camera_match = fitted_now;
     let lens = matched.as_ref().map(|m| &m.lens);
 
     // Largest first, so every smaller rendition is a downscale of one already cut rather

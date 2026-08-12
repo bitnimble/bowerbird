@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { runJob } from './rawshim_job';
+import { readCameraMatch, writeCameraMatch } from './camera_match_store';
 import type { ProcessingResult, RenditionJob, WorkerJob } from './processing_types';
 
 // Bun worker thread (DESIGN §10.3). Writes renditions of one photo - the grid
@@ -43,6 +44,9 @@ function toCommand(job: RenditionJob): Parameters<typeof runJob>[0] {
   return {
     rawFilePath: job.rawFilePath,
     matchEmbeddedJpeg: job.matchEmbeddedJpeg,
+    // Read here rather than passed in, so the blob crosses to the worker as a file path's
+    // worth of nothing rather than 5KB per job through `postMessage`.
+    cameraMatch: readCameraMatch(job.dataPath, job.photoId),
     denoiseLuminance: job.denoiseLuminance,
     denoiseColour: job.denoiseColour,
     sharpen: job.sharpen,
@@ -78,7 +82,11 @@ self.onmessage = async (event) => {
   const job = event.data;
   try {
     await ensureOutputDirs(job);
-    const { descriptor } = runJob(toCommand(job));
+    const { descriptor, cameraMatch } = runJob(toCommand(job));
+    // Written here, in the worker that fitted it, rather than sent back for the main thread to
+    // store: it is a file, this side is already doing file work, and the main thread's one job
+    // is to stay off the disk.
+    if (cameraMatch != null) writeCameraMatch(job.dataPath, job.photoId, cameraMatch);
     self.postMessage({ photoId: job.photoId, success: true, descriptor });
   } catch (err) {
     for (const output of outputsOf(job)) await Bun.file(output).delete().catch(() => {});

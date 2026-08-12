@@ -6,6 +6,7 @@ import type { Library } from '../../schemas/libraries';
 import { EditDocSchema } from '../../schemas/photo_edits';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { dataPathForLibraryId, getDataPath, renditionPathFor } from '../../utils/paths';
+import { readCameraMatch } from './camera_match_store';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
 import type { SettingsRepository } from '../settings/settings_repository';
 import type {
@@ -284,13 +285,23 @@ export class ProcessingService {
    * PNG rather than AVIF: the reader is judging noise and sharpness at 1:1, which is the one
    * place a lossy encoder is answering a different question from the one being asked.
    */
-  renderTile(rawFilePath: string, photoId: string, tile: [number, number, number, number]): Buffer {
+  renderTile(
+    rawFilePath: string,
+    photoId: string,
+    library: Library,
+    tile: [number, number, number, number],
+  ): Buffer {
+    const dataPath = getDataPath(library);
     return renderTile({
       rawFilePath,
       tile,
       targets: [],
       grade: this.grade(),
       matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+      // The kept match, which is the difference between 660ms a tile and 105ms. A photo with
+      // none yet fits one and does not store it: a tile hands back an image rather than an
+      // outcome, and the next render of the photograph writes it anyway.
+      cameraMatch: readCameraMatch(dataPath, photoId),
       ...developed(this.editsFor(photoId)),
       ...this.render(),
     });

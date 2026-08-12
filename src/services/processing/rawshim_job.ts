@@ -55,6 +55,14 @@ export interface Job {
    */
   tile?: [number, number, number, number];
   /**
+   * This photograph's camera match, where one has been kept.
+   *
+   * Half a second of fitting that depends on nothing but the file, so every path that has one
+   * hands it over rather than paying again. A blob the library cannot read is ignored and
+   * refitted, so an older one is never a wrong picture.
+   */
+  cameraMatch?: Uint8Array;
+  /**
    * The Detail panel's two sliders, 0 to 100, exactly as `EditDoc` stores them (§10.9).
    *
    * Positions rather than strengths, and carried unconverted for the same reason the
@@ -139,20 +147,29 @@ export interface JobAdjust {
 export interface JobOutcome {
   /** The stacking descriptor a grid tile produced (§19.3), or undefined. */
   descriptor?: Uint8Array;
+  /**
+   * The camera match this job had to fit, for the caller to keep against the photo.
+   *
+   * Undefined where the job was given a usable one, so this means "new, store it" rather than
+   * "here it is again". About 5KB, and it saves the next render, rebuild, editor open and
+   * loupe tile half a second each.
+   */
+  cameraMatch?: Uint8Array;
 }
 
 interface JobReply {
   ok: boolean;
   error?: string;
-  outcome?: { descriptor?: number[] };
+  outcome?: { descriptor?: number[]; cameraMatch?: number[] };
 }
 
-// Big enough for any reply the job produces: the only variable-length thing in one
-// is the stacking descriptor, which is 2.6kB of bytes rendered as a JSON array, so
-// ~16kB at its widest. Sized generously rather than exactly because the cost of
-// being wrong is a second call, and the cost of being generous is one allocation
-// per photo that never leaves this function.
-const REPLY_CAPACITY = 64 * 1024;
+// Big enough for any reply the job produces. Two things in one are variable-length and both
+// are bytes rendered as a JSON array, which costs up to four characters each: the stacking
+// descriptor at 2.6kB (~16kB rendered) and the camera match at 5kB (~20kB). Sized generously
+// rather than exactly because the cost of being wrong is a second call - which re-renders the
+// *reply*, not the job - and the cost of being generous is one allocation per photo that never
+// leaves this function.
+const REPLY_CAPACITY = 128 * 1024;
 
 /**
  * Builds every rendition one job names, and returns what came back.
@@ -179,7 +196,13 @@ export function runJob(job: Job): JobOutcome {
   const parsed = JSON.parse(new TextDecoder().decode(reply.subarray(0, written))) as JobReply;
   if (!parsed.ok) throw new Error(parsed.error ?? 'rawshim could not run the job');
   const descriptor = parsed.outcome?.descriptor;
-  return { descriptor: descriptor == null ? undefined : Uint8Array.from(descriptor) };
+  const cameraMatch = parsed.outcome?.cameraMatch;
+  return {
+    descriptor: descriptor == null ? undefined : Uint8Array.from(descriptor),
+    // Present only where this job had to fit one, so its presence means "keep this" rather
+    // than "here it is again".
+    cameraMatch: cameraMatch == null ? undefined : Uint8Array.from(cameraMatch),
+  };
 }
 
 // A transcoded rendition is usually a couple of megabytes; 32MB covers a

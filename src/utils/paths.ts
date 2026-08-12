@@ -38,6 +38,22 @@ export function getRenditionPath(library: Library, photoId: string, rendition: R
   return renditionPathFor(getDataPath(library), photoId, rendition, hdr);
 }
 
+/**
+ * Where this photo's camera match is kept (`native/rawshim/src/camera_match.rs`).
+ *
+ * **Beside `renditions/` rather than inside it, and that is the whole point of the directory.**
+ * A rendition is a cache: it can be deleted at any moment and the next request rebuilds it, and
+ * the orphan sweep is free to take any file in there that no photo claims. A match is not that.
+ * It costs half a second of fitting, it depends on nothing but the RAW, and losing one is
+ * paying that again for every render, rebuild, editor open and loupe tile of that photograph.
+ * So it lives one level up, where wiping the cache does not reach it.
+ *
+ * `<photoId>.bbm`, so a filename still reads as an id if anything ever has to sweep these too.
+ */
+export function cameraMatchPathFor(dataPath: string, photoId: string): string {
+  return path.join(dataPath, 'matches', `${photoId}.bbm`);
+}
+
 // The Bin holds originals, which is why it lives beside the photographs and not
 // in the data directory: everything under `DATA_DIR` is generated and must stay
 // disposable, so that removing a library (or the user clearing that directory by

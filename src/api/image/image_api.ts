@@ -30,6 +30,7 @@ type PathFor = (library: Library, photo: BasicPhoto) => string;
 type TileRenderer = (
   rawFilePath: string,
   photoId: string,
+  library: Library,
   tile: [number, number, number, number],
 ) => Uint8Array;
 
@@ -169,7 +170,7 @@ export class ImageApi {
     // Through the processing service, which is where the reader's stored edits already become
     // job fields: a loupe showing anything else would be magnifying a photograph nobody is
     // about to export.
-    const jpeg = this.processing.renderTile(original, photoId, [left, top, width, height]);
+    const jpeg = this.processing.renderTile(original, photoId, library, [left, top, width, height]);
 
     return new Response(new Uint8Array(jpeg), {
       headers: {

@@ -54,6 +54,7 @@ use std::os::raw::c_int;
 
 #[cfg(feature = "renditions")]
 pub mod avif;
+pub mod camera_match;
 #[cfg(feature = "renditions")]
 pub mod debug;
 /// The editor's open half. The tick that follows it is the client's GPU.
@@ -1423,7 +1424,83 @@ mod tests {
         println!("  + demosaic, whole       {full_ms:>5}ms  {full_pixels} px");
         println!("  + demosaic, 700px crop  {crop_ms:>5}ms  {crop_pixels} px");
 
-        // And the thing itself: one tile, denoised and demosaiced, from nothing.
+        // The whole server path, which is what a reader actually waits on: `job::tile` fits the
+        // camera match and grades on top of the decode below.
+        #[cfg(feature = "renditions")]
+        {
+            let tile_job = |side: usize| job::Job {
+                raw_file_path: path.clone(),
+                match_embedded_jpeg: true,
+                tile: Some([2000, 1400, side, side]),
+                camera_match: None,
+                denoise_luminance: 20.0,
+                denoise_colour: 30.0,
+                sharpen: 1.0,
+                defringe: 1.0,
+                exposure: 0.0,
+                adjust: gpu::Adjust::none(),
+                geometry: image::Geometry::none(),
+                grade: hdr::Grade {
+                    peak_nits: 1000.0,
+                    reference_white_nits: 203.0,
+                    white_quantile: 0.995,
+                },
+                targets: Vec::new(),
+            };
+            job::tile(&tile_job(400));
+            for side in [400usize, 700] {
+                let started = std::time::Instant::now();
+                let bytes = job::tile(&tile_job(side)).expect("the tile renders");
+                println!(
+                    "  job::tile, {side}px         {:>5}ms  {} kB",
+                    started.elapsed().as_millis(),
+                    bytes.len() / 1024,
+                );
+            }
+            // How big the fit actually is, which decides whether it is worth storing per photo
+            // rather than re-fitting. Measured rather than counted off the constants.
+            if let Some(frame) = decode_frame(&path, 16, true, 0) {
+                if let Some(fitted) =
+                    fit_hdr_for(&frame, &path, 0.995, None, image::Strengths::default())
+                {
+                    let colour = &fitted.colour;
+                    let numbers = colour.curves.iter().map(Vec::len).sum::<usize>()
+                        + 9
+                        + colour.chroma.as_ref().map_or(0, |map| map.nodes_flat().len())
+                        + fitted.lens.distortion.as_ref().map_or(0, Vec::len)
+                        + fitted.lens.tca.as_ref().map_or(0, |pair| pair[0].len() + pair[1].len())
+                        + 3;
+                    let blob = camera_match::encode(&fitted);
+                    println!(
+                        "  the fit is {numbers} numbers, {} bytes stored ({} kB as f64)",
+                        blob.len(),
+                        numbers * 8 / 1024,
+                    );
+
+                    // And the tile with that match handed to it, which is what a photograph
+                    // whose fit has been kept costs from the second request onwards.
+                    let mut with_match = tile_job(400);
+                    with_match.camera_match = Some(blob);
+                    job::tile(&with_match);
+                    let started = std::time::Instant::now();
+                    job::tile(&with_match).expect("renders");
+                    println!(
+                        "  job::tile, match stored  {:>5}ms",
+                        started.elapsed().as_millis(),
+                    );
+                }
+            }
+
+            // The same tile with no camera match, which is the one expensive thing a tile
+            // repeats that belongs to the *photograph* rather than to the crop.
+            let mut unmatched = tile_job(400);
+            unmatched.match_embedded_jpeg = false;
+            let started = std::time::Instant::now();
+            job::tile(&unmatched).expect("renders");
+            println!("  job::tile, no match      {:>5}ms", started.elapsed().as_millis());
+        }
+
+        // And the decode alone: one tile, denoised and demosaiced, from nothing.
         //
         // Warmed first, because the pipelines and the adapter are built once per process and a
         // loupe asks its second question with them already up.

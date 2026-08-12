@@ -233,6 +233,11 @@ pub struct MapShape {
 /// Every node of the grid, as a compile-time count.
 const MAP_NODES: usize = MAP_CHROMA * MAP_CHROMA * MAP_LEVEL;
 
+/// How many nodes the lattice has, for a caller sizing a buffer to read one back into.
+pub fn map_nodes() -> usize {
+    MAP_NODES
+}
+
 /// How far out the chroma axes reach before the grid clamps, and how far up the level
 /// axis does. Beyond either, a colour keeps the last node's correction rather than an
 /// extrapolated one - which is what makes the map safe above the reference's clip point.
@@ -438,6 +443,23 @@ impl ChromaMap {
     }
 
     const LEVEL_SCALE: f64 = (MAP_LEVEL - 1) as f64 / LEVEL_REACH;
+
+    /// The lattice rebuilt from what [`ChromaMap::nodes_flat`] and [`ChromaMap::shape`] handed
+    /// out, for a match read back from storage rather than fitted.
+    ///
+    /// Refuses a `nodes` of the wrong length rather than padding it: the grid's dimensions are
+    /// this module's, and a stored map that disagrees was written by a build whose lattice was
+    /// a different shape - which would land every colour on the wrong node rather than fail.
+    pub fn from_parts(nodes: &[f64], low: [f64; 2], scale: [f64; 2]) -> Option<ChromaMap> {
+        if nodes.len() != MAP_NODES * NODE_VALUES {
+            return None;
+        }
+        let mut lattice = Box::new([[0.0; NODE_VALUES]; MAP_NODES]);
+        for (node, values) in lattice.iter_mut().zip(nodes.chunks_exact(NODE_VALUES)) {
+            node.copy_from_slice(values);
+        }
+        Some(ChromaMap { nodes: lattice, low, scale })
+    }
 
     /// The lattice as one flat array, `NODE_VALUES` per node, in `correct`'s index order.
     ///
