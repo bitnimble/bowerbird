@@ -36,6 +36,36 @@ services:
       - /dev/dri:/dev/dri
     group_add:
       - "${RENDER_GID:-106}"
+    # An NVIDIA card, where the host has one and the container toolkit to inject it.
+    #
+    # **`graphics` is the one that matters and the one everybody leaves out.** `compute` alone
+    # brings CUDA and no Vulkan ICD, so the container ends up with the devices, the libraries,
+    # and no adapter - which looks exactly like not having asked for the GPU at all. The driver
+    # userspace cannot be installed in the image either: `libGLX_nvidia.so.<version>` handshakes
+    # with the host's kernel module and a mismatched pair refuses to initialise, so the toolkit
+    # bind-mounts the host's own at start and the two agree by construction.
+    #
+    # Harmless on a host with no NVIDIA card and no toolkit: `NVIDIA_VISIBLE_DEVICES` is read by
+    # a runtime hook that is not there, and the AMD path above is untouched.
+    runtime: "${NVIDIA_RUNTIME:-runc}"
+    # Uncomment to profile the native side with `perf`, and comment it back out afterwards.
+    #
+    # **The blocker is seccomp, not `perf_event_paranoid` and not capabilities.** Docker's default
+    # seccomp profile denies `perf_event_open` outright, so every event is refused - including
+    # software ones like `cpu-clock`, which is the tell: a paranoid-level problem would have
+    # allowed those. The host's `perf_event_paranoid` is already 2, which permits profiling your
+    # own processes in user space, and that is all a decode profile needs. Raise it to 1 on the
+    # *host* only if you want kernel symbols, and add `cap_add: [PERFMON]` only for system-wide.
+    #
+    # The image carries neither tool: `apt-get install linux-perf binutils` as root inside the
+    # running container. `binutils` is not optional - without `addr2line` a profile can only name
+    # functions, and the interesting question is which line inside `decode_line`.
+    #
+    # Debian's trixie `linux-perf` installs a real `/usr/bin/perf` rather than the version-matching
+    # shim, so a 6.12 perf samples a 6.13 kernel without complaint. `perf annotate` segfaults on
+    # this crate's larger Rust symbols; `perf report --sort srcline` answers the same question.
+    security_opt:
+      - seccomp:unconfined
     # Only what has to be known before the catalogue can be opened. Everything
     # else is a setting on the app's Settings page, stored in the DB (§15).
     environment:
@@ -46,6 +76,10 @@ services:
       PORT: 3000
       DB_PATH: /config/bowerbird.db
       DATA_DIR: /data
+      # Read by the NVIDIA container runtime's hook, and ignored where there is no such hook.
+      # See `runtime:` above for why `graphics` is the member that matters.
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: graphics,compute,utility
     volumes:
       # This repo, live-mounted for hot reload. REPO_DIR must be set in .env to the
       # repo's path ON THE DOCKER HOST (it differs from the path in this container).

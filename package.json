@@ -7,7 +7,7 @@
     "start": "bun run src/index.ts",
     "dev": "bun run dev.ts",
     "restore": "bun run scripts/restore-backup.ts",
-    "dev:docker": "bun run build:native && sudo docker compose -f docker-compose.dev.yml up --build",
+    "dev:docker": "bun run build:native && docker stop bowerbird-dev bowerbird-web-dev && docker rm bowerbird-dev bowerbird-web-dev && docker compose -f docker-compose.dev.yml up --build",
     "lint": "oxlint",
     "test": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test src",
     "test:integration": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test test/integration",

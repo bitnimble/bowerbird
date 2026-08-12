@@ -226,6 +226,15 @@ impl Gpu {
         // fallback silently, and the only symptom is renders that take twice as long as the
         // same code on the same hardware outside it.
         {
+            // Every candidate, not only the winner: a missing ICD and a rejected one look
+            // identical from the chosen adapter alone, and they want opposite fixes.
+            for offered in pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all())) {
+                let info = offered.get_info();
+                eprintln!(
+                    "rawshim gpu offered: {} ({:?}, {:?}) via {}",
+                    info.name, info.device_type, info.backend, info.driver,
+                );
+            }
             let info = adapter.get_info();
             eprintln!(
                 "rawshim gpu: {} ({:?}, {:?}) via {}",
