@@ -44,9 +44,10 @@ import galoshPrelude from './wgsl/galosh/prelude.wgsl?raw';
 import buildInvLut from './wgsl/galosh/build_inv_lut.wgsl?raw';
 import lutFinalize from './wgsl/galosh/lut_finalize.wgsl?raw';
 import pass12 from './wgsl/galosh/pass12.wgsl?raw';
+import yuvEnvBlockStats from './wgsl/galosh/yuv_env_block_stats.wgsl?raw';
+import yuvEnvSelect from './wgsl/galosh/yuv_env_select.wgsl?raw';
 import yuvGatFwd from './wgsl/galosh/yuv_gat_fwd.wgsl?raw';
 import yuvJoin from './wgsl/galosh/yuv_join.wgsl?raw';
-import yuvLapMad from './wgsl/galosh/yuv_lap_mad.wgsl?raw';
 import yuvLoess from './wgsl/galosh/yuv_loess.wgsl?raw';
 import yuvMakitalo from './wgsl/galosh/yuv_makitalo.wgsl?raw';
 import yuvSigmaScale from './wgsl/galosh/yuv_sigma_scale.wgsl?raw';
@@ -86,7 +87,8 @@ export const BALANCE = compose(prelude, edit,whiteBalance);
  */
 export const GALOSH = {
   split: compose(galoshPrelude, yuvSplit),
-  lapMad: compose(galoshPrelude, yuvLapMad),
+  blockStats: compose(galoshPrelude, yuvEnvBlockStats),
+  envSelect: compose(galoshPrelude, yuvEnvSelect),
   synthAlpha: compose(galoshPrelude, yuvSynthAlpha),
   gatFwd: compose(galoshPrelude, yuvGatFwd),
   sigmaScale: compose(galoshPrelude, yuvSigmaScale),
@@ -108,18 +110,26 @@ export const GALOSH = {
  * ISO 25600 frame, everything past the first sixth of the track was smearing texture the
  * picture needed. One number, one behaviour, monotone.
  *
- * `luma` is a shrinkage threshold in units of the frame's *own* fitted noise, since the
- * plane is normalised to unit sigma before the shrinkage runs. That is worth knowing before
- * choosing the top of its range: a fixed slider position is already ISO-adaptive, so 1.0
- * would mean "throw away everything within one sigma" on a frame whose sigma is 3.5% of
- * full scale. 0.4 is where the worst frame in the test library still keeps its texture.
+ * **`luma` runs to exactly 1.0, and that number means something.** The plane is normalised
+ * to its own measured sigma before the shrinkage, so this is the noise level the shrinkage
+ * *believes in*, in units of what was measured: 1.0 is the calibrated point, where it treats
+ * exactly the measured noise as noise. Under it, noise is left behind on purpose; over it,
+ * signal goes - and not gently, since a block whose own deviation falls to the assumed noise
+ * has its whole AC zeroed rather than shrunk.
+ *
+ * The top was 0.4 while the estimator behind sigma was a global median of the frame's
+ * Laplacians, which reads 2.6 to 4.6 times high on a detailed photograph because the median
+ * pixel of one is not a quiet pixel. 0.4 of an estimate three times too large is already
+ * past the calibrated point, which is what the flattening at the top of the old track was.
+ * With the envelope estimator underneath, the slider is what it says: the fraction of the
+ * frame's measured noise to remove.
  */
 export function denoiseAmounts(luminance: number, colour: number): {
   luma: number;
   blend: number;
 } {
   const on = (value: number) => Math.min(Math.max(value, 0), 100) / 100;
-  return { luma: on(luminance) * 0.4, blend: on(colour) };
+  return { luma: on(luminance), blend: on(colour) };
 }
 
 // The detail blur's working size used to be a rule here too, alongside `gpu::detail_size`, and

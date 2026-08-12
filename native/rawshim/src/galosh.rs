@@ -382,6 +382,39 @@ impl NoiseModel {
     pub fn at_mid_grey(&self) -> f32 {
         (self.alpha * 0.5 + self.sigma_sq).max(0.0).sqrt()
     }
+
+    /// What the Detail sliders should read on this frame, 0 to 100, where nobody has said.
+    ///
+    /// **A gate and then a constant, which is less of a rule than it looks.** The shrinkage
+    /// normalises the plane to this very sigma before it runs, so a slider position is
+    /// already a threshold *in units of the frame's own noise* - "40" is the same relative
+    /// shrinkage at base ISO as at 25600, with no help from here. What a fixed number cannot
+    /// do is decline, and that is what this adds: below the gate the frame is clean enough
+    /// that thirteen passes would cost more than they remove.
+    ///
+    /// The two rules it is not, both measured across a 32-frame library:
+    ///
+    /// - Holding the *residual* constant - more noise, more removed, every frame equally
+    ///   quiet - picks 95 on an ISO 25600 frame, which is well past where that frame's
+    ///   texture survives.
+    /// - Holding the *amount removed* constant is inverted where it matters: it picks 100 on
+    ///   clean ISO 200-640 frames, because a fixed absolute threshold against small noise is
+    ///   a large relative one, and it eats texture that was never noise.
+    ///
+    /// The gate is where this library's base-ISO frames sit (0.0028 to 0.0041) and comfortably
+    /// above the 0.002 under which the reference declines outright.
+    pub fn suggested_amount(&self) -> f64 {
+        const GATE: f32 = 0.004;
+        const RAMP: f32 = 0.004;
+        const SETTLED: f64 = 40.0;
+        let sigma = self.at_mid_grey();
+        if sigma < GATE {
+            return 0.0;
+        }
+        // Ramped rather than stepped, so two frames either side of the gate are not two
+        // different photographs.
+        (SETTLED * f64::from((sigma - GATE + RAMP / 2.0) / RAMP)).clamp(0.0, SETTLED)
+    }
 }
 
 impl Amounts {

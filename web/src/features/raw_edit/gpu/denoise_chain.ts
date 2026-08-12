@@ -12,6 +12,13 @@
 //         -> build the inverse table -> shrink -> denormalise -> invert
 //         -> chroma regression -> join
 //
+// Both sigmas are measured as an **envelope**: each 8x8 block's own median Laplacian, then
+// the quietest tenth of the blocks. The reference's simpler estimator takes one median over
+// the whole frame, and measured against this on real frames it reads 2.6 to 4.6 times high -
+// on a detailed photograph the median pixel is not a quiet one. That matters more than it
+// sounds, because the shrinkage zeroes a block outright once its deviation falls to the
+// assumed noise, so an inflated sigma does not over-smooth by a little; it flattens.
+//
 // **The chroma regression's guide is the noisy stabilised luma, not the shrunk one.** That
 // looks like a bug and is not: the bilateral weight is deciding which neighbours belong to
 // the same surface, and a denoised guide has already made that decision - following it
@@ -67,6 +74,11 @@ export function buildDenoiseChain(
   const small = (label: string, floats: number) =>
     device.createBuffer({ label, size: floats * 4, usage: GPUBufferUsage.STORAGE });
 
+  // One value per 8x8 block, which is what the envelope is taken over.
+  const blocksWide = Math.max(1, Math.floor(width / 8));
+  const blocksHigh = Math.max(1, Math.floor(height / 8));
+  const blockCount = blocksWide * blocksHigh;
+
   const y = plane('denoise Y');
   const cb = plane('denoise Cb');
   const cr = plane('denoise Cr');
@@ -79,7 +91,8 @@ export function buildDenoiseChain(
   const lutD = small('denoise lut d', 4096);
   const lutX = small('denoise lut x', 4096);
   const lutParams = small('denoise lut params', 8);
-  const planes = [y, cb, cr, yStab, yDen, crOut, params, lutD, lutX, lutParams];
+  const blockSigma = small('denoise block sigma', blockCount);
+  const planes = [y, cb, cr, yStab, yDen, crOut, params, lutD, lutX, lutParams, blockSigma];
 
   const COMPUTE = GPUShaderStage.COMPUTE;
   const layoutOf = (kinds: [number, Binding][]) =>
@@ -101,7 +114,8 @@ export function buildDenoiseChain(
     });
 
   const splitLayout = layoutOf([[0, 'read'], [1, 'write'], [2, 'write'], [3, 'write'], [20, 'uniform']]);
-  const madLayout = layoutOf([[0, 'read'], [1, 'write'], [20, 'uniform']]);
+  const statsLayout = layoutOf([[0, 'read'], [1, 'write'], [20, 'uniform']]);
+  const selectLayout = layoutOf([[0, 'read'], [1, 'write'], [20, 'uniform']]);
   const alphaLayout = layoutOf([[0, 'write'], [20, 'uniform']]);
   const gatLayout = layoutOf([[0, 'read'], [1, 'write'], [2, 'read'], [20, 'uniform']]);
   const scaleLayout = layoutOf([[0, 'write'], [1, 'read'], [20, 'uniform']]);
@@ -118,7 +132,8 @@ export function buildDenoiseChain(
 
   const pipelines = {
     split: pipelineOf(GALOSH.split, 'yuv_split', splitLayout),
-    mad: pipelineOf(GALOSH.lapMad, 'yuv_lap_mad', madLayout),
+    stats: pipelineOf(GALOSH.blockStats, 'yuv_env_block_stats', statsLayout),
+    select: pipelineOf(GALOSH.envSelect, 'yuv_env_select', selectLayout),
     alpha: pipelineOf(GALOSH.synthAlpha, 'yuv_synth_alpha', alphaLayout),
     gat: pipelineOf(GALOSH.gatFwd, 'yuv_gat_fwd', gatLayout),
     norm: pipelineOf(GALOSH.sigmaScale, 'yuv_sigma_norm', scaleLayout),
@@ -142,8 +157,8 @@ export function buildDenoiseChain(
       ],
     });
 
-  // Twelve slots: the two table kernels take no scalars at all.
-  const SLOTS = 12;
+  // Thirteen slots: the two table kernels take no scalars at all.
+  const SLOTS = 13;
   const uniform = device.createBuffer({
     label: 'denoise pushes',
     size: SLOTS * SLOT,
@@ -153,10 +168,12 @@ export function buildDenoiseChain(
 
   const groups = {
     split: bind(splitLayout, [[0, frame], [1, y], [2, cb], [3, cr]], 0),
-    madLinear: bind(madLayout, [[0, y], [1, params]], 1),
+    statsLinear: bind(statsLayout, [[0, y], [1, blockSigma]], 1),
+    selectLinear: bind(selectLayout, [[0, blockSigma], [1, params]], 11),
     alpha: bind(alphaLayout, [[0, params]], 2),
     gat: bind(gatLayout, [[0, y], [1, yStab], [2, params]], 3),
-    madGat: bind(madLayout, [[0, yStab], [1, params]], 4),
+    statsGat: bind(statsLayout, [[0, yStab], [1, blockSigma]], 4),
+    selectGat: bind(selectLayout, [[0, blockSigma], [1, params]], 12),
     norm: bind(scaleLayout, [[0, yStab], [1, params]], 5),
     lut: bind(lutLayout, [[0, params], [1, lutD], [2, lutX], [3, lutParams]], null),
     lutFin: bind(lutFinLayout, [[0, lutD], [1, lutParams]], null),
@@ -194,11 +211,13 @@ export function buildDenoiseChain(
       const floats = new Float32Array(scalars);
       const at = (slot: number) => (slot * SLOT) / 4;
       ints[at(0)] = npix;
-      ints.set([width, height, 3, P_SIGMA_LINEAR], at(1));
+      ints.set([width, height, blocksWide, blocksHigh], at(1));
       ints[at(2)] = P_SIGMA_LINEAR;
       ints[at(3)] = npix;
-      ints.set([width, height, 3, P_SIGMA_GAT], at(4));
+      ints.set([width, height, blocksWide, blocksHigh], at(4));
       ints.set([npix, P_SIGMA_GAT], at(5));
+      ints.set([blockCount, P_SIGMA_LINEAR], at(11));
+      ints.set([blockCount, P_SIGMA_GAT], at(12));
       ints.set([width, height], at(6));
       floats[at(6) + 2] = amounts.luma;
       ints.set([npix, P_SIGMA_GAT], at(7));
@@ -223,10 +242,12 @@ export function buildDenoiseChain(
       };
 
       run(pipelines.split, groups.split, 0, flat);
-      run(pipelines.mad, groups.madLinear, 1, [1, 1]);
+      run(pipelines.stats, groups.statsLinear, 1, [over(blockCount, 64), 1]);
+      run(pipelines.select, groups.selectLinear, 11, [1, 1]);
       run(pipelines.alpha, groups.alpha, 2, [1, 1]);
       run(pipelines.gat, groups.gat, 3, flat);
-      run(pipelines.mad, groups.madGat, 4, [1, 1]);
+      run(pipelines.stats, groups.statsGat, 4, [over(blockCount, 64), 1]);
+      run(pipelines.select, groups.selectGat, 12, [1, 1]);
       run(pipelines.norm, groups.norm, 5, flat);
       run(pipelines.lut, groups.lut, null, [16, 1]);
       run(pipelines.lutFin, groups.lutFin, null, [1, 1]);
