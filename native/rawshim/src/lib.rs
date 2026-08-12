@@ -76,6 +76,7 @@ pub mod job;
 pub mod lens;
 #[cfg(feature = "renditions")]
 pub mod lensfun;
+pub mod noise;
 pub mod parallel;
 pub mod rgb;
 #[cfg(feature = "renditions")]

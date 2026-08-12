@@ -55,7 +55,7 @@ class Pipeline {
   /**
    * The Detail pair, and how many times the chain behind it was asked to run.
    *
-   * The count is the interesting half: the denoise is thirteen passes over the frame rather
+   * The count is the interesting half: the denoise is eight passes over the frame rather
    * than a uniform word, so a control that re-ran it per tick would be a control that made
    * the editor unusable while any *other* slider moved.
    */

@@ -51,6 +51,20 @@ export interface ColourPayload {
   chroma: ChromaPayload | null;
 }
 
+/**
+ * The samples' own noise, as `crate::noise::Noise` measured it.
+ *
+ * `stabilised` is the sigma of the transformed luma at each level, indexed by the level of the
+ * luma it came from; bin `i` covers `i / n` to `(i + 1) / n`. Measured where the frame is built
+ * because the estimator reduces every block in it, which is a whole-frame pass the tick would
+ * otherwise repeat on every slider move.
+ */
+export interface NoisePayload {
+  stabilised: number[];
+  alpha: number;
+  sigmaSq: number;
+}
+
 export interface PreparedHeader {
   ok: boolean;
   error?: string;
@@ -63,6 +77,7 @@ export interface PreparedHeader {
   strengths: EditStrengths;
   matched: boolean;
   colour: ColourPayload | null;
+  noise: NoisePayload;
   samplesLen: number;
 }
 

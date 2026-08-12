@@ -22,9 +22,6 @@ fn main() {
 
     let sources = kernels![
         "yuv_split",
-        "yuv_env_block_stats",
-        "yuv_env_select",
-        "yuv_synth_alpha",
         "yuv_gat_fwd",
         "yuv_sigma_scale",
         "yuv_makitalo",

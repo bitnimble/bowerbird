@@ -44,15 +44,12 @@ import galoshPrelude from './wgsl/galosh/prelude.wgsl?raw';
 import buildInvLut from './wgsl/galosh/build_inv_lut.wgsl?raw';
 import lutFinalize from './wgsl/galosh/lut_finalize.wgsl?raw';
 import pass12 from './wgsl/galosh/pass12.wgsl?raw';
-import yuvEnvBlockStats from './wgsl/galosh/yuv_env_block_stats.wgsl?raw';
-import yuvEnvSelect from './wgsl/galosh/yuv_env_select.wgsl?raw';
 import yuvGatFwd from './wgsl/galosh/yuv_gat_fwd.wgsl?raw';
 import yuvJoin from './wgsl/galosh/yuv_join.wgsl?raw';
 import yuvLoess from './wgsl/galosh/yuv_loess.wgsl?raw';
 import yuvMakitalo from './wgsl/galosh/yuv_makitalo.wgsl?raw';
 import yuvSigmaScale from './wgsl/galosh/yuv_sigma_scale.wgsl?raw';
 import yuvSplit from './wgsl/galosh/yuv_split.wgsl?raw';
-import yuvSynthAlpha from './wgsl/galosh/yuv_synth_alpha.wgsl?raw';
 
 const compose = (...parts: string[]): string => parts.join('\n');
 
@@ -87,9 +84,6 @@ export const BALANCE = compose(prelude, edit,whiteBalance);
  */
 export const GALOSH = {
   split: compose(galoshPrelude, yuvSplit),
-  blockStats: compose(galoshPrelude, yuvEnvBlockStats),
-  envSelect: compose(galoshPrelude, yuvEnvSelect),
-  synthAlpha: compose(galoshPrelude, yuvSynthAlpha),
   gatFwd: compose(galoshPrelude, yuvGatFwd),
   sigmaScale: compose(galoshPrelude, yuvSigmaScale),
   buildInvLut: compose(galoshPrelude, buildInvLut),
@@ -110,26 +104,36 @@ export const GALOSH = {
  * ISO 25600 frame, everything past the first sixth of the track was smearing texture the
  * picture needed. One number, one behaviour, monotone.
  *
- * **`luma` runs to exactly 1.0, and that number means something.** The plane is normalised
- * to its own measured sigma before the shrinkage, so this is the noise level the shrinkage
- * *believes in*, in units of what was measured: 1.0 is the calibrated point, where it treats
- * exactly the measured noise as noise. Under it, noise is left behind on purpose; over it,
- * signal goes - and not gently, since a block whose own deviation falls to the assumed noise
+ * **The midpoint is the calibrated one, not the top.** The plane is normalised to its own
+ * measured sigma before the shrinkage, so `luma` is the noise level the shrinkage *believes
+ * in*, in units of what was measured - and 1.0, at slider 50, is where it believes the
+ * measurement exactly. Under it noise is left behind on purpose; over it the threshold is
+ * into signal, and not gently, since a block whose own deviation falls to the assumed noise
  * has its whole AC zeroed rather than shrunk.
  *
- * The top was 0.4 while the estimator behind sigma was a global median of the frame's
- * Laplacians, which reads 2.6 to 4.6 times high on a detailed photograph because the median
- * pixel of one is not a quiet pixel. 0.4 of an estimate three times too large is already
- * past the calibrated point, which is what the flattening at the top of the old track was.
- * With the envelope estimator underneath, the slider is what it says: the fraction of the
- * frame's measured noise to remove.
+ * **The top half exists because the measurement can still be wrong.** An envelope over the
+ * quietest blocks is a far better estimate than the median it replaced - which read 2.6 to
+ * 4.6 times high - but it is an estimate, and a frame whose quietest tenth still holds
+ * texture reads low. Rather than let that frame be under-denoised with no way out, the track
+ * runs to twice the calibrated point and the reader can say so.
+ *
+ * The colour control has no equivalent headroom in its first half, because a dry/wet mix
+ * ends at wet. Past the midpoint it widens the ridge the regression is damped by instead,
+ * which drives the fitted slope towards zero and the output towards the window's mean - more
+ * smoothing, by a different means, once there is no more of the estimate left to trust.
  */
 export function denoiseAmounts(luminance: number, colour: number): {
   luma: number;
   blend: number;
+  ridge: number;
 } {
   const on = (value: number) => Math.min(Math.max(value, 0), 100) / 100;
-  return { luma: on(luminance), blend: on(colour) };
+  const past = (value: number) => Math.max(0, on(value) - 0.5) * 2;
+  return {
+    luma: on(luminance) * 2,
+    blend: Math.min(on(colour) * 2, 1),
+    ridge: 1 + past(colour) * 2,
+  };
 }
 
 // The detail blur's working size used to be a rule here too, alongside `gpu::detail_size`, and

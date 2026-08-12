@@ -390,7 +390,7 @@ impl NoiseModel {
     /// already a threshold *in units of the frame's own noise* - "40" is the same relative
     /// shrinkage at base ISO as at 25600, with no help from here. What a fixed number cannot
     /// do is decline, and that is what this adds: below the gate the frame is clean enough
-    /// that thirteen passes would cost more than they remove.
+    /// that a full denoise would cost more than it removes.
     ///
     /// The two rules it is not, both measured across a 32-frame library:
     ///
@@ -406,7 +406,7 @@ impl NoiseModel {
     pub fn suggested_amount(&self) -> f64 {
         const GATE: f32 = 0.004;
         const RAMP: f32 = 0.004;
-        const SETTLED: f64 = 50.0;
+        const SETTLED: f64 = 40.0;
         let sigma = self.at_mid_grey();
         if sigma < GATE {
             return 0.0;
@@ -420,13 +420,18 @@ impl NoiseModel {
 impl Amounts {
     /// The Detail panel's two sliders, 0 to 100, in the units the kernels read.
     ///
-    /// Scaled so the document's default of 50 lands on exactly the denoise the reference
-    /// ships - a luma shrinkage of 0.5 and a colour walk of 1.0 - and so the top of the
-    /// luma track is 1.0, the calibrated point where the shrinkage treats exactly the
-    /// measured noise as noise. Past it is signal, so it is not offered.
+    /// Scaled so the **midpoint** is the calibrated one: 50 puts the luma shrinkage at 1.0,
+    /// where it treats exactly the noise Phase 0 measured as noise, and the colour walk at
+    /// the reference's own default of 1.0.
+    ///
+    /// The top half is headroom against the fit being wrong rather than a suggestion. Phase
+    /// 0's envelope is a good estimate and not an infallible one - a frame whose quietest
+    /// blocks still hold texture reads low - so the track goes to twice the calibrated point
+    /// rather than stopping where the estimate says it should and leaving such a frame
+    /// under-denoised with nothing to be done about it.
     pub fn from_sliders(luminance: f64, colour: f64) -> Amounts {
         Amounts {
-            luma: (luminance.clamp(0.0, 100.0) / 100.0) as f32,
+            luma: (luminance.clamp(0.0, 100.0) / 100.0 * 2.0) as f32,
             colour: (colour.clamp(0.0, 100.0) / 100.0 * 2.0) as f32,
         }
     }
@@ -901,7 +906,47 @@ pub fn denoise(
 
 #[cfg(test)]
 mod tests {
-    use super::{Amounts, denoise, device};
+    use super::{Amounts, NoiseModel, denoise, device};
+
+    /// The Detail track's landmarks, on this side of it.
+    ///
+    /// **Two implementations of one scale, and this is half of the guard.** The editor maps
+    /// the same slider through `denoiseAmounts` in `shaders.ts`, in another language, and
+    /// nothing but arithmetic keeps the two agreeing - the colour halves already differ on
+    /// purpose, because the mosaic path walks anchors where the editor has one scale and a
+    /// dry/wet mix. What both must agree on is where the *landmarks* fall, so each side pins
+    /// its own against the number rather than against the other's source.
+    #[test]
+    fn the_middle_of_the_track_is_the_calibrated_point() {
+        // 50 is where the shrinkage treats exactly the noise Phase 0 measured as noise, and
+        // where the colour walk sits on the reference's own default.
+        let calibrated = Amounts::from_sliders(50.0, 50.0);
+        assert!((calibrated.luma - 1.0).abs() < 1e-6, "luma {}", calibrated.luma);
+        assert!((calibrated.colour - 1.0).abs() < 1e-6, "colour {}", calibrated.colour);
+
+        // The document's default is four fifths of that, deliberately short: the failure
+        // below the mark is grain and above it is smearing, and only grain reads as a
+        // photograph.
+        let shipped = Amounts::from_sliders(40.0, 40.0);
+        assert!((shipped.luma - 0.8).abs() < 1e-6, "luma {}", shipped.luma);
+
+        // And the top is headroom against the fit reading low, not a limit to stop at.
+        assert!((Amounts::from_sliders(100.0, 100.0).luma - 2.0).abs() < 1e-6);
+        assert_eq!(Amounts::from_sliders(0.0, 0.0).does_anything(), false);
+    }
+
+    #[test]
+    fn a_clean_frame_is_left_alone_and_a_noisy_one_is_not() {
+        // The gate, which is the whole of what an automatic amount adds: below it a frame is
+        // clean enough that a full denoise costs more than it removes. Base ISO on the test
+        // library sits at 0.003, an ISO 2000 frame at 0.015.
+        let at = |sigma_sq: f32| NoiseModel { alpha: 0.0, sigma_sq }.suggested_amount();
+        assert_eq!(at(0.003 * 0.003), 0.0, "a base-ISO frame asks for nothing");
+        assert!(at(0.015 * 0.015) > 30.0, "a noisy frame asks for the shipped amount");
+        // Ramped rather than stepped, so two frames either side of it are not two different
+        // photographs.
+        assert!(at(0.0045 * 0.0045) < at(0.006 * 0.006));
+    }
 
     /// A synthetic frame: four flat CFA levels with Gaussian noise on top, and one hard
     /// vertical edge, so a test can ask both what was removed and what was kept.

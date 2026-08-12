@@ -24,7 +24,7 @@ import {
   edits,
   wholeFrameGeometry,
 } from './shaders';
-import { buildDenoiseChain, type DenoiseChain } from './denoise_chain';
+import { buildDenoiseChain, type DenoiseChain, type NoiseCurve } from './denoise_chain';
 import type { DetailPass, DetailSize, EditAdjust, EditGeometry } from './shaders';
 
 /**
@@ -85,9 +85,11 @@ export interface PreparedHeader {
   white: number;
   peak: number;
   grade: { peakNits: number; referenceWhiteNits: number; whiteQuantile: number };
-  strengths: { luma: number; chroma: number; sharpen: number; defringe: number };
+  strengths: { sharpen: number; defringe: number };
   matched: boolean;
   colour: ColourPayload | null;
+  /** What the samples' noise is, level by level, for the denoise to shrink against. */
+  noise: NoiseCurve;
 }
 
 /** The part of the frame on screen, in source pixels. Zoom and pan move this and nothing else. */
@@ -1190,7 +1192,7 @@ export class EditPipeline {
    * The Detail sliders, 0 to 100 each.
    *
    * Unlike every other control this is not a uniform write: the denoise is a chain of
-   * thirteen dispatches over the whole frame, so it runs when one of these two moves and
+   * eight dispatches over the whole frame, so it runs when one of these two moves and
    * not once per tick. Everything downstream reads `denoised`, so nothing else has to know.
    *
    * The neighbourhood the presence sliders read is rebuilt with it, because it is a blur of
@@ -1213,7 +1215,7 @@ export class EditPipeline {
    * The denoise, or a copy where there is nothing to do.
    *
    * The copy is not a special case worth avoiding: it is one `copyBufferToBuffer` against
-   * thirteen dispatches, and having `denoised` always be the thing to read is what keeps
+   * eight dispatches, and having `denoised` always be the thing to read is what keeps
    * every consumer from carrying a branch.
    */
   private runDenoise({ luminance, colour }: { luminance: number; colour: number }): void {
@@ -1232,7 +1234,18 @@ export class EditPipeline {
   private denoiseChainFor(): DenoiseChain | null {
     if (this.denoiseChain != null) return this.denoiseChain;
     if (!denoiseSupported(this.device)) return null;
-    const built = buildDenoiseChain(this.device, this.frame, this.denoised, this.width, this.height);
+    // A frame whose noise was never measured, which is a shell older than the field. Declining
+    // is a picture without a denoise; the alternative is a zero-length buffer, and that is a
+    // validation error rather than a degraded feature.
+    if (!this.header.noise?.stabilised) return null;
+    const built = buildDenoiseChain(
+      this.device,
+      this.frame,
+      this.denoised,
+      this.width,
+      this.height,
+      this.header.noise,
+    );
     this.denoiseChain = built;
     this.denoisePlanes = built.planes;
     return built;

@@ -86,20 +86,23 @@ const EFFECTS: readonly SliderSpec[] = [
  *
  * **0 to 100 rather than -100 to 100**, unlike every slider above: there is no such thing as
  * negative noise reduction, and a detent in the middle of a track whose left half does not
- * exist would invite one. Their default is 50 and not 0, so the reset arrow on these two
- * returns to a denoised picture rather than to a raw one - and 50 is half the noise the
- * frame was measured to have, rather than half of nothing in particular.
+ * exist would invite one. Their default is 40 and not 0, so the reset arrow on these two
+ * returns to a denoised picture rather than to a raw one - and the track's landmark is its
+ * middle, where the denoise removes exactly the noise the frame was measured to have.
  */
 const DETAIL: readonly SliderSpec[] = [
-  { key: 'luminanceNoise', label: 'Luminance', min: 0, max: 100, step: 1, neutral: 50 },
-  { key: 'colourNoise', label: 'Colour', min: 0, max: 100, step: 1, neutral: 50 },
+  { key: 'luminanceNoise', label: 'Luminance', min: 0, max: 100, step: 1, neutral: 40 },
+  { key: 'colourNoise', label: 'Colour', min: 0, max: 100, step: 1, neutral: 40 },
 ];
 
 /// Signed only where the track has a negative half; `+33` on a 0-to-100 slider states a
 /// direction it has no opposite of.
-function reading(value: number, spec: SliderSpec): string {
-  const sign = spec.min < 0 && value > 0 ? '+' : '';
-  return `${sign}${spec.step < 1 ? value.toFixed(2) : value}`;
+///
+/// Takes the two fields it reads rather than a whole spec, because the controls outside the
+/// groups above - the balance pair, the straighten - have no `SliderSpec` to hand.
+function reading(value: number, { min, step }: Pick<SliderSpec, 'min' | 'step'>): string {
+  const sign = min < 0 && value > 0 ? '+' : '';
+  return `${sign}${step < 1 ? value.toFixed(2) : value}`;
 }
 
 function Group({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
@@ -278,7 +281,7 @@ const WhiteBalance = observer(function WhiteBalance({
           </EditControl>
           <EditControl
             label="Tint"
-            value={reading(balance.tint, 1)}
+            value={reading(balance.tint, { min: -150, step: 1 })}
             dirty={moved}
             onReset={asShot}
             testId="raw-edit-tint"
@@ -326,7 +329,7 @@ const Geometry = observer(function Geometry({
     <>
       <EditControl
         label="Straighten"
-        value={`${reading(angle, 0.05)}°`}
+        value={`${reading(angle, { min: -45, step: 0.05 })}°`}
         dirty={angle !== 0}
         onReset={() => presenter.settleStraighten(0)}
         testId="raw-edit-straighten"

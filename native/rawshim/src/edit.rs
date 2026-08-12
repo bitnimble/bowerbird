@@ -110,6 +110,12 @@ pub struct PreparedHeader {
     /// photographs.
     pub detail: crate::gpu::DetailSize,
     pub colour: Option<ColourPayload>,
+    /// What the samples' own noise is, level by level, for the tick's denoise to shrink against.
+    ///
+    /// Measured here rather than on the client for the reason [`crate::noise`] gives: the
+    /// estimator reduces every block in the frame before the first pixel can be denoised, which
+    /// is a whole-frame pass the tick would otherwise repeat on every slider move.
+    pub noise: crate::noise::Noise,
     /// Bytes of `u16` little-endian RGB following the header.
     pub samples_len: usize,
 }
@@ -409,6 +415,9 @@ fn payload(
         edits,
         detail: crate::gpu::detail_size(prepared.width, prepared.height),
         colour: matched.map(|m| ColourPayload::from(&m.colour)),
+        // Last, on the buffer as it will be sent: the warp resamples and the sharpen amplifies,
+        // and a tick denoises what comes out of both rather than what went into them.
+        noise: crate::noise::measure(&prepared.samples, prepared.width, prepared.height),
         samples_len: prepared.samples.len() * 2,
     };
     Prepared { header, samples: prepared.samples }
@@ -486,6 +495,7 @@ mod tests {
             edits: vec![0; 48],
             detail: crate::gpu::detail_size(pixels, 1),
             colour: None,
+            noise: crate::noise::measure(&samples, pixels, 1),
             samples_len: samples.len() * 2,
         };
         encode(&Prepared { header, samples }).expect("encoding a frame")
