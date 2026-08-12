@@ -92,9 +92,17 @@ fn main() {
             0.94 * 255.0,
         );
         let tile = tile(&ours, &theirs, *x, *y, what.dx, what.dy);
-        let name = format!("{out}/match-{x}-{y}-peak{:.2}-d{}_{}.jpg", what.peak, what.dx, what.dy);
-        let bytes = rawshim::jpeg::encode(tile.as_ref(), 95).expect("the tile encodes");
-        std::fs::write(&name, bytes).expect("the tile writes");
+        let name = format!("{out}/match-{x}-{y}-peak{:.2}-d{}_{}.avif", what.peak, what.dx, what.dy);
+        rawshim::avif::encode_rendition(
+            std::borrow::Cow::Borrowed(tile.as_ref().data),
+            tile.width,
+            tile.height,
+            4,
+            10,
+            true,
+            &name,
+        )
+        .expect("the tile encodes");
         eprintln!("{name}");
     }
     eprintln!(

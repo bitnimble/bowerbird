@@ -67,7 +67,7 @@ fn main() {
     if crops.is_empty() {
         let full = rawshim::rgb::RgbRef { width, height, data: &data };
         let small = rawshim::image::resize_to_fit(full, 1600);
-        write(&format!("{out}/full.jpg"), small.as_ref());
+        write(&format!("{out}/full.avif"), small.as_ref());
         return;
     }
 
@@ -86,11 +86,11 @@ fn main() {
         let mine = cut(rawshim::rgb::RgbRef { width, height, data: &data }, x, y, w, h);
         let theirs = cut(camera.as_ref(), at(x), at(y), at(w), at(h));
 
-        write(&format!("{out}/crop-{x}-{y}.jpg"), mine.as_ref());
-        write(&format!("{out}/camera-{x}-{y}.jpg"), theirs.as_ref());
+        write(&format!("{out}/crop-{x}-{y}.avif"), mine.as_ref());
+        write(&format!("{out}/camera-{x}-{y}.avif"), theirs.as_ref());
         // And the two in one image, so they are judged under the same exposure and the same
         // JPEG rather than by flicking between files.
-        write(&format!("{out}/pair-{x}-{y}.jpg"), beside(mine.as_ref(), theirs.as_ref()).as_ref());
+        write(&format!("{out}/pair-{x}-{y}.avif"), beside(mine.as_ref(), theirs.as_ref()).as_ref());
 
         let (a, b) = (mean(mine.as_ref()), mean(theirs.as_ref()));
         eprintln!(
@@ -148,7 +148,15 @@ fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, w: usize, h: usize) 
 }
 
 fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
-    let bytes = rawshim::jpeg::encode(image, 95).expect("the crop encodes");
-    std::fs::write(path, bytes).expect("the crop writes");
+    rawshim::avif::encode_rendition(
+        std::borrow::Cow::Borrowed(image.data),
+        image.width,
+        image.height,
+        4,
+        10,
+        true,
+        path,
+    )
+    .expect("the crop encodes");
     eprintln!("wrote {path}");
 }

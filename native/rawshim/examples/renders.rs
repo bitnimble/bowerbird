@@ -184,7 +184,7 @@ fn main() {
 
         if crops.is_empty() {
             let small = rawshim::image::resize_to_fit(whole, 1600);
-            write(&format!("{out}/{name}.jpg"), small.as_ref());
+            write(&format!("{out}/{name}.avif"), small.as_ref());
             continue;
         }
         for (x, y, side) in &crops {
@@ -197,7 +197,7 @@ fn main() {
                 roughness(cut.as_ref()),
                 mean(cut.as_ref()),
             );
-            write(&format!("{out}/{name}-{x}-{y}.jpg"), cut.as_ref());
+            write(&format!("{out}/{name}-{x}-{y}.avif"), cut.as_ref());
         }
     }
 }
@@ -235,6 +235,13 @@ fn roughness(image: rawshim::rgb::RgbRef<'_>) -> f64 {
     laps[mid] / 1.6521
 }
 
+/// Near-lossless, because the whole point of a crop here is to look at grain: an encoder that
+/// smoothed it would be answering the question the harness was opened to ask.
+const CROP_QUANTIZER: i32 = 4;
+
+/// Fastest. These are written to be looked at once and deleted.
+const CROP_SPEED: i32 = 10;
+
 /// Mean luma, which says whether two renders were graded alike.
 fn mean(image: rawshim::rgb::RgbRef<'_>) -> f64 {
     let sum: f64 = (0..image.width * image.height)
@@ -248,7 +255,15 @@ fn mean(image: rawshim::rgb::RgbRef<'_>) -> f64 {
 }
 
 fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
-    let bytes = rawshim::jpeg::encode(image, 96).expect("the crop encodes");
-    std::fs::write(path, bytes).expect("the crop writes");
+    rawshim::avif::encode_rendition(
+        std::borrow::Cow::Borrowed(image.data),
+        image.width,
+        image.height,
+        CROP_QUANTIZER,
+        CROP_SPEED,
+        true,
+        path,
+    )
+    .expect("the crop encodes");
     eprintln!("    wrote {path}");
 }

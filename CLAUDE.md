@@ -74,7 +74,7 @@ cargo run --release --manifest-path native/rawshim/Cargo.toml --example renders 
   <raw> <out-dir> --detail 40 --crop 3060,2254,480
 ```
 
-It writes `rendition-*.jpg` and `editor-*.jpg` for the same frame coordinates at 1:1, with the
+It writes `rendition-*.avif` and `editor-*.avif` for the same frame coordinates at 1:1, with the
 luma roughness of each, in about ten seconds for the pair. The screenshot route costs a
 Playwright run, a zoom to 100% and a pan for every region, and then compares two pictures that
 were graded differently unless you were careful.

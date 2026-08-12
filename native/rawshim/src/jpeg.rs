@@ -1,5 +1,32 @@
 // JPEG, in and out. Two pure-Rust crates where libvips used to be.
 //
+// ============================================================================================
+// JPEG IS FOR PIXELS LEAVING THE APPLICATION. NEVER FOR TRANSPORT INSIDE IT.
+// ============================================================================================
+//
+// The line is who opens the file. A download is on its way to somebody else's software, where
+// JPEG's universality is the whole point and is worth what it costs. Anything this application
+// hands to itself - a tile, a preview, a frame for a harness to look at - has an AVIF decoder
+// waiting at the other end, so there is nothing to buy and a real amount to lose.
+//
+// What it loses: JPEG is 8-bit and cannot carry PQ, so encoding through here bakes in the
+// roll-off and clips the highlights. That never surfaces as a failure. It surfaces as a picture
+// that looks slightly flat and a reader who believes it - the loupe's tiles were JPEG for
+// exactly this reason, and it made the glass disagree with the stage underneath it while both
+// were, as far as any test could tell, working.
+//
+// So: `decode` for a camera's own embedded JPEG, which is the one JPEG this library genuinely
+// handles and which arrives from someone else's encoder. `encode` from `bb_transcode_jpeg`, the
+// download an SDR library offers for compatibility - an HDR library's download hands back the
+// AVIF untouched, since transcoding it would ship a tone-map and call it the render.
+//
+// And from `fixture_tests`, which manufactures a stand-in for that embedded JPEG so the lens fit
+// has a target with a known falloff or distortion in it. The fit reads JPEG bytes because a
+// camera hands it JPEG bytes, so a test that wants to control what it sees has to encode one.
+//
+// Writing a picture out to look at? `avif::encode_rendition` for 8-bit, `avif::encode_still`
+// for PQ. Both are as easy to open as a JPEG and neither loses the thing being examined.
+//
 // libvips was reached for because it was already linked, and by the time the resampling
 // and filtering moved to `image` and `fit` it was carrying three calls: this decode, this
 // encode, and reading our own AVIF renditions back (`avif::decode`). What that cost was

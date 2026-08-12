@@ -686,11 +686,16 @@ fn tile_crops(
             }
         }
     }
-    let tiled = crate::rgb::Rgb { width, height: side, data: out };
-    let encoded = crate::jpeg::encode(tiled.as_ref(), 92)
-        .map_err(|e| format!("could not encode the tile: {e}"))?;
-    std::fs::write(output_path, encoded)
-        .map_err(|e| format!("could not write {output_path}: {e}"))?;
+    crate::avif::encode_rendition(
+        std::borrow::Cow::Owned(out),
+        width,
+        side,
+        4,
+        10,
+        true,
+        output_path,
+    )
+    .map_err(|e| format!("could not encode the tile: {e}"))?;
     Ok(Reply::default())
 }
 
