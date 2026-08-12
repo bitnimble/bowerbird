@@ -1,0 +1,14 @@
+# Here rather than beside the crate: cargo finds this by walking up from the working directory,
+# and every script that builds rawshim runs from the repo root with `--manifest-path`.
+#
+# A build is not the only thing running: the dev server, its containers and an editor share this
+# machine, and an unbounded cargo takes every core and the memory that goes with them - a release
+# build of the pixel crates and a test run that decodes 61MP frames on every thread at once were
+# between them enough to stall the box they were meant to be serving.
+[build]
+jobs = 4
+
+[env]
+# The other half of it. `jobs` bounds the compile; a test binary defaults to one thread per core
+# whatever cargo was told, and these tests hold whole frames.
+RUST_TEST_THREADS = "4"
