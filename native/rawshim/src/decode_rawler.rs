@@ -17,18 +17,6 @@ pub fn wanted() -> bool {
     std::env::var("BOWERBIRD_DECODER").is_ok_and(|value| value.eq_ignore_ascii_case("rawler"))
 }
 
-/// XYZ (D65) to linear Rec.2020, which is the space the rest of the pipeline works in.
-///
-/// The grade downstream reads normalised PQ Rec.2020, and `tone::encode_base` is what puts it
-/// there; what arrives here has to be linear Rec.2020 with the same primaries LibRaw's
-/// `OUTPUT_REC2020` produced, or every camera match ever fitted describes a different starting
-/// point.
-const XYZ_TO_REC2020: [[f32; 3]; 3] = [
-    [1.716651, -0.355671, -0.253366],
-    [-0.666684, 1.616481, 0.015769],
-    [0.017640, -0.042771, 0.942103],
-];
-
 /// Decodes a RAW to a linear Rec.2020 frame, denoising the mosaic and demosaicing on the GPU.
 ///
 /// `amounts` is the mosaic denoise, which runs before the demosaic for the reason it always has:
@@ -648,60 +636,50 @@ fn xyz_to_cam_of(image: &rawler::RawImage) -> Option<[[f32; 3]; 4]> {
 }
 
 /// Camera native primaries to linear Rec.2020.
+///
+/// **The rows are normalised in sRGB, and moving that step is a colour cast.** A camera matrix has
+/// an arbitrary per-row scale and something has to pin it; normalising `xyz_to_cam` where it stands
+/// pins camera (1,1,1) to XYZ (1,1,1), which is not a colour anyone means by white - D65 is about
+/// (0.9505, 1.0, 1.0890) - and the difference is a per-channel gain the white balance does not
+/// undo. dcraw's `cam_xyz_coeff` multiplies through `xyz_rgb` first for exactly this reason, and
+/// `xyz_rgb` there is sRGB's matrix whatever `output_color` eventually asks for. sRGB rather than
+/// the Rec.2020 this returns, then, because every camera match ever fitted is against a frame that
+/// came out of `cam_xyz_coeff`.
 fn camera_to_rec2020(image: &rawler::RawImage) -> Option<[[f32; 3]; 3]> {
-    let xyz_to_cam = xyz_to_cam_of(image)?;
-    let cam_to_xyz = pseudoinverse(xyz_to_cam);
+    camera_to_rec2020_from(xyz_to_cam_of(image)?)
+}
+
+fn camera_to_rec2020_from(xyz_to_cam: [[f32; 3]; 4]) -> Option<[[f32; 3]; 3]> {
+    // Camera from sRGB: how much of each camera channel an sRGB primary excites.
+    let mut cam_from_srgb = [[0f64; 3]; 3];
+    for (row, slot) in cam_from_srgb.iter_mut().enumerate() {
+        for (col, cell) in slot.iter_mut().enumerate() {
+            for k in 0..3 {
+                *cell += f64::from(xyz_to_cam[row][k]) * crate::hdr_fit::SRGB_TO_XYZ[k][col];
+            }
+        }
+        let sum: f64 = slot.iter().sum();
+        if sum.abs() > 1e-9 {
+            for cell in slot.iter_mut() {
+                *cell /= sum;
+            }
+        }
+    }
+
+    // Singular means the file described something impossible, and declining leaves the caller
+    // without a frame rather than with one in invented colours.
+    let srgb_from_cam = crate::hdr_fit::invert3(&cam_from_srgb)?;
+
+    let rec2020_from_cam =
+        crate::hdr_fit::multiply(&crate::hdr_fit::srgb_to_rec2020(), &srgb_from_cam);
+
     let mut out = [[0f32; 3]; 3];
     for (row, slot) in out.iter_mut().enumerate() {
         for (col, cell) in slot.iter_mut().enumerate() {
-            let mut total = 0f32;
-            for k in 0..3 {
-                total += XYZ_TO_REC2020[row][k] * cam_to_xyz[k][col];
-            }
-            *cell = total;
+            *cell = rec2020_from_cam[row][col] as f32;
         }
     }
     Some(out)
-}
-
-/// Moore-Penrose inverse of the camera's XYZ matrix, normalised so that a neutral in camera space
-/// lands on a neutral in XYZ.
-///
-/// Written here rather than taken from rawler's own because that one reads `xyz_to_cam`, which is
-/// the field that comes back empty.
-fn pseudoinverse(matrix: [[f32; 3]; 4]) -> [[f32; 3]; 3] {
-    // Rows normalised so each sums to one: a camera matrix scaled per row renders the same colours
-    // at a different exposure, and the rest of the pipeline sets exposure itself.
-    let mut normalised = [[0f64; 3]; 3];
-    for row in 0..3 {
-        let sum: f64 = (0..3).map(|c| f64::from(matrix[row][c])).sum();
-        let scale = if sum.abs() > 1e-9 { 1.0 / sum } else { 1.0 };
-        for col in 0..3 {
-            normalised[row][col] = f64::from(matrix[row][col]) * scale;
-        }
-    }
-
-    let m = &normalised;
-    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-    if det.abs() < 1e-12 {
-        // Singular, which means the file described something impossible. Identity at least renders
-        // a picture with the wrong colours rather than no picture at all.
-        return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-    }
-    let inv = 1.0 / det;
-    let mut out = [[0f32; 3]; 3];
-    for row in 0..3 {
-        for col in 0..3 {
-            // Cofactor transposed, i.e. the adjugate, divided by the determinant.
-            let (r1, r2) = ((col + 1) % 3, (col + 2) % 3);
-            let (c1, c2) = ((row + 1) % 3, (row + 2) % 3);
-            let cofactor = m[r1][c1] * m[r2][c2] - m[r1][c2] * m[r2][c1];
-            out[row][col] = (cofactor * inv) as f32;
-        }
-    }
-    out
 }
 
 /// Applies the colour transform over the cropped region, quantising to the 16-bit scene-linear the
@@ -774,4 +752,40 @@ fn as_shot_of(image: &rawler::RawImage) -> Option<crate::white_balance::AsShot> 
     let wb = image.wb_coeffs;
     let cam_mul = [wb[0], wb[1], wb[2], wb[3]];
     crate::white_balance::as_shot(&cam_mul, &xyz_to_cam_of(image)?)
+}
+
+#[cfg(test)]
+mod tests {
+    /// A camera reading its own neutral is what the white balance hands the matrix, so this is the
+    /// one colour the matrix is not free to choose: it has to come out grey.
+    ///
+    /// Normalising the camera matrix in XYZ instead of sRGB failed exactly here, and only here -
+    /// a neutral came out scaled by (1.108, 0.966, 0.917), which is the Rec.2020 of XYZ (1,1,1),
+    /// a 15% red-over-green cast that no saturated colour would have made as obvious.
+    #[test]
+    fn a_camera_neutral_stays_neutral() {
+        // Canon R5, D65.
+        let xyz_to_cam = [
+            [0.7695, -0.2686, -0.0805],
+            [-0.3428, 1.0964, 0.2861],
+            [-0.0136, 0.0428, 0.6461],
+            [0.0, 0.0, 0.0],
+        ];
+        let matrix = super::camera_to_rec2020_from(xyz_to_cam).expect("an invertible matrix");
+        let neutral: Vec<f32> = (0..3)
+            .map(|row| matrix[row][0] + matrix[row][1] + matrix[row][2])
+            .collect();
+        for channel in &neutral {
+            assert!(
+                (channel - neutral[1]).abs() < 1e-3,
+                "camera white renders as {neutral:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_singular_matrix_is_declined_rather_than_rendered() {
+        let flat = [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0], [3.0, 3.0, 3.0], [0.0; 3]];
+        assert!(super::camera_to_rec2020_from(flat).is_none());
+    }
 }

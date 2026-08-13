@@ -89,7 +89,7 @@ pub fn as_shot(cam_mul: &[f32; 4], cam_xyz: &[[f32; 3]; 4]) -> Option<AsShot> {
         [f64::from(cam_xyz[1][0]), f64::from(cam_xyz[1][1]), f64::from(cam_xyz[1][2])],
         [f64::from(cam_xyz[2][0]), f64::from(cam_xyz[2][1]), f64::from(cam_xyz[2][2])],
     ];
-    let cam_to_xyz = invert(&xyz_to_cam)?;
+    let cam_to_xyz = crate::hdr_fit::invert3(&xyz_to_cam)?;
     let neutral = [1.0 / r, 1.0 / g, 1.0 / b];
     let xyz = apply(&cam_to_xyz, neutral);
     let sum = xyz[0] + xyz[1] + xyz[2];
@@ -167,7 +167,7 @@ pub fn rec2020_to_cone() -> [[f64; 3]; 3] {
 }
 
 pub fn cone_to_rec2020() -> [[f64; 3]; 3] {
-    invert(&rec2020_to_cone()).expect("the Bradford transform is invertible")
+    crate::hdr_fit::invert3(&rec2020_to_cone()).expect("the Bradford transform is invertible")
 }
 
 pub fn xyz_to_cone() -> [[f64; 3]; 3] {
@@ -187,29 +187,6 @@ fn apply(m: &[[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
         m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
         m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
     ]
-}
-
-fn invert(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
-    let cofactor = |r: usize, c: usize| {
-        let rows: Vec<usize> = (0..3).filter(|i| *i != r).collect();
-        let cols: Vec<usize> = (0..3).filter(|i| *i != c).collect();
-        let minor = m[rows[0]][cols[0]] * m[rows[1]][cols[1]]
-            - m[rows[0]][cols[1]] * m[rows[1]][cols[0]];
-        if (r + c) % 2 == 0 { minor } else { -minor }
-    };
-    let determinant =
-        m[0][0] * cofactor(0, 0) + m[0][1] * cofactor(0, 1) + m[0][2] * cofactor(0, 2);
-    if determinant.abs() < 1e-12 {
-        return None;
-    }
-    // Transposed on the way out, which is what turns the cofactors into the adjugate.
-    let mut out = [[0.0; 3]; 3];
-    for (r, row) in out.iter_mut().enumerate() {
-        for (c, value) in row.iter_mut().enumerate() {
-            *value = cofactor(c, r) / determinant;
-        }
-    }
-    Some(out)
 }
 
 #[cfg(test)]

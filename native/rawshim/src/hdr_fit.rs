@@ -64,7 +64,7 @@ const CAMERA_CLIPPING: f64 = 0.94;
 /// other case; this is the value it used to be fixed at.
 const MATRIX_RIDGE: f64 = 0.05;
 
-const SRGB_TO_XYZ: [[f64; 3]; 3] = [
+pub(crate) const SRGB_TO_XYZ: [[f64; 3]; 3] = [
     [0.4124564, 0.3575761, 0.1804375],
     [0.2126729, 0.7151522, 0.072175],
     [0.0193339, 0.119192, 0.9503041],
@@ -1181,6 +1181,10 @@ pub fn rec2020_to_srgb() -> [[f64; 3]; 3] {
     multiply(&XYZ_TO_SRGB, &REC2020_TO_XYZ)
 }
 
+pub fn srgb_to_rec2020() -> [[f64; 3]; 3] {
+    multiply(&XYZ_TO_REC2020, &SRGB_TO_XYZ)
+}
+
 /// The transfer LibRaw's 8-bit path applies, for a render meant to match one of those.
 ///
 /// dcraw's `gamma_curve(gamm[0], gamm[1], ..)` at LibRaw's defaults - 1/2.222 over a
@@ -1879,7 +1883,7 @@ fn fitted_matrix_for(
 }
 
 /// A 3x3 inverse, by solving the matrix against each basis vector. None when singular.
-fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+pub(crate) fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
     let columns: [[f64; 3]; 3] = [
         solve_row(m, &[1.0, 0.0, 0.0])?,
         solve_row(m, &[0.0, 1.0, 0.0])?,
@@ -3022,7 +3026,7 @@ pub fn fit(
 
     // Linearised before the resample: averaging gamma-encoded samples is not
     // averaging light, and at this scale factor that alone shifts the mid-tones.
-    let srgb_to_rec2020 = multiply(&XYZ_TO_REC2020, &SRGB_TO_XYZ);
+    let srgb_to_rec2020 = srgb_to_rec2020();
     let mut full = vec![0.0f64; preview.width * preview.height * 3];
     for p in 0..preview.width * preview.height {
         let i = p * 3;
