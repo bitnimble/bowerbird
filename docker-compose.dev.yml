@@ -64,8 +64,8 @@ services:
     # Debian's trixie `linux-perf` installs a real `/usr/bin/perf` rather than the version-matching
     # shim, so a 6.12 perf samples a 6.13 kernel without complaint. `perf annotate` segfaults on
     # this crate's larger Rust symbols; `perf report --sort srcline` answers the same question.
-    security_opt:
-      - seccomp:unconfined
+    #security_opt:
+    #  - seccomp:unconfined
     # Only what has to be known before the catalogue can be opened. Everything
     # else is a setting on the app's Settings page, stored in the DB (§15).
     environment:
