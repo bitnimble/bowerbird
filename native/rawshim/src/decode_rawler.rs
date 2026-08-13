@@ -34,6 +34,48 @@ const XYZ_TO_REC2020: [[f32; 3]; 3] = [
 /// `amounts` is the mosaic denoise, which runs before the demosaic for the reason it always has:
 /// GALOSH is fitted to the sensor's own noise on the CFA, and a demosaic in front of it would
 /// correlate the samples it measures.
+/// The camera's embedded JPEG, still compressed.
+///
+/// Still compressed because the caller decodes it at a size: a preview is usually the sensor's own
+/// resolution and libjpeg scales during the decode, so a caller that wants a grid tile out of a
+/// 24MP JPEG should not be handed 24MP of pixels first. That is why this exists rather than
+/// rawler's `preview_image`, which decodes what it finds.
+pub fn preview_jpeg(path: &str) -> Option<Vec<u8>> {
+    let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
+    let decoder = rawler::get_decoder(&source).ok()?;
+    let params = rawler::decoders::RawDecodeParams::default();
+    Some(decoder.preview_jpeg(&source, &params).ok().flatten()?.to_vec())
+}
+
+/// The embedded JPEG, turned upright if it is not already.
+///
+/// **The preview is stored as the sensor read it, and LibRaw's thumbnail is not.** That is the one
+/// behavioural difference between the two ways of reaching the same JPEG, and it is not cosmetic:
+/// the camera match is fitted by comparing this against the render, so a sideways preview fits
+/// against unrelated content. Measured, it cost 15% of the mean luma on a portrait frame.
+///
+/// A landscape frame is handed back untouched, which is most of them. The rest pay a decode and a
+/// re-encode, and pay it here so that every caller is right rather than each having to know.
+pub fn upright_preview_jpeg(path: &str) -> Option<Vec<u8>> {
+    let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
+    let decoder = rawler::get_decoder(&source).ok()?;
+    let params = rawler::decoders::RawDecodeParams::default();
+    let jpeg = decoder.preview_jpeg(&source, &params).ok().flatten()?;
+
+    let upright = upright_of(decoder.as_ref(), &source, &params);
+    use rawler::decoders::Orientation as O;
+    if matches!(upright, O::Normal | O::Unknown) {
+        return Some(jpeg.to_vec());
+    }
+
+    let image = crate::jpeg::decode(jpeg, 0).ok()?;
+    let (data, width, height) = orient(image.data, image.width, image.height, upright);
+    let turned = crate::rgb::RgbRef { width, height, data: &data };
+    // High enough that the fit sees the preview and not the encoder. It is compared against a
+    // render to derive a colour transform, so a visible block artefact is a colour error.
+    crate::jpeg::encode(turned, 95).ok()
+}
+
 /// One tile of a photograph, decoding only the part of the file the tile needs.
 ///
 /// `tile` is in the same space `decode` hands back: the recommended crop's pixels, before the
@@ -124,6 +166,18 @@ pub fn decode_tile(path: &str, tile: crate::Tile, amounts: crate::galosh::Amount
 }
 
 pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
+    decode_source(&rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?, amounts)
+}
+
+/// The same decode, from bytes already in hand.
+///
+/// What preparing an edit needs: the server has read the file to hash it and hands the buffer
+/// straight on, so opening the path again would read it twice.
+pub fn decode_bytes(bytes: &[u8], amounts: crate::galosh::Amounts) -> Option<Frame> {
+    decode_source(&rawler::rawsource::RawSource::new_from_slice(bytes), amounts)
+}
+
+fn decode_source(source: &rawler::rawsource::RawSource, amounts: crate::galosh::Amounts) -> Option<Frame> {
     // Stage timings, for the benchmark that compares this against LibRaw. Off unless asked, and
     // the clock reads are per decode rather than per pixel, so leaving it in costs nothing.
     let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
@@ -135,8 +189,8 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
         mark = std::time::Instant::now();
     };
 
-    let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
-    let decoder = rawler::get_decoder(&source).ok()?;
+    let source = &source;
+    let decoder = rawler::get_decoder(source).ok()?;
     let params = rawler::decoders::RawDecodeParams::default();
 
     let upright = upright_of(decoder.as_ref(), &source, &params);
@@ -524,12 +578,12 @@ fn to_rec2020(rgb: &[u8], stride: usize, crop: (usize, usize, usize, usize), mat
 /// Rewrites the frame upright, returning it with whatever dimensions that left.
 ///
 /// The four transposing orientations swap width and height; the rest are in-place permutations.
-fn orient(
-    pixels: Vec<u16>,
+fn orient<T: Copy + Default>(
+    pixels: Vec<T>,
     width: usize,
     height: usize,
     orientation: rawler::decoders::Orientation,
-) -> (Vec<u16>, usize, usize) {
+) -> (Vec<T>, usize, usize) {
     use rawler::decoders::Orientation as O;
     // `Unknown` is left alone deliberately: a file that did not say is more likely to be upright
     // already than to want a guess, and guessing wrong rotates a whole shoot.
@@ -539,7 +593,7 @@ fn orient(
 
     let transposes = matches!(orientation, O::Transpose | O::Rotate90 | O::Transverse | O::Rotate270);
     let (out_w, out_h) = if transposes { (height, width) } else { (width, height) };
-    let mut out = vec![0u16; pixels.len()];
+    let mut out = vec![T::default(); pixels.len()];
     for row in 0..height {
         for col in 0..width {
             let (to_col, to_row) = match orientation {

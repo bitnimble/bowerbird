@@ -664,15 +664,14 @@ fn decode_frame_cropped(
     // half decode, which this path has no equivalent of, so it simply hands back the whole frame.
     // Requiring it to be zero is what kept this branch out of the product entirely: every rendition
     // the import builds asks for a bounded size, so nothing ever reached it.
-    if decode_rawler::wanted()
-        && depth == 16
-        && rec2020_linear
-        && !reference
-        && let DecodeSource::Path(path) = source
-    {
-        let frame = match crop {
-            Some(tile) => decode_rawler::decode_tile(path, tile, amounts),
-            None => decode_rawler::decode(path, amounts),
+    if decode_rawler::wanted() && depth == 16 && rec2020_linear && !reference {
+        let frame = match (&source, crop) {
+            (DecodeSource::Path(path), Some(tile)) => decode_rawler::decode_tile(path, tile, amounts),
+            (DecodeSource::Path(path), None) => decode_rawler::decode(path, amounts),
+            // A tile of an in-memory source has no caller, so it falls through rather than reading
+            // the buffer to a file to get one.
+            (DecodeSource::Bytes(bytes), None) => decode_rawler::decode_bytes(bytes, amounts),
+            (DecodeSource::Bytes(_), Some(_)) => None,
         };
         if let Some(frame) = frame {
             return Some(frame);
@@ -1096,8 +1095,8 @@ fn decode_with_libraw(
 /// The whole of an import's tile pass in one call. None when the file embeds no
 /// JPEG preview, which is a property of the file rather than an error: the caller
 /// falls back to a render.
-pub fn decode_embedded_frame(path: &str, long_edge: u32) -> Option<frame::Frame> {
-    let path = std::ffi::CString::new(path).ok()?;
+pub fn decode_embedded_frame(raw_path: &str, long_edge: u32) -> Option<frame::Frame> {
+    let path = std::ffi::CString::new(raw_path).ok()?;
     let decoded = guard("decode_embedded_frame", None, || {
         #[expect(unsafe_code)]
         unsafe {
@@ -1219,6 +1218,19 @@ unsafe fn with_embedded_jpeg<T>(
     use_bytes: impl FnOnce(&[u8]) -> T,
 ) -> Option<T> {
     let path = unsafe { CStr::from_ptr(path) };
+    // rawler finds the same bytes by reading the container, where this reads them through an unpack
+    // of the thumbnail. The lookup is not the only difference: LibRaw's thumbnail comes out
+    // oriented and the JPEG rawler points at is stored as the sensor read it, so a portrait frame
+    // arrives on its side. Every caller here either decodes it to compare against an upright render
+    // or hands it to something that will display it, so it is turned once, here, rather than six
+    // times over - measured, leaving it sideways cost 15% of a portrait frame's mean luma, because
+    // the camera match then fits against unrelated content.
+    if decode_rawler::wanted()
+        && let Ok(text) = path.to_str()
+        && let Some(jpeg) = decode_rawler::upright_preview_jpeg(text)
+    {
+        return Some(use_bytes(&jpeg));
+    }
     with_embedded_jpeg_from(Opened::Path(path), use_bytes)
 }
 
