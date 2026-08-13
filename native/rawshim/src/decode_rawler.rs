@@ -34,6 +34,95 @@ const XYZ_TO_REC2020: [[f32; 3]; 3] = [
 /// `amounts` is the mosaic denoise, which runs before the demosaic for the reason it always has:
 /// GALOSH is fitted to the sensor's own noise on the CFA, and a demosaic in front of it would
 /// correlate the samples it measures.
+/// One tile of a photograph, decoding only the part of the file the tile needs.
+///
+/// `tile` is in the same space `decode` hands back: the recommended crop's pixels, before the
+/// orientation is applied. That is what `cropbox` means on the LibRaw side, and a loupe asking both
+/// decoders for the same rectangle has to get the same picture.
+///
+/// The saving is the point of the fork. `raw_image_region` decodes the tiles or subbands the region
+/// touches and leaves the rest of the frame alone, and everything after it here - conditioning, the
+/// denoise, the demosaic, the colour transform - runs over the region rather than the frame.
+pub fn decode_tile(path: &str, tile: crate::Tile, amounts: crate::galosh::Amounts) -> Option<Frame> {
+    let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
+    let decoder = rawler::get_decoder(&source).ok()?;
+    let params = rawler::decoders::RawDecodeParams::default();
+    let upright = upright_of(decoder.as_ref(), &source, &params);
+
+    // Dummy first, for `crop_area`: the tile is in the crop's coordinates and the region to decode
+    // is in the sensor's, so the offset between them has to be known before anything is read. A
+    // dummy decode skips the decompression, which is the whole cost.
+    let shape = decoder.raw_image(&source, &params, true).ok()?;
+    let (frame_w, frame_h) = (shape.width, shape.height);
+    let (origin, extent) = shape.crop_area.map_or(((0, 0), (frame_w, frame_h)), |area| {
+        ((area.p.x, area.p.y), (area.d.w, area.d.h))
+    });
+    // Named upright, cropped in the sensor's coordinates, handed back upright again.
+    let tile = as_sensor_rect(tile, extent.0, extent.1, upright);
+
+    // Grown by what reads past the tile, and by the denoise's own window, then aligned to whole CFA
+    // sites so the pattern inside the region is the pattern the frame has. An odd origin would
+    // relabel every colour in it.
+    let reach = RCD_MARGIN + crate::TILE_HALO;
+    let left = (origin.0 + tile.left).saturating_sub(reach) & !1;
+    let top = (origin.1 + tile.top).saturating_sub(reach) & !1;
+    let right = (origin.0 + tile.left + tile.width + reach).min(frame_w);
+    let bottom = (origin.1 + tile.top + tile.height + reach).min(frame_h);
+    if right <= left || bottom <= top {
+        return None;
+    }
+    let region = rawler::imgop::Rect::new(
+        rawler::imgop::Point::new(left, top),
+        rawler::imgop::Dim2::new(right - left, bottom - top),
+    );
+
+    let image = decoder.raw_image_region(&source, &params, region, false).ok()?;
+    let rawler::RawImageData::Integer(samples) = &image.data else {
+        return None;
+    };
+    if samples.len() < frame_w * frame_h {
+        return None;
+    }
+
+    // The region's own mosaic, lifted out of the frame-sized buffer the region decode hands back.
+    let (region_w, region_h) = (right - left, bottom - top);
+    let mut window = vec![0u16; region_w * region_h];
+    for row in 0..region_h {
+        let from = (top + row) * frame_w + left;
+        window[row * region_w..(row + 1) * region_w].copy_from_slice(&samples[from..from + region_w]);
+    }
+
+    let cfa = cfa_of(&image);
+    let mut mosaic = condition(&window, region_w, region_h, &image, cfa);
+
+    let gpu = crate::gpu::device()?;
+    let noise = crate::galosh::device(gpu).and_then(|kernels| {
+        amounts
+            .does_anything()
+            .then(|| crate::galosh::denoise(gpu, kernels, &mut mosaic, region_w, region_h, amounts))
+    });
+
+    let matrix = camera_to_rec2020(&image)?;
+    let rcd = crate::demosaic::device(gpu)?;
+    // The tile's place inside the region, which is where the margin that was grown on ends.
+    let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
+    let crop = (inset.0, inset.1, tile.width.min(region_w - inset.0), tile.height.min(region_h - inset.1));
+    let pixels = crate::demosaic::demosaic_with(gpu, rcd, &mosaic, region_w, region_h, cfa, |rgb| {
+        to_rec2020(rgb, region_w, crop, matrix)
+    })?;
+
+    let (pixels, out_w, out_h) = orient(pixels, crop.2, crop.3, upright);
+    Some(Frame {
+        width: out_w,
+        height: out_h,
+        pixels: Pixels::Sixteen(pixels),
+        halved: false,
+        direct: true,
+        as_shot: as_shot_of(&image),
+        noise,
+    })
+}
+
 pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
     // Stage timings, for the benchmark that compares this against LibRaw. Off unless asked, and
     // the clock reads are per decode rather than per pixel, so leaving it in costs nothing.
@@ -50,26 +139,14 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
     let decoder = rawler::get_decoder(&source).ok()?;
     let params = rawler::decoders::RawDecodeParams::default();
 
-    // **From the metadata, not from `RawImage::orientation`.** That field exists but the decoders
-    // here leave it `Normal` even for a frame shot in portrait; the EXIF tag is where the answer
-    // actually is. Reading the wrong one leaves every upright photograph on its side.
-    let upright = decoder
-        .raw_metadata(&source, &params)
-        .ok()
-        .and_then(|meta| meta.exif.orientation)
-        .map_or(rawler::decoders::Orientation::Normal, rawler::decoders::Orientation::from_u16);
+    let upright = upright_of(decoder.as_ref(), &source, &params);
 
     lap("open");
     let image = decoder.raw_image(&source, &params, false).ok()?;
     lap("read");
     let (width, height) = (image.width, image.height);
 
-    let cfa = [
-        image.camera.cfa.color_at(0, 0) as u32,
-        image.camera.cfa.color_at(0, 1) as u32,
-        image.camera.cfa.color_at(1, 0) as u32,
-        image.camera.cfa.color_at(1, 1) as u32,
-    ];
+    let cfa = cfa_of(&image);
 
     let rawler::RawImageData::Integer(samples) = &image.data else {
         return None;
@@ -78,35 +155,7 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
         return None;
     }
 
-    // **Black first, then white balance, then the demosaic.** The order is not free. The
-    // directional statistic in RCD is built to be blind to a per-channel gain, so it does not care
-    // either way, but the colour-difference stages assume the difference between a chroma channel
-    // and green is locally smooth - and before white balance green sits about twice as high as red
-    // and blue, so that difference carries the imbalance rather than the scene.
-    let black = per_channel_black(&image, cfa);
-    let white = saturation_of(&image, &samples[..width * height]);
-    let gains = white_balance_gains(&image);
-
-    let mut mosaic = vec![0f32; width * height];
-    mosaic.par_chunks_mut(width).enumerate().for_each(|(row, out)| {
-        let from = &samples[row * width..(row + 1) * width];
-        for (col, (sample, slot)) in from.iter().zip(out).enumerate() {
-            let colour = cfa[(row & 1) * 2 + (col & 1)].min(3) as usize;
-            let floor = black[colour];
-            let range = (white - floor).max(1.0);
-            // Clamped at zero because §2.2 of the specification requires it: a negative sample in
-            // the shadows can drive the low-pass sum the green stage divides by through zero, and
-            // the epsilon there does not save it.
-            //
-            // And clamped at one, which §2.2 does not ask for because it does not white balance.
-            // Here it is what keeps a blown highlight neutral: the gains put a saturated red or
-            // blue above one while green lands on it exactly, so without this the three leave for
-            // the colour matrix unequal and the highlight comes out with a hue. It has to happen
-            // before the matrix - clamping afterwards, which is all `to_rec2020` can do, mixes the
-            // channels first and then clips one of them, which is a colour cast rather than white.
-            *slot = ((f32::from(*sample) - floor).max(0.0) / range * gains[colour]).min(1.0);
-        }
-    });
+    let mut mosaic = condition(&samples[..width * height], width, height, &image, cfa);
 
     lap("condition");
     let gpu = crate::gpu::device()?;
@@ -156,6 +205,113 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
         as_shot: as_shot_of(&image),
         noise,
     })
+}
+
+/// How far past a tile the pipeline reads, in sensor pixels.
+const RCD_MARGIN: usize = crate::demosaic::MARGIN as usize;
+
+/// The same rectangle, named in the crop's own coordinates instead of the upright frame's.
+///
+/// A tile arrives in the coordinates a reader sees, which are the upright ones, and everything
+/// before `orient` works in the sensor's. On a landscape frame those are the same and this is
+/// identity; on a portrait one they are not, and cropping without it hands back a tile of the right
+/// size showing a different part of the photograph.
+///
+/// `width` and `height` are the crop's, before orientation.
+fn as_sensor_rect(
+    tile: crate::Tile,
+    width: usize,
+    height: usize,
+    orientation: rawler::decoders::Orientation,
+) -> crate::Tile {
+    use rawler::decoders::Orientation as O;
+    // Inverse of the mapping in `orient`, applied to the corners: each of these is its own inverse
+    // except the two rotations, which are each other's.
+    let back = |x: usize, y: usize| -> (usize, usize) {
+        match orientation {
+            O::HorizontalFlip => (width.saturating_sub(1) - x, y),
+            O::Rotate180 => (width.saturating_sub(1) - x, height.saturating_sub(1) - y),
+            O::VerticalFlip => (x, height.saturating_sub(1) - y),
+            O::Transpose => (y, x),
+            O::Rotate90 => (y, height.saturating_sub(1) - x),
+            O::Transverse => (width.saturating_sub(1) - y, height.saturating_sub(1) - x),
+            O::Rotate270 => (width.saturating_sub(1) - y, x),
+            O::Normal | O::Unknown => (x, y),
+        }
+    };
+
+    let far = (tile.left + tile.width.saturating_sub(1), tile.top + tile.height.saturating_sub(1));
+    let (ax, ay) = back(tile.left, tile.top);
+    let (bx, by) = back(far.0, far.1);
+    crate::Tile {
+        left: ax.min(bx),
+        top: ay.min(by),
+        width: ax.abs_diff(bx) + 1,
+        height: ay.abs_diff(by) + 1,
+    }
+}
+
+/// **From the metadata, not from `RawImage::orientation`.** That field exists but the decoders here
+/// leave it `Normal` even for a frame shot in portrait; the EXIF tag is where the answer actually
+/// is. Reading the wrong one leaves every upright photograph on its side.
+fn upright_of(
+    decoder: &dyn rawler::decoders::Decoder,
+    source: &rawler::rawsource::RawSource,
+    params: &rawler::decoders::RawDecodeParams,
+) -> rawler::decoders::Orientation {
+    decoder
+        .raw_metadata(source, params)
+        .ok()
+        .and_then(|meta| meta.exif.orientation)
+        .map_or(rawler::decoders::Orientation::Normal, rawler::decoders::Orientation::from_u16)
+}
+
+fn cfa_of(image: &rawler::RawImage) -> [u32; 4] {
+    [
+        image.camera.cfa.color_at(0, 0) as u32,
+        image.camera.cfa.color_at(0, 1) as u32,
+        image.camera.cfa.color_at(1, 0) as u32,
+        image.camera.cfa.color_at(1, 1) as u32,
+    ]
+}
+
+/// Black subtracted, normalised by the sensor's saturation, and white balanced, into the roughly
+/// unit interval the demosaic's specification asks for.
+///
+/// **Black first, then white balance, then the demosaic.** The order is not free. The directional
+/// statistic in RCD is built to be blind to a per-channel gain, so it does not care either way, but
+/// the colour-difference stages assume the difference between a chroma channel and green is locally
+/// smooth - and before white balance green sits about twice as high as red and blue, so that
+/// difference carries the imbalance rather than the scene.
+///
+/// `samples` may be a region lifted out of the frame rather than the frame, in which case its origin
+/// has to sit on a whole CFA site or every colour in it is relabelled.
+fn condition(samples: &[u16], width: usize, height: usize, image: &rawler::RawImage, cfa: [u32; 4]) -> Vec<f32> {
+    let black = per_channel_black(image, cfa);
+    let white = saturation_of(image);
+    let gains = white_balance_gains(image);
+
+    let mut mosaic = vec![0f32; width * height];
+    mosaic.par_chunks_mut(width).enumerate().for_each(|(row, out)| {
+        let from = &samples[row * width..(row + 1) * width];
+        for (col, (sample, slot)) in from.iter().zip(out).enumerate() {
+            let colour = cfa[(row & 1) * 2 + (col & 1)].min(3) as usize;
+            let floor = black[colour];
+            let range = (white - floor).max(1.0);
+            // Clamped at zero because §2.2 of the specification requires it: a negative sample in
+            // the shadows can drive the low-pass sum the green stage divides by through zero, and
+            // the epsilon there does not save it.
+            //
+            // And clamped at one, which §2.2 does not ask for because it does not white balance.
+            // Here it is what keeps a blown highlight neutral: the gains put a saturated red or
+            // blue above one while green lands on it exactly, so without this the three leave for
+            // the colour matrix unequal and the highlight comes out with a hue. It has to happen
+            // before the matrix - clamping afterwards, which is all `to_rec2020` can do, mixes the
+            // channels first and then clips one of them, which is a colour cast rather than white.
+            *slot = ((f32::from(*sample) - floor).max(0.0) / range * gains[colour]).min(1.0);
+        }
+    });
+    mosaic
 }
 
 /// The per-channel black level, in sensor counts.
@@ -211,7 +367,7 @@ pub fn use_stated_white_level(on: bool) {
     STATED_WHITE_LEVEL.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-fn saturation_of(image: &rawler::RawImage, samples: &[u16]) -> f32 {
+fn saturation_of(image: &rawler::RawImage) -> f32 {
     let reported = image.whitelevel.0.iter().copied().max().unwrap_or(65535) as u16;
     // Taking the maker note's figure at its word is what this did before, and what the pictures in
     // the log compare against. Kept as a seam rather than deleted: the difference between the two is
@@ -222,8 +378,13 @@ fn saturation_of(image: &rawler::RawImage, samples: &[u16]) -> f32 {
     if stated {
         return f32::from(reported);
     }
-    let present = samples.iter().copied().max().unwrap_or(0);
-    f32::from(reported.max(present))
+    // The converter's own ceiling, not the largest sample present. Both clear the stated level on
+    // the Canon files, and this one is a property of the camera rather than of the frame: taken from
+    // the data, a tile whose corner of the picture happens to hold no highlight would be scaled
+    // differently from the frame around it, and the loupe would disagree with the render it is
+    // magnifying.
+    let ceiling = u16::try_from((1u32 << image.bps.min(16)) - 1).unwrap_or(u16::MAX);
+    f32::from(reported.max(ceiling))
 }
 
 /// Per-channel gains, scaled so the smallest of them is unity.

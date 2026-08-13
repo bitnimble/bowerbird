@@ -14,7 +14,7 @@ use wgpu::util::DeviceExt;
 ///
 /// The specification's reach analysis composes to exactly this: the low-pass reaches 1, the
 /// directional kernel 3, its energy 4, the refinement 5, and the two chroma stages 7 and 10.
-const MARGIN: u32 = 10;
+pub const MARGIN: u32 = 10;
 
 const STAGES: [&str; 7] = [
     "seed",

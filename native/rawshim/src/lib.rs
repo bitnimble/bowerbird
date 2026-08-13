@@ -668,11 +668,15 @@ fn decode_frame_cropped(
         && depth == 16
         && rec2020_linear
         && !reference
-        && crop.is_none()
         && let DecodeSource::Path(path) = source
-        && let Some(frame) = decode_rawler::decode(path, amounts)
     {
-        return Some(frame);
+        let frame = match crop {
+            Some(tile) => decode_rawler::decode_tile(path, tile, amounts),
+            None => decode_rawler::decode(path, amounts),
+        };
+        if let Some(frame) = frame {
+            return Some(frame);
+        }
     }
     match source {
         DecodeSource::Path(path) => {
