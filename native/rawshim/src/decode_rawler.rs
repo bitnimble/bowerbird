@@ -97,7 +97,14 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
             // Clamped at zero because §2.2 of the specification requires it: a negative sample in
             // the shadows can drive the low-pass sum the green stage divides by through zero, and
             // the epsilon there does not save it.
-            *slot = (f32::from(*sample) - floor).max(0.0) / range * gains[colour];
+            //
+            // And clamped at one, which §2.2 does not ask for because it does not white balance.
+            // Here it is what keeps a blown highlight neutral: the gains put a saturated red or
+            // blue above one while green lands on it exactly, so without this the three leave for
+            // the colour matrix unequal and the highlight comes out with a hue. It has to happen
+            // before the matrix - clamping afterwards, which is all `to_rec2020` can do, mixes the
+            // channels first and then clips one of them, which is a colour cast rather than white.
+            *slot = ((f32::from(*sample) - floor).max(0.0) / range * gains[colour]).min(1.0);
         }
     });
 
@@ -178,15 +185,28 @@ fn per_channel_black(image: &rawler::RawImage, cfa: [u32; 4]) -> [f32; 4] {
     by_colour
 }
 
-/// Per-channel gains normalised so green is unity, which keeps the frame's overall level where the
-/// rest of the pipeline expects it rather than brightening every photograph by the green multiplier.
+/// Per-channel gains, scaled so the smallest of them is unity.
+///
+/// **On the smallest, so that saturation lands exactly on one in the least amplified channel.** A
+/// sensor sample at the white level says only "at least this bright" - its colour is unknown - so
+/// every channel of a blown pixel has to come out equal or the highlight takes on a hue. Pairing
+/// this with the clamp in `condition` is what does that: the least amplified channel reaches one
+/// exactly at saturation, the others pass it and are clamped back, and all three arrive at the
+/// colour matrix neutral.
+///
+/// Scaling on the largest instead was tried and is worse in a way that is easy to miss. Nothing
+/// clips, so the counters look better, but a blown pixel then carries the gain ratios themselves -
+/// red one, green a half, blue three quarters - and renders warm rather than white. Measured on a
+/// blown highlight it came out (248, 216, 192) against LibRaw's (176, 173, 170).
 fn white_balance_gains(image: &rawler::RawImage) -> [f32; 4] {
     let wb = image.wb_coeffs;
-    let green = if wb[1].is_finite() && wb[1] > 0.0 { wb[1] } else { 1.0 };
+    let usable = |c: f32| c.is_finite() && c > 0.0;
+    let smallest = wb.iter().copied().filter(|c| usable(*c)).fold(f32::INFINITY, f32::min);
+    let scale = if smallest.is_finite() && smallest > 0.0 { smallest } else { 1.0 };
     let mut out = [1f32; 4];
     for (channel, slot) in out.iter_mut().enumerate() {
         let coefficient = wb[channel.min(3)];
-        *slot = if coefficient.is_finite() && coefficient > 0.0 { coefficient / green } else { 1.0 };
+        *slot = if usable(coefficient) { coefficient / scale } else { 1.0 };
     }
     out
 }
