@@ -67,7 +67,7 @@ RUN printf '%s\n' \
 # too, which is `devices:` and `group_add:` in the compose files.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libraw23t64 liblensfun1 libavif16 mesa-vulkan-drivers \
+     liblensfun1 libavif16 mesa-vulkan-drivers \
   && rm -rf /var/lib/apt/lists/*
 
 # Bun's own image is Debian too, so the binary runs here unchanged and needs nothing
@@ -151,7 +151,7 @@ FROM base AS native
 # and inheriting is what makes them the same package at the same version.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libraw-dev liblensfun-dev libavif-dev \
+     liblensfun-dev libavif-dev \
      build-essential ca-certificates curl git libclang-dev \
   && rm -rf /var/lib/apt/lists/*
 # Downloaded to a file rather than piped into sh: in a pipeline the exit status is
