@@ -1,11 +1,12 @@
 # Bowerbird backend. Every pixel operation goes through native/rawshim, which links
-# LibRaw, libavif and lensfun, so the image ships all three as system libraries.
+# libavif and lensfun, so the image ships both as system libraries. The RAW decoder is
+# rawler and needs nothing installed.
 #
 # Debian rather than Alpine, which would save ~50MB of base. The original reason no
 # longer holds - it was that Alpine's `vips` is built without libheif and so cannot
 # write an AVIF, which stopped mattering when the encode moved to libavif and then
 # libvips left entirely - so this is now inertia rather than a constraint. Alpine is
-# untested; musl against LibRaw and lensfun is the part to check before trying it.
+# untested; musl against lensfun is the part to check before trying it.
 FROM debian:trixie-slim AS base
 WORKDIR /app
 
@@ -145,10 +146,14 @@ RUN bun install --frozen-lockfile --production
 # The entrypoint picks between them by running each, so nothing here has to predict
 # what the host supports.
 FROM base AS native
-# The -dev half of what base installs. build.rs generates the LibRaw bindings from
-# these headers, so this stage has to inherit base rather than fork beside it: the
-# generated field offsets are only right against the library the headers describe,
-# and inheriting is what makes them the same package at the same version.
+# The -dev half of what base installs. build.rs generates the lensfun and libavif
+# bindings from these headers, so this stage has to inherit base rather than fork
+# beside it: the generated field offsets are only right against the library the headers
+# describe, and inheriting is what makes them the same package at the same version.
+#
+# The same four are what a development machine needs, and there is no substitute for
+# any of them: without the -dev packages the crate does not link, and without
+# libclang-dev bindgen cannot parse the headers it does have.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
      liblensfun-dev libavif-dev \

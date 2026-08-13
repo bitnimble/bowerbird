@@ -17,7 +17,10 @@ function run(cmd: string, args: string[], env: Record<string, string> = {}): voi
 }
 
 run('bun', ['run', '--cwd', 'web', 'build']);
-run('cargo', [
+// Through `scripts/cargo.ts`, which sweeps the generation this one replaces.
+run('bun', [
+  'run',
+  'scripts/cargo.ts',
   'build',
   '--manifest-path',
   'src-tauri/Cargo.toml',
