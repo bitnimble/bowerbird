@@ -819,6 +819,14 @@ export class PhotosPresenter {
       // rendition written below is a single shared field, so a reader who has
       // moved on while that was in flight must not have this photo's applied.
       if (!this.isCurrent(photoId)) return;
+      // **Unless the reader has already chosen one.** `beginDetail` cleared this, so anything
+      // here is a choice that landed while the fetches above were in flight - and the opening
+      // rendition is what the *library* would have picked, so applying it now silently discards
+      // a deliberate keypress. `isCurrent` does not cover this: the reader has not moved to
+      // another photo, they have asked this one for something else. Pressing O straight after a
+      // step lands exactly here, and the build succeeds before being overwritten, which is why
+      // it looks like nothing happened rather than like a failure.
+      if (this.store.rendition != null) return;
       const opening = this.renditionToApply();
       if (opening == null) return;
       // A rendition every photo already has needs no build, and no round trip to
