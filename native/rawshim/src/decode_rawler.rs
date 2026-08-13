@@ -198,6 +198,12 @@ fn per_channel_black(image: &rawler::RawImage, cfa: [u32; 4]) -> [f32; 4] {
 /// of saturation is scaled by the reported level either way.
 fn saturation_of(image: &rawler::RawImage, samples: &[u16]) -> f32 {
     let reported = image.whitelevel.0.iter().copied().max().unwrap_or(65535) as u16;
+    // `BOWERBIRD_WHITE_LEVEL=stated` takes the maker note's figure at its word, which is what this
+    // did before and what the pictures in the log are a comparison of. Kept as a seam rather than
+    // deleted: the difference between the two is the argument for the line below it.
+    if std::env::var("BOWERBIRD_WHITE_LEVEL").is_ok_and(|value| value == "stated") {
+        return f32::from(reported);
+    }
     let present = samples.iter().copied().max().unwrap_or(0);
     f32::from(reported.max(present))
 }
