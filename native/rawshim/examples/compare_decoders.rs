@@ -75,7 +75,7 @@ fn main() {
 
     println!(
         "{:>16}  {:>13}  {:>13}  {:>7}  {:>7}  {:>7}  {:>6}  {:>7}  {:>14}  {:>14}",
-        "file", "libraw", "rawler", "offset", "mean", "bias", "p99.9", "max", "quiet tiles", "busy tiles"
+        "file", "libraw", "rawler", "offset", "mean", "bias", "p99.9", "max", "clipped l/r", "busy tiles"
     );
 
     for path in args {
@@ -95,7 +95,24 @@ fn main() {
         let fit = |frame: &rawshim::frame::Frame| {
             rawshim::fit_hdr_for(frame, &path, grade().white_quantile, None, Strengths { sharpen: 1.0, defringe: 1.0 })
         };
-        let (theirs, mine) = (fit(&reference), fit(&ours));
+        // Before the grade, because the grade's shoulder hides it: a frame that ran out of range in
+        // the decode and one that was merely bright both come out of the tone curve looking bright.
+        println!(
+            "{name:>16}  ceiling in the 16-bit frame: libraw {:.4}%  rawler {:.4}%",
+            at_ceiling(&reference),
+            at_ceiling(&ours),
+        );
+
+        let theirs = fit(&reference);
+        // `BOWERBIRD_COMPARE_SHARED_FIT` answers a different question to the default, and only one
+        // of them at a time. Each path fitting its own is what the product does and what the
+        // thresholds are about; both on LibRaw's separates a difference in the pixels from a
+        // difference in the tone curve fitted to them, at the cost of an exposure offset, because
+        // the two disagree on absolute scale.
+        let mine = match std::env::var_os("BOWERBIRD_COMPARE_SHARED_FIT").is_some() {
+            true => theirs.clone(),
+            false => fit(&ours),
+        };
 
         let (Some(left), Some(right)) = (render(&reference, theirs.as_ref()), render(&ours, mine.as_ref())) else {
             println!("{name:>16}  not a 16-bit decode");
@@ -107,7 +124,14 @@ fn main() {
             continue;
         };
 
-        let (lx, ly) = worst_region(&left, &right, dx, dy);
+        // `BOWERBIRD_COMPARE_AT=x,y` pins the crop, so the same patch can be looked at again after a
+        // change. Without it the search moves, and a fix that stops one region being the worst
+        // leaves nothing to compare the old picture against.
+        let pinned = std::env::var("BOWERBIRD_COMPARE_AT").ok().and_then(|value| {
+            let (x, y) = value.split_once(',')?;
+            Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+        });
+        let (lx, ly) = pinned.unwrap_or_else(|| worst_region(&left, &right, dx, dy));
         let l = crop(&left, lx, ly);
         let r = crop(&right, lx + dx, ly + dy);
 
@@ -115,11 +139,12 @@ fn main() {
         write(&format!("{out}/{name}-libraw.avif"), &l);
         write(&format!("{out}/{name}-rawler.avif"), &r);
         write(&format!("{out}/{name}-delta.avif"), &delta_picture(&l, &r));
+        println!("{name:>16}  crop at {lx},{ly}");
 
-        let (quiet_l, busy_l) = roughness_split(&l);
-        let (quiet_r, busy_r) = roughness_split(&r);
+        let (_, busy_l) = roughness_split(&l);
+        let (_, busy_r) = roughness_split(&r);
         println!(
-            "{name:>16}  {:>5}x{:<7}  {:>5}x{:<7}  {:>3},{:<3}  {:>7.3}  {:>7.2}  {:>6.0}  {:>7.0}  {:>6.2}{:>+7.1}%  {:>6.2}{:>+7.1}%",
+            "{name:>16}  {:>5}x{:<7}  {:>5}x{:<7}  {:>3},{:<3}  {:>7.3}  {:>7.2}  {:>6.0}  {:>7.0}  {:>5.2}%/{:<5.2}%  {:>6.2}{:>+7.1}%",
             left.width,
             left.height,
             right.width,
@@ -130,12 +155,22 @@ fn main() {
             stats.bias,
             stats.p999,
             stats.max,
-            quiet_l,
-            (quiet_r - quiet_l) / quiet_l * 100.0,
+            stats.clipped.0,
+            stats.clipped.1,
             busy_l,
             (busy_r - busy_l) / busy_l * 100.0,
         );
     }
+}
+
+/// Percentage of samples sitting at the top of the 16-bit scene-linear range, i.e. highlights the
+/// decode had no room left for.
+fn at_ceiling(frame: &rawshim::frame::Frame) -> f64 {
+    let Some(samples) = frame.samples16() else {
+        return 0.0;
+    };
+    let hits = samples.iter().filter(|s| **s == u16::MAX).count();
+    hits as f64 / samples.len() as f64 * 100.0
 }
 
 fn render(frame: &rawshim::frame::Frame, matched: Option<&rawshim::hdr_fit::HdrMatch>) -> Option<Rendered> {
@@ -188,20 +223,47 @@ fn align(left: &Rendered, right: &Rendered) -> Option<(isize, isize)> {
 /// The whole frame is searched rather than the centre taken, because the centre is wherever the
 /// photographer pointed and has no reason to be where a demosaic struggles. Overlapping windows so
 /// a region straddling a boundary is not missed by both of its neighbours.
+///
+/// **Only windows both frames fully cover.** `crop` pads out of range with black, and a window that
+/// runs off one frame scores that padding as disagreement - which is the largest number available,
+/// so an unrestricted search returns the frame's edge every time on any pair whose origins differ.
 fn worst_region(left: &Rendered, right: &Rendered, dx: isize, dy: isize) -> (isize, isize) {
     let step = CROP / 2;
-    let mut best = (0isize, 0isize, -1.0);
-    let mut y = 0;
-    while y + CROP <= left.height {
-        let mut x = 0;
-        while x + CROP <= left.width {
-            let mean = difference(&crop(left, x as isize, y as isize), &crop(right, x as isize + dx, y as isize + dy)).mean;
-            if mean > best.2 {
-                best = (x as isize, y as isize, mean);
+    let low = |d: isize| (-d).max(0) as usize;
+    let (x0, y0) = (low(dx), low(dy));
+    let high = |span: usize, other: usize, d: isize| {
+        let by_left = span.saturating_sub(CROP) as isize;
+        let by_right = other as isize - d - CROP as isize;
+        by_left.min(by_right)
+    };
+    let (x1, y1) = (high(left.width, right.width, dx), high(left.height, right.height, dy));
+
+    // `BOWERBIRD_COMPARE_BY=bright` looks for the brightest region rather than the one the two
+    // disagree on most. That is where highlight handling shows, and it is not usually the same
+    // place: a blown highlight both decoders render similarly badly contributes little difference.
+    //
+    // Scoring by how much of the output is at the top of the range would be the obvious way to find
+    // it and finds nothing - the grade's roll-off leaves even a blown sky near 160 of 255, so no
+    // region has any samples up there at all. What is lost is lost before the grade, which is what
+    // `at_ceiling` counts on the 16-bit frame.
+    let by_brightness = std::env::var("BOWERBIRD_COMPARE_BY").is_ok_and(|v| v == "bright");
+
+    let mut best = (x0 as isize, y0 as isize, -1.0);
+    let mut y = y0 as isize;
+    while y <= y1 {
+        let mut x = x0 as isize;
+        while x <= x1 {
+            let (l, r) = (crop(left, x, y), crop(right, x + dx, y + dy));
+            let score = match by_brightness {
+                true => l.data.iter().map(|s| f64::from(*s)).sum::<f64>() / l.data.len() as f64,
+                false => difference(&l, &r).mean,
+            };
+            if score > best.2 {
+                best = (x, y, score);
             }
-            x += step;
+            x += step as isize;
         }
-        y += step;
+        y += step as isize;
     }
     (best.0, best.1)
 }
@@ -230,6 +292,9 @@ struct Stats {
     mean: f64,
     p999: f64,
     max: f64,
+    /// Fraction of samples at the top of the range in each, as a percentage. A render that is
+    /// merely brighter and one that has run out of headroom look the same until this is counted.
+    clipped: (f64, f64),
     /// Mean *signed* difference. Separates the two ways a mean can be large: a uniform shift, where
     /// this equals it, and structure that cancels, where this sits near zero however big the mean.
     bias: f64,
@@ -237,19 +302,30 @@ struct Stats {
 
 /// Per-channel absolute difference in 8-bit counts, which is the unit the agreed thresholds are in.
 fn difference(left: &Rendered, right: &Rendered) -> Stats {
+    // Not 255: the grade's roll-off and the 8-bit quantisation both land a blown highlight a count
+    // or two short, so counting only the very top misses most of what looks blown.
+    const CEILING: u8 = 250;
     let mut histogram = [0u64; 256];
     let mut total = 0f64;
     let mut signed = 0f64;
+    let (mut top_left, mut top_right) = (0u64, 0u64);
     for (a, b) in left.data.iter().zip(&right.data) {
         let d = a.abs_diff(*b);
         histogram[d as usize] += 1;
         total += f64::from(d);
         signed += f64::from(*b) - f64::from(*a);
+        if *a >= CEILING {
+            top_left += 1;
+        }
+        if *b >= CEILING {
+            top_right += 1;
+        }
     }
     let count: u64 = histogram.iter().sum();
     if count == 0 {
-        return Stats { mean: 0.0, p999: 0.0, max: 0.0, bias: 0.0 };
+        return Stats { mean: 0.0, p999: 0.0, max: 0.0, bias: 0.0, clipped: (0.0, 0.0) };
     }
+    let percent = |hits: u64| hits as f64 / count as f64 * 100.0;
 
     let cutoff = (count as f64 * 0.999) as u64;
     let mut seen = 0u64;
@@ -265,7 +341,13 @@ fn difference(left: &Rendered, right: &Rendered) -> Stats {
         }
         max = value as f64;
     }
-    Stats { mean: total / count as f64, p999, max, bias: signed / count as f64 }
+    Stats {
+        mean: total / count as f64,
+        p999,
+        max,
+        bias: signed / count as f64,
+        clipped: (percent(top_left), percent(top_right)),
+    }
 }
 
 /// Luma roughness split by what the neighbourhood is doing, which is the whole argument about
