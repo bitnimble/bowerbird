@@ -1033,7 +1033,38 @@ fn fit_of(mapped: &[u8]) -> NoiseFit {
 
 #[cfg(test)]
 mod tests {
-    use super::{Amounts, NoiseModel, denoise, device};
+    use super::{
+        Amounts, NoiseModel, P_ALPHA, P_DARK_REF0, P_INV_SG, P_SIGMA_SQ, P_UNIFIED_SIGMA, denoise,
+        device,
+    };
+
+    /// The params slots, against the shader that declares them.
+    ///
+    /// Renumbering one in `prelude.wgsl` is a silent wrong picture rather than a failure: a
+    /// supplied fit would be seeded into whatever now lives at 13, the reductions that would have
+    /// written the real slot are skipped, and the tile denoises against a number that means
+    /// something else.
+    #[test]
+    fn the_params_slots_are_the_ones_the_shader_declares() {
+        const WGSL: &str =
+            include_str!("../../../web/src/features/raw_edit/gpu/wgsl/galosh/prelude.wgsl");
+        let declared = |name: &str| {
+            let opener = format!("const {name}: i32 = ");
+            let start = WGSL.find(&opener).unwrap_or_else(|| panic!("{name} is declared"));
+            let rest = &WGSL[start + opener.len()..];
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            digits.parse::<usize>().unwrap_or_else(|_| panic!("{name} is a number"))
+        };
+        for (name, here) in [
+            ("P_UNIFIED_SIGMA", P_UNIFIED_SIGMA),
+            ("P_INV_SG", P_INV_SG),
+            ("P_DARK_REF0", P_DARK_REF0),
+            ("P_ALPHA", P_ALPHA),
+            ("P_SIGMA_SQ", P_SIGMA_SQ),
+        ] {
+            assert_eq!(declared(name), here, "{name}: the shader and this host disagree");
+        }
+    }
 
     /// The Detail track's landmarks, on this side of it.
     ///
