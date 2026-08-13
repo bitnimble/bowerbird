@@ -88,6 +88,9 @@ pub mod tca;
 pub mod tone;
 pub mod white_balance;
 
+/// lensfun and libavif, for a `renditions` build. An editor build binds no C at all, which is why
+/// this is empty rather than absent there: the modules that reach for it are behind the same
+/// feature, so an empty module is what nothing referencing it looks like.
 mod raw {
     #![allow(
         non_upper_case_globals,
@@ -96,7 +99,7 @@ mod raw {
         dead_code
     )]
     #![expect(unsafe_code)]
-    include!(concat!(env!("OUT_DIR"), "/libraw.rs"));
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
 /// Runs `body`, turning a panic into `fallback` rather than letting it out of the
