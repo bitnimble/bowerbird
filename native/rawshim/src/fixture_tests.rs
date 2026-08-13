@@ -512,13 +512,8 @@ mod camera_match {
         let decoded = decode(&sony(), 8, false, 400);
         let fitted = resize(decoded.rgb8().expect("an 8-bit render"), 400);
         let render = fitted.as_ref();
-        // Both fitted to the same long edge, so this is like-for-like - to a pixel.
-        //
-        // Not exactly, and the reason is worth naming: the render is the manufacturer's
-        // recommended crop and the camera's own JPEG is very slightly wider than that, so at
-        // 400 the two aspects round to 266 and 267. That is a fifth of a percent, the fit
-        // resamples both onto its own grid anyway, and a real misalignment would be tens of
-        // pixels rather than one.
+        // The render is the manufacturer's recommended crop and the camera's own JPEG is very
+        // slightly wider, so at 400 the two aspects round to 266 and 267.
         assert_eq!(render.height, preview.height, "the render and its preview must share a long edge");
         assert!(
             render.width.abs_diff(preview.width) <= 1,
@@ -530,22 +525,35 @@ mod camera_match {
             preview.height,
         );
 
+        // **Sampled by position, not by index.** One pixel of width is a fifth of a percent of
+        // framing and nothing to a metric that lands the two on each other - but walking both
+        // buffers by the same offset does not: it slides the preview a pixel further left on
+        // every row, so by the bottom of a 266-row frame it is comparing a full row across.
+        // That is what the deltaE here measured for as long as the crops differed, ~19 against
+        // a bound of 1.5, and it is why this stopped saying anything about the fit.
+        let at = |image: &crate::rgb::RgbRef<'_>, u: f64, v: f64| {
+            let x = ((u * image.width as f64) as usize).min(image.width - 1);
+            let y = ((v * image.height as f64) as usize).min(image.height - 1);
+            let i = (y * image.width + x) * 3;
+            [
+                f64::from(image.data[i]),
+                f64::from(image.data[i + 1]),
+                f64::from(image.data[i + 2]),
+            ]
+        };
+
         let (mut before, mut after, mut counted) = (0.0, 0.0, 0usize);
-        for p in (0..render.data.len() / 3).step_by(37) {
-            let i = p * 3;
-            let target = [
-                f64::from(preview.data[i]),
-                f64::from(preview.data[i + 1]),
-                f64::from(preview.data[i + 2]),
-            ];
-            let source = [
-                f64::from(render.data[i]),
-                f64::from(render.data[i + 1]),
-                f64::from(render.data[i + 2]),
-            ];
-            before += crate::fit::delta_e76(&source, &target);
-            after += crate::fit::delta_e76(&colour_at(fitted_colour, source), &target);
-            counted += 1;
+        let preview = preview.as_ref();
+        for row in 0..render.height {
+            let v = (row as f64 + 0.5) / render.height as f64;
+            for col in (0..render.width).step_by(7) {
+                let u = (col as f64 + 0.5) / render.width as f64;
+                let target = at(&preview, u, v);
+                let source = at(&render, u, v);
+                before += crate::fit::delta_e76(&source, &target);
+                after += crate::fit::delta_e76(&colour_at(fitted_colour, source), &target);
+                counted += 1;
+            }
         }
         assert!(counted > 100);
         let (before, after) = (before / (counted as f64), after / (counted as f64));
@@ -853,10 +861,27 @@ mod camera_match {
             let gap = (corner_scale(&via_sdr) - corner_scale(&via_linear)).abs() * radius;
             assert!(gap < 30.0, "{}: the two fits are {gap}px apart at the corner", path.display());
 
-            // Where both keep a curve it must be the same curve, since those knots are
-            // read from the file or the database rather than fitted from pixels.
+            // Where both keep a curve it must be the *same* curve, because its shape is read
+            // from the file or the database rather than invented: two routes cannot arrive at
+            // barrel and pincushion for one lens.
+            //
+            // The same shape rather than the same knots, because `with_curve` scans a gain over
+            // that shape and keeps the product. The scan is `[0, 0.5, 1.0, 1.5]` refined by
+            // 0.25, so two searches over two renders of one photograph land on neighbouring
+            // points readily - measured here, 1.0 against 1.5 on IMG_5360, which is the same
+            // coin toss as the tier above and not a disagreement about the lens. What the gain
+            // does to the picture is the assertion before this one.
             if let (Some(a), Some(b)) = (&via_linear.knots, &via_sdr.knots) {
-                assert_eq!(a, b, "{}", path.display());
+                let widest = (0..b.len()).max_by(|x, y| b[*x].abs().total_cmp(&b[*y].abs()));
+                let at = widest.expect("a curve has knots");
+                let gain = a[at] / b[at];
+                for (linear, sdr) in a.iter().zip(b) {
+                    assert!(
+                        (linear - sdr * gain).abs() < 1e-6,
+                        "{}: {a:?} is not {gain} times {b:?}",
+                        path.display(),
+                    );
+                }
                 // The crop is scanned against the render, so it may land a hair apart.
                 assert!((via_linear.crop - via_sdr.crop).abs() < 0.002);
             }
