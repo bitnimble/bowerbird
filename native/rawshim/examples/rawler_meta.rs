@@ -28,6 +28,11 @@ fn main() {
             let total: u64 = samples[..n].iter().map(|s| u64::from(*s)).sum();
             let peak = samples[..n].iter().copied().max().unwrap_or(0);
             println!("   samples     mean {:.1}  peak {}  sum {total}", total as f64 / n as f64, peak);
+            // How much of the frame the stated white level would discard. A handful of samples is
+            // hot pixels; a real fraction is highlight the metadata is wrong about.
+            let stated = image.whitelevel.0.iter().copied().max().unwrap_or(65535) as u16;
+            let over = samples[..n].iter().filter(|s| **s > stated).count();
+            println!("   above white {over} of {n} ({:.4}%)", over as f64 / n as f64 * 100.0);
         }
     }
 }
