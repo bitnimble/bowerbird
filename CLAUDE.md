@@ -18,6 +18,10 @@ notification would not, and the output is piped through `tail` in any case, so t
 empty until the run ends - every read of it returns the same nothing. If there is genuinely
 nothing to do until a run finishes, wait for it rather than checking on it.
 
+**Reach cargo through `scripts/cargo.ts`.** It runs cargo and then drops the artefacts that run
+superseded, which cargo itself never does - `target/` reached 2.5GB in a day of rebuilding before
+this existed. Bare `cargo` still works and still leaves the litter behind.
+
 ## Which suite a test belongs in
 
 Four runners, and the rule is what a claim *needs*, not which layer it happens to live in.
@@ -70,7 +74,7 @@ usually costs a millisecond one layer down.
 rendition are render specifications - a decode, a set of edits, a size - and both render natively:
 
 ```
-cargo run --release --manifest-path native/rawshim/Cargo.toml --example renders -- \
+bun run scripts/cargo.ts run --release --manifest-path native/rawshim/Cargo.toml --example renders -- \
   <raw> <out-dir> --detail 40 --crop 3060,2254,480
 ```
 
@@ -125,6 +129,6 @@ Adding a rule to one side and not the other is the failure mode these exist for.
 has to be computed in two places, pin it in the same commit.
 
 Regenerate the fixtures deliberately, and only the ones that moved:
-`BOWERBIRD_WRITE_FIXTURES=1 cargo test --release --manifest-path native/rawshim/Cargo.toml --test gpu_fixture`.
+`BOWERBIRD_WRITE_FIXTURES=1 bun run scripts/cargo.ts test --release --manifest-path native/rawshim/Cargo.toml --test gpu_fixture`.
 The `.expected.bin` files are compared with a tolerance, so rewriting them wholesale replaces the
 committed answer with whatever this machine's GPU produced - and the browser then cannot match it.

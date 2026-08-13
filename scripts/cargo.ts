@@ -44,16 +44,21 @@ function main(): void {
  * Every file the build just used, cargo's word for it.
  *
  * A second invocation rather than JSON from the first: everything is fresh by now, so this costs
- * a tenth of a second and reports the whole set, fresh units included. `--no-run` because the
- * tests have already run and the question is only what they were built from.
+ * a tenth of a second and reports the whole set, fresh units included.
+ *
+ * Asked in a form that only builds, since the work has already been done: `--no-run` for a test,
+ * and `build` in place of `run` - which would otherwise decode a folder of RAWs a second time.
  */
 function live(args: string[]): Set<string> {
   const end = args.indexOf('--');
   const head = end === -1 ? args : args.slice(0, end);
-  const tail = end === -1 ? [] : args.slice(end);
+  const [subcommand = 'build', ...rest] = head;
+  // A `run`'s trailing arguments are the program's, and `build` would take them for its own.
+  const tail = end === -1 || subcommand === 'run' ? [] : args.slice(end);
   const probe = [
-    ...head,
-    ...(head[0] === 'test' || head[0] === 'bench' ? ['--no-run'] : []),
+    subcommand === 'run' ? 'build' : subcommand,
+    ...rest,
+    ...(subcommand === 'test' || subcommand === 'bench' ? ['--no-run'] : []),
     '--message-format=json',
     ...tail,
   ];
