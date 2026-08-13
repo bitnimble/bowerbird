@@ -3,12 +3,11 @@ import { extractEmbedded, readHeaderFields } from './rawshim_ops';
 // The RAW file's own metadata and its embedded preview, both by way of
 // `native/rawshim` (DESIGN §10.4 / §11.1).
 //
-// Nothing here reaches into a LibRaw struct any more. It used to: six tables of
-// hardcoded byte offsets into five of them, one reached by assuming where `sizes`
-// sits inside `libraw_data_t`. The offsets were right and were checked against real
-// files from several bodies, but nothing kept them right, and the failure would have
-// been a silent one - a photo dated 1970, or every rendition sideways. bindgen
-// resolves the fields in Rust from the headers the runtime library was built from.
+// Nothing here reaches into a C struct any more. It used to: six tables of hardcoded byte
+// offsets into five of them, one reached by assuming where another sat inside a sixth. The
+// offsets were right and were checked against real files from several bodies, but nothing
+// kept them right, and the failure would have been a silent one - a photo dated 1970, or
+// every rendition sideways. The fields are named in Rust now.
 
 // What the pixels are in when the decode hands them back.
 //   'srgb'            display-referred, sRGB primaries and transfer. Everything
@@ -38,7 +37,7 @@ export function readEmbeddedJpeg(filePath: string): Buffer | null {
 export interface RawHeader {
   width: number; // display/upright (post flip-adjust)
   height: number;
-  orientation: number; // LibRaw sizes.flip code (0/3/5/6); 0 if unreadable
+  orientation: number; // EXIF orientation, 1 to 8; 0 if unreadable
   dateTaken: string | null;
   latitude: number | null;
   longitude: number | null;
@@ -51,36 +50,25 @@ export interface RawHeader {
   lensModel: string | null;
 }
 
-// EXIF DateTimeOriginal carries no timezone, and LibRaw turns it into a time_t
-// with mktime(), i.e. it reads the camera's wall clock as *server-local* time.
-// Taking that instant as UTC would slide every capture date by the server's
-// offset (and by an hour across DST), so read the components back in the same
-// local zone mktime used and re-encode them as UTC. The stored value is then the
-// wall clock the camera wrote, on any machine.
+// EXIF DateTimeOriginal carries no timezone, and `bb_read_header` reads it as UTC, so the
+// wall clock the camera wrote is already what these seconds mean and formatting them is
+// the whole job.
 //
-// Stays in TypeScript deliberately: this is date semantics, not struct access, and
-// it has to run in the same process whose local zone mktime was resolved against.
-function wallClockIso(epochSeconds: number): string {
-  const local = new Date(epochSeconds * 1000);
-  return new Date(
-    Date.UTC(
-      local.getFullYear(),
-      local.getMonth(),
-      local.getDate(),
-      local.getHours(),
-      local.getMinutes(),
-      local.getSeconds(),
-    ),
-  ).toISOString();
+// It was a round trip through the server's own zone until the header moved off LibRaw:
+// `mktime` resolved that string against local time, and undoing it here was the only way
+// to get the same date on every machine. Nothing calls `mktime` now, and the round trip
+// had become the thing introducing the shift - a server at +10 dated an evening shot to
+// the following day.
+export function wallClockIso(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toISOString();
 }
 
 // Reads dimensions (always) plus best-effort capture time and GPS, without
 // decoding pixels (DESIGN §11.1). Returns UTC-normalized dateTaken.
 //
-// Every field comes from `bb_read_header`, which resolves them from LibRaw's own
-// typed structs. This used to read five of those structs from here at hardcoded
-// byte offsets - including one reached by assuming where `sizes` sits inside
-// `libraw_data_t` - which is the same guess that moved the decode into Rust.
+// Every field comes from `bb_read_header`. This used to read five C structs from here at
+// hardcoded byte offsets - including one reached by assuming where another sat inside a
+// sixth - which is the same guess that moved the decode into Rust.
 export function readRawHeader(filePath: string): RawHeader {
   const fields = readHeaderFields(filePath);
   return {
