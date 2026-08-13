@@ -11,7 +11,7 @@ suites - `bun run test:native`, `bun run test`, `bun run typecheck`, `bun run li
 almost everything and answer it in seconds, so iterate against those and let e2e confirm the
 finished thing. The exception is a change *to* an e2e spec or to the machinery it drives, where
 the suite is the only thing that can say whether the change works; even then, run the one spec
-(`bun run test:e2e -- <name>`) rather than all of them.
+(`bun run --cwd web test:e2e -- <name>`) rather than all of them.
 
 **Never poll a background job's output file.** Re-reading it in a loop tells you nothing the
 notification would not, and the output is piped through `tail` in any case, so the file stays
@@ -31,7 +31,7 @@ Four runners, and the rule is what a claim *needs*, not which layer it happens t
 | `cargo test` | `bun run test:native` | The native pipeline: decode, fit, warp, the grade, and the WGSL held against it |
 | `bun test` (root) | `bun run test` | The server, the schemas, and everything in `web/src` that is not a browser |
 | `bun test` + jsdom | same, via `registerDom()` | React components: what a control does when it is used |
-| Playwright | `bun run test:e2e` | Only what a real browser or a real GPU can answer |
+| Playwright | `bun run --cwd web test:e2e` | Only what a real browser or a real GPU can answer |
 
 ### An edit producing a picture is not an end-to-end question
 
