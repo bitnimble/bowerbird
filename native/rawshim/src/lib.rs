@@ -655,68 +655,38 @@ fn decode_frame_cropped(
     if depth != 8 && depth != 16 {
         return None;
     }
-    // The decoder without LibRaw, where it has been asked for and can serve this call. It reads a
-    // path, produces 16-bit scene-linear, and demosaics on the GPU; the 8-bit sRGB route, the
-    // in-memory sources and the tile crop are still LibRaw's, so those fall through.
-    //
-    // `at_least_long_edge` is deliberately not among the conditions. It is a floor, not a size, and
-    // a frame at the sensor's own resolution clears any of them - LibRaw uses it to take a cheaper
-    // half decode, which this path has no equivalent of, so it simply hands back the whole frame.
-    // Requiring it to be zero is what kept this branch out of the product entirely: every rendition
-    // the import builds asks for a bounded size, so nothing ever reached it.
-    if decode_rawler::wanted() && depth == 16 && rec2020_linear && !reference {
-        let frame = match (&source, crop) {
-            (DecodeSource::Path(path), Some(tile)) => decode_rawler::decode_tile(path, tile, amounts),
-            (DecodeSource::Path(path), None) => decode_rawler::decode(path, amounts),
-            // A tile of an in-memory source has no caller, so it falls through rather than reading
-            // the buffer to a file to get one.
-            (DecodeSource::Bytes(bytes), None) => decode_rawler::decode_bytes(bytes, amounts),
-            (DecodeSource::Bytes(_), Some(_)) => None,
-        };
-        if let Some(frame) = frame {
-            return Some(frame);
-        }
-    }
-    match source {
-        DecodeSource::Path(path) => {
-            let path = std::ffi::CString::new(path).ok()?;
-            decode_with_libraw(
-                Opened::Path(&path),
-                depth,
-                rec2020_linear,
-                at_least_long_edge,
-                reference,
-                amounts,
-                crop,
-            )
-        }
-        DecodeSource::Bytes(bytes) => decode_with_libraw(
-            Opened::Bytes(bytes),
-            depth,
-            rec2020_linear,
-            at_least_long_edge,
-            reference,
-            amounts,
-            crop,
-        ),
+    // `at_least_long_edge` is a floor rather than a size, and a frame at the sensor's own
+    // resolution clears any of them. LibRaw used it to take a cheaper half decode; there is no
+    // equivalent here, so the whole frame is decoded and the caller fits it as it would anyway.
+    let scene = match (&source, crop) {
+        (DecodeSource::Path(path), Some(tile)) => decode_rawler::decode_tile(path, tile, amounts),
+        (DecodeSource::Path(path), None) => decode_rawler::decode(path, amounts),
+        // A tile of an in-memory source has no caller, so it is refused rather than read to a file
+        // to get one.
+        (DecodeSource::Bytes(bytes), None) => decode_rawler::decode_bytes(bytes, amounts),
+        (DecodeSource::Bytes(_), Some(_)) => None,
+    }?;
+
+    // Scene-linear Rec.2020 is what the decode produces; 8-bit sRGB is that with the matrix and the
+    // transfer curve on top. `dcraw_process` handed the second back directly, which is why the two
+    // still arrive as one request.
+    match (depth, rec2020_linear) {
+        (16, true) => Some(scene),
+        (8, false) => decode_rawler::to_srgb8(&scene),
+        _ => None,
     }
 }
 
 /// One tile of a photograph, at rendition quality, with nothing kept between requests.
 ///
-/// **The whole point is that this is a pure function of its arguments.** `params.cropbox`
-/// restricts the demosaic's own work rather than trimming its output - measured on a 24MP CR3,
-/// a 700px crop costs 65ms against 307ms for the frame - and the denoise takes a window, so a
-/// tile is an open, an unpack and two small pieces of work. Nothing is cached, so nothing has
-/// to be invalidated when an edit lands; the tile a reader sees is the tile their current
-/// settings describe.
+/// **The whole point is that this is a pure function of its arguments.** Only the region the tile
+/// covers is decoded - measured on a 24MP CR3, a 512 tile costs 59ms against 588ms for the frame -
+/// and the denoise takes a window, so a tile is an open, a partial read and two small pieces of
+/// work. Nothing is cached, so nothing has to be invalidated when an edit lands; the tile a reader
+/// sees is the tile their current settings describe.
 ///
-/// The floor is `libraw_unpack` at around 70ms, which decompresses the whole stream whatever
-/// is asked of it afterwards. That is what a resident mosaic would buy back, and it is an
-/// optimisation rather than a requirement.
-///
-/// `crop` is in the decoded image's own pixels, which is the space `cropbox` and the editor's
-/// region both speak.
+/// `crop` is in the decoded image's own pixels, upright, which is the space the editor's region
+/// speaks.
 pub fn decode_tile(
     path: &str,
     crop: Tile,
@@ -733,11 +703,6 @@ pub fn decode_tile(
         amounts,
         Some(crop),
     )
-}
-
-enum Opened<'a> {
-    Path(&'a std::ffi::CStr),
-    Bytes(&'a [u8]),
 }
 
 /// A rectangle of the mosaic, in the raw image's own pixels.
@@ -889,6 +854,12 @@ unsafe fn denoise_mosaic(
         }
     }
     Some(model)
+}
+
+/// Which of the two ways LibRaw can be handed a file. Only the embedded preview still opens one.
+enum Opened<'a> {
+    Path(&'a std::ffi::CStr),
+    Bytes(&'a [u8]),
 }
 
 impl Opened<'_> {

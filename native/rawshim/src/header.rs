@@ -16,11 +16,8 @@
 // under us the way an upstream C struct can, and its size is checked at the first
 // call.
 
-use crate::raw;
-use std::ffi::{c_char, CString};
-
-/// Unknown, for a field the camera did not record. LibRaw leaves these at 0, and
-/// a 0 that reached the catalogue would print as f/0 or 1970.
+/// Unknown, for a field the camera did not record. A 0 that reached the catalogue would print as
+/// f/0 or 1970.
 const UNKNOWN: f32 = 0.0;
 
 /// Flat header fields, in one struct so reading them is one call.
@@ -69,29 +66,6 @@ impl BbHeader {
     }
 }
 
-/// Copies a fixed-width NUL-padded C string across, truncating rather than
-/// overflowing. A name longer than the destination is a misparse either way.
-fn copy_name(into: &mut [u8], from: &[c_char]) {
-    let bytes: Vec<u8> = from.iter().map(|c| *c as u8).collect();
-    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-    let n = end.min(into.len().saturating_sub(1));
-    into[..n].copy_from_slice(&bytes[..n]);
-}
-
-/// LibRaw's own cleaned-up names where it has them - "ILCE-7CR" rather than a
-/// vendor string with firmware glued on - falling back to the raw ones.
-fn preferred(normalized: &[c_char], raw_name: &[c_char], into: &mut [u8]) {
-    copy_name(into, normalized);
-    if into[0] == 0 {
-        copy_name(into, raw_name);
-    }
-}
-
-/// Degrees from LibRaw's degrees/minutes/seconds triple.
-fn degrees(dms: &[f32; 3]) -> f64 {
-    f64::from(dms[0]) + f64::from(dms[1]) / 60.0 + f64::from(dms[2]) / 3600.0
-}
-
 /// Bounds that mean "no camera reports this", not physical limits: ISO 4 million,
 /// a one-hour exposure, f/256 and a 10m lens are all past anything real, so a
 /// value beyond them is a misread rather than an unusual shot.
@@ -99,93 +73,134 @@ fn plausible(value: f32, max: f32) -> f32 {
     if value.is_finite() && value > 0.0 && value < max { value } else { UNKNOWN }
 }
 
-/// The header of a file on disk, or None when LibRaw cannot open it.
+/// The header of a file on disk, or None when it cannot be read.
 ///
-/// The one place that opens a RAW purely for its metadata, so the init/open/recycle
-/// dance is written once - the fit reaches for this too, to name the lens.
+/// The one place that opens a RAW purely for its metadata - the fit reaches for this too, to name
+/// the lens.
+///
+/// The dimensions come from a dummy decode rather than from EXIF. EXIF describes the picture the
+/// camera would have made, which is not always the one this produces: the recommended crop and the
+/// orientation both move it, and the catalogue's row has to agree with the rendition it will show.
 pub fn read_path(path: &str) -> Option<BbHeader> {
-    let path = CString::new(path).ok()?;
-    #[expect(unsafe_code)]
-    unsafe {
-        let r = raw::libraw_init(0);
-        if r.is_null() {
-            return None;
-        }
-        let header = match raw::libraw_open_file(r, path.as_ptr()) {
-            0 => Some(read(r)),
-            _ => None,
-        };
-        raw::libraw_recycle(r);
-        raw::libraw_close(r);
-        header
+    let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
+    let decoder = rawler::get_decoder(&source).ok()?;
+    let params = rawler::decoders::RawDecodeParams::default();
+    let metadata = decoder.raw_metadata(&source, &params).ok()?;
+    let shape = decoder.raw_image(&source, &params, true).ok()?;
+
+    let mut out = BbHeader::blank();
+    let exif = &metadata.exif;
+
+    let orientation = exif.orientation.unwrap_or(1);
+    out.orientation = if (1..=8).contains(&orientation) { i32::from(orientation) } else { 0 };
+
+    let (mut width, mut height) = shape
+        .crop_area
+        .map_or((shape.width as u32, shape.height as u32), |area| (area.d.w as u32, area.d.h as u32));
+    if matches!(orientation, 5 | 6 | 7 | 8) {
+        std::mem::swap(&mut width, &mut height);
     }
+    out.width = width;
+    out.height = height;
+
+    let ratio = |r: &rawler::formats::tiff::Rational| match r.d {
+        0 => 0.0,
+        d => r.n as f32 / d as f32,
+    };
+    out.iso = plausible(
+        exif.iso_speed.or_else(|| exif.iso_speed_ratings.map(u32::from)).unwrap_or(0) as f32,
+        4_000_000.0,
+    );
+    out.shutter = plausible(exif.exposure_time.as_ref().map_or(0.0, ratio), 3600.0);
+    out.aperture = plausible(exif.fnumber.as_ref().map_or(0.0, ratio), 256.0);
+    out.focal = plausible(exif.focal_length.as_ref().map_or(0.0, ratio), 10_000.0);
+
+    if let Some(taken) = exif.date_time_original.as_deref().and_then(seconds_since_epoch) {
+        // 1990 to 2100: a timestamp outside that is a misparse, not a photograph.
+        if taken > 631_152_000 && taken < 4_102_444_800 {
+            out.timestamp = taken;
+        }
+    }
+
+    if let Some(gps) = exif.gps.as_ref() {
+        // An exact 0,0 is a body saying nothing rather than a photograph taken in the Gulf of
+        // Guinea, which is why this reads the triples rather than trusting their presence.
+        let latitude = gps.gps_latitude.map(|t| degrees_of(&t)).unwrap_or(0.0)
+            * if gps.gps_latitude_ref.as_deref() == Some("S") { -1.0 } else { 1.0 };
+        let longitude = gps.gps_longitude.map(|t| degrees_of(&t)).unwrap_or(0.0)
+            * if gps.gps_longitude_ref.as_deref() == Some("W") { -1.0 } else { 1.0 };
+        if latitude != 0.0 || longitude != 0.0 {
+            if latitude.is_finite() && latitude.abs() <= 90.0 {
+                out.latitude = latitude;
+            }
+            if longitude.is_finite() && longitude.abs() <= 180.0 {
+                out.longitude = longitude;
+            }
+        }
+    }
+
+    write_name(&mut out.camera_make, &metadata.make);
+    write_name(&mut out.camera_model, &metadata.model);
+    let lens = metadata
+        .lens
+        .as_ref()
+        .map(|l| l.lens_name.clone())
+        .or_else(|| exif.lens_model.clone())
+        .unwrap_or_default();
+    write_name(&mut out.lens_model, &lens);
+
+    Some(out)
+}
+
+/// Degrees, minutes and seconds as the one number the catalogue stores.
+fn degrees_of(triple: &[rawler::formats::tiff::Rational; 3]) -> f64 {
+    let part = |r: &rawler::formats::tiff::Rational| match r.d {
+        0 => 0.0,
+        d => f64::from(r.n) / f64::from(d),
+    };
+    part(&triple[0]) + part(&triple[1]) / 60.0 + part(&triple[2]) / 3600.0
+}
+
+/// EXIF's `YYYY:MM:DD HH:MM:SS`, in seconds, treated as UTC.
+///
+/// Treated as UTC deliberately, which is what LibRaw's own parse did: the offset tags are not
+/// filled in by every body, and a timestamp that shifts depending on whether the camera recorded a
+/// zone would reorder a shoot.
+fn seconds_since_epoch(stamp: &str) -> Option<i64> {
+    let numbers: Vec<i64> = stamp
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    let [year, month, day, hour, minute, second] = numbers.get(..6)?.try_into().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    // Days since 1970 by the civil-from-days algorithm, which needs no calendar crate and no
+    // leap-year special cases beyond the shifted year it starts from.
+    let year = year - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second)
+}
+
+/// Writes a name into its fixed-width field, truncated and always NUL-terminated.
+fn write_name(field: &mut [u8], value: &str) {
+    let trimmed = value.trim().as_bytes();
+    let room = field.len().saturating_sub(1);
+    let taken = trimmed.len().min(room);
+    field[..taken].copy_from_slice(&trimmed[..taken]);
+    field[taken..].fill(0);
 }
 
 /// The name a field holds, or "" where the camera recorded none.
 pub fn name(field: &[u8]) -> &str {
     let end = field.iter().position(|b| *b == 0).unwrap_or(field.len());
     std::str::from_utf8(&field[..end]).unwrap_or("").trim()
-}
-
-/// Reads the header of an already-opened file. `r` must have had `open_file` run.
-///
-/// # Safety
-/// `r` must be a live `libraw_data_t` from `libraw_init`.
-#[expect(unsafe_code)]
-pub unsafe fn read(r: *mut raw::libraw_data_t) -> BbHeader {
-    let mut out = BbHeader::blank();
-
-    // sizes.flip is set at open and must be read before adjust_sizes_info_only.
-    //
-    // Normalised, because a CIFF/CRW records it in *degrees* and `unpack` rewrites
-    // those to codes later - so the raw value here is not the one the decode will act
-    // on, and 270 is not even in the range this field is documented to hold. It used to
-    // fall outside the 0..=8 guard below and be stored as 0, which reads as "no
-    // rotation" for a frame that is turned a quarter turn.
-    let flip = crate::normalised_flip(unsafe { (*r).sizes }.flip);
-    out.orientation = if (0..=8).contains(&flip) { flip } else { 0 };
-
-    // The stored dimensions describe the picture that gets thumbnailed, so they
-    // carry the same crop the decode applies.
-    let insets = crate::rotate_insets(unsafe { crate::read_insets(r) }, flip);
-    unsafe { raw::libraw_adjust_sizes_info_only(r) };
-    out.width = u32::from(unsafe { (*r).sizes }.iwidth).saturating_sub((insets.left + insets.right) as u32);
-    out.height = u32::from(unsafe { (*r).sizes }.iheight).saturating_sub((insets.top + insets.bottom) as u32);
-
-    let other = &unsafe { (*r).other };
-    out.iso = plausible(other.iso_speed, 4_000_000.0);
-    out.shutter = plausible(other.shutter, 3600.0);
-    out.aperture = plausible(other.aperture, 256.0);
-    out.focal = plausible(other.focal_len, 10_000.0);
-
-    // 1990 to 2100: a timestamp outside that is a misparse, not a photograph.
-    let seconds = other.timestamp as i64;
-    if seconds > 631_152_000 && seconds < 4_102_444_800 {
-        out.timestamp = seconds;
-    }
-
-    let gps = &other.parsed_gps;
-    // Canon reports a parsed fix on every frame and zeroes the triples when there
-    // was none, so an exact 0,0 is a body saying nothing rather than a photograph
-    // taken in the Gulf of Guinea.
-    if gps.gpsparsed == 1 && !(gps.latitude == [0.0; 3] && gps.longitude == [0.0; 3]) {
-        // 'S' and 'W' are the negative hemispheres.
-        let latitude = degrees(&gps.latitude) * if gps.latref as u8 == b'S' { -1.0 } else { 1.0 };
-        let longitude = degrees(&gps.longitude) * if gps.longref as u8 == b'W' { -1.0 } else { 1.0 };
-        if latitude.is_finite() && latitude.abs() <= 90.0 {
-            out.latitude = latitude;
-        }
-        if longitude.is_finite() && longitude.abs() <= 180.0 {
-            out.longitude = longitude;
-        }
-    }
-
-    let idata = &unsafe { (*r).idata };
-    preferred(&idata.normalized_make, &idata.make, &mut out.camera_make);
-    preferred(&idata.normalized_model, &idata.model, &mut out.camera_model);
-    copy_name(&mut out.lens_model, &unsafe { (*r).lens }.Lens);
-
-    out
 }
 
 #[cfg(test)]
@@ -203,19 +218,41 @@ mod tests {
     #[test]
     fn a_name_is_truncated_rather_than_overflowing() {
         let mut into = [0u8; 8];
-        let long: Vec<c_char> = "ILCE-7CR-and-then-some".bytes().map(|b| b as c_char).collect();
-        copy_name(&mut into, &long);
+        write_name(&mut into, "ILCE-7CR-and-then-some");
         assert_eq!(&into[..7], b"ILCE-7C");
         assert_eq!(into[7], 0, "always NUL-terminated");
     }
 
     #[test]
-    fn a_blank_normalized_name_falls_back_to_the_raw_one() {
-        let mut into = [0u8; 64];
-        let blank: Vec<c_char> = vec![0; 64];
-        let raw_name: Vec<c_char> = "SONY".bytes().map(|b| b as c_char).collect();
-        preferred(&blank, &raw_name, &mut into);
-        assert_eq!(&into[..4], b"SONY");
+    fn a_name_leaves_no_tail_of_the_one_before_it() {
+        let mut into = [0u8; 16];
+        write_name(&mut into, "ILCE-7CR");
+        write_name(&mut into, "R8");
+        assert_eq!(name(&into), "R8");
+    }
+
+    #[test]
+    fn a_timestamp_is_read_from_the_exif_spelling() {
+        // 2024-06-07 14:58:25 UTC.
+        assert_eq!(seconds_since_epoch("2024:06:07 14:58:25"), Some(1_717_772_305));
+        // A leap day, which is where a hand-rolled calendar goes wrong if it is going to.
+        assert_eq!(seconds_since_epoch("2024:02:29 00:00:00"), Some(1_709_164_800));
+        assert_eq!(seconds_since_epoch("1970:01:01 00:00:00"), Some(0));
+    }
+
+    #[test]
+    fn a_timestamp_that_is_not_one_reports_nothing() {
+        assert_eq!(seconds_since_epoch(""), None);
+        assert_eq!(seconds_since_epoch("2024:06:07"), None, "a date with no time is short");
+        assert_eq!(seconds_since_epoch("2024:13:07 00:00:00"), None, "there is no thirteenth month");
+    }
+
+    #[test]
+    fn degrees_come_out_of_the_triple_the_way_a_map_wants_them() {
+        let rational = |n: u32, d: u32| rawler::formats::tiff::Rational::new(n, d);
+        // 38 deg 37' 3.5" is the south side of Huka Falls.
+        let dms = [rational(38, 1), rational(37, 1), rational(35, 10)];
+        assert!((degrees_of(&dms) - 38.617_638_9).abs() < 1e-6);
     }
 
     #[test]
@@ -231,7 +268,8 @@ mod tests {
 
     #[test]
     fn degrees_combines_the_dms_triple() {
-        assert!((degrees(&[51.0, 30.0, 0.0]) - 51.5).abs() < 1e-9);
-        assert!((degrees(&[0.0, 0.0, 3600.0]) - 1.0).abs() < 1e-9);
+        let rational = |n: u32, d: u32| rawler::formats::tiff::Rational::new(n, d);
+        assert!((degrees_of(&[rational(51, 1), rational(30, 1), rational(0, 1)]) - 51.5).abs() < 1e-9);
+        assert!((degrees_of(&[rational(0, 1), rational(0, 1), rational(3600, 1)]) - 1.0).abs() < 1e-9);
     }
 }

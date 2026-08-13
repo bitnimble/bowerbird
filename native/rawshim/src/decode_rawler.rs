@@ -34,6 +34,51 @@ const XYZ_TO_REC2020: [[f32; 3]; 3] = [
 /// `amounts` is the mosaic denoise, which runs before the demosaic for the reason it always has:
 /// GALOSH is fitted to the sensor's own noise on the CFA, and a demosaic in front of it would
 /// correlate the samples it measures.
+/// The same frame as 8-bit sRGB, which is what a caller asking for a render rather than a scene
+/// wants.
+///
+/// Not a second decode: the scene-linear frame is the one that took the work, and this is the
+/// matrix and the transfer curve on top of it. `dcraw_process` used to hand this back directly,
+/// which is why the depth and the colour space arrive together as one request.
+pub fn to_srgb8(frame: &Frame) -> Option<Frame> {
+    let samples = frame.samples16()?;
+    let matrix = crate::hdr_fit::rec2020_to_srgb();
+    let mut out = vec![0u8; samples.len()];
+    out.par_chunks_mut(frame.width * 3).enumerate().for_each(|(row, line)| {
+        let from = &samples[row * frame.width * 3..(row + 1) * frame.width * 3];
+        for (pixel, source) in line.chunks_exact_mut(3).zip(from.chunks_exact(3)) {
+            let linear = [
+                f32::from(source[0]) / 65535.0,
+                f32::from(source[1]) / 65535.0,
+                f32::from(source[2]) / 65535.0,
+            ];
+            for (channel, slot) in pixel.iter_mut().enumerate() {
+                let row = matrix[channel];
+                let value = row[0] * f64::from(linear[0]) + row[1] * f64::from(linear[1]) + row[2] * f64::from(linear[2]);
+                *slot = (srgb_transfer(value.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8;
+            }
+        }
+    });
+    Some(Frame {
+        width: frame.width,
+        height: frame.height,
+        pixels: Pixels::Eight(out),
+        halved: frame.halved,
+        direct: frame.direct,
+        as_shot: frame.as_shot,
+        noise: frame.noise,
+    })
+}
+
+/// The sRGB transfer function, which is a straight line near black and a power curve above it.
+fn srgb_transfer(linear: f64) -> f64 {
+    if linear <= 0.003_130_8 {
+        linear * 12.92
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
+    }
+}
+
 /// The camera's embedded JPEG, still compressed.
 ///
 /// Still compressed because the caller decodes it at a size: a preview is usually the sensor's own
