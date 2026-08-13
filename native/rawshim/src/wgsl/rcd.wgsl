@@ -217,7 +217,10 @@ fn green_at_chroma(@builtin(global_invocation_id) gid: vec3<u32>) {
   let est_h = (g_w * e_e + g_e * e_w) / (g_e + g_w);
 
   let t = refine_axis(r, c);
-  green[idx(r, c)] = clamp(mix(est_v, est_h, t), 0.0, 1.0);
+  // Below only. White balance normalises green to unity, so red and blue arrive already scaled by
+  // their gain and a bright one sits well above 1.0; clamping there is clipping a highlight inside
+  // the demosaic, where the grade downstream still had use for it (§8).
+  green[idx(r, c)] = max(mix(est_v, est_h, t), 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +262,7 @@ fn chroma_at_chroma(@builtin(global_invocation_id) gid: vec3<u32>) {
   let est_q = (g_ne * d_sw + g_sw * d_ne) / (g_ne + g_sw);
 
   let t = refine_diag(r, c);
-  let value = clamp(green[idx(r, c)] + mix(est_p, est_q, t), 0.0, 1.0);
+  let value = max(green[idx(r, c)] + mix(est_p, est_q, t), 0.0);
 
   let at = idx(r, c);
   if (phase(r, c) == 0u) { blue[at] = value; } else { red[at] = value; }
@@ -306,7 +309,7 @@ fn chroma_at_green(r: i32, c: i32, plane: u32, t: f32) -> f32 {
   let est_v = (g_n * d_s + g_s * d_n) / (g_n + g_s);
   let est_h = (g_e * d_w + g_w * d_e) / (g_e + g_w);
 
-  return clamp(g0 + mix(est_v, est_h, t), 0.0, 1.0);
+  return max(g0 + mix(est_v, est_h, t), 0.0);
 }
 
 @compute @workgroup_size(8, 8)
