@@ -129,27 +129,6 @@ pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
     }
 }
 
-/// LibRaw's `user_qual`: PPG, the cheapest of LibRaw's algorithms and not the
-/// worst. See DESIGN 10.4 for the measured table across all of them.
-const DEMOSAIC_PPG: c_int = 2;
-
-/// Which demosaic to run, overridable with BOWERBIRD_DEMOSAIC.
-///
-/// A knob because the choice is a speed/quality trade that only measurement
-/// settles, and the measurement is worth repeating on a different sensor: see
-/// DESIGN 10.4 for the numbers across LibRaw's algorithms. Anything outside the
-/// range LibRaw accepts falls back to PPG rather than letting it pick its default.
-fn demosaic() -> c_int {
-    std::env::var("BOWERBIRD_DEMOSAIC")
-        .ok()
-        .and_then(|value| value.parse::<c_int>().ok())
-        .filter(|value| (0..=12).contains(value))
-        .unwrap_or(DEMOSAIC_PPG)
-}
-
-const OUTPUT_SRGB: c_int = 1;
-const OUTPUT_REC2020: c_int = 8;
-
 // The denoise used to be scaled here by the frame's ISO, on the reasoning that shot
 // noise goes as its square root. It is measured off the frame instead now
 // (`image::measure_noise`), which answers the same question better: by the time the
@@ -755,107 +734,6 @@ impl Tile {
 /// given; 64 covers that and the joint upsample's own neighbourhood on the way back up.
 pub const TILE_HALO: usize = 64;
 
-/// The mosaic denoised in place, between LibRaw's unpack and its demosaic.
-///
-/// Declines rather than fails, in every case where it cannot help: no adapter, an adapter
-/// under the denoise's workgroup-storage floor, a sensor whose filter array does not tile
-/// into 2x2 sites, or a frame too small for the chroma pyramid. The photograph decodes
-/// either way; what changes is whether its noise came out with it.
-///
-/// **X-Trans and Foveon get nothing.** Every phase of GALOSH pairs rows and columns into
-/// 2x2 CFA sites - the transform, the chroma extraction, the per-slot dark reference - and
-/// a 6x6 array is not that. Declining is the honest answer; a filter that assumed the wrong
-/// periodicity would produce a maze pattern rather than a denoise.
-///
-/// `window` is the part of the mosaic to work on, which a tile takes and a rendition does not.
-///
-/// # Safety
-/// `r` must be a live `libraw_data_t` with `unpack` already run and `dcraw_process` not.
-#[expect(unsafe_code)]
-unsafe fn denoise_mosaic(
-    r: *mut raw::libraw_data_t,
-    amounts: galosh::Amounts,
-    window: Option<Tile>,
-) -> Option<galosh::NoiseModel> {
-    if !amounts.does_anything() {
-        return None;
-    }
-    let idata = &unsafe { (*r).idata };
-    // dcraw's own test: X-Trans reports 9, a full-colour sensor 0, and every Bayer array is
-    // a large bit pattern.
-    if idata.filters < 1000 || idata.colors != 3 {
-        return None;
-    }
-
-    let sizes = &unsafe { (*r).sizes };
-    let stride = match sizes.raw_pitch {
-        0 => sizes.raw_width as usize,
-        pitch => pitch as usize / 2,
-    };
-    // Trimmed to whole sites. An odd last row or column keeps its noise, which beats
-    // denoising it against the wrong filter colour.
-    let width = (sizes.raw_width as usize) & !1;
-    let height = (sizes.raw_height as usize) & !1;
-    // Below the eighth-resolution chroma level the reference skips its own pyramid; there
-    // is no such frame in a photo library, so declining is simpler than the special case.
-    if width < 64 || height < 64 || stride < width {
-        return None;
-    }
-
-    let image = unsafe { (*r).rawdata.raw_image };
-    if image.is_null() {
-        return None;
-    }
-    let gpu = gpu::device()?;
-    let kernels = galosh::device(gpu)?;
-
-    // The window the samples are normalised into. GALOSH fits its own per-slot dark
-    // reference in Phase 2, so the *residue* of a black level that is not quite right is
-    // measured and removed rather than baked in - which is why one scalar is enough here
-    // where the demosaic downstream wants LibRaw's whole per-channel table.
-    let colour = &unsafe { (*r).color };
-    let black = colour.black + colour.cblack[..4].iter().copied().min().unwrap_or(0);
-    let white = colour.maximum;
-    if white <= black {
-        return None;
-    }
-    let floor = black as f32;
-    let range = (white - black) as f32;
-
-    // The part of the mosaic to denoise. A tile takes a window; a rendition takes the frame.
-    let cut = window.map_or(Tile { left: 0, top: 0, width, height }, |asked| {
-        asked.within(width, height)
-    });
-    if cut.width < 64 || cut.height < 64 {
-        return None;
-    }
-    let (width, height) = (cut.width, cut.height);
-    let start = cut.top * stride + cut.left;
-
-    let mut mosaic = Vec::with_capacity(width * height);
-    for row in 0..height {
-        let line = unsafe { std::slice::from_raw_parts(image.add(start + row * stride), width) };
-        mosaic.extend(line.iter().map(|v| (f32::from(*v) - floor) / range));
-    }
-
-    let model = galosh::denoise(gpu, kernels, &mut mosaic, width, height, amounts);
-
-    for row in 0..height {
-        let line =
-            unsafe { std::slice::from_raw_parts_mut(image.add(start + row * stride), width) };
-        for (sample, denoised) in line.iter_mut().zip(&mosaic[row * width..]) {
-            // A sample at or above saturation is left exactly as it was. The denoise clamps
-            // its own output to the window, so passing a clipped highlight through it would
-            // pull it *down* to `maximum` and take the headroom the highlight recovery
-            // downstream reads with it.
-            if *sample < white as u16 {
-                *sample = (denoised * range + floor).round().clamp(0.0, 65535.0) as u16;
-            }
-        }
-    }
-    Some(model)
-}
-
 /// Which of the two ways LibRaw can be handed a file. Only the embedded preview still opens one.
 enum Opened<'a> {
     Path(&'a std::ffi::CStr),
@@ -872,193 +750,6 @@ impl Opened<'_> {
             },
         }
     }
-}
-
-#[expect(unsafe_code)]
-fn decode_with_libraw(
-    source: Opened<'_>,
-    depth: u32,
-    rec2020_linear: bool,
-    at_least_long_edge: u32,
-    reference: bool,
-    amounts: galosh::Amounts,
-    crop: Option<Tile>,
-) -> Option<frame::Frame> {
-    let r = unsafe { raw::libraw_init(0) };
-    if r.is_null() {
-        return None;
-    }
-
-    // Guarded around the closure rather than outside `libraw_init`, so a panic still
-    // reaches the `recycle`/`close` below instead of leaking the processor with it.
-    let result = guard("bb_decode", None, || {
-        (|| -> Option<frame::Frame> {
-            #[expect(unsafe_code)]
-            unsafe {
-                if source.open(r) != 0 {
-                    return None;
-                }
-
-                // Read before unpack/process, which overwrite the size fields - and normalised,
-                // because `unpack` also rewrites a degree-valued flip into a code, and
-                // `copy_processed` reads it on the far side of that.
-                let flip = normalised_flip((*r).sizes.flip);
-                let mut insets = rotate_insets(read_insets(r), flip);
-                let full_long_edge = (*r).sizes.width.max((*r).sizes.height) as u32;
-
-                // The typed field the whole wrapper exists for.
-                let halved = at_least_long_edge > 0 && full_long_edge / 2 >= at_least_long_edge;
-                if halved {
-                    (*r).params.half_size = 1;
-                    insets = halve_insets(insets);
-                }
-
-                if let Some(mul) = camera_multipliers(&(*r).color.cam_mul) {
-                    (*r).params.user_mul = mul;
-                }
-                (*r).params.user_qual = demosaic();
-                (*r).params.output_bps = depth as c_int;
-                if rec2020_linear {
-                    (*r).params.output_color = OUTPUT_REC2020;
-                    // Identity curve, so samples stay proportional to the light that made
-                    // them, and no auto-brightening to normalise away HDR headroom.
-                    (*r).params.gamm[0] = 1.0;
-                    (*r).params.gamm[1] = 1.0;
-                    (*r).params.no_auto_bright = 1;
-                } else {
-                    (*r).params.output_color = OUTPUT_SRGB;
-                }
-
-                // `cropbox` restricts the demosaic's own work rather than trimming its output,
-                // which is what makes a tile affordable. Set before the unpack because LibRaw
-                // reads it while sizing what `raw2image` will build.
-                if let Some(asked) = crop {
-                    (*r).params.cropbox = [
-                        asked.left as u32,
-                        asked.top as u32,
-                        asked.width as u32,
-                        asked.height as u32,
-                    ];
-                }
-                if raw::libraw_unpack(r) != 0 {
-                    return None;
-                }
-                // Between the unpack and the demosaic, which is the only moment the mosaic
-                // exists: `dcraw_process` reads `rawdata.raw_image` into `imgdata.image`
-                // and interpolates it, and after that every sample is an average of its
-                // neighbours and the noise with it.
-                // The crop is in the *image's* pixels and the mosaic still carries the sensor's
-                // margins, so the window is shifted past them before it names anything - and
-                // grown by the halo, since a tile denoised without the context that reaches
-                // across its seam disagrees with its neighbour along it.
-                let window = crop.map(|asked| {
-                    Tile {
-                        left: asked.left + (*r).sizes.left_margin as usize,
-                        top: asked.top + (*r).sizes.top_margin as usize,
-                        width: asked.width,
-                        height: asked.height,
-                    }
-                    .with_halo(TILE_HALO)
-                });
-                let noise = denoise_mosaic(r, amounts, window);
-                if raw::libraw_dcraw_process(r) != 0 {
-                    return None;
-                }
-
-                // Straight out of `imgdata.image` where the curve is ours to know, which skips
-                // the second whole-frame buffer `dcraw_make_mem_image` would allocate and the
-                // copy back out of it.
-                let taken = if reference {
-                    None
-                } else {
-                    copy_processed(r, depth, &insets, at_least_long_edge)
-                };
-                let direct = taken.is_some();
-                let (width, height, data) = match taken {
-                    Some((w, h, samples)) => (w, h, frame::Pixels::Sixteen(samples)),
-                    None => {
-                        let mut err: c_int = 0;
-                        let image = raw::libraw_dcraw_make_mem_image(r, &mut err);
-                        if image.is_null() || err != 0 {
-                            return None;
-                        }
-                        let w = (*image).width as usize;
-                        let h = (*image).height as usize;
-                        let colors = (*image).colors;
-                        let bits = (*image).bits as u32;
-                        let data = copy_cropped(
-                            (*image).data.as_ptr(),
-                            w,
-                            h,
-                            3 * (depth as usize / 8),
-                            &insets,
-                        );
-                        raw::libraw_dcraw_clear_mem(image);
-                        if colors != 3 || bits != depth {
-                            return None;
-                        }
-                        let (cw, ch) = (
-                            w - insets.left - insets.right,
-                            h - insets.top - insets.bottom,
-                        );
-                        if depth != 16 {
-                            (cw, ch, frame::Pixels::Eight(data))
-                        } else {
-                            // Bytes out of LibRaw's buffer, into the `u16`s they are. Both arms
-                            // hand back the same type, which is what lets the differential test
-                            // compare them at all.
-                            let samples: Vec<u16> = data
-                                .chunks_exact(2)
-                                .map(|b| u16::from_ne_bytes([b[0], b[1]]))
-                                .collect();
-                            // The fit the direct path fuses into its copy, applied here as the
-                            // separate pass it used to be. That is what keeps the two
-                            // comparable: `fixture_tests::fused_decode_matches_libraw` holds
-                            // them against each other, so it pins the fusion as well as the
-                            // interleave.
-                            let (tw, th) = decode_target(cw, ch, at_least_long_edge);
-                            match (tw, th) == (cw, ch) {
-                                true => (cw, ch, frame::Pixels::Sixteen(samples)),
-                                false => (
-                                    tw,
-                                    th,
-                                    frame::Pixels::Sixteen(image::box_resize_u16(
-                                        &samples, cw, ch, tw, th,
-                                    )?),
-                                ),
-                            }
-                        }
-                    }
-                };
-
-                let mut built = frame::Frame::new(width, height, data);
-                built.halved = halved;
-                built.direct = direct;
-                // The last thing read off the processor, and the only place it can be read:
-                // `libraw_close` below takes the matrix with it, and the balanced samples
-                // carry no trace of what was divided out of them.
-                built.as_shot =
-                    white_balance::as_shot(&(*r).color.cam_mul, &(*r).color.cam_xyz);
-                built.noise = noise;
-                Some(built)
-            }
-        })()
-    });
-
-    // Both, and as early as the copy allows. `recycle` frees `imgdata.image` *and*
-    // `imgdata.rawdata`, which `dcraw_process` does not: measured on a 61MP frame, the
-    // unpacked raw is 124MB and stays resident through the process and the copy, so what is
-    // live at the peak is 494MB of `image` plus that plus the 366MB being copied into. The C
-    // API has no way to hand back the raw alone - `libraw_free_image` is `image` only and
-    // there is no `LIBRAW_RAWOPTIONS` for it - so the only lever here is *when*, and this is
-    // as early as it goes. Reducing the sum itself means banding the decode, which is a
-    // different change (DESIGN 10.3).
-    #[expect(unsafe_code)]
-    unsafe {
-        raw::libraw_recycle(r);
-        raw::libraw_close(r);
-    }
-    result
 }
 
 /// The camera's embedded preview as an owned frame, fitted to `long_edge`.
@@ -1369,68 +1060,19 @@ mod tests {
     ///     native/rawshim/Cargo.toml --lib tile_cost -- --nocapture --ignored
     #[test]
     #[ignore = "wants a real RAW on this machine"]
-    #[expect(unsafe_code)]
     fn tile_cost() {
         let Ok(path) = std::env::var("BOWERBIRD_TILE_RAW") else { return };
-        let file = std::ffi::CString::new(path.clone()).expect("a path");
-
-        // One stage at a time, each from a fresh processor, because `dcraw_process` runs once
-        // per handle and the earlier stages are what the later ones are being compared against.
-        let stage = |crop: Option<[u32; 4]>, process: bool| -> (u128, usize) {
-            let started = std::time::Instant::now();
-            unsafe {
-                let r = raw::libraw_init(0);
-                assert!(!r.is_null());
-                assert_eq!(raw::libraw_open_file(r, file.as_ptr()), 0, "opens");
-                (*r).params.user_qual = demosaic();
-                (*r).params.output_bps = 16;
-                (*r).params.output_color = OUTPUT_REC2020;
-                (*r).params.gamm[0] = 1.0;
-                (*r).params.gamm[1] = 1.0;
-                (*r).params.no_auto_bright = 1;
-                if let Some([left, top, width, height]) = crop {
-                    (*r).params.cropbox = [left, top, width, height];
-                }
-                assert_eq!(raw::libraw_unpack(r), 0, "unpacks");
-                let mut pixels = 0usize;
-                if process {
-                    assert_eq!(raw::libraw_dcraw_process(r), 0, "processes");
-                    pixels = (*r).sizes.iwidth as usize * (*r).sizes.iheight as usize;
-                }
-                raw::libraw_recycle(r);
-                raw::libraw_close(r);
-                (started.elapsed().as_millis(), pixels)
-            }
-        };
-
-        // From memory, to split the file read off the decompression: the library under test
-        // reads from a NAS as often as from a disk, and those want different answers.
-        let bytes = std::fs::read(&path).expect("reads");
-        let from_memory = {
-            let started = std::time::Instant::now();
-            unsafe {
-                let r = raw::libraw_init(0);
-                assert_eq!(
-                    raw::libraw_open_buffer(r, bytes.as_ptr().cast(), bytes.len()),
-                    0,
-                    "opens",
-                );
-                assert_eq!(raw::libraw_unpack(r), 0, "unpacks");
-                raw::libraw_recycle(r);
-                raw::libraw_close(r);
-            }
-            started.elapsed().as_millis()
-        };
-        println!("  bytes are {} MB", bytes.len() / (1 << 20));
-        println!("  open+unpack from memory {from_memory:>5}ms");
-
-        let (unpack_ms, _) = stage(None, false);
-        let (full_ms, full_pixels) = stage(None, true);
-        let (crop_ms, crop_pixels) = stage(Some([2000, 1400, 700, 700]), true);
-
-        println!("  open+unpack only        {unpack_ms:>5}ms");
-        println!("  + demosaic, whole       {full_ms:>5}ms  {full_pixels} px");
-        println!("  + demosaic, 700px crop  {crop_ms:>5}ms  {crop_pixels} px");
+        // The decode either side of the tile, which is what the region read is measured against.
+        // `tile_check` is the finer instrument - it compares a tile against the frame's own
+        // pixels - and this is the wall clock a reader waits on.
+        let started = std::time::Instant::now();
+        let whole = decode_frame(&path, 16, true, 0).expect("the frame decodes");
+        println!(
+            "  whole frame             {:>5}ms  {}x{}",
+            started.elapsed().as_millis(),
+            whole.width,
+            whole.height,
+        );
 
         // The whole server path, which is what a reader actually waits on: `job::tile` fits the
         // camera match and grades on top of the decode below.
