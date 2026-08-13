@@ -155,10 +155,15 @@ mod decode_geometry {
 
     /// Pinned, because the failure this guards is a plausible-looking number: the EOS
     /// R8 decoded to 3879x5811, a 3% tight and off-centre crop of the picture the
-    /// camera took, from applying a crop LibRaw had already applied.
+    /// camera took, from applying a crop that had already been applied.
+    ///
+    /// The numbers moved when LibRaw did. These are the manufacturer's recommended crop,
+    /// which is what `crop_area` states and what the camera's own JPEG is; LibRaw emitted a
+    /// slightly larger frame on both bodies - 4024x6024 here and 3999x5999 there - because it
+    /// trimmed to its own margins instead. Same picture, a couple of dozen pixels of border.
     #[test]
     fn decodes_the_frame_the_camera_says_it_took() {
-        for (path, width, height) in [(sony(), 4024, 6024), (canon(), 3999, 5999)] {
+        for (path, width, height) in [(sony(), 4000, 6000), (canon(), 4000, 6000)] {
             let frame = decode(&path, 8, false, 0);
             assert_eq!((frame.width, frame.height), (width, height), "{}", path.display());
         }
@@ -269,54 +274,42 @@ mod halving {
     }
 }
 
-/// The scene-linear decode skips `dcraw_make_mem_image` and reads `imgdata.image`
-/// itself, interleaving, orienting and cropping in one pass (§10.4). That is only safe
-/// because the output curve on this path is a constant we set rather than one LibRaw
-/// derives: `no_auto_bright` pins dcraw's `t_white`, `bright` is 1 and `gamm` is {1,1},
-/// which makes the curve the identity.
+/// The half-size decode against the frame it stands in for.
 ///
-/// So it is pinned rather than reasoned about: both routes must agree to the byte, on
-/// both orientations of the flip, on a body that declares a crop and one that does not,
-/// and at half size as well as full, since the half-size decision changes the insets.
-mod fused_decode_matches_libraw {
+/// This used to hold two LibRaw routes against each other to the byte - a fused read out of
+/// `imgdata.image` and `dcraw_make_mem_image` - and neither exists. What is worth pinning now is
+/// that halving happens when it should and that what comes out is the same photograph: a site
+/// combined off an odd row reads the colours next door and comes out plausible, sharp and green,
+/// which no assertion about dimensions would catch.
+mod a_halved_frame_is_the_same_picture {
     use super::*;
 
     #[test]
-    fn on_both_bodies_at_both_sizes() {
+    fn on_both_bodies() {
         for path in [sony(), canon()] {
-            for long in [0u32, 640] {
-                let direct = decode(&path, 16, true, long);
-                let reference =
-                    crate::_for_testing_decode_frame_reference(path.to_str().unwrap(), 16, true, long)
-                        .expect("the reference decode");
+            let whole = decode(&path, 16, true, 0);
+            // A floor of 640 is under half of either fixture, so both are candidates.
+            let halved = decode(&path, 16, true, 640);
 
-                // A guard on the fixture rather than the code: a half-size case that
-                // stopped halving would pass the comparison while testing the same
-                // thing twice.
-                assert_eq!(direct.halved, long > 0, "{} at {long}", path.display());
-                assert_eq!(
-                    (direct.width, direct.height),
-                    (reference.width, reference.height),
-                    "{} at {long}",
-                    path.display(),
-                );
+            assert!(halved.halved, "{} was not halved", path.display());
+            assert_eq!(
+                (halved.width, halved.height),
+                (whole.width / 2, whole.height / 2),
+                "{}",
+                path.display(),
+            );
 
-                // And a guard on the fork itself. `copy_processed` declines - falling
-                // back to the very path this compares against - on any of five
-                // conditions, one of which is a curve parameter it does not set. If it
-                // ever starts declining, everything above passes with both arms on the
-                // reference path and the thing under test is dead with nothing to say
-                // so.
-                assert!(direct.direct, "the fused path declined on {}", path.display());
-                assert!(!reference.direct, "the reference path took the fused route");
-
-                assert_eq!(
-                    crate::debug::summarise(&direct).sha1,
-                    crate::debug::summarise(&reference).sha1,
-                    "{} at {long} differs between the two decode routes",
-                    path.display(),
-                );
-            }
+            let mean = |frame: &crate::frame::Frame| -> f64 {
+                let samples = frame.samples16().expect("16-bit");
+                samples.iter().map(|v| f64::from(*v)).sum::<f64>() / samples.len() as f64
+            };
+            let (full, small) = (mean(&whole), mean(&halved));
+            assert!(
+                (small - full).abs() / full < 0.01,
+                "{}: the halved frame means {small} against the full frame's {full}, which is a \
+                 different picture rather than a smaller one",
+                path.display(),
+            );
         }
     }
 }
@@ -328,31 +321,10 @@ mod fused_decode_matches_libraw {
 /// says, where the number that matters is what an actual sensor, demosaic and resample
 /// leave behind - and if the estimator came back an order of magnitude out, the luma
 /// denoise would either do nothing or flatten the picture, with nothing in between.
-mod the_noise_estimate_lands_where_a_real_frame_puts_it {
-    use super::*;
-
-    #[test]
-    fn on_both_bodies() {
-        for path in [sony(), canon()] {
-            let frame = decode(&path, 8, false, 1280);
-            let rgb = frame.rgb8().expect("an 8-bit decode");
-            let sigma = crate::image::_for_testing_measure_noise(rgb.data, rgb.width, rgb.height);
-            // Loose on purpose: the claim is an order of magnitude, not a value. Under
-            // 0.1% of full scale would leave the denoise doing nothing on every frame.
-            //
-            // The upper bound is the estimator's own ceiling rather than a number above
-            // it - `sigma_from` ends in `.min(NOISE_CEILING)`, so any bound looser than
-            // that can never fail. A real frame *reaching* the ceiling would mean the
-            // estimator had stopped measuring and started saturating.
-            assert!(sigma > 0.001, "{}: sigma {sigma} is too low to denoise anything", path.display());
-            assert!(
-                sigma < crate::image::_for_testing_noise_ceiling(),
-                "{}: sigma {sigma} is pinned at the ceiling, so it is not a measurement",
-                path.display(),
-            );
-        }
-    }
-}
+// The noise estimator this measured is gone with the post-demosaic luma denoise it fed. GALOSH
+// fits its own model on the mosaic, before the demosaic and the resample that used to be the
+// reason a frame's noise could not be predicted from its ISO, and `galosh::NoiseModel` rides out
+// on the frame where this had to go looking for it.
 
 /// Deriving, per photo, the transform that makes a RAW render look like the camera's
 /// own JPEG - the maker's colour treatment and whichever picture profile the
@@ -541,12 +513,22 @@ mod camera_match {
         let decoded = decode(&sony(), 8, false, 400);
         let fitted = resize(decoded.rgb8().expect("an 8-bit render"), 400);
         let render = fitted.as_ref();
-        // Both fitted to the same long edge, and the render and its own embedded
-        // preview share an aspect, so this is like-for-like.
-        assert_eq!(
-            (render.width, render.height),
-            (preview.width, preview.height),
-            "the render and its own preview must be fitted alike",
+        // Both fitted to the same long edge, so this is like-for-like - to a pixel.
+        //
+        // Not exactly, and the reason is worth naming: the render is the manufacturer's
+        // recommended crop and the camera's own JPEG is very slightly wider than that, so at
+        // 400 the two aspects round to 266 and 267. That is a fifth of a percent, the fit
+        // resamples both onto its own grid anyway, and a real misalignment would be tens of
+        // pixels rather than one.
+        assert_eq!(render.height, preview.height, "the render and its preview must share a long edge");
+        assert!(
+            render.width.abs_diff(preview.width) <= 1,
+            "the render is {}x{} against a preview of {}x{}, which is a different framing rather \
+             than a rounding difference",
+            render.width,
+            render.height,
+            preview.width,
+            preview.height,
         );
 
         let (mut before, mut after, mut counted) = (0.0, 0.0, 0usize);
@@ -1462,12 +1444,8 @@ mod one_open_at_a_time {
                 reference_white_nits: 203.0,
                 white_quantile: 0.9,
             },
-            strengths: crate::image::Strengths {
-                luma: 0.5,
-                chroma: 0.5,
-                sharpen: 0.6,
-                defringe: 0.5,
-            },
+            strengths: crate::image::Strengths { sharpen: 0.6, defringe: 0.5 },
+            camera_match: None,
         }
     }
 

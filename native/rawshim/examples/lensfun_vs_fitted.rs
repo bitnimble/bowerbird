@@ -100,7 +100,7 @@ fn measure(path: &std::path::Path) -> Result<Option<Row>, String> {
     let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
     let source = hdr::Source { samples, width: frame.width, height: frame.height };
 
-    let jpeg = rawshim::embedded_jpeg_bytes(&bytes).ok_or("no embedded JPEG")?;
+    let jpeg = rawshim::decode_rawler::upright_preview_jpeg_bytes(&bytes).ok_or("no embedded JPEG")?;
     let preview = rawshim::jpeg::decode(&jpeg, hdr_fit::sample_long_edge())?;
 
     let levels = rawshim::tone::levels(source.samples, 0.995);
