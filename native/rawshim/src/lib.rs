@@ -239,16 +239,13 @@ fn decode_frame_via(
     decode_frame_cropped(source, depth, rec2020_linear, at_least_long_edge, reference, amounts, None)
 }
 
-/// `_at_least_long_edge` is a floor rather than a size, and a frame at the sensor's own resolution
-/// clears any of them. LibRaw used it to take a cheaper half decode when the caller only wanted a
-/// small rendition; there is no equivalent here, so the whole frame is decoded and the caller fits
-/// it as it would have anyway. Kept in the signature because it still describes what the caller
-/// needs, and a decoder that can act on it would want to be told.
+/// `at_least_long_edge` is a floor rather than a size: the smallest long edge that would still
+/// serve. A frame whose own is at least twice that is halved, which skips the demosaic entirely.
 fn decode_frame_cropped(
     source: DecodeSource<'_>,
     depth: u32,
     rec2020_linear: bool,
-    _at_least_long_edge: u32,
+    at_least_long_edge: u32,
     _reference: bool,
     amounts: galosh::Amounts,
     crop: Option<Tile>,
@@ -257,11 +254,12 @@ fn decode_frame_cropped(
         return None;
     }
     let scene = match (&source, crop) {
+        // A tile is magnifying, so it is never halved however small the caller's floor is.
         (DecodeSource::Path(path), Some(tile)) => decode_rawler::decode_tile(path, tile, amounts),
-        (DecodeSource::Path(path), None) => decode_rawler::decode(path, amounts),
+        (DecodeSource::Path(path), None) => decode_rawler::decode_fitted(path, amounts, at_least_long_edge),
         // A tile of an in-memory source has no caller, so it is refused rather than read to a file
         // to get one.
-        (DecodeSource::Bytes(bytes), None) => decode_rawler::decode_bytes(bytes, amounts),
+        (DecodeSource::Bytes(bytes), None) => decode_rawler::decode_bytes(bytes, amounts, at_least_long_edge),
         (DecodeSource::Bytes(_), Some(_)) => None,
     }?;
 

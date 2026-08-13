@@ -219,19 +219,98 @@ pub fn decode_tile(path: &str, tile: crate::Tile, amounts: crate::galosh::Amount
     })
 }
 
+/// The whole frame, at the sensor's own resolution.
 pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
-    decode_source(&rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?, amounts)
+    decode_fitted(path, amounts, 0)
+}
+
+/// The frame, halved where the caller's floor allows it.
+///
+/// `at_least_long_edge` is the smallest long edge that would still serve. Halving a frame whose own
+/// long edge is at least twice that leaves it still large enough, and saves the demosaic outright.
+pub fn decode_fitted(path: &str, amounts: crate::galosh::Amounts, at_least_long_edge: u32) -> Option<Frame> {
+    decode_source(
+        &rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?,
+        amounts,
+        at_least_long_edge,
+    )
+}
+
+/// One RGB pixel per 2x2 CFA site, which is a half-resolution frame with no demosaic in it.
+///
+/// **Not an approximation of one.** Every site carries a real red, a real blue and two greens, so
+/// the output pixel is measured rather than interpolated - there is no direction to guess and no
+/// false colour to suppress. It is what LibRaw's `half_size` did, and it is the reason a caller that
+/// only wants a small rendition should never pay for RCD: the demosaic is the largest cost in the
+/// decode and this skips all of it.
+///
+/// `cfa` is the 2x2 read row-major, and the site grid is the frame's own, so the caller must not
+/// hand this a mosaic whose origin sits on an odd row or column.
+fn half_size(mosaic: &[f32], width: usize, height: usize, cfa: [u32; 4]) -> Vec<f32> {
+    let (out_w, out_h) = (width / 2, height / 2);
+    let mut out = vec![0f32; out_w * out_h * 3];
+    out.par_chunks_mut(out_w * 3).enumerate().for_each(|(row, line)| {
+        let (top, bottom) = (row * 2 * width, (row * 2 + 1) * width);
+        for (col, pixel) in line.chunks_exact_mut(3).enumerate() {
+            let site = [
+                mosaic[top + col * 2],
+                mosaic[top + col * 2 + 1],
+                mosaic[bottom + col * 2],
+                mosaic[bottom + col * 2 + 1],
+            ];
+            let mut green = 0.0;
+            let mut greens = 0.0;
+            for (at, value) in site.iter().enumerate() {
+                match cfa[at] {
+                    0 => pixel[0] = *value,
+                    2 => pixel[2] = *value,
+                    // Both of them, averaged: the two greens of a site are the same colour sampled
+                    // twice, and using one would throw away half the luminance signal the sensor
+                    // spends half its photosites collecting.
+                    _ => {
+                        green += *value;
+                        greens += 1.0;
+                    }
+                }
+            }
+            pixel[1] = if greens > 0.0 { green / greens } else { 0.0 };
+        }
+    });
+    out
+}
+
+/// The colour transform over a frame that is already interleaved RGB, for the half-size path.
+///
+/// `to_rec2020` reads the demosaic's mapped bytes; this reads floats that never left the CPU.
+fn to_rec2020_from(rgb: &[f32], stride: usize, crop: (usize, usize, usize, usize), matrix: [[f32; 3]; 3]) -> Vec<u16> {
+    let (left, top, width, height) = crop;
+    let mut out = vec![0u16; width * height * 3];
+    out.par_chunks_mut(width * 3).enumerate().for_each(|(row, line)| {
+        for (col, pixel) in line.chunks_exact_mut(3).enumerate() {
+            let from = ((top + row) * stride + left + col) * 3;
+            let (r, g, b) = (rgb[from], rgb[from + 1], rgb[from + 2]);
+            for (channel, slot) in pixel.iter_mut().enumerate() {
+                let value = matrix[channel][0] * r + matrix[channel][1] * g + matrix[channel][2] * b;
+                *slot = (value * 65535.0).clamp(0.0, 65535.0) as u16;
+            }
+        }
+    });
+    out
 }
 
 /// The same decode, from bytes already in hand.
 ///
 /// What preparing an edit needs: the server has read the file to hash it and hands the buffer
 /// straight on, so opening the path again would read it twice.
-pub fn decode_bytes(bytes: &[u8], amounts: crate::galosh::Amounts) -> Option<Frame> {
-    decode_source(&rawler::rawsource::RawSource::new_from_slice(bytes), amounts)
+pub fn decode_bytes(bytes: &[u8], amounts: crate::galosh::Amounts, at_least_long_edge: u32) -> Option<Frame> {
+    decode_source(&rawler::rawsource::RawSource::new_from_slice(bytes), amounts, at_least_long_edge)
 }
 
-fn decode_source(source: &rawler::rawsource::RawSource, amounts: crate::galosh::Amounts) -> Option<Frame> {
+fn decode_source(
+    source: &rawler::rawsource::RawSource,
+    amounts: crate::galosh::Amounts,
+    at_least_long_edge: u32,
+) -> Option<Frame> {
     // Stage timings, for the benchmark that compares this against LibRaw. Off unless asked, and
     // the clock reads are per decode rather than per pixel, so leaving it in costs nothing.
     let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
@@ -287,10 +366,28 @@ fn decode_source(source: &rawler::rawsource::RawSource, amounts: crate::galosh::
         .map(|area| (area.p.x, area.p.y, area.d.w, area.d.h))
         .unwrap_or((0, 0, width, height));
 
-    let rcd = crate::demosaic::device(gpu)?;
-    let pixels = crate::demosaic::demosaic_with(gpu, rcd, &mosaic, width, height, cfa, |rgb| {
-        to_rec2020(rgb, width, crop, matrix)
-    })?;
+    // Halved where the caller said a smaller frame would do, which skips the demosaic outright.
+    // The crop halves with it, and its origin has to stay on a whole CFA site or the colours in the
+    // half-size frame are the ones next door - so an odd origin declines rather than shifts.
+    let halved = at_least_long_edge > 0
+        && (width.max(height) as u32) / 2 >= at_least_long_edge
+        && crop.0 % 2 == 0
+        && crop.1 % 2 == 0;
+
+    let (pixels, crop) = match halved {
+        true => {
+            let small = half_size(&mosaic, width, height, cfa);
+            let crop = (crop.0 / 2, crop.1 / 2, crop.2 / 2, crop.3 / 2);
+            (to_rec2020_from(&small, width / 2, crop, matrix), crop)
+        }
+        false => {
+            let rcd = crate::demosaic::device(gpu)?;
+            let pixels = crate::demosaic::demosaic_with(gpu, rcd, &mosaic, width, height, cfa, |rgb| {
+                to_rec2020(rgb, width, crop, matrix)
+            })?;
+            (pixels, crop)
+        }
+    };
     drop(mosaic);
 
     lap("demosaic, colour, crop");
@@ -308,7 +405,7 @@ fn decode_source(source: &rawler::rawsource::RawSource, amounts: crate::galosh::
         width: out_w,
         height: out_h,
         pixels: Pixels::Sixteen(pixels),
-        halved: false,
+        halved,
         direct: true,
         as_shot: as_shot_of(&image),
         noise,
