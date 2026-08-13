@@ -658,12 +658,17 @@ fn decode_frame_cropped(
     // The decoder without LibRaw, where it has been asked for and can serve this call. It reads a
     // path, produces 16-bit scene-linear, and demosaics on the GPU; the 8-bit sRGB route, the
     // in-memory sources and the tile crop are still LibRaw's, so those fall through.
+    //
+    // `at_least_long_edge` is deliberately not among the conditions. It is a floor, not a size, and
+    // a frame at the sensor's own resolution clears any of them - LibRaw uses it to take a cheaper
+    // half decode, which this path has no equivalent of, so it simply hands back the whole frame.
+    // Requiring it to be zero is what kept this branch out of the product entirely: every rendition
+    // the import builds asks for a bounded size, so nothing ever reached it.
     if decode_rawler::wanted()
         && depth == 16
         && rec2020_linear
         && !reference
         && crop.is_none()
-        && at_least_long_edge == 0
         && let DecodeSource::Path(path) = source
         && let Some(frame) = decode_rawler::decode(path, amounts)
     {
