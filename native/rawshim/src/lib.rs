@@ -130,13 +130,12 @@ pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
     }
 }
 
-// The denoise used to be scaled here by the frame's ISO, on the reasoning that shot
-// noise goes as its square root. It is measured off the frame instead now
-// (`image::measure_noise`), which answers the same question better: by the time the
-// denoise runs, the frame has been through a demosaic, a resample that averaged some of
-// the noise away and a grade that may have lifted it several stops, and none of that is
-// in the ISO. Asking the pixels costs one box mean and needs no reference ISO, no cap
-// and no special case for a body that records nothing.
+// The denoise used to be scaled here by the frame's ISO, on the reasoning that shot noise
+// goes as its square root. It is fitted off the mosaic instead now (`galosh::NoiseModel`,
+// carried on the frame), which answers the same question better: the ISO is what the body
+// was set to, not what the sensor did, and it says nothing about a pushed exposure. Asking
+// the pixels needs no reference ISO, no cap, and no special case for a body that records
+// nothing.
 
 /// Decodes a RAW to an owned frame.
 ///

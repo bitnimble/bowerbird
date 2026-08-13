@@ -49,11 +49,15 @@ async function encoded(run: (file: string) => void, fullChroma = false): Promise
   }
 }
 
-test('the denoise and the sharpen reach the HDR encode', () => {
+test('the sharpen and the defringe reach the HDR encode', () => {
   // The HDR half of §10.9 is one call in `encode_still`, and until this test it was
   // reachable by nothing: every route in pinned both settings at 0, so deleting the
   // call left every suite green. That is the same hole the SDR wiring test exists to
   // close, on the other half of the pipeline.
+  //
+  // The sharpen and the defringe, which is what `GradeSpec` carries. The mosaic denoise
+  // is on the far side of the decode and reaches this path through nothing here; it has
+  // its own wiring test in `galosh_decode`.
   //
   // Only that the pixels moved. What the filters do is measured in `image.rs` against
   // constructed inputs; what cannot be checked there is whether anything calls them.
@@ -81,17 +85,23 @@ test('the denoise and the sharpen reach the HDR encode', () => {
 test('a scene-linear decode keeps the highlight headroom an sRGB one spends', () => {
   // Half size: the subject is the levels the two decodes land on, which is a
   // property of the tone curve rather than of the frame's size.
+  //
+  // Each in the space it is served in - sRGB comes back at 8 bits and scene-linear at 16, and
+  // there is no third pairing - so the two means are compared as fractions of their own full
+  // scale rather than as counts.
   const half = { atLeastLongEdge: 1000 };
-  const display = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'srgb', ...half });
+  const display = _for_testing_decodeSummary(FIXTURE, { depth: 8, space: 'srgb', ...half });
   const scene = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'rec2020-linear', ...half });
 
-  expect(scene.width).toBe(display.width);
   expect(scene.depth).toBe(16);
+  expect(display.depth).toBe(8);
 
   // The summary reports a mean per channel; the frame's is their average, every
   // channel having the same count.
-  const meanOf = (image: typeof scene): number =>
-    image.channels.reduce((total, channel) => total + channel.mean, 0) / image.channels.length;
+  const meanOf = (image: typeof scene): number => {
+    const full = image.depth === 16 ? 65535 : 255;
+    return image.channels.reduce((total, channel) => total + channel.mean, 0) / image.channels.length / full;
+  };
 
   expect(meanOf(scene)).toBeLessThan(meanOf(display) / 2);
 });

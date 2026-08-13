@@ -64,8 +64,8 @@ pub struct Source<'a> {
 ///
 /// **Ahead of the geometric warp, which is what the sharpen is not.** Noise is generated at
 /// the sensor and so is spatially uniform in sensor space; the lens warp resamples
-/// non-uniformly by radius and breaks that, and `image::measure_noise` takes one global
-/// median and applies one sigma everywhere - an estimator for a uniform field. Measured on a
+/// non-uniformly by radius and breaks that, and the denoise fits one sigma for the frame and
+/// applies it everywhere - an estimator for a uniform field. Measured on a
 /// synthetic flat field, the warp alone takes corner-to-centre noise from 1.00x to 0.76x;
 /// denoising after it compounds that to 0.59x, where denoising first adds nothing to the
 /// warp's own 0.75x and removes ~35% more noise besides.

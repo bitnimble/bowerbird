@@ -222,7 +222,10 @@ const TRANSCODE_CAPACITY = 32 * 1024 * 1024;
  * address crosses: the bytes are copied into a buffer this side owns.
  */
 /**
- * One tile of a photograph, graded and encoded, as JPEG bytes.
+ * One tile of a photograph, graded and encoded as an HDR AVIF - PQ Rec.2020, 4:4:4, the same
+ * encode every other picture this library serves takes. See `job::tile`: a loupe held over the
+ * stage has to tone map the way the stage does, and an SDR encode has already clipped the
+ * highlights a reader opened the loupe to look at.
  *
  * The same `Job` a rendition takes, with `tile` set. Bytes back rather than a descriptor,
  * because a tile is a response and not a file: writing one to disk to read it straight back is
@@ -243,8 +246,8 @@ export function renderTile(job: Job): Buffer {
   return Buffer.from(out.subarray(0, written));
 }
 
-// A 700px JPEG at quality 96 is a few hundred kilobytes; 8MB is far past any tile this serves
-// and costs one allocation on a path that answers in about a tenth of a second.
+// A 700px 4:4:4 AVIF is a few hundred kilobytes; 8MB is far past any tile this serves and costs
+// one allocation on a path that answers in about a tenth of a second.
 const TILE_CAPACITY = 8 * 1024 * 1024;
 
 export function transcodeJpeg(filePath: string, longEdge: number, quality: number): Buffer {

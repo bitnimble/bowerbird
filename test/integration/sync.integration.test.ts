@@ -77,9 +77,16 @@ test('initial sync indexes the file with real LibRaw metadata', async () => {
     date_taken: string;
   };
   photoId = p.id;
-  expect(p.width).toBe(4024);
-  expect(p.height).toBe(6024);
-  expect(p.orientation).toBe(5); // LibRaw flip code for the rotated fixture
+  // The manufacturer's recommended crop, which is what `crop_area` states and what the camera's
+  // own JPEG is. LibRaw trimmed to its own margins and emitted 4024x6024 - the same picture with
+  // a couple of dozen pixels of border.
+  expect(p.width).toBe(4000);
+  expect(p.height).toBe(6000);
+  // The EXIF tag, which is what the catalogue stores now. LibRaw reported its own `flip` code and
+  // called this same 90° counter-clockwise rotation 5 - so a row written before the header moved
+  // holds a different number for the same photograph. Nothing reads it back for display, which is
+  // why the drift is recorded rather than migrated (§10.4).
+  expect(p.orientation).toBe(8);
   expect(p.date_taken).toBe('2020-12-06T12:46:35.000Z');
   expect(opens).toBe(1); // the one new file was opened
 });

@@ -56,13 +56,19 @@ function service(): ProcessingService {
 test('a 16-bit decode yields twice the bytes of an 8-bit one', () => {
   // The whole frame at both depths, which costs two full decodes and is the only
   // way to get the same one twice. `atLeastLongEdge` is not the same instruction
-  // at both depths any more: the scene-linear path fits the frame to it on the way
-  // out of LibRaw (§10.4), where the 8-bit path uses it only to decide whether to
-  // halve. So asking both for 1000 returned 668x1000 and 2012x3012 - a real
-  // difference, correctly reported, that this test is not about.
+  // at both depths: the scene-linear path fits the frame to it on the way out
+  // (§10.4), where the 8-bit path uses it only to decide whether to halve. So
+  // asking both for 1000 returned 668x1000 and 2012x3012 - a real difference,
+  // correctly reported, that this test is not about.
+  //
+  // **Each depth in the space that depth is served in.** There are two decodes and
+  // only two: scene-linear Rec.2020 at 16 bits, and sRGB at 8. Sixteen-bit sRGB was
+  // LibRaw handing back whatever `dcraw_process` was asked for; the decode declines
+  // it now, so pairing the depths differently is asking for a frame that does not
+  // exist rather than testing one.
   const whole = { atLeastLongEdge: 0 } as const;
   const eight = _for_testing_decodeSummary(FIXTURE, { depth: 8, space: 'srgb', ...whole });
-  const sixteen = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'srgb', ...whole });
+  const sixteen = _for_testing_decodeSummary(FIXTURE, { depth: 16, space: 'rec2020-linear', ...whole });
 
   expect(eight.depth).toBe(8);
   expect(sixteen.depth).toBe(16);

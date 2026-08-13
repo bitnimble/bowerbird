@@ -268,7 +268,7 @@ export class ProcessingService {
   }
 
   /**
-   * One tile of a photograph, at the export's own quality, as PNG bytes.
+   * One tile of a photograph, at the export's own quality.
    *
    * What the loupe magnifies. The reader's edits are the ones the export would use, from the
    * same `developed` this path already reads them through, so the magnified crop is the
