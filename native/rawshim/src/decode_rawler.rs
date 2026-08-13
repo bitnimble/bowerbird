@@ -84,7 +84,7 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
     // and green is locally smooth - and before white balance green sits about twice as high as red
     // and blue, so that difference carries the imbalance rather than the scene.
     let black = per_channel_black(&image, cfa);
-    let white = f32::from(image.whitelevel.0.iter().copied().max().unwrap_or(65535) as u16);
+    let white = saturation_of(&image, &samples[..width * height]);
     let gains = white_balance_gains(&image);
 
     let mut mosaic = vec![0f32; width * height];
@@ -183,6 +183,23 @@ fn per_channel_black(image: &rawler::RawImage, cfa: [u32; 4]) -> [f32; 4] {
         by_colour[cfa[position].min(3) as usize] = out[position];
     }
     by_colour
+}
+
+/// Where the sensor saturates, in raw counts.
+///
+/// **Never below the largest sample present, whatever the file says.** The metadata is not reliable
+/// here: an EOS R8 CR3 reports 12735 while its data runs to 16383, the full 14 bits, so a third of
+/// the highlight range is samples the file claims cannot exist. Dividing by the reported figure
+/// puts all of them above one, where the clamp in `condition` flattens them into a single value -
+/// white water loses its texture and turns cyan as red, carrying the largest gain, runs out first.
+///
+/// Taking the larger of the two is content-independent wherever it matters: it can only differ from
+/// the reported level on a frame that already exceeded it, and a frame whose highlights fall short
+/// of saturation is scaled by the reported level either way.
+fn saturation_of(image: &rawler::RawImage, samples: &[u16]) -> f32 {
+    let reported = image.whitelevel.0.iter().copied().max().unwrap_or(65535) as u16;
+    let present = samples.iter().copied().max().unwrap_or(0);
+    f32::from(reported.max(present))
 }
 
 /// Per-channel gains, scaled so the smallest of them is unity.
