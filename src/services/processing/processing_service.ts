@@ -19,7 +19,7 @@ import type {
   RenditionSource,
 } from './processing_types';
 import { renderTile } from './rawshim_job';
-import type { JobAdjust, JobGeometry } from './rawshim_job';
+import type { JobAdjust, JobGeometry, NoiseFit } from './rawshim_job';
 import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
@@ -290,11 +290,16 @@ export class ProcessingService {
     photoId: string,
     library: Library,
     tile: [number, number, number, number],
+    noiseFit?: NoiseFit,
   ): Buffer {
     const dataPath = getDataPath(library);
     return renderTile({
       rawFilePath,
       tile,
+      // The frame's own, from the editor that is holding the glass. Without it the crop fits its
+      // own noise, which is between half and half again the photograph's, so the loupe would stop
+      // predicting the export and start changing as the reader pans.
+      noiseFit,
       targets: [],
       grade: this.grade(),
       matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,

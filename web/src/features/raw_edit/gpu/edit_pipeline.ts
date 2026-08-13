@@ -26,6 +26,7 @@ import {
 } from './shaders';
 import { buildDenoiseChain, type DenoiseChain, type NoiseCurve } from './denoise_chain';
 import type { DetailPass, DetailSize, EditAdjust, EditGeometry } from './shaders';
+import type { NoiseFit } from '../../../../../src/services/processing/rawshim_job';
 
 /**
  * Where each `Edit` field lives, by name. Computed once from the layout the shader declares.
@@ -90,6 +91,14 @@ export interface PreparedHeader {
   colour: ColourPayload | null;
   /** What the samples' noise is, level by level, for the denoise to shrink against. */
   noise: NoiseCurve;
+  /**
+   * The *mosaic's* noise, which nothing on this side filters with.
+   *
+   * Held only to be handed back on the loupe's tile requests: a tile is a crop, its own
+   * whole-region fit is not the photograph's, and the server has no frame to measure. Absent
+   * where the decoding machine had no adapter.
+   */
+  noiseFit?: NoiseFit;
 }
 
 /** The part of the frame on screen, in source pixels. Zoom and pan move this and nothing else. */

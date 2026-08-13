@@ -123,6 +123,14 @@ pub struct PreparedHeader {
     /// estimator reduces every block in the frame before the first pixel can be denoised, which
     /// is a whole-frame pass the tick would otherwise repeat on every slider move.
     pub noise: crate::noise::Noise,
+    /// The *mosaic's* noise, which is a different thing from `noise` above and for a different
+    /// consumer: the client filters nothing with it and only hands it back on its loupe tile
+    /// requests, so a tile is denoised at the strength its own export would use rather than at
+    /// whatever its few hundred thousand photosites happen to imply.
+    ///
+    /// Absent where the decode had no adapter, which is the same case as a tile fitting its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub noise_fit: Option<crate::galosh::NoiseFit>,
     /// The camera match this open had to fit, for the caller to keep beside the photograph.
     ///
     /// Absent where the caller supplied a usable one, so its presence means "this is new" and a
@@ -273,8 +281,10 @@ pub fn served() -> Vec<(u64, u64)> {
 /// The open itself, with the turn already taken.
 fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     {
-        let frame = crate::decode_frame_bytes(bytes, 16, true, request.long_edge)
-            .ok_or("the decoder could not read this file")?;
+        let frame =
+            crate::decode_frame_bytes(bytes, 16, true, request.long_edge, crate::galosh::Fit::Only)
+                .ok_or("the decoder could not read this file")?;
+        let noise_fit = frame.noise;
         let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
         let source = hdr::Source { samples, width: frame.width, height: frame.height };
 
@@ -342,7 +352,7 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
             }
         }
         filter(&mut prepared, Strengths { sharpen: request.strengths.sharpen, ..Default::default() });
-        Ok(payload(prepared, matched.as_ref(), frame.as_shot, request, keep))
+        Ok(payload(prepared, matched.as_ref(), frame.as_shot, request, keep, noise_fit))
     }
 }
 
@@ -406,6 +416,7 @@ fn payload(
     request: &EditRequest,
     // The match this open fitted, or None where the request carried a usable one.
     camera_match: Option<Vec<u8>>,
+    noise_fit: Option<crate::galosh::NoiseFit>,
 ) -> Prepared {
     // The frame's own half of the uniform, in the units and the order the shader reads. At rest
     // on everything a tick moves: no gain, no adjustment, and the region and canvas the editor
@@ -445,6 +456,7 @@ fn payload(
         // Last, on the buffer as it will be sent: the warp resamples and the sharpen amplifies,
         // and a tick denoises what comes out of both rather than what went into them.
         noise: crate::noise::measure(&prepared.samples, prepared.width, prepared.height),
+        noise_fit,
         camera_match,
         samples_len: prepared.samples.len() * 2,
     };
@@ -524,6 +536,7 @@ mod tests {
             detail: crate::gpu::detail_size(pixels, 1),
             colour: None,
             noise: crate::noise::measure(&samples, pixels, 1),
+            noise_fit: None,
             camera_match: None,
             samples_len: samples.len() * 2,
         };

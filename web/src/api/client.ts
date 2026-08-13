@@ -26,6 +26,7 @@ import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequ
 import type { CreateShootRequest, Shoot, ShootRemoval, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
 import type { ProcessingStage } from '../../../src/services/processing/processing_types';
+import type { NoiseFit } from '../../../src/services/processing/rawshim_job';
 import { describe } from '../errors';
 import { type Reply, assetUrl, send } from './transport';
 
@@ -373,9 +374,21 @@ export function preparedPath(photoId: string, longEdge: number): string {
 export function tilePath(
   photoId: string,
   rect: { left: number; top: number; width: number; height: number },
+  noiseFit?: NoiseFit | null,
 ): string {
   const at = [rect.left, rect.top, rect.width, rect.height].map(Math.round);
-  return `/image/${photoId}/tile?left=${at[0]}&top=${at[1]}&width=${at[2]}&height=${at[3]}`;
+  const base = `/image/${photoId}/tile?left=${at[0]}&top=${at[1]}&width=${at[2]}&height=${at[3]}`;
+  if (noiseFit == null) return base;
+  // Seven numbers in one parameter rather than seven parameters: this is one measurement and it
+  // is round-tripped rather than read, so a caller that splits it up has invented six ways to
+  // send half of one.
+  const words = [
+    noiseFit.alpha,
+    noiseFit.sigmaSq,
+    noiseFit.unifiedSigma,
+    ...noiseFit.darkRef,
+  ];
+  return `${base}&noise=${words.join(',')}`;
 }
 
 // What the viewer shows for one of its three choices: the camera's JPEG served

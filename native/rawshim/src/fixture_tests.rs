@@ -224,10 +224,69 @@ mod decode_geometry {
             [(2000, 1400, 400, 400), (2000, 1400, 401, 400), (2001, 1401, 400, 401), (2001, 1401, 401, 401)]
         {
             let tile = crate::Tile { left, top, width, height };
-            let frame = crate::decode_tile(canon().to_str().unwrap(), tile, 16, true, amounts)
-                .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
+            let frame = crate::decode_tile(
+                canon().to_str().unwrap(),
+                tile,
+                16,
+                true,
+                amounts,
+                crate::galosh::Fit::Measure,
+            )
+            .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
             assert_eq!((frame.width, frame.height), (width, height));
         }
+    }
+
+    /// The fit taken alone is the fit the denoise takes, and neither depends on the size asked for.
+    ///
+    /// Both halves matter. The first is what makes `Fit::Only` a prefix of the chain rather than a
+    /// second estimator that happens to agree today. The second is what lets one measurement answer
+    /// for the editor's frame, every loupe tile and every rendition: the halving decision comes
+    /// after the denoise, so both of these see the same full-resolution mosaic.
+    #[test]
+    fn the_fit_alone_is_the_fit_the_denoise_makes() {
+        let amounts = crate::galosh::Amounts::from_sliders(20.0, 30.0);
+        for path in [sony(), canon()] {
+            let path = path.to_str().unwrap().to_string();
+            let denoised = crate::decode_frame_denoised(&path, 16, true, 0, amounts)
+                .and_then(|frame| frame.noise)
+                .expect("the denoise fits the frame");
+            let bytes = std::fs::read(&path).expect("the fixture reads");
+            for long_edge in [0u32, 1000] {
+                let alone =
+                    crate::decode_frame_bytes(&bytes, 16, true, long_edge, crate::galosh::Fit::Only)
+                        .and_then(|frame| frame.noise)
+                        .expect("the fit alone");
+                assert_eq!(alone, denoised, "{path} fitted differently at {long_edge}");
+            }
+        }
+    }
+
+    /// A tile handed the frame's fit does not measure its own.
+    ///
+    /// What the loupe is for: the crop is denoised at the photograph's strength, so the magnified
+    /// pixels are the ones the export would have. The tile's own fit is a different number - 0.49
+    /// to 1.51 times the frame's, measured over the fixtures - so this is a real substitution and
+    /// not two names for one measurement.
+    #[test]
+    fn a_tile_denoises_at_the_frame_it_was_cut_from() {
+        let amounts = crate::galosh::Amounts::from_sliders(20.0, 30.0);
+        let path = canon().to_str().unwrap().to_string();
+        let bytes = std::fs::read(&path).expect("the fixture reads");
+        let frame = crate::decode_frame_bytes(&bytes, 16, true, 0, crate::galosh::Fit::Only)
+            .and_then(|f| f.noise)
+            .expect("the frame's fit");
+
+        let tile = crate::Tile { left: 2000, top: 1400, width: 512, height: 512 };
+        let given = crate::decode_tile(&path, tile, 16, true, amounts, crate::galosh::Fit::Given(frame))
+            .and_then(|f| f.noise)
+            .expect("the tile decodes");
+        let own = crate::decode_tile(&path, tile, 16, true, amounts, crate::galosh::Fit::Measure)
+            .and_then(|f| f.noise)
+            .expect("the tile decodes");
+
+        assert_eq!(given, frame, "the tile reported something other than what it was handed");
+        assert_ne!(own.alpha, frame.alpha, "the crop happens to fit the frame's own alpha");
     }
 }
 
@@ -1537,5 +1596,17 @@ mod one_open_at_a_time {
             b.0,
             a.1,
         );
+    }
+
+    /// The open carries the frame's noise, and carries one a tile will accept.
+    ///
+    /// The client cannot check it - it holds the numbers without reading them - and the tile route
+    /// refuses a fit that does not describe a sensor, so an open that sent a fit `usable` rejects
+    /// would leave every loupe tile quietly fitting its own with nothing to say so.
+    #[test]
+    fn an_open_hands_over_the_frame_it_measured() {
+        let prepared = crate::edit::prepare(&request(&sony())).expect("the fixture opens");
+        let fit = prepared.header.noise_fit.expect("the open measured the mosaic");
+        assert!(fit.usable(), "the open sent a fit a tile would refuse: {fit:?}");
     }
 }

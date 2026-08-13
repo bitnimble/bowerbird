@@ -5,6 +5,7 @@ import { turnedForDisplay, turnedPointForDisplay, type CropRect } from './crop_t
 import { isUpright, type KeystoneGuide } from './keystone';
 import { wholeFrameGeometry, type EditGeometry } from './gpu/shaders';
 import type { AsShot, Region } from './gpu/edit_pipeline';
+import type { NoiseFit } from '../../../../src/services/processing/rawshim_job';
 
 export type EditStatus = 'idle' | 'fetching' | 'preparing' | 'live' | 'failed';
 
@@ -89,6 +90,16 @@ export class RawEditStore {
    * nothing, and the pair stays closed.
    */
   @observable accessor asShot: AsShot | null = null;
+
+  /**
+   * The sensor's noise as the open measured it off the mosaic, for the loupe to hand back.
+   *
+   * Nothing here reads the numbers: the tick's own denoise works on the warped frame and has
+   * `noise` for that. This is the tile renderer's, and it travels back rather than being
+   * measured again because a tile is a crop of the photograph and a crop's own fit is not the
+   * photograph's. Null for a frame decoded without an adapter.
+   */
+  @observable accessor noiseFit: NoiseFit | null = null;
 
   /** The adapter behind the tick, for the readout: this is a GPU pipeline now. */
   @observable accessor adapter = '';

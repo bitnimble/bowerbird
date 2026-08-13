@@ -11,7 +11,7 @@
 // disagree about which frame they describe.
 import { ptr } from 'bun:ffi';
 import { shim } from './rawshim';
-import type { JobGrade } from './rawshim_job';
+import type { JobGrade, NoiseFit } from './rawshim_job';
 
 /**
  * What the open applies before the frame crosses.
@@ -88,6 +88,12 @@ export interface PreparedHeader {
   matched: boolean;
   colour: ColourPayload | null;
   noise: NoisePayload;
+  /**
+   * The *mosaic's* noise, which is a different measurement from `noise` and for a different
+   * consumer: the client filters nothing with it and hands it back on its loupe tile requests,
+   * so a tile is denoised at the strength the photograph's own export would use.
+   */
+  noiseFit?: NoiseFit;
   /**
    * The camera match this open had to fit, as bytes, for the caller to keep.
    *

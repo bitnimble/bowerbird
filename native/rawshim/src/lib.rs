@@ -179,18 +179,24 @@ pub fn decode_frame_denoised(
     )
 }
 
+/// `fit` is what the decode does about the noise, and only an in-memory decode is ever asked:
+/// [`galosh::Fit::Only`] measures the frame without filtering it, which is the editor's open, and
+/// the measurement rides back on `frame.noise` for the loupe tiles that follow.
 pub fn decode_frame_bytes(
     bytes: &[u8],
     depth: u32,
     rec2020_linear: bool,
     at_least_long_edge: u32,
+    fit: galosh::Fit,
 ) -> Option<frame::Frame> {
-    decode_frame_via(
+    decode_frame_cropped(
         DecodeSource::Bytes(bytes),
         depth,
         rec2020_linear,
         at_least_long_edge,
         galosh::Amounts::default(),
+        None,
+        fit,
     )
 }
 
@@ -206,7 +212,15 @@ fn decode_frame_via(
     at_least_long_edge: u32,
     amounts: galosh::Amounts,
 ) -> Option<frame::Frame> {
-    decode_frame_cropped(source, depth, rec2020_linear, at_least_long_edge, amounts, None)
+    decode_frame_cropped(
+        source,
+        depth,
+        rec2020_linear,
+        at_least_long_edge,
+        amounts,
+        None,
+        galosh::Fit::Measure,
+    )
 }
 
 /// `at_least_long_edge` is a floor rather than a size: the smallest long edge that would still
@@ -218,17 +232,22 @@ fn decode_frame_cropped(
     at_least_long_edge: u32,
     amounts: galosh::Amounts,
     crop: Option<Tile>,
+    fit: galosh::Fit,
 ) -> Option<frame::Frame> {
     if depth != 8 && depth != 16 {
         return None;
     }
     let scene = match (&source, crop) {
         // A tile is magnifying, so it is never halved however small the caller's floor is.
-        (DecodeSource::Path(path), Some(tile)) => decode_rawler::decode_tile(path, tile, amounts),
+        (DecodeSource::Path(path), Some(tile)) => {
+            decode_rawler::decode_tile(path, tile, amounts, fit)
+        }
         (DecodeSource::Path(path), None) => decode_rawler::decode_fitted(path, amounts, at_least_long_edge),
         // A tile of an in-memory source has no caller, so it is refused rather than read to a file
         // to get one.
-        (DecodeSource::Bytes(bytes), None) => decode_rawler::decode_bytes(bytes, amounts, at_least_long_edge),
+        (DecodeSource::Bytes(bytes), None) => {
+            decode_rawler::decode_bytes(bytes, amounts, at_least_long_edge, fit)
+        }
         (DecodeSource::Bytes(_), Some(_)) => None,
     }?;
 
@@ -252,12 +271,18 @@ fn decode_frame_cropped(
 ///
 /// `crop` is in the decoded image's own pixels, upright, which is the space the editor's region
 /// speaks.
+///
+/// `fit` is the *frame's* noise, measured by the open and handed back with the request. Without it
+/// the tile measures its own, which is a different number - between 0.49 and 1.51 times the frame's
+/// on the fixtures - and the strength it denoises at, so the magnifier stops predicting the export
+/// and starts moving as the reader pans.
 pub fn decode_tile(
     path: &str,
     crop: Tile,
     depth: u32,
     rec2020_linear: bool,
     amounts: galosh::Amounts,
+    fit: galosh::Fit,
 ) -> Option<frame::Frame> {
     decode_frame_cropped(
         DecodeSource::Path(path),
@@ -266,6 +291,7 @@ pub fn decode_tile(
         0,
         amounts,
         Some(crop),
+        fit,
     )
 }
 
@@ -281,7 +307,7 @@ pub struct Tile {
 impl Tile {
     /// The window grown by `halo` on every side, which is what a tile needs.
     ///
-    /// The denoise is local with a bounded reach - the chroma pyramid goes to an eighth of the
+    /// The denoise is local with a bounded reach - the chroma pyramid goes to a quarter of the
     /// frame and the joint upsample reads a neighbourhood on the way back - so a tile denoised
     /// on its own disagrees with its neighbour along the seam unless both were computed with
     /// the context that reaches across it. The halo is trimmed off by the demosaic's own crop.
@@ -297,7 +323,7 @@ impl Tile {
 
 /// How much context the mosaic denoise needs either side of a tile.
 ///
-/// A multiple of eight, because the chroma pyramid's smallest level is an eighth of what it is
+/// A multiple of four, because the chroma pyramid's smallest level is a quarter of what it is
 /// given; 64 covers that and the joint upsample's own neighbourhood on the way back up.
 pub const TILE_HALO: usize = 64;
 
@@ -553,6 +579,7 @@ mod tests {
                 raw_file_path: path.clone(),
                 match_embedded_jpeg: true,
                 tile: Some([2000, 1400, side, side]),
+                noise_fit: None,
                 camera_match: None,
                 denoise_luminance: 20.0,
                 denoise_colour: 30.0,
@@ -626,11 +653,12 @@ mod tests {
         // Warmed first, because the pipelines and the adapter are built once per process and a
         // loupe asks its second question with them already up.
         let warm = Tile { left: 2000, top: 1400, width: 400, height: 400 };
-        decode_tile(&path, warm, 16, true, galosh::Amounts::from_sliders(40.0, 40.0));
+        let sliders = galosh::Amounts::from_sliders(40.0, 40.0);
+        decode_tile(&path, warm, 16, true, sliders, galosh::Fit::Measure);
         for side in [400usize, 700] {
             let crop = Tile { left: 2000, top: 1400, width: side, height: side };
             let started = std::time::Instant::now();
-            let tile = decode_tile(&path, crop, 16, true, galosh::Amounts::from_sliders(40.0, 40.0));
+            let tile = decode_tile(&path, crop, 16, true, sliders, galosh::Fit::Measure);
             let took = started.elapsed().as_millis();
             let frame = tile.expect("the tile decodes");
             println!(

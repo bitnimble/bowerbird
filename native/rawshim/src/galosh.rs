@@ -33,6 +33,17 @@ const LOESS_STRENGTH: f32 = 1.0;
 /// Workgroups for the IRLS reductions, and the invocations in each.
 const DR_WORKGROUPS: u32 = 64;
 
+/// `params_buf` slots, which are `prelude.wgsl`'s and must stay its.
+///
+/// Only the ones the host writes or reads are here; the kernels address the rest themselves. The
+/// readback below and `NoiseFit`'s seeding are the two places this side touches the block, and
+/// `the_params_slots_are_the_ones_the_shader_declares` holds these against the shader's own text.
+const P_UNIFIED_SIGMA: usize = 4;
+const P_INV_SG: usize = 5;
+const P_DARK_REF0: usize = 6;
+const P_ALPHA: usize = 13;
+const P_SIGMA_SQ: usize = 14;
+
 /// What `pass12` needs of a workgroup: four tile planes of 40x40 f32.
 const WORKGROUP_STORAGE: u32 = 4 * 40 * 40 * 4;
 
@@ -361,6 +372,53 @@ pub struct NoiseModel {
     pub sigma_sq: f32,
 }
 
+/// Everything the denoise reduces over the whole frame before any pixel is filtered.
+///
+/// **The reason this is a type rather than a local.** Every one of these is a *whole-frame*
+/// statistic, so a denoise given a region fits a different one - and a loupe tile is a region.
+/// Measured on the two fixtures, a 512px tile's noise came out between 0.49 and 1.51 times its own
+/// frame's, which is the strength the tile is then denoised at: the magnifier disagreeing with the
+/// export it exists to predict, and moving as the reader pans. Handing the frame's own fit back to
+/// the tile is what makes the two the same picture (§10.9).
+///
+/// Geometry-independent, which is what makes one fit answer for every consumer: the halving
+/// decision happens *after* the denoise, so this is always measured over the full-resolution
+/// mosaic whatever size the caller asked the decode for.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoiseFit {
+    pub alpha: f32,
+    pub sigma_sq: f32,
+    /// The RMS of the four per-CFA sigmas, which is the only form anything downstream reads.
+    pub unified_sigma: f32,
+    /// One per position of the 2x2, subtracted before the transform and added back after it.
+    pub dark_ref: [f32; 4],
+}
+
+impl NoiseFit {
+    /// The model the rest of the pipeline describes a frame's noise with.
+    pub fn model(&self) -> NoiseModel {
+        NoiseModel { alpha: self.alpha, sigma_sq: self.sigma_sq }
+    }
+
+    /// Whether this is a fit anything should be handed, rather than one to refuse and refit.
+    ///
+    /// It crosses the API from a client, so it is not the decode's own arithmetic any more. The
+    /// bounds are deliberately wide - this is a guard against a corrupted or invented payload, not
+    /// a judgement about what a sensor may do - but `alpha` at zero would divide by it in the GAT
+    /// and a negative sigma would `sqrt` to a NaN that reaches every pixel.
+    pub fn usable(&self) -> bool {
+        let finite = |v: f32| v.is_finite();
+        finite(self.alpha)
+            && self.alpha > 0.0
+            && finite(self.sigma_sq)
+            && self.sigma_sq >= 0.0
+            && finite(self.unified_sigma)
+            && self.unified_sigma > 0.0
+            && self.dark_ref.iter().all(|v| finite(*v))
+    }
+}
+
 impl NoiseModel {
     /// The noise a mid-grey photosite carries, as a standard deviation in [0, 1].
     ///
@@ -477,7 +535,84 @@ pub fn denoise(
     width: usize,
     height: usize,
     amounts: Amounts,
-) -> NoiseModel {
+) -> NoiseFit {
+    run(gpu, galosh, mosaic, width, height, Work::Denoise { amounts, fit: None })
+}
+
+/// The same, over a frame whose whole-frame statistics were measured somewhere else.
+///
+/// For a tile: the fit is the frame's, so the crop is denoised at the strength its own export
+/// would use rather than at whatever its few hundred thousand photosites happen to imply. Skips
+/// the sixteen reduction dispatches that would have measured it, which is most of what a tile
+/// spends before it filters anything.
+pub fn denoise_with(
+    gpu: &crate::gpu::Gpu,
+    galosh: &Galosh,
+    mosaic: &mut [f32],
+    width: usize,
+    height: usize,
+    amounts: Amounts,
+    fit: NoiseFit,
+) -> NoiseFit {
+    run(gpu, galosh, mosaic, width, height, Work::Denoise { amounts, fit: Some(fit) })
+}
+
+/// What the frame's statistics are, without filtering anything with them.
+///
+/// The editor's open wants this and no denoise: its frame crosses to a client that denoises on its
+/// own (§10.9), but the loupe tiles it fetches afterwards are the server's and do want it. Running
+/// the fit alone costs the two whole-frame transforms the reductions read through, and none of the
+/// shrinkage, the chroma pyramid or the inverse.
+pub fn fit(
+    gpu: &crate::gpu::Gpu,
+    galosh: &Galosh,
+    mosaic: &[f32],
+    width: usize,
+    height: usize,
+) -> NoiseFit {
+    let mut scratch = mosaic.to_vec();
+    run(gpu, galosh, &mut scratch, width, height, Work::FitOnly)
+}
+
+/// What a decode does about the noise: whose statistics it filters with, or whether it only
+/// measures them.
+#[derive(Clone, Copy, Default, Debug)]
+pub enum Fit {
+    /// Measure this frame's own as part of filtering it, which is what a whole frame wants. A
+    /// decode that filters nothing measures nothing.
+    #[default]
+    Measure,
+    /// Measure and hand back, filtering nothing: the editor's open, whose client filters for
+    /// itself but whose loupe tiles have no frame of their own to measure.
+    Only,
+    /// The whole frame's, for a tile cut out of it.
+    Given(NoiseFit),
+}
+
+/// Which half of the chain to run, and with whose numbers.
+enum Work {
+    /// Stop once the whole-frame statistics are known; the frame itself is left alone.
+    FitOnly,
+    Denoise { amounts: Amounts, fit: Option<NoiseFit> },
+}
+
+fn run(
+    gpu: &crate::gpu::Gpu,
+    galosh: &Galosh,
+    mosaic: &mut [f32],
+    width: usize,
+    height: usize,
+    work: Work,
+) -> NoiseFit {
+    let amounts = match work {
+        Work::FitOnly => Amounts { luma: 0.0, colour: 0.0 },
+        Work::Denoise { amounts, .. } => amounts,
+    };
+    let supplied = match work {
+        Work::Denoise { fit: Some(fit), .. } => Some(fit),
+        _ => None,
+    };
+    let fit_only = matches!(work, Work::FitOnly);
     assert!(width % 2 == 0 && height % 2 == 0, "the mosaic's dimensions pair into 2x2 sites");
     assert_eq!(mosaic.len(), width * height, "one sample per photosite");
 
@@ -524,15 +659,34 @@ pub fn denoise(
     // then the shrinkage's output; `full_b` is the luma transform until `pass12` has read
     // it, then the overlap average that guides the chroma home.
     let full_a = plane("galosh in_gat / L_cs_den", npix);
-    let full_b = plane("galosh L_cs / L_pixel", npix);
+    // Zero-length for a fit, which stops before any of them is read. The fit needs `full_a` and
+    // the params block and nothing else, and the rest is most of the gigabyte this holds at 61MP -
+    // a cost the editor's open should not pay for a number.
+    let tail = |len: usize| if fit_only { 0 } else { len };
+    let full_b = plane("galosh L_cs / L_pixel", tail(npix));
 
     // Copied back with the frame: what Phase 0 fitted is the only physical description of
     // this photograph's noise anything has, and a caller choosing an amount wants it.
-    let params = device.create_buffer(&wgpu::BufferDescriptor {
+    // Seeded where the caller brought the frame's own statistics, so the dispatches that would
+    // have measured them can be skipped. The slots are `prelude.wgsl`'s, and the two derived ones
+    // go in with them: `P_INV_SG` is `unified_sigma`'s reciprocal, which only that kernel would
+    // otherwise write.
+    let mut seed = [0f32; 32];
+    if let Some(fit) = supplied {
+        seed[P_ALPHA] = fit.alpha;
+        seed[P_SIGMA_SQ] = fit.sigma_sq;
+        seed[P_UNIFIED_SIGMA] = fit.unified_sigma;
+        seed[P_INV_SG] = 1.0 / fit.unified_sigma;
+        seed[P_DARK_REF0..P_DARK_REF0 + 4].copy_from_slice(&fit.dark_ref);
+    }
+    let mut seed_bytes = Vec::with_capacity(seed.len() * 4);
+    for value in seed {
+        seed_bytes.extend_from_slice(&value.to_ne_bytes());
+    }
+    let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("galosh params"),
-        size: 32 * 4,
+        contents: &seed_bytes,
         usage: storage | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
     });
     let lut_d = plane("galosh lut_d", 4096);
     let lut_x = plane("galosh lut_x", 4096);
@@ -547,11 +701,11 @@ pub fn denoise(
     let dark_thresh_hist = plane("galosh dark thresh hist", 4096);
     let dark_lap_hist = plane("galosh dark lap hist", 4096);
 
-    let half = hw * hh;
-    let quarter = cq_w * cq_h;
+    let half = tail(hw * hh);
+    let quarter = tail(cq_w * cq_h);
     let l_h_den = plane("galosh L_h_den", half);
     let l_q = plane("galosh L_q", quarter);
-    let l_for_q = plane("galosh L_for_q", kq_w * kq_h);
+    let l_for_q = plane("galosh L_for_q", tail(kq_w * kq_h));
     let trio = |label: &str, len: usize| [plane(label, len), plane(label, len), plane(label, len)];
     let c_h = trio("galosh C_h", half);
     // The half-res regression, and where the blend writes its answer back: nothing reads the
@@ -564,11 +718,12 @@ pub fn denoise(
     // Scratch for the K16 whose output is not already the size its consumer wants - on a frame
     // whose half-resolution dimensions are both even there is no padding at all.
     let padded_half = kq_w == hw && kq_h == hh;
-    let scratch_half = trio("galosh K16 scratch", if padded_half { 0 } else { kq_w * kq_h });
+    let scratch_half =
+        trio("galosh K16 scratch", if padded_half { 0 } else { tail(kq_w * kq_h) });
 
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("galosh readback"),
-        size: (npix * 4) as u64,
+        size: (tail(npix).max(1) * 4) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -655,39 +810,66 @@ pub fn denoise(
     let mut encoder = device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
+        // Everything past the fit is skipped rather than branched around, so a fit-only run reads
+        // as the same sequence it is a prefix of. The buffers those dispatches would have touched
+        // are zero-length above, which is what makes skipping them the whole saving rather than
+        // half of it.
+        let done = std::cell::Cell::new(false);
         let mut run = |kernel: &Kernel, group: &wgpu::BindGroup, offset: u32, x: u32, y: u32| {
+            if done.get() {
+                return;
+            }
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, group, &[offset]);
             pass.dispatch_workgroups(x, y, 1);
         };
 
-        // Phase 0: the blind Poisson-Gaussian fit, off the frame's own statistics.
-        let g = bind(&galosh.ne_block_stats, &[(0, &raw), (1, &blk_mean), (2, &blk_var)]);
-        run(&galosh.ne_block_stats, &g, block_stats, (4 * ne_per_ch as u32).div_ceil(64).max(1), 1);
-        let g = bind(&galosh.ne_finalize, &[(0, &blk_mean), (1, &blk_var), (3, &params)]);
-        run(&galosh.ne_finalize, &g, finalize, 1, 1);
-        let g = bind(&galosh.ne_dark_thresh_hist, &[(0, &raw), (1, &dark_thresh_hist)]);
-        let (tx, ty) = groups((hw + 2) / 3, (hh + 2) / 3, 16);
-        run(&galosh.ne_dark_thresh_hist, &g, wh, tx, ty);
-        let g = bind(&galosh.ne_dark_thresh_finalize, &[(0, &dark_thresh_hist), (1, &params)]);
-        run(&galosh.ne_dark_thresh_finalize, &g, thresh_slot, 1, 1);
-        let g = bind(&galosh.ne_dark_lap_hist, &[(0, &raw), (1, &params), (2, &dark_lap_hist)]);
-        run(&galosh.ne_dark_lap_hist, &g, lap_hist, hx, hy);
-        let g = bind(&galosh.ne_dark_finalize, &[(0, &dark_lap_hist), (1, &params)]);
-        run(&galosh.ne_dark_finalize, &g, thresh_slot, 1, 1);
+        // Phase 0: the blind Poisson-Gaussian fit, off the frame's own statistics - or off the
+        // frame this region was cut from, in which case it is already in `params` and none of
+        // these whole-region reductions would be measuring the right thing anyway.
+        if supplied.is_none() {
+            let g = bind(&galosh.ne_block_stats, &[(0, &raw), (1, &blk_mean), (2, &blk_var)]);
+            run(
+                &galosh.ne_block_stats,
+                &g,
+                block_stats,
+                (4 * ne_per_ch as u32).div_ceil(64).max(1),
+                1,
+            );
+            let g = bind(&galosh.ne_finalize, &[(0, &blk_mean), (1, &blk_var), (3, &params)]);
+            run(&galosh.ne_finalize, &g, finalize, 1, 1);
+            let g = bind(&galosh.ne_dark_thresh_hist, &[(0, &raw), (1, &dark_thresh_hist)]);
+            let (tx, ty) = groups((hw + 2) / 3, (hh + 2) / 3, 16);
+            run(&galosh.ne_dark_thresh_hist, &g, wh, tx, ty);
+            let g = bind(&galosh.ne_dark_thresh_finalize, &[(0, &dark_thresh_hist), (1, &params)]);
+            run(&galosh.ne_dark_thresh_finalize, &g, thresh_slot, 1, 1);
+            let g = bind(&galosh.ne_dark_lap_hist, &[(0, &raw), (1, &params), (2, &dark_lap_hist)]);
+            run(&galosh.ne_dark_lap_hist, &g, lap_hist, hx, hy);
+            let g = bind(&galosh.ne_dark_finalize, &[(0, &dark_lap_hist), (1, &params)]);
+            run(&galosh.ne_dark_finalize, &g, thresh_slot, 1, 1);
+        }
 
         // Phase 1: into the GAT domain, and the table that comes back out of it.
         let g = bind(&galosh.gat_forward_full, &[(0, &raw), (1, &full_a), (6, &params)]);
         run(&galosh.gat_forward_full, &g, wh, fx, fy);
-        let g =
-            bind(&galosh.build_inv_lut, &[(0, &params), (1, &lut_d), (2, &lut_x), (3, &lut_params)]);
-        run(&galosh.build_inv_lut, &g, wh, 16, 1);
-        let g = bind(&galosh.lut_finalize, &[(0, &lut_d), (1, &lut_params)]);
-        run(&galosh.lut_finalize, &g, wh, 1, 1);
-        let g = bind(&galosh.sigma_per_cfa, &[(0, &full_a), (1, &params)]);
-        run(&galosh.sigma_per_cfa, &g, wh, 4, 1);
-        let g = bind(&galosh.unified_sigma, &[(0, &params)]);
-        run(&galosh.unified_sigma, &g, wh, 1, 1);
+        // The table that undoes the GAT, which only the last phase reads: a fit stops before it,
+        // and the series it sums is long enough that leaving it in doubles what a fit costs.
+        if !fit_only {
+            let g = bind(
+                &galosh.build_inv_lut,
+                &[(0, &params), (1, &lut_d), (2, &lut_x), (3, &lut_params)],
+            );
+            run(&galosh.build_inv_lut, &g, wh, 16, 1);
+            let g = bind(&galosh.lut_finalize, &[(0, &lut_d), (1, &lut_params)]);
+            run(&galosh.lut_finalize, &g, wh, 1, 1);
+        }
+        // The per-CFA sigmas and their RMS, which are whole-region reductions like Phase 0's.
+        if supplied.is_none() {
+            let g = bind(&galosh.sigma_per_cfa, &[(0, &full_a), (1, &params)]);
+            run(&galosh.sigma_per_cfa, &g, wh, 4, 1);
+            let g = bind(&galosh.unified_sigma, &[(0, &params)]);
+            run(&galosh.unified_sigma, &g, wh, 1, 1);
+        }
         let g = bind(&galosh.normalize_apply, &[(0, &full_a), (5, &params)]);
         run(&galosh.normalize_apply, &g, wh, fx, fy);
 
@@ -702,15 +884,22 @@ pub fn denoise(
             &[(0, &full_a), (1, &raw), (2, &params), (3, &partial_resid)],
         );
         let resid_fin = bind(&galosh.dark_resid_finalize, &[(0, &partial_resid), (1, &params)]);
-        for iteration in 0..3 {
-            run(&galosh.dark_ref_reduce, &reduce, wh, DR_WORKGROUPS, 1);
-            run(&galosh.dark_ref_finalize, &reduce_fin, n_wg, 1, 1);
-            if iteration == 2 {
-                break;
+        // The references themselves, which the IRLS reduces over the whole region - so a supplied
+        // fit skips the iterations and `dark_sub_full` below subtracts the frame's own.
+        if supplied.is_none() {
+            for iteration in 0..3 {
+                run(&galosh.dark_ref_reduce, &reduce, wh, DR_WORKGROUPS, 1);
+                run(&galosh.dark_ref_finalize, &reduce_fin, n_wg, 1, 1);
+                if iteration == 2 {
+                    break;
+                }
+                run(&galosh.dark_resid_reduce, &resid, wh, DR_WORKGROUPS, 1);
+                run(&galosh.dark_resid_finalize, &resid_fin, n_wg, 1, 1);
             }
-            run(&galosh.dark_resid_reduce, &resid, wh, DR_WORKGROUPS, 1);
-            run(&galosh.dark_resid_finalize, &resid_fin, n_wg, 1, 1);
         }
+        // The whole-frame statistics are in `params` from here, which is all a fit was after.
+        done.set(fit_only);
+
         let g = bind(&galosh.dark_sub_full, &[(0, &full_a), (5, &params)]);
         run(&galosh.dark_sub_full, &g, wh, fx, fy);
 
@@ -798,32 +987,48 @@ pub fn denoise(
         );
         run(&galosh.k16_inverse_fused, &g, k16_final, fx, fy);
     }
-    encoder.copy_buffer_to_buffer(&raw, 0, &readback, 0, (npix * 4) as u64);
+    if !fit_only {
+        encoder.copy_buffer_to_buffer(&raw, 0, &readback, 0, (npix * 4) as u64);
+    }
     encoder.copy_buffer_to_buffer(&params, 0, &fitted, 0, 32 * 4);
     gpu.queue.submit([encoder.finish()]);
 
-    let slice = readback.slice(..);
     let model_slice = fitted.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |_| {});
     model_slice.map_async(wgpu::MapMode::Read, |_| {});
+    if !fit_only {
+        readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    }
     device.poll(wgpu::PollType::wait_indefinitely()).expect("the denoise finished");
-    {
+    if !fit_only {
+        let slice = readback.slice(..);
         let mapped = slice.get_mapped_range().expect("the readback mapped");
         for (sample, word) in mosaic.iter_mut().zip(mapped.chunks_exact(4)) {
             *sample = f32::from_ne_bytes([word[0], word[1], word[2], word[3]]);
         }
     }
-    let model = {
+    let measured = {
         let mapped = model_slice.get_mapped_range().expect("the model mapped");
-        let at = |slot: usize| {
-            let word = &mapped[slot * 4..slot * 4 + 4];
-            f32::from_ne_bytes([word[0], word[1], word[2], word[3]])
-        };
-        NoiseModel { alpha: at(13), sigma_sq: at(14) }
+        fit_of(&mapped)
     };
-    readback.unmap();
+    if !fit_only {
+        readback.unmap();
+    }
     fitted.unmap();
-    model
+    measured
+}
+
+/// The whole-frame statistics, off a mapped copy of the params block.
+fn fit_of(mapped: &[u8]) -> NoiseFit {
+    let at = |slot: usize| {
+        let word = &mapped[slot * 4..slot * 4 + 4];
+        f32::from_ne_bytes([word[0], word[1], word[2], word[3]])
+    };
+    NoiseFit {
+        alpha: at(P_ALPHA),
+        sigma_sq: at(P_SIGMA_SQ),
+        unified_sigma: at(P_UNIFIED_SIGMA),
+        dark_ref: [at(P_DARK_REF0), at(P_DARK_REF0 + 1), at(P_DARK_REF0 + 2), at(P_DARK_REF0 + 3)],
+    }
 }
 
 #[cfg(test)]

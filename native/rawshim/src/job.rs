@@ -95,6 +95,13 @@ pub struct Job {
     /// a tile a pure function of this job: there is no cache to invalidate when a slider moves.
     #[serde(default)]
     pub tile: Option<[usize; 4]>,
+    /// The whole frame's noise, for a tile that would otherwise measure its own.
+    ///
+    /// Only a tile reads it: a whole-frame decode fits the same thing itself, and better, because
+    /// it has the frame. Absent means "measure it", which is what every caller but the editor's
+    /// loupe wants and what a client too old to send it gets.
+    #[serde(default)]
+    pub noise_fit: Option<crate::galosh::NoiseFit>,
     /// This photograph's camera match, if the caller has one stored (`crate::camera_match`).
     ///
     /// Fitting it is half a second and depends on nothing but the file, so a caller that keeps
@@ -291,12 +298,20 @@ impl Base {
         // and at the sensor's own scale: a loupe is magnifying, so fitting the tile to a size
         // would throw away the pixels it exists to show.
         let frame = match job.tile {
+            // `job.noise_fit` is the frame's, measured at the editor's open and handed back with
+            // the request: a tile that fits its own is denoised at its own crop's strength rather
+            // than the photograph's, which is a loupe that disagrees with the export it exists to
+            // predict and changes as the reader pans. Refused rather than trusted where it does
+            // not describe a sensor, since it crosses the API from a client.
             Some([left, top, width, height]) => crate::decode_tile(
                 &job.raw_file_path,
                 crate::Tile { left, top, width, height },
                 16,
                 true,
                 job.amounts(),
+                job.noise_fit
+                    .filter(crate::galosh::NoiseFit::usable)
+                    .map_or(crate::galosh::Fit::Measure, crate::galosh::Fit::Given),
             ),
             None => {
                 crate::decode_frame_denoised(&job.raw_file_path, 16, true, size, job.amounts())

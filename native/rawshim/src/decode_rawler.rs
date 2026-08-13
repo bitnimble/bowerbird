@@ -118,7 +118,12 @@ fn upright_preview_of(source: &rawler::rawsource::RawSource) -> Option<Vec<u8>> 
 /// The saving is the point of the fork. `raw_image_region` decodes the tiles or subbands the region
 /// touches and leaves the rest of the frame alone, and everything after it here - conditioning, the
 /// denoise, the demosaic, the colour transform - runs over the region rather than the frame.
-pub fn decode_tile(path: &str, tile: crate::Tile, amounts: crate::galosh::Amounts) -> Option<Frame> {
+pub fn decode_tile(
+    path: &str,
+    tile: crate::Tile,
+    amounts: crate::galosh::Amounts,
+    fit: crate::galosh::Fit,
+) -> Option<Frame> {
     let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
     let decoder = rawler::get_decoder(&source).ok()?;
     let params = rawler::decoders::RawDecodeParams::default();
@@ -179,9 +184,22 @@ pub fn decode_tile(path: &str, tile: crate::Tile, amounts: crate::galosh::Amount
 
     let gpu = crate::gpu::device()?;
     let noise = crate::galosh::device(gpu).and_then(|kernels| {
-        amounts
-            .does_anything()
-            .then(|| crate::galosh::denoise(gpu, kernels, &mut mosaic, region_w, region_h, amounts))
+        if !amounts.does_anything() {
+            return None;
+        }
+        // **The frame's fit, where the caller had one.** Every whole-region reduction in Phase 0
+        // and Phase 2 measures this crop rather than the photograph, and a crop is not a sample of
+        // the frame: measured on the fixtures, a 512px tile fitted between 0.49 and 1.51 times its
+        // own frame's noise, which is the strength it is then denoised at. So a loupe disagreed
+        // with the export it exists to predict, and moved as the reader panned.
+        Some(match fit {
+            crate::galosh::Fit::Given(fit) => crate::galosh::denoise_with(
+                gpu, kernels, &mut mosaic, region_w, region_h, amounts, fit,
+            ),
+            // A tile fitting itself is the case above's cost, not its correctness: it is what a
+            // caller with no frame's fit to hand back gets, and it is what the numbers describe.
+            _ => crate::galosh::denoise(gpu, kernels, &mut mosaic, region_w, region_h, amounts),
+        })
     });
 
     let matrix = camera_to_rec2020(&image)?;
@@ -218,6 +236,7 @@ pub fn decode_fitted(path: &str, amounts: crate::galosh::Amounts, at_least_long_
         &rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?,
         amounts,
         at_least_long_edge,
+        crate::galosh::Fit::Measure,
     )
 }
 
@@ -287,14 +306,25 @@ fn to_rec2020_from(rgb: &[f32], stride: usize, crop: (usize, usize, usize, usize
 ///
 /// What preparing an edit needs: the server has read the file to hash it and hands the buffer
 /// straight on, so opening the path again would read it twice.
-pub fn decode_bytes(bytes: &[u8], amounts: crate::galosh::Amounts, at_least_long_edge: u32) -> Option<Frame> {
-    decode_source(&rawler::rawsource::RawSource::new_from_slice(bytes), amounts, at_least_long_edge)
+pub fn decode_bytes(
+    bytes: &[u8],
+    amounts: crate::galosh::Amounts,
+    at_least_long_edge: u32,
+    fit: crate::galosh::Fit,
+) -> Option<Frame> {
+    decode_source(
+        &rawler::rawsource::RawSource::new_from_slice(bytes),
+        amounts,
+        at_least_long_edge,
+        fit,
+    )
 }
 
 fn decode_source(
     source: &rawler::rawsource::RawSource,
     amounts: crate::galosh::Amounts,
     at_least_long_edge: u32,
+    fit: crate::galosh::Fit,
 ) -> Option<Frame> {
     // Stage timings, for the benchmark that compares this against LibRaw. Off unless asked, and
     // the clock reads are per decode rather than per pixel, so leaving it in costs nothing.
@@ -331,12 +361,17 @@ fn decode_source(
 
     lap("condition");
     let gpu = crate::gpu::device()?;
-    let noise = crate::galosh::device(gpu).and_then(|kernels| {
-        if amounts.does_anything() {
-            Some(crate::galosh::denoise(gpu, kernels, &mut mosaic, width, height, amounts))
-        } else {
-            None
+    let noise = crate::galosh::device(gpu).and_then(|kernels| match fit {
+        crate::galosh::Fit::Only => {
+            Some(crate::galosh::fit(gpu, kernels, &mosaic, width, height))
         }
+        _ if !amounts.does_anything() => None,
+        crate::galosh::Fit::Measure => {
+            Some(crate::galosh::denoise(gpu, kernels, &mut mosaic, width, height, amounts))
+        }
+        crate::galosh::Fit::Given(fit) => Some(crate::galosh::denoise_with(
+            gpu, kernels, &mut mosaic, width, height, amounts, fit,
+        )),
     });
 
     lap("denoise");

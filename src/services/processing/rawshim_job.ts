@@ -43,9 +43,31 @@ export interface JobTarget {
   sdrFullChroma: boolean;
 }
 
+/**
+ * The Poisson-Gaussian fit of a sensor's noise, as `galosh::NoiseFit` measured it.
+ *
+ * Opaque to everything between the two ends: the editor's open produces it, the client holds it
+ * for the session, and a tile hands it straight back. Nothing here reads the numbers, and the
+ * far side refuses one that does not describe a sensor.
+ */
+export interface NoiseFit {
+  alpha: number;
+  sigmaSq: number;
+  unifiedSigma: number;
+  darkRef: [number, number, number, number];
+}
+
 export interface Job {
   rawFilePath: string;
   matchEmbeddedJpeg: boolean;
+  /**
+   * The whole frame's noise, for a tile that would otherwise measure its own.
+   *
+   * Only `renderTile` sends it, because only a tile is a crop: a whole-frame job fits the same
+   * thing itself and better. Absent means "measure it", which is what a caller with no open
+   * editor behind it wants.
+   */
+  noiseFit?: NoiseFit;
   /**
    * One tile of the photograph rather than the whole of it: `[left, top, width, height]` in the
    * decoded image's own pixels, and only for `renderTile`.

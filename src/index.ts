@@ -121,8 +121,8 @@ const albumsApi = new AlbumsApi(albumsService, photosService);
 const shootsApi = new ShootsApi(shootsService, photosService);
 const stacksApi = new StacksApi(stacksService, photosService);
 const imageApi = new ImageApi(photosService, settingsRepo, {
-  renderTile: (rawFilePath, photoId, library, tile) =>
-    processingService.renderTile(rawFilePath, photoId, library, tile),
+  renderTile: (rawFilePath, photoId, library, tile, noiseFit) =>
+    processingService.renderTile(rawFilePath, photoId, library, tile, noiseFit),
 });
 
 // With no configured allowlist, mirror back any origin on the same host the

@@ -65,7 +65,7 @@ fn main() {
             header.iso,
             model.alpha,
             model.sigma_sq,
-            model.at_mid_grey(),
+            model.model().at_mid_grey(),
             path.rsplit('/').next().unwrap_or(path).to_string(),
         ));
     }

@@ -21,6 +21,7 @@ import {
   editFeatures,
   editLimits,
 } from './gpu/edit_pipeline';
+import type { NoiseFit } from '../../../../src/services/processing/rawshim_job';
 import { readSetting, writeSetting } from '../../app/local_setting';
 import {
   LOUPE_MAX_MAGNIFICATION,
@@ -471,7 +472,7 @@ export class RawEditPresenter {
       if (photoId != null && this.tiles == null) {
         this.tiles = new LoupeTiles(
           photoId,
-          fetchTile,
+          (id, rect, signal) => fetchTile(id, rect, signal, this.store.noiseFit),
           // A tile landing is not a state change anything renders from directly - the glass is
           // a canvas - so this asks for the draw that will put it there.
           () => this.drawLoupe(this.store.loupeBox),
@@ -1071,6 +1072,7 @@ export class RawEditPresenter {
     this.store.saveStatus = 'clean';
     this.store.matched = false;
     this.store.asShot = null;
+    this.store.noiseFit = null;
   }
 
   @action.bound
@@ -1087,6 +1089,7 @@ export class RawEditPresenter {
     this.store.height = header.height;
     this.store.matched = header.matched;
     this.store.asShot = header.asShot;
+    this.store.noiseFit = header.noiseFit ?? null;
     // Whatever the document already says - an imported sidecar routinely arrives cropped - so
     // the first frame drawn is the picture rather than the frame it was taken out of. The frame
     // has only just arrived, so this is the first shape there has been and it seeds the region.
@@ -1127,8 +1130,13 @@ export class RawEditPresenter {
  * Over the same transport everything else uses, so the desktop shell's IPC answers it too - the
  * loupe is not a browser feature and the bytes are an HDR AVIF either way.
  */
-async function fetchTile(photoId: string, rect: TileRect, signal: AbortSignal): Promise<Blob> {
-  const reply = await send('get:tile', 'GET', tilePath(photoId, rect), undefined, signal);
+async function fetchTile(
+  photoId: string,
+  rect: TileRect,
+  signal: AbortSignal,
+  noiseFit: NoiseFit | null,
+): Promise<Blob> {
+  const reply = await send('get:tile', 'GET', tilePath(photoId, rect, noiseFit), undefined, signal);
   if (reply.status < 200 || reply.status >= 300) {
     throw new Error(`could not render that tile: ${reply.status}`);
   }

@@ -35,7 +35,9 @@ fn main() {
         let bytes = std::fs::read(&path).ok();
         let from_bytes = bytes
             .as_ref()
-            .and_then(|b| rawshim::decode_frame_bytes(b, 16, true, 0))
+            .and_then(|b| {
+                rawshim::decode_frame_bytes(b, 16, true, 0, rawshim::galosh::Fit::Measure)
+            })
             .map(|f| (f.width, f.height));
 
         let from_path = rawshim::decode_frame_denoised(&path, 16, true, 0, Default::default()).map(|f| (f.width, f.height));

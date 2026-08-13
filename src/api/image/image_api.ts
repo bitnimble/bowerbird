@@ -8,7 +8,7 @@ import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
 import { headerOf, prepareEditAsync } from '../../services/processing/rawshim_edit';
 import { readCameraMatch, writeCameraMatch } from '../../services/processing/camera_match_store';
-import { transcodeJpeg } from '../../services/processing/rawshim_job';
+import { transcodeJpeg, type NoiseFit } from '../../services/processing/rawshim_job';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
 import type { BasicPhoto } from '../../services/photos/photos_repository';
@@ -34,6 +34,7 @@ type TileRenderer = (
   photoId: string,
   library: Library,
   tile: [number, number, number, number],
+  noiseFit?: NoiseFit,
 ) => Uint8Array;
 
 const JPEG_QUALITY = 92;
@@ -61,10 +62,33 @@ const DEFAULT_EDIT_EDGE = 0;
 const MAX_EDIT_EDGE = 100_000;
 
 // What a loupe tile's sides may be. The floor is the mosaic denoise's own: below 64 the chroma
-// pyramid has no eighth-resolution level to build. The ceiling is what keeps a tile a tile -
+// pyramid has no quarter-resolution level to build. The ceiling is what keeps a tile a tile -
 // past this it is a rendition, it costs like one, and there is a route that caches those.
 const MIN_TILE = 64;
 const MAX_TILE = 2048;
+
+/**
+ * The frame's noise as the editor's open measured it, off a tile request's `noise` parameter.
+ *
+ * Seven numbers, comma-separated, in `galosh::NoiseFit`'s own order. Round-tripped rather than
+ * read: nothing on this side interprets them, and the native side refuses a fit that does not
+ * describe a sensor, so a malformed one is dropped here and the tile measures its own.
+ */
+function noiseFitOf(words: string | undefined): NoiseFit | undefined {
+  if (words == null) return undefined;
+  const parts = words.split(',').map(Number);
+  if (parts.length !== 7 || parts.some((value) => !Number.isFinite(value))) return undefined;
+  const [alpha, sigmaSq, unifiedSigma, ...darkRef] = parts as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  return { alpha, sigmaSq, unifiedSigma, darkRef };
+}
 
 // The viewer reports the weight of the rendition it is showing, and reads it off
 // the response it already received rather than asking for a number the server
@@ -180,7 +204,13 @@ export class ImageApi {
     // at once and every one of them reports the queue as its own cost. When these two numbers
     // disagree, the gap is the wait and not the renderer.
     const started = Bun.nanoseconds();
-    const tile = this.processing.renderTile(original, photoId, library, [left, top, width, height]);
+    const tile = this.processing.renderTile(
+      original,
+      photoId,
+      library,
+      [left, top, width, height],
+      noiseFitOf(c.req.query('noise')),
+    );
     log.info('rendered a loupe tile', {
       photoId,
       tile: `${width}x${height}+${left}+${top}`,
