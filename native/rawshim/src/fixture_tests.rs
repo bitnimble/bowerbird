@@ -207,6 +207,28 @@ mod decode_geometry {
             }
         }
     }
+
+    /// A tile of any size and at any offset, with the denoise running.
+    ///
+    /// **The odd cases are the ordinary ones.** The loupe rounds a span to whole pixels, so it asks
+    /// for odd widths and odd origins about half the time. The decode grows the region by the
+    /// demosaic's reach and the denoise's window and aligns the origin to a whole CFA site, and it
+    /// has to align the far edge too: the denoise pairs samples into 2x2 sites and refuses - by
+    /// assertion, not by declining - a region that does not. That panic was reachable from an
+    /// ordinary drag of the magnifier, and nothing here decoded a tile at all.
+    #[test]
+    fn a_tile_of_any_size_survives_the_denoise() {
+        let amounts = crate::galosh::Amounts::from_sliders(20.0, 30.0);
+        assert!(amounts.does_anything(), "the denoise has to run or this tests nothing");
+        for (left, top, width, height) in
+            [(2000, 1400, 400, 400), (2000, 1400, 401, 400), (2001, 1401, 400, 401), (2001, 1401, 401, 401)]
+        {
+            let tile = crate::Tile { left, top, width, height };
+            let frame = crate::decode_tile(canon().to_str().unwrap(), tile, 16, true, amounts)
+                .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
+            assert_eq!((frame.width, frame.height), (width, height));
+        }
+    }
 }
 
 /// Half-size decoding is a real quality trade - a faint checkerboard on dark edges -

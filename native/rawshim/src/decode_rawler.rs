@@ -143,6 +143,13 @@ pub fn decode_tile(path: &str, tile: crate::Tile, amounts: crate::galosh::Amount
     let top = (origin.1 + tile.top).saturating_sub(reach) & !1;
     let right = (origin.0 + tile.left + tile.width + reach).min(frame_w);
     let bottom = (origin.1 + tile.top + tile.height + reach).min(frame_h);
+    // Both extents even as well as both origins, because the denoise pairs samples into 2x2 sites
+    // and refuses a region that does not. Trimmed rather than grown: the last column is halo, which
+    // is there to be eaten, and at the frame's own edge there is nothing to grow into. A caller
+    // asking for an odd-sized tile is ordinary - the loupe rounds a span to whole pixels - so this
+    // is the common path rather than a guard against a strange request.
+    let right = right - ((right - left) & 1);
+    let bottom = bottom - ((bottom - top) & 1);
     if right <= left || bottom <= top {
         return None;
     }
