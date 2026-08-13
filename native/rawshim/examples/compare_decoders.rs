@@ -83,8 +83,22 @@ fn main() {
             .file_stem()
             .map_or_else(|| path.clone(), |s| s.to_string_lossy().into_owned());
 
-        let Some(reference) = rawshim::decode_frame_denoised(&path, 16, true, 0, Default::default()) else {
-            println!("{name:>16}  libraw declined");
+        // `BOWERBIRD_COMPARE_SIDES=whitelevel` puts rawler against itself, the maker note's white
+        // level on the left and the sensor's own cap on the right, so the search finds where that
+        // choice matters rather than where the two decoders differ. Looking for it by brightness
+        // instead lands on flat sky, where the choice changes nothing visible.
+        let white_level_ab = std::env::var("BOWERBIRD_COMPARE_SIDES").is_ok_and(|v| v == "whitelevel");
+        let reference = match white_level_ab {
+            true => {
+                rawshim::decode_rawler::use_stated_white_level(true);
+                let frame = rawshim::decode_rawler::decode(&path, Default::default());
+                rawshim::decode_rawler::use_stated_white_level(false);
+                frame
+            }
+            false => rawshim::decode_frame_denoised(&path, 16, true, 0, Default::default()),
+        };
+        let Some(reference) = reference else {
+            println!("{name:>16}  the left side declined");
             continue;
         };
         let Some(ours) = rawshim::decode_rawler::decode(&path, Default::default()) else {
@@ -247,6 +261,11 @@ fn worst_region(left: &Rendered, right: &Rendered, dx: isize, dy: isize) -> (isi
     // region has any samples up there at all. What is lost is lost before the grade, which is what
     // `at_ceiling` counts on the 16-bit frame.
     let by_brightness = std::env::var("BOWERBIRD_COMPARE_BY").is_ok_and(|v| v == "bright");
+    // `highlight` scores the difference over bright pixels only. Neither of the other two finds a
+    // highlight that renders differently: the plain difference lands in shadows, where noise
+    // disagrees far more than anything in the highlights does, and brightness lands on whatever is
+    // brightest whether or not the two sides do anything different there.
+    let by_highlight = std::env::var("BOWERBIRD_COMPARE_BY").is_ok_and(|v| v == "highlight");
 
     let mut best = (x0 as isize, y0 as isize, -1.0);
     let mut y = y0 as isize;
@@ -254,9 +273,12 @@ fn worst_region(left: &Rendered, right: &Rendered, dx: isize, dy: isize) -> (isi
         let mut x = x0 as isize;
         while x <= x1 {
             let (l, r) = (crop(left, x, y), crop(right, x + dx, y + dy));
-            let score = match by_brightness {
-                true => l.data.iter().map(|s| f64::from(*s)).sum::<f64>() / l.data.len() as f64,
-                false => difference(&l, &r).mean,
+            let score = if by_brightness {
+                l.data.iter().map(|s| f64::from(*s)).sum::<f64>() / l.data.len() as f64
+            } else if by_highlight {
+                highlight_difference(&l, &r)
+            } else {
+                difference(&l, &r).mean
             };
             if score > best.2 {
                 best = (x, y, score);
@@ -266,6 +288,30 @@ fn worst_region(left: &Rendered, right: &Rendered, dx: isize, dy: isize) -> (isi
         y += step as isize;
     }
     (best.0, best.1)
+}
+
+/// Mean absolute difference over the bright pixels only, and zero where a region has none.
+///
+/// Averaging over everything answers a different question: a frame's shadows disagree far more than
+/// its highlights do, because that is where the noise is, so the plain difference always points
+/// there however much or little the highlights moved.
+fn highlight_difference(left: &Rendered, right: &Rendered) -> f64 {
+    // Not 200-odd, which finds nothing at all: the grade's roll-off puts a blown sky near 160 and an
+    // LED strip's core near 175, so this is where the highlights in these renders actually live.
+    const BRIGHT: f64 = 150.0;
+    let mut total = 0.0;
+    let mut counted = 0u64;
+    for (a, b) in left.data.chunks_exact(3).zip(right.data.chunks_exact(3)) {
+        let luma = 0.2126 * f64::from(a[0]) + 0.7152 * f64::from(a[1]) + 0.0722 * f64::from(a[2]);
+        if luma < BRIGHT {
+            continue;
+        }
+        for channel in 0..3 {
+            total += f64::from(a[channel].abs_diff(b[channel]));
+        }
+        counted += 3;
+    }
+    if counted == 0 { 0.0 } else { total / counted as f64 }
 }
 
 fn crop(image: &Rendered, x: isize, y: isize) -> Rendered {

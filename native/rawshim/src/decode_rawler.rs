@@ -187,21 +187,39 @@ fn per_channel_black(image: &rawler::RawImage, cfa: [u32; 4]) -> [f32; 4] {
 
 /// Where the sensor saturates, in raw counts.
 ///
-/// **Never below the largest sample present, whatever the file says.** The metadata is not reliable
-/// here: an EOS R8 CR3 reports 12735 while its data runs to 16383, the full 14 bits, so a third of
-/// the highlight range is samples the file claims cannot exist. Dividing by the reported figure
-/// puts all of them above one, where the clamp in `condition` flattens them into a single value -
-/// white water loses its texture and turns cyan as red, carrying the largest gain, runs out first.
+/// The maker note's figure, except on Canon, where the largest sample present wins if it is higher.
 ///
-/// Taking the larger of the two is content-independent wherever it matters: it can only differ from
-/// the reported level on a frame that already exceeded it, and a frame whose highlights fall short
-/// of saturation is scaled by the reported level either way.
+/// **Canon's `SpecularWhiteLevel` is conservative by enough to cost picture.** An R8 states 14888
+/// and its data runs to 16383, the full 14 bits; dividing by the stated figure puts everything above
+/// it past one, where the clamp in `condition` flattens it into a single value. Bright water loses
+/// its foam and turns cyan, red carrying the largest gain and so running out first. That is a tenth
+/// of a stop of headroom and it is visible.
+///
+/// **Sony's is not, and is left alone.** An A7CR states 15360 against the same 14-bit ceiling: a
+/// fifteenth of a stop, and although 4.4% of a frame exceeds it, none of that is highlight worth
+/// recovering - searched for specifically, the regions where raising the level changes anything are
+/// shadows, where it changes the noise. Taking the data's word there buys pixel noise and nothing
+/// else, so the file's figure is better trusted.
+fn stated_only(image: &rawler::RawImage) -> bool {
+    !image.clean_make.eq_ignore_ascii_case("canon")
+}
+/// Set by the comparison harness to render the stated level and the sensor's cap from one process,
+/// which is the only way to search a frame for where the choice between them matters.
+static STATED_WHITE_LEVEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn use_stated_white_level(on: bool) {
+    STATED_WHITE_LEVEL.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn saturation_of(image: &rawler::RawImage, samples: &[u16]) -> f32 {
     let reported = image.whitelevel.0.iter().copied().max().unwrap_or(65535) as u16;
-    // `BOWERBIRD_WHITE_LEVEL=stated` takes the maker note's figure at its word, which is what this
-    // did before and what the pictures in the log are a comparison of. Kept as a seam rather than
-    // deleted: the difference between the two is the argument for the line below it.
-    if std::env::var("BOWERBIRD_WHITE_LEVEL").is_ok_and(|value| value == "stated") {
+    // Taking the maker note's figure at its word is what this did before, and what the pictures in
+    // the log compare against. Kept as a seam rather than deleted: the difference between the two is
+    // the argument for the line below it.
+    let stated = stated_only(image)
+        || STATED_WHITE_LEVEL.load(std::sync::atomic::Ordering::Relaxed)
+        || std::env::var("BOWERBIRD_WHITE_LEVEL").is_ok_and(|value| value == "stated");
+    if stated {
         return f32::from(reported);
     }
     let present = samples.iter().copied().max().unwrap_or(0);
