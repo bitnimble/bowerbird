@@ -15,8 +15,11 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    // Every path named here must exist. Cargo cannot stat a missing one, so it treats the script
+    // as dirty and re-runs it on every build - which regenerates the bindings, which recompiles the
+    // crate, on a tree where nothing changed. `wrapper_client.h` was listed here after it was
+    // deleted and cost every native test run two minutes of rebuild.
     println!("cargo:rerun-if-changed=wrapper.h");
-    println!("cargo:rerun-if-changed=wrapper_client.h");
     println!("cargo:rerun-if-env-changed=LIBCLANG_PATH");
 
     // Only a `renditions` build binds anything now: rawler reads the RAWs, and lensfun and
