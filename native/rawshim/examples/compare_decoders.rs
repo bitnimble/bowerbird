@@ -107,9 +107,9 @@ fn main() {
             continue;
         };
 
-        let (lx, ly) = (left.width.saturating_sub(CROP) / 2, left.height.saturating_sub(CROP) / 2);
-        let l = crop(&left, lx as isize, ly as isize);
-        let r = crop(&right, lx as isize + dx, ly as isize + dy);
+        let (lx, ly) = worst_region(&left, &right, dx, dy);
+        let l = crop(&left, lx, ly);
+        let r = crop(&right, lx + dx, ly + dy);
 
         let stats = difference(&l, &r);
         write(&format!("{out}/{name}-libraw.avif"), &l);
@@ -181,6 +181,29 @@ fn align(left: &Rendered, right: &Rendered) -> Option<(isize, isize)> {
         }
     }
     Some((best.0, best.1))
+}
+
+/// Where in the frame the two disagree most, as the top-left of a `CROP` square.
+///
+/// The whole frame is searched rather than the centre taken, because the centre is wherever the
+/// photographer pointed and has no reason to be where a demosaic struggles. Overlapping windows so
+/// a region straddling a boundary is not missed by both of its neighbours.
+fn worst_region(left: &Rendered, right: &Rendered, dx: isize, dy: isize) -> (isize, isize) {
+    let step = CROP / 2;
+    let mut best = (0isize, 0isize, -1.0);
+    let mut y = 0;
+    while y + CROP <= left.height {
+        let mut x = 0;
+        while x + CROP <= left.width {
+            let mean = difference(&crop(left, x as isize, y as isize), &crop(right, x as isize + dx, y as isize + dy)).mean;
+            if mean > best.2 {
+                best = (x as isize, y as isize, mean);
+            }
+            x += step;
+        }
+        y += step;
+    }
+    (best.0, best.1)
 }
 
 fn crop(image: &Rendered, x: isize, y: isize) -> Rendered {
