@@ -251,8 +251,17 @@ struct Gained {
 fn wiener(noisy: Half, pilot_row_: Half, sigma_sq_unorm: f32) -> Gained {
   let s2_lo = pilot_row_.lo * pilot_row_.lo;
   let s2_hi = pilot_row_.hi * pilot_row_.hi;
-  let w_lo = max(s2_lo / (s2_lo + vec4f(sigma_sq_unorm)), vec4f(WIENER_FLOOR));
-  let w_hi = max(s2_hi / (s2_hi + vec4f(sigma_sq_unorm)), vec4f(WIENER_FLOOR));
+  // **The divisor is floored because both of its terms can be zero at once, and `max` does not
+  // agree about NaN across backends.** `sigma_sq_unorm` is exactly zero whenever the luma slider
+  // is - an ordinary position, since colour alone satisfies `does_anything` - and a block that is
+  // exactly flat, a clipped highlight or shadows the conditioning clamped to zero, has every AC
+  // coefficient of its pilot at zero too. That is 0/0. WGSL's `max` propagates the NaN and
+  // Metal's `fmax` returns the other operand, so the two hosts would take different branches
+  // through the fallback below on the same photograph, which is the one thing the shared shaders
+  // exist to prevent.
+  let floor_ = vec4f(1e-20);
+  let w_lo = max(s2_lo / max(s2_lo + vec4f(sigma_sq_unorm), floor_), vec4f(WIENER_FLOOR));
+  let w_hi = max(s2_hi / max(s2_hi + vec4f(sigma_sq_unorm), floor_), vec4f(WIENER_FLOOR));
   return Gained(
     Half(noisy.lo * w_lo, noisy.hi * w_hi),
     dot(w_lo, w_lo) + dot(w_hi, w_hi),
@@ -412,10 +421,9 @@ fn pass12(
       let g7 = wiener(noisy.r7, guide.r7, sigma_sq_unorm);
       // The DC coefficient's gain is 1 rather than the pilot's, so its energy is 1 too and
       // the floor the rest were held to is not part of it.
-      let dc_w = max(
-        guide.r0.lo.x * guide.r0.lo.x / (guide.r0.lo.x * guide.r0.lo.x + sigma_sq_unorm),
-        WIENER_FLOOR,
-      );
+      // Floored for the same reason as `wiener` above: a flat block at zero luma is 0/0 here too.
+      let dc_s2 = guide.r0.lo.x * guide.r0.lo.x;
+      let dc_w = max(dc_s2 / max(dc_s2 + sigma_sq_unorm, 1e-20), WIENER_FLOOR);
       var energy = g0.energy + g1.energy + g2.energy + g3.energy + g4.energy + g5.energy
         + g6.energy + g7.energy - dc_w * dc_w + 1.0;
       var b = Block(g0.row, g1.row, g2.row, g3.row, g4.row, g5.row, g6.row, g7.row);

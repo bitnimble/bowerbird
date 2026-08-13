@@ -57,7 +57,20 @@ fn build_inv_lut(@builtin(global_invocation_id) id: vec3u) {
 
   var exg_s = 0.0;
   var exg_c = 0.0;
-  let k_max = i32(lambda + 8.0 * sqrt(max(lambda, 1.0))) + 20;
+  // **Bounded, because the term count is 1/alpha and alpha is fitted.** The sum runs to about
+  // lambda, and lambda is `x / alpha` - so the cost of this kernel is set by a number the noise
+  // estimate solves for rather than by anything the frame's size bounds. `ne_finalize` accepts any
+  // positive slope and floors it at 1e-8, four orders below the 1e-4 it falls back to when the fit
+  // fails, and a low-contrast frame can land there: the loop then runs 1e8 iterations of a
+  // 10-node inner loop, per invocation, which is not slow but a lost device - the watchdog resets
+  // the GPU and `on_uncaptured_error` takes the process with it.
+  //
+  // The cap sits above every alpha the two estimators can legitimately produce - the editor's own
+  // floor is 1e-5 (`noise.rs`), so lambda reaches 1e5 and the window around its peak wants about
+  // 1.03e5 terms - and it is chosen so it never truncates one of those. What it bounds is the
+  // pathological fit alone, at 500 times less work than 1e-8 would cost.
+  const K_TERMS_MAX: i32 = 200000;
+  let k_max = min(i32(lambda + 8.0 * sqrt(max(lambda, 1.0))) + 20, K_TERMS_MAX);
   var lp_s = -lambda;
   var lp_c = 0.0;
   let log_lambda = log_s(lambda);

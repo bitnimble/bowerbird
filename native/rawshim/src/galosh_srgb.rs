@@ -226,7 +226,13 @@ pub fn denoise(
     let device = &gpu.device;
     // The frame crosses as packed `u16` pairs, which is what `yuv_split` unpacks and `yuv_join`
     // writes back - so the buffer is words, not samples.
-    let words = samples.len().div_ceil(2);
+    //
+    // **Sized from the pairs `yuv_join` writes, not from the samples.** It takes two pixels at a
+    // time and writes three whole words for them, so an odd pixel count costs a word of padding
+    // that no sample occupies - `ceil(3 * npix / 2)` is one short of `3 * ceil(npix / 2)` on every
+    // odd frame, and the kernel's last store lands past the end. The browser's own sizing rounds
+    // up twice and happens to land on the right number, so the two hosts disagreed only here.
+    let words = 3 * npix.div_ceil(2);
 
     let storage = wgpu::BufferUsages::STORAGE;
     let plane = |label: &str, len: usize| {
