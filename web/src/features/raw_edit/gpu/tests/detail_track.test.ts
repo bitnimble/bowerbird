@@ -9,10 +9,32 @@
 // The failure this guards is silent. A mapping that drifted would not throw; it would ship one
 // denoise in the editor and a different one in the export, and the reader would find out by
 // comparing a preview against a file.
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { denoiseAmounts } from '../shaders';
 
 describe('the Detail track', () => {
+  // The landmarks below are each host checking its own arithmetic, which a rewrite landing on
+  // those four and missing everywhere between would pass on both sides at once. This is the one
+  // assertion the two share a file over: `test/fixtures/denoise-amounts.txt`, read by
+  // `the_editor_track_is_the_one_the_fixture_states` in `galosh_srgb.rs` as well.
+  test('follows the curve the shared fixture states, off the landmarks too', () => {
+    const fixture = path.join(import.meta.dir, '../../../../../../test/fixtures/denoise-amounts.txt');
+    const rows = readFileSync(fixture, 'utf8')
+      .split('\n')
+      .filter((line) => line.trim() !== '' && !line.trimStart().startsWith('#'))
+      .map((line) => line.trim().split(/\s+/).map(Number));
+
+    expect(rows.length).toBeGreaterThanOrEqual(8);
+    for (const [luminance, colour, luma, blend, ridge] of rows) {
+      const got = denoiseAmounts(luminance!, colour!);
+      expect(got.luma, `luma at ${luminance},${colour}`).toBeCloseTo(luma!, 6);
+      expect(got.blend, `blend at ${luminance},${colour}`).toBeCloseTo(blend!, 6);
+      expect(got.ridge, `ridge at ${luminance},${colour}`).toBeCloseTo(ridge!, 6);
+    }
+  });
+
   test('treats exactly the measured noise at its middle', () => {
     // 50 is the calibrated point: the plane is normalised to its own sigma before the shrinkage
     // runs, so an amount of 1.0 is "remove what the frame was measured to have".

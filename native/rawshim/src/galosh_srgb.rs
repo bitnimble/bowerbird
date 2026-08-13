@@ -405,6 +405,35 @@ pub fn denoise(
 mod tests {
     use super::Amounts;
 
+    /// The whole track, against the same file the TypeScript twin reads.
+    ///
+    /// **Landmarks are not enough for a curve.** The two hosts were pinned at 0, 40, 50 and 100
+    /// each against its own arithmetic, which a rewrite that landed on those four and missed
+    /// everywhere between would pass on both sides at once - and the editor's live preview takes
+    /// one of these while an export takes the other, so that is a picture which changes when it is
+    /// saved. The fixture is off-landmark on purpose.
+    #[test]
+    fn the_editor_track_is_the_one_the_fixture_states() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../test/fixtures/denoise-amounts.txt");
+        let text = std::fs::read_to_string(path).expect("the shared fixture");
+        let mut rows = 0;
+        for line in text.lines().filter(|line| !line.trim_start().starts_with('#') && !line.trim().is_empty()) {
+            let cells: Vec<f64> = line.split_whitespace().map(|cell| cell.parse().expect("a number")).collect();
+            let [luminance, colour, luma, blend, ridge] = cells[..] else { panic!("five columns: {line}") };
+            let got = Amounts::for_editor(luminance, colour);
+            for (name, got, want) in
+                [("luma", got.luma, luma), ("blend", got.blend, blend), ("ridge", got.ridge, ridge)]
+            {
+                assert!(
+                    (f64::from(got) - want).abs() < 1e-6,
+                    "at {luminance},{colour} the {name} is {got} where the fixture says {want}",
+                );
+            }
+            rows += 1;
+        }
+        assert!(rows >= 8, "the fixture has only {rows} rows");
+    }
+
     /// **Half of a two-language guard.** `denoiseAmounts` in
     /// `web/src/features/raw_edit/gpu/shaders.ts` maps the same slider, and
     /// `web/src/features/raw_edit/gpu/tests/detail_track.test.ts` pins the same landmarks from

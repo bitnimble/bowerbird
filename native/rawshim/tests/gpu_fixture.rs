@@ -578,7 +578,7 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
             // suite's bound for the same stage: the grade must land, where `finish` is a
             // denoise the two accumulate differently and this fixture is already past it.
             assert!(
-                mean <= 0.5,
+                mean <= 0.5 && worst <= WORST_COUNTS,
                 "edit-{name}-ev{ev}: the shader's frame is {mean:.4} counts from the CPU's on \
                  average, worst {worst}",
             );
@@ -645,16 +645,28 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
                 worst = worst.max(error.abs());
             }
             let mean = total as f64 / want.len() as f64;
-            // In the `u16` both sides write, before any transfer. Tighter than the PQ arm's
-            // bound because PQ compresses: an error here is worth less afterwards, not more.
+            // In the `u16` both sides write, before any transfer.
             assert!(
-                mean <= 0.5,
+                mean <= 0.5 && worst <= WORST_COUNTS,
                 "rolled-{name}-ev{ev}: the shader's frame is {mean:.4} counts from the CPU's \
                  on average, worst {worst}",
             );
         }
     }
 }
+
+/// What any single sample of a 16-bit arm may be out by, against the mean bound beside it.
+///
+/// **A mean alone cannot see a localised error, which is the shape most regressions here take.**
+/// Over a 512x512 frame a mean of 0.5 counts is met by a hundred pixels being wrong by two
+/// thousand, and both 16-bit arms bounded only the mean - the sRGB arm has always bounded both.
+/// The boundary bug in the RCD demosaic was worth ~9700 counts on the pixels it touched and
+/// nothing else, which is exactly the case this is here for.
+///
+/// A tenth of a percent of range, which is far tighter in relative terms than the sRGB arm's two
+/// counts of 255 and still leaves room for another adapter's rounding. Both arms are bit-exact
+/// against the committed answer on the machine this was written on.
+const WORST_COUNTS: i64 = 64;
 
 const BANDED: usize = 256;
 
