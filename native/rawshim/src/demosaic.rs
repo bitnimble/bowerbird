@@ -269,3 +269,78 @@ pub fn demosaic_with<T>(
     lap("read back");
     Some(out)
 }
+
+#[cfg(test)]
+mod tests {
+    /// The seam between what RCD writes and what the border fill writes.
+    ///
+    /// **A stage may only read a site an earlier stage actually wrote.** §10's reaches are
+    /// cumulative from the mosaic, so each stage can compute nearer the edge than the final margin
+    /// of 10 - and it has to, because the stage after it reads past its own output. Gating them all
+    /// at 10 left stage E reading green at `r - 2` on the first interior row, where stage C had
+    /// declined to write and the seed's zero was still sitting: a ring of wrong colour a few pixels
+    /// wide, around every frame, on every photograph.
+    ///
+    /// Measured on a field smooth enough that the interior is nearly exact, so anything the seam
+    /// does stands out against it. `demosaic_psnr` cannot see this - it crops 16 pixels off each
+    /// side, "comfortably more than the algorithm's own margin", which is exactly the band at issue.
+    #[test]
+    fn the_seam_reconstructs_as_well_as_the_interior() {
+        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(rcd) = super::device(gpu) else { return };
+
+        let (w, h) = (96usize, 96usize);
+        let cfa = [0u32, 1, 1, 2];
+        // One smooth ramp with a constant offset per channel, so every colour difference is
+        // constant over the frame - which is the assumption RCD interpolates under, and the only
+        // kind of field it reconstructs to within rounding. A field whose channels vary
+        // *differently* measures the algorithm's modelling error instead, which at 0.13 here
+        // swamps what this test is looking for.
+        let truth = |r: usize, c: usize, channel: usize| -> f32 {
+            let (x, y) = (c as f32 / w as f32, r as f32 / h as f32);
+            let base = 0.3 + 0.3 * x + 0.2 * y;
+            base + match channel {
+                0 => 0.10,
+                1 => 0.0,
+                _ => -0.05,
+            }
+        };
+        let mosaic: Vec<f32> = (0..h)
+            .flat_map(|r| (0..w).map(move |c| truth(r, c, cfa[(r & 1) * 2 + (c & 1)] as usize)))
+            .collect();
+
+        let rgb = super::demosaic_with(gpu, rcd, &mosaic, w, h, cfa, |bytes| {
+            bytes
+                .chunks_exact(4)
+                .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
+                .collect::<Vec<f32>>()
+        })
+        .expect("the demosaic runs");
+
+        let margin = super::MARGIN as usize;
+        let worst = |rows: std::ops::Range<usize>, cols: std::ops::Range<usize>| {
+            let mut worst = 0f32;
+            for r in rows {
+                for c in cols.clone() {
+                    for channel in 0..3 {
+                        let got = rgb[(r * w + c) * 3 + channel];
+                        worst = worst.max((got - truth(r, c, channel)).abs());
+                    }
+                }
+            }
+            worst
+        };
+
+        // The top seam, away from the left and right ones - a band spanning the full width would
+        // carry the vertical seams into every row it measured, including the interior's.
+        let seam = worst(margin..margin + 4, margin + 8..w - margin - 8);
+        let interior = worst(h / 2 - 2..h / 2 + 2, w / 2 - 2..w / 2 + 2);
+        // Generous against the interior, because the seam legitimately has less evidence to work
+        // from. Measured with the flat margin the seam was off by 0.148 against an interior of
+        // 5.2e-6 - a factor of nearly thirty thousand, so the bar has room to spare.
+        assert!(
+            seam < interior.max(1e-5) * 100.0,
+            "the seam is off by {seam} where the interior is off by {interior}",
+        );
+    }
+}

@@ -64,12 +64,22 @@ fn is_green_site(r: i32, c: i32) -> bool {
   return phase(r, c) == 1u;
 }
 
-/// True where the pixel is far enough from every edge that every stage's reads land inside the
-/// frame. Outside this the border fill owns the pixel (§10).
-fn interior(r: i32, c: i32) -> bool {
-  let m = i32(params.margin);
+/// True where the pixel is at least `m` from every edge.
+///
+/// **Each stage passes its own reach, not the frame's margin, and the difference is a defect if it
+/// is got wrong.** §10's table is cumulative from the mosaic: a stage can compute correctly wherever
+/// *its own* inputs are valid, which for the early stages is nearer the edge than the final margin
+/// of 10. Gating every stage at 10 leaves a band where a later stage reads a site an earlier one
+/// declined to write - the seeded zero, not a reconstructed value - which is a ring of wrong colour
+/// just inside the border fill, on every frame.
+fn interior(r: i32, c: i32, m: i32) -> bool {
   return r >= m && c >= m && r < i32(params.height) - m && c < i32(params.width) - m;
 }
+
+/// §10's cumulative reaches, which are what each stage may write out to.
+const REACH_FIELD: i32 = 4;  // E_d, from h_d at +-1 along d
+const REACH_GREEN: i32 = 5;  // stage C, and the refined t* it takes
+const REACH_CHROMA: i32 = 7; // stage E, from green at +-2 diagonal
 
 // ---------------------------------------------------------------------------
 // Stage A and D: the directional blend fields (§3)
@@ -105,7 +115,7 @@ fn fields(@builtin(global_invocation_id) gid: vec3<u32>) {
   // Zero outside the valid region, which §10 requires and §3.5 relies on: the refinement reaches
   // one pixel further than the field is defined, and zero there is wrong but bounded where
   // uninitialised memory is not.
-  if (!interior(r, c)) {
+  if (!interior(r, c, REACH_FIELD)) {
     field_axis[at] = 0.0;
     field_diag[at] = 0.0;
     return;
@@ -187,7 +197,7 @@ fn green_at_chroma(@builtin(global_invocation_id) gid: vec3<u32>) {
   let c = i32(gid.x);
   let r = i32(gid.y);
   if (u32(c) >= params.width || u32(r) >= params.height) { return; }
-  if (is_green_site(r, c) || !interior(r, c)) { return; }
+  if (is_green_site(r, c) || !interior(r, c, REACH_GREEN)) { return; }
 
   // §5.1. Each gradient mixes green-to-green differences at spacing two with centre-colour
   // differences at spacing two, so it measures activity on both phases along that direction. The
@@ -232,7 +242,7 @@ fn chroma_at_chroma(@builtin(global_invocation_id) gid: vec3<u32>) {
   let c = i32(gid.x);
   let r = i32(gid.y);
   if (u32(c) >= params.width || u32(r) >= params.height) { return; }
-  if (is_green_site(r, c) || !interior(r, c)) { return; }
+  if (is_green_site(r, c) || !interior(r, c, REACH_CHROMA)) { return; }
 
   // At a red site the missing channel is blue and vice versa, and the four diagonal neighbours are
   // exactly the sites where it was sampled directly.
@@ -317,7 +327,9 @@ fn chroma_at_greens(@builtin(global_invocation_id) gid: vec3<u32>) {
   let c = i32(gid.x);
   let r = i32(gid.y);
   if (u32(c) >= params.width || u32(r) >= params.height) { return; }
-  if (!is_green_site(r, c) || !interior(r, c)) { return; }
+  // The last stage, so its reach is the frame's own margin - the border fill owns everything
+  // outside, and there is nothing after this to read what it writes.
+  if (!is_green_site(r, c) || !interior(r, c, i32(params.margin))) { return; }
 
   // The same axis field stage C used, refined the same way, computed once for both channels.
   let t = refine_axis(r, c);
@@ -359,7 +371,8 @@ fn assemble(@builtin(global_invocation_id) gid: vec3<u32>) {
   var out_r: f32;
   var out_g: f32;
   var out_b: f32;
-  if (interior(r, c)) {
+  // The frame's margin, which is exactly where the last stage stopped writing.
+  if (interior(r, c, i32(params.margin))) {
     out_r = red[at];
     out_g = green[at];
     out_b = blue[at];
