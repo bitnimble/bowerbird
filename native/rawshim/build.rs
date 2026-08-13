@@ -1,16 +1,10 @@
-// Generates the LibRaw bindings from the installed headers at build time.
+// Generates the lensfun and libavif bindings from the installed headers at build time, so that
+// field offsets come from the same headers the runtime libraries were built from and no offset
+// appears anywhere in the source.
 //
-// This is the point of the whole exercise: field offsets come from the same
-// headers the runtime library was built from, so `params.half_size` resolves the
-// way a C compiler resolves it and no offset appears anywhere in the source.
-//
-// **Two shapes, chosen by the `renditions` feature.** With it, the crate binds LibRaw,
-// lensfun and libavif and links all three: that is the server, which builds renditions.
-// Without it, LibRaw alone - which is everything the editor's open needs, since
-// `edit::prepare` reads the lens spline the camera recorded in the RAW itself rather than
-// lensfun's database, and the display transform is the client's GPU rather than an AVIF
-// encoder. That is what lets the desktop and mobile shells link one C library instead of
-// four, and lensfun is the one with no prebuilt Android build anywhere.
+// Only a `renditions` build has any: the RAWs are rawler's, which is Rust, and the display
+// transform is the client's GPU rather than an AVIF encoder, so the editor's shells link no C at
+// all. lensfun is the one with no prebuilt Android build anywhere, and that is what this buys.
 use std::env;
 use std::path::PathBuf;
 
@@ -24,13 +18,11 @@ fn main() {
 
     // Only a `renditions` build binds anything now: rawler reads the RAWs, and lensfun and
     // libavif are the server's alone. An editor build links no C at all.
+    if env::var("CARGO_FEATURE_RENDITIONS").is_err() {
+        return;
+    }
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    let path = out.join("bindings.rs");
-    let source = match env::var("CARGO_FEATURE_RENDITIONS").is_ok() {
-        true => server_bindings().to_string(),
-        false => String::new(),
-    };
-    std::fs::write(&path, source).expect("write bindings");
+    std::fs::write(out.join("bindings.rs"), server_bindings().to_string()).expect("write bindings");
 }
 
 /// AVIF, encode and decode, which only a `renditions` build binds.
@@ -87,6 +79,6 @@ fn server_bindings() -> bindgen::Bindings {
         .allowlist_var("LF_SEARCH_LOOSE")
         .allowlist_var("LF_MODIFY_DISTORTION")
         .generate()
-        .expect("bindgen failed against the installed LibRaw headers")
+        .expect("bindgen failed against the installed lensfun and libavif headers")
 }
 

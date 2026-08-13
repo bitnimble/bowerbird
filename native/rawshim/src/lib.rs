@@ -47,8 +47,11 @@
 #![deny(unfulfilled_lint_expectations)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(feature = "renditions")]
 use std::ffi::CStr;
+#[cfg(feature = "renditions")]
 use std::os::raw::c_char;
+#[cfg(feature = "renditions")]
 use std::os::raw::c_int;
 
 #[cfg(feature = "renditions")]
@@ -88,9 +91,9 @@ pub mod tca;
 pub mod tone;
 pub mod white_balance;
 
-/// lensfun and libavif, for a `renditions` build. An editor build binds no C at all, which is why
-/// this is empty rather than absent there: the modules that reach for it are behind the same
-/// feature, so an empty module is what nothing referencing it looks like.
+/// lensfun and libavif, which only a `renditions` build binds. An editor build links no C at all
+/// and so has no bindings to declare.
+#[cfg(feature = "renditions")]
 mod raw {
     #![allow(
         non_upper_case_globals,
