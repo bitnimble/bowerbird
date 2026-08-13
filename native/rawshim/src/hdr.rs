@@ -123,7 +123,7 @@ pub fn fit_match_from(
 /// and each walked the whole frame to build the same average.
 ///
 /// Both normalise it by diffuse white, the geometry search included. The peak stood in
-/// for LibRaw's auto-brightening once, and it is a maximum over a strided subsample: one
+/// for the decoder's auto-brightening once, and it is a maximum over a strided subsample: one
 /// specular sample drags the whole render toward black by the peak/white ratio, `pairs`
 /// drops anything whose darkest channel lands on 1 or below, and a frame can fall under
 /// `MIN_PAIRS` and lose its colour match entirely. Diffuse white is a percentile, so it
@@ -212,7 +212,7 @@ pub struct Prepared {
 /// Everything a grade needs that the exposure does not change.
 ///
 /// `fit_to` is the size to resample to, or `None` for a decode that already arrived at
-/// one - LibRaw bounds the browser's decode on the way out, so there is nothing left to
+/// one - the decode bounds the browser's frame on the way out, so there is nothing left to
 /// resize there.
 ///
 /// Leaves the lens alone: the one-shot encode gathers it inside the grade, and the

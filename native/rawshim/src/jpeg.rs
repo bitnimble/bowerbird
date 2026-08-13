@@ -70,7 +70,7 @@ use crate::rgb::{Rgb, RgbRef};
 /// foliage, not sky - and at tile size it is not visible even under a 1:1 crop.
 ///
 /// EXIF orientation is applied, so callers get the picture the way it was shot. A render
-/// never needs this - LibRaw bakes the rotation in - but an embedded preview is stored the
+/// never needs this - the decode bakes the rotation in - but an embedded preview is stored the
 /// way the sensor read it.
 pub fn decode(bytes: &[u8], long_edge: usize) -> Result<Rgb, String> {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));

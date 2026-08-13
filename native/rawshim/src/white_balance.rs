@@ -69,7 +69,7 @@ const LOCUS: [[f64; 4]; 31] = [
 /// tint towards magenta.
 const TINT_SCALE: f64 = -3000.0;
 
-/// The illuminant the camera balanced for, from what LibRaw read out of the file.
+/// The illuminant the camera balanced for, from what the decoder read out of the file.
 ///
 /// `cam_mul` is what a neutral surface has to be multiplied by to come out grey, so the
 /// surface itself sat at its reciprocal - that reciprocal, through the camera's own
@@ -78,7 +78,7 @@ const TINT_SCALE: f64 = -3000.0;
 ///
 /// One shot rather than the DNG SDK's iteration, because there is nothing here to iterate:
 /// that loop exists for a dual-illuminant profile, whose matrix depends on the very
-/// temperature being solved for, and LibRaw hands out one matrix.
+/// temperature being solved for, and the decode picks one matrix.
 pub fn as_shot(cam_mul: &[f32; 4], cam_xyz: &[[f32; 3]; 4]) -> Option<AsShot> {
     let (r, g, b) = (f64::from(cam_mul[0]), f64::from(cam_mul[1]), f64::from(cam_mul[2]));
     if !(r > 0.0) || !(g > 0.0) || !(b > 0.0) {

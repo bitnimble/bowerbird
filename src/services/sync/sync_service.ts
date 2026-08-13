@@ -1399,7 +1399,7 @@ export class SyncService implements LibraryLifecycleListener {
 
   // Stats each file and opens/hashes ONLY the ones that are new or whose mtime+size
   // changed vs the stored record (§9.1). Unchanged files are never opened, so a
-  // no-op sync does zero LibRaw work. Shared by the full and scoped paths.
+  // no-op sync does zero decoding. Shared by the full and scoped paths.
   //
   // `onBatch`, when given, takes each run of INSERT_BATCH files as it is hashed
   // and is what makes a first scan resumable: a half-built `present` is normally

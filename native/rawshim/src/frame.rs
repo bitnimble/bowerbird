@@ -49,17 +49,12 @@ pub struct Frame {
     pub width: usize,
     pub height: usize,
     pub pixels: Pixels,
-    /// Whether LibRaw demosaiced at half size (10.4).
+    /// Whether the frame was combined off 2x2 sites rather than demosaiced (10.4).
     pub halved: bool,
-    /// Whether the frame came straight out of `imgdata.image` rather than through
-    /// `dcraw_make_mem_image`. Only the differential decode test reads it, and only
-    /// to check that its two arms actually took different routes.
-    pub direct: bool,
     /// The illuminant the decode balanced against, from the camera's own multipliers
     /// and its own matrix.
     ///
-    /// Read here rather than recomputed downstream because this is the only place it
-    /// exists: `libraw_close` takes the matrix with it, and the samples that come out
+    /// Read here rather than recomputed downstream because the samples that come out
     /// carry no trace of what was divided out of them. None where the file recorded
     /// nothing usable, which is the same case `camera_multipliers` declines.
     pub as_shot: Option<crate::white_balance::AsShot>,
@@ -74,7 +69,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn new(width: usize, height: usize, pixels: Pixels) -> Frame {
-        Frame { width, height, pixels, halved: false, direct: false, as_shot: None, noise: None }
+        Frame { width, height, pixels, halved: false, as_shot: None, noise: None }
     }
 
     /// The 8-bit samples, borrowed. None for a 16-bit frame.

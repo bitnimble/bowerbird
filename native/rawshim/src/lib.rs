@@ -1,17 +1,13 @@
-// A LibRaw wrapper that exposes what the app actually wants, rather than the
-// twenty-odd C calls the app currently makes to assemble it.
+// The decode, the fit and the grade, exposed as what the app actually wants rather
+// than the twenty-odd C calls it once made to assemble them.
 //
-// Everything the TypeScript decoder does per frame happens here instead: as-shot
-// white balance, PPG demosaic, the half-size decision, and the masked-border crop
-// during the copy out of LibRaw's buffer. JS gets one call and a pointer.
-//
-// The reason this exists rather than a one-function shim: `params.half_size` has
-// no setter in the C API, and bindgen resolves it from the installed headers, so
-// the offset is the compiler's problem instead of something located at runtime.
+// Everything the TypeScript decoder used to do per frame happens here instead:
+// as-shot white balance, the demosaic, the half-size decision, and the
+// masked-border crop. JS gets one call and a pointer.
 //
 // `bb_` and `Bb` are short for Bowerbird. On the exported functions the prefix is
 // not decoration: C has one flat symbol namespace, and this library is dlopen'd
-// into a process that already holds LibRaw, lensfun and libavif, so a bare
+// into a process that already holds lensfun and libavif, so a bare
 // `decode` or `fit` would be an invitation. The `#[repr(C)]` types carry it too,
 // against the usual rule of naming for behaviour rather than owner, only so that
 // each pairs visibly with the symbol it crosses the boundary in - `BbHeader` with
@@ -39,7 +35,7 @@
 // native/rawshim/src` is the audit, and the count only ever goes down.
 //
 // What is left is the irreducible part: reading the one command buffer at an entry
-// point, and calling LibRaw, libavif and lensfun, which are C. Nothing is
+// point, and calling libavif and lensfun, which are C. Nothing is
 // marked for our own memory any more - a `Frame` is an owned Rust value with a real
 // lifetime, and the handle API that needed raw pointers for it survives only behind
 // a lint fence, for tests.
@@ -158,7 +154,6 @@ pub fn decode_frame(
         depth,
         rec2020_linear,
         at_least_long_edge,
-        false,
         galosh::Amounts::default(),
     )
 }
@@ -181,7 +176,6 @@ pub fn decode_frame_denoised(
         depth,
         rec2020_linear,
         at_least_long_edge,
-        false,
         amounts,
     )
 }
@@ -197,7 +191,6 @@ pub fn decode_frame_bytes(
         depth,
         rec2020_linear,
         at_least_long_edge,
-        false,
         galosh::Amounts::default(),
     )
 }
@@ -207,39 +200,14 @@ enum DecodeSource<'a> {
     Bytes(&'a [u8]),
 }
 
-/// `decode_frame`, on LibRaw's own `dcraw_make_mem_image` path rather than the fused
-/// one (§10.4).
-///
-/// Only the differential pin wants this, and it wants it because the two routes must
-/// agree to the byte. It used to be an environment variable read inside the library,
-/// which meant a subprocess per case to set it; a parameter says the same thing and
-/// lets both arms run in one process.
-#[cfg(all(test, feature = "fixtures"))]
-pub fn _for_testing_decode_frame_reference(
-    path: &str,
-    depth: u32,
-    rec2020_linear: bool,
-    at_least_long_edge: u32,
-) -> Option<frame::Frame> {
-    decode_frame_via(
-        DecodeSource::Path(path),
-        depth,
-        rec2020_linear,
-        at_least_long_edge,
-        true,
-        galosh::Amounts::default(),
-    )
-}
-
 fn decode_frame_via(
     source: DecodeSource<'_>,
     depth: u32,
     rec2020_linear: bool,
     at_least_long_edge: u32,
-    reference: bool,
     amounts: galosh::Amounts,
 ) -> Option<frame::Frame> {
-    decode_frame_cropped(source, depth, rec2020_linear, at_least_long_edge, reference, amounts, None)
+    decode_frame_cropped(source, depth, rec2020_linear, at_least_long_edge, amounts, None)
 }
 
 /// `at_least_long_edge` is a floor rather than a size: the smallest long edge that would still
@@ -249,7 +217,6 @@ fn decode_frame_cropped(
     depth: u32,
     rec2020_linear: bool,
     at_least_long_edge: u32,
-    _reference: bool,
     amounts: galosh::Amounts,
     crop: Option<Tile>,
 ) -> Option<frame::Frame> {
@@ -268,7 +235,7 @@ fn decode_frame_cropped(
 
     // Scene-linear Rec.2020 is what the decode produces; 8-bit sRGB is that with the matrix and the
     // transfer curve on top. `dcraw_process` handed the second back directly, which is why the two
-    // still arrive as one request.
+    // arrive as one request rather than two.
     match (depth, rec2020_linear) {
         (16, true) => Some(scene),
         (8, false) => decode_rawler::to_srgb8(&scene),
@@ -298,7 +265,6 @@ pub fn decode_tile(
         depth,
         rec2020_linear,
         0,
-        false,
         amounts,
         Some(crop),
     )

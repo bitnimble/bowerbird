@@ -74,8 +74,8 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   shutter_speed: z.number().nullable(),
   aperture: z.number().nullable(),
   focal_length: z.number().nullable(),
-  // Body and lens, off the RAW header. LibRaw's normalized names where it has
-  // them; null when the camera recorded nothing (fixed-lens bodies report no lens).
+  // Body and lens, off the RAW header. Null when the camera recorded nothing
+  // (fixed-lens bodies report no lens).
   camera_make: z.string().nullable(),
   camera_model: z.string().nullable(),
   lens_model: z.string().nullable(),

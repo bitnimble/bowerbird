@@ -1031,7 +1031,7 @@ fn fit_grids(grids: Grids, geometry: Geometry) -> Result<Option<Profile>, String
     let settled: (Option<Vec<f64>>, f64, u32) = match geometry {
         // Taken at its word for the curve, which is most of what a search costs. The
         // scale still has to be fitted: the body is saying it undistorted nothing, not
-        // that it framed the JPEG exactly as LibRaw frames the render.
+        // that it framed the JPEG exactly as the decode frames the render.
         Geometry::Uncorrected => chosen(fit_scale(&grids), baseline_delta, 0),
         Geometry::Recorded(knots) => with_curve(&grids, knots, baseline_delta, SOURCE_CAMERA),
         Geometry::Profiled(knots) => with_curve(&grids, knots, baseline_delta, SOURCE_LENSFUN),

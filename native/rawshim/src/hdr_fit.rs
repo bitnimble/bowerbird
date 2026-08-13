@@ -569,7 +569,7 @@ impl ChromaMap {
 ///
 /// One struct rather than three arguments because they are one thing. The colour was
 /// fitted from pairs that only correspond *through* the geometry, so applying the
-/// colour without the warp gives a photo the camera's colour and LibRaw's shape -
+/// colour without the warp gives a photo the camera's colour and the raw render's shape -
 /// which is what shipped first, and it made the HDR rendition disagree with its own
 /// SDR twin about where everything in the frame was. The falloff joined on the same
 /// terms: the curves were fitted on a render that already carried it.
@@ -1185,14 +1185,11 @@ pub fn srgb_to_rec2020() -> [[f64; 3]; 3] {
     multiply(&XYZ_TO_REC2020, &SRGB_TO_XYZ)
 }
 
-/// The transfer LibRaw's 8-bit path applies, for a render meant to match one of those.
+/// BT.709's transfer: 1/2.222 over a slope of 4.5, which is what dcraw's
+/// `gamma_curve(gamm[0], gamm[1], ..)` bisects its way to at LibRaw's defaults.
 ///
-/// dcraw's `gamma_curve(gamm[0], gamm[1], ..)` at LibRaw's defaults - 1/2.222 over a
-/// slope of 4.5 - whose bisection converges on the BT.709 constants written out here.
-///
-/// Not to be confused with `srgb_oetf` below, and the distinction is the whole point:
-/// the *measurement* wants sRGB, because a deltaE against an 8-bit JPEG is defined
-/// there, while the geometry *render* is trying to look like something LibRaw made.
+/// Not to be confused with `srgb_oetf` below - see `render_8bit`, its one caller, for why
+/// the distinction is now a question rather than an answer.
 fn bt709_oetf(value: f64) -> f64 {
     let c = value.clamp(0.0, 1.0);
     if c < 0.018 { 4.5 * c } else { 1.099 * c.powf(0.45) - 0.099 }
@@ -3242,20 +3239,22 @@ pub fn fit_plane(linear: &[u16], width: usize, height: usize, wide: usize) -> Pl
 /// question, so they had better agree - and what they are handed is the only thing that
 /// can make the answer differ.
 ///
-/// **In LibRaw's transfer, which is not the sRGB one.** Its 8-bit path runs dcraw's
-/// `gamma_curve` at LibRaw's default `gamm` of 1/2.222 over a slope of 4.5, which is
-/// BT.709; sRGB's 1/2.4 over 12.92 lifts shadows considerably further. Rendered with
-/// sRGB's, this put level 16 where LibRaw puts 8 and 32 where it puts 16 - 12.4 levels
-/// apart across the frame, of which a per-channel curve explained all but 2.3, the rest
-/// being the 1280px plane against LibRaw's 3000px decode.
+/// **In BT.709's transfer, which is not the sRGB one, and that is now a disagreement rather
+/// than a choice.** It is here because LibRaw's 8-bit path ran dcraw's `gamma_curve` at a
+/// `gamm` of 1/2.222 over a slope of 4.5, and this render existed to look like one of those:
+/// sRGB's 1/2.4 over 12.92 lifts shadows considerably further, putting level 16 where LibRaw
+/// put 8 and 32 where it put 16. But the 8-bit render is `decode_rawler::to_srgb8` now, and
+/// that applies sRGB's, so the two renders of one RAW that this doc says had better agree no
+/// longer do. Changing it is a change to what the geometry fit sees, so it wants the fixture
+/// suite in front of it rather than an edit on the way past.
 ///
 /// **Normalised by diffuse white, not by the frame's peak**, and the difference is not
-/// cosmetic. LibRaw's auto-bright is a percentile - it clips its brightest ~1% on
+/// cosmetic. The auto-bright this replaced was a percentile - it clipped its brightest ~1% on
 /// purpose. Dividing by the peak instead clips nothing, which sounds safer and is the
 /// bug: the peak is the maximum of a strided subsample, so a single specular sample - a
 /// sun, a chrome edge, a hot pixel - drags the whole render toward black by the
 /// peak/white ratio, which `tone.rs` documents as varying 10x across bodies. Measured on
-/// DSC02981 that took the render's mean from 88 to 51 against LibRaw's 115, about a stop
+/// DSC02981 that took the render's mean from 88 to 51 against a reference 115, about a stop
 /// and a fifth, and `fit::pairs` drops any pair whose darkest channel lands on 1 or
 /// below - so the shadows that error creates are not merely dark, they are discarded,
 /// and a frame can fall under `MIN_PAIRS` and lose its colour match altogether.
@@ -3273,7 +3272,7 @@ pub fn render_srgb8(plane: &Plane, white: f64) -> crate::rgb::Rgb {
     let mut data = vec![0u8; plane.width * plane.height * 3];
     let to_srgb = rec2020_to_srgb();
     data.par_chunks_mut(3).zip(plane.data.par_chunks(3)).for_each(|(out, px)| {
-        // sRGB primaries first, as LibRaw's own `OUTPUT_SRGB` lands on; the fit works in
+        // sRGB primaries first, which is where the camera's JPEG lives; the fit works in
         // Rec.2020.
         let v = apply3(&to_srgb, px[0] / white, px[1] / white, px[2] / white);
         for c in 0..3 {

@@ -44,7 +44,6 @@ pub fn to_srgb8(frame: &Frame) -> Option<Frame> {
         height: frame.height,
         pixels: Pixels::Eight(out),
         halved: frame.halved,
-        direct: frame.direct,
         as_shot: frame.as_shot,
         noise: frame.noise,
     })
@@ -193,7 +192,6 @@ pub fn decode_tile(path: &str, tile: crate::Tile, amounts: crate::galosh::Amount
         height: out_h,
         pixels: Pixels::Sixteen(pixels),
         halved: false,
-        direct: true,
         as_shot: as_shot_of(&image),
         noise,
     })
@@ -386,7 +384,6 @@ fn decode_source(
         height: out_h,
         pixels: Pixels::Sixteen(pixels),
         halved,
-        direct: true,
         as_shot: as_shot_of(&image),
         noise,
     })

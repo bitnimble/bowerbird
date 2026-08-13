@@ -4,7 +4,7 @@
 // Zero at the centre by construction and growing with radius, which is what separates
 // it from every other colour error in the pipeline. On a 16mm f/2.8 frame it measures
 // ~5px at the corner, where it reads as magenta on the outward side of a highlight and
-// green on the inward side. Canon removes it in the JPEG; LibRaw's render carries it.
+// green on the inward side. Canon removes it in the JPEG; a render off the RAW carries it.
 //
 // The model is one scale per channel against green, which is all a rectilinear lens's
 // lateral aberration is. It composes with the distortion warp rather than needing a

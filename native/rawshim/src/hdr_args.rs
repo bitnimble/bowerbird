@@ -219,7 +219,7 @@ pub fn ffmpeg_args(width: u32, height: u32, options: &EncodeOptions) -> Vec<Stri
         "-hide_banner",
         "-loglevel",
         "error",
-        // LibRaw's samples are in native order, so no byte swap is needed here.
+        // The decode's samples are in native order, so no byte swap is needed here.
         "-f",
         "rawvideo",
         "-pixel_format",

@@ -158,7 +158,7 @@ pub fn save_still(
 /// An 8-bit sRGB rendition, straight to disk.
 ///
 /// The other half of what `bb_save_avif` used to hand to libvips. Nothing to transfer
-/// and no gamut to convert: LibRaw's sRGB decode already produced display-referred sRGB,
+/// and no gamut to convert: the 8-bit decode already produced display-referred sRGB,
 /// so the pixels go to libavif exactly as they arrive and only the YCbCr matrix is left.
 /// Tagged sRGB rather than left bare, since a file that says what it is costs nine bytes.
 ///

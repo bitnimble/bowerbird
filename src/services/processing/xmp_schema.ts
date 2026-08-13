@@ -214,9 +214,8 @@ export const CalibrationSchema = z.object({
 });
 
 export const GeometrySchema = z.object({
-  // Standard EXIF orientation codes, as the sidecar states them. It may
-  // disagree with the raw's own orientation, and LibRaw's flip code is a
-  // different encoding of the same idea; reconciling either is the consumer's.
+  // Standard EXIF orientation codes, as the sidecar states them. It may disagree with the
+  // raw's own; reconciling that is the consumer's.
   orientation: z.number().nullable(),
   // Authoritative. Crop values are frequently present and non-default while
   // this is false - stale state from a crop the user undid - so the edges are

@@ -15,7 +15,7 @@ import { headerOf, prepareEditAsync } from '../rawshim_edit';
 // serialised it by accident; a thread per call does not, and the client cannot cancel work
 // the native side has already begun - so opening the editor, pressing Escape and opening it
 // again leaves the first decode running with the second beside it. Ten of those is ten
-// simultaneous LibRaw decodes of the same 61MP RAW, several gigabytes, and the process.
+// simultaneous decodes of the same 61MP RAW, several gigabytes, and the process.
 //
 // A missing file rather than a fixture: the dedup happens before the work does, and the
 // request being refused is what makes this fast and what pins the release.

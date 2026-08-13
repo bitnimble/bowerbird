@@ -5,14 +5,11 @@ import path from 'node:path';
 // this app does to pixels happens in there, and it owns every decoded image for as
 // long as TypeScript holds a handle to it.
 //
-// Decoding moved out of TypeScript because `params.half_size` has no setter in
-// LibRaw's C API, and the FFI could only reach it by locating the struct at
-// runtime and writing at an offset. That worked, and was checked from two
-// directions, but "we believe this address is right" is a poor foundation for a
-// field whose neighbours - `four_color_rgb`, `use_auto_wb` - silently change the
-// picture when written to by mistake. bindgen resolves the field from the same
-// headers the runtime library was built from, so the offset is the compiler's
-// problem and stops being ours.
+// Decoding moved out of TypeScript because the half-size flag had no setter in the C API
+// it lived behind, and the FFI could only reach it by locating the struct at runtime and
+// writing at an offset. That worked, and was checked from two directions, but "we believe
+// this address is right" is a poor foundation for a field whose neighbours silently change
+// the picture when written to by mistake. There is no C decoder left to reach into.
 //
 // Everything else followed because the boundary was in the wrong place. The fit
 // evaluates tens of candidate geometries, each warping, blurring, pairing and
@@ -49,7 +46,7 @@ const SYMBOLS = {
   // Questions about pixels, for tests and pins. Same shape as bb_run_job.
   bb_for_testing_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // The editor's open: start it, be told when it is done, copy it out. Three calls rather
-  // than one because the open is seconds of LibRaw and this process answers every other
+  // than one because the open is seconds of decoding and this process answers every other
   // request from the same thread, so it runs on one the library owns (`rawshim_edit.ts`).
   bb_prepare_edit_start: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
   bb_prepare_edit_poll: { args: [FFIType.u64], returns: FFIType.i64 },

@@ -39,7 +39,7 @@ export interface RawHeaderFields {
   width: number;
   height: number;
   orientation: number;
-  /** Epoch seconds as LibRaw's `mktime` produced them, or null. */
+  /** Epoch seconds, from the camera's wall clock read as UTC, or null. */
   timestamp: number | null;
   latitude: number | null;
   longitude: number | null;
@@ -64,10 +64,9 @@ function name(raw: Uint8Array, at: number, size: number): string | null {
  * Dimensions, orientation, capture time, GPS and the exposure a RAW records, with
  * no pixel decoded.
  *
- * Every field is resolved from LibRaw's own typed structs in Rust; this reads one
- * flat struct of our own at fixed offsets, size-checked at the first call. It used
- * to reach into five of LibRaw's structs from here at hardcoded offsets, one of
- * them by assuming where `sizes` sits inside `libraw_data_t` (§10.4).
+ * One flat struct of our own, read at fixed offsets and size-checked at the first call. It
+ * used to reach into five C structs from here at hardcoded offsets, one of them by
+ * assuming where another sat inside a sixth (§10.4).
  */
 export function readHeaderFields(filePath: string): RawHeaderFields {
   const S = shim();

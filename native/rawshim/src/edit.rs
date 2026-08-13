@@ -198,7 +198,7 @@ pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, St
 ///
 /// An open cannot be cancelled: a reader who opens the editor and changes their mind leaves
 /// the decode running, because neither the browser abandoning a request nor Tauri dropping an
-/// invoke reaches the thread already inside LibRaw. So what bounds this is how many can be
+/// invoke reaches the thread already inside the decode. So what bounds this is how many can be
 /// *underway*, and until now nothing did - the server's dedup collapses repeats of one
 /// photograph and says nothing about the next one, and the shell had not even that. Stepping
 /// through a few photographs and opening each was that many full-sensor decodes at once, and
@@ -274,7 +274,7 @@ pub fn served() -> Vec<(u64, u64)> {
 fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     {
         let frame = crate::decode_frame_bytes(bytes, 16, true, request.long_edge)
-            .ok_or("LibRaw could not decode this file")?;
+            .ok_or("the decoder could not read this file")?;
         let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
         let source = hdr::Source { samples, width: frame.width, height: frame.height };
 
@@ -372,7 +372,7 @@ fn fit(
     let recorded = crate::lens::read_distortion(raw);
     // Three outcomes where `ffi::geometry_for` has four: no `Profiled`, so a lens with no
     // recorded spline is fitted from the picture rather than looked up in lensfun. Chosen,
-    // not missed. The editor links LibRaw alone - the whole crate does without the
+    // not missed. The editor links no C at all - the whole crate does without the
     // `renditions` feature - and that is what makes the desktop and Android shells buildable
     // at all, since lensfun has no Android build and wants glib underneath it.
     //

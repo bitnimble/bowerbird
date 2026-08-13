@@ -89,7 +89,7 @@ export class PhotosService {
     private readonly libraries: LibrariesRepository,
     private readonly processing: ProcessingService,
     // Defaulted rather than required, matching SyncService: a seam for tests
-    // that must not pull LibRaw in, without every caller having to wire it.
+    // that must not pull the native library in, without every caller having to wire it.
     private readonly extract: (filePath: string) => Promise<FileMetadata> = extractMetadata,
   ) {}
 
@@ -182,8 +182,8 @@ export class PhotosService {
 
   // The camera's JPEG has no file of its own to stat, so its weight is only
   // known by lifting it out - a header read and a copy, ~1ms, on a single-photo
-  // read. Null for a RAW that has gone, which is also what keeps LibRaw out of
-  // the tests: they name files that do not exist.
+  // read. Null for a RAW that has gone, which is also what keeps the native library out
+  // of the tests: they name files that do not exist.
   private embeddedBytes(raw: string): number | null {
     if (!existsSync(raw)) return null;
     return readEmbeddedJpeg(raw)?.length ?? null;
@@ -424,8 +424,8 @@ export class PhotosService {
       return;
     }
 
-    // A photo whose file is gone has nothing to render from, and LibRaw's
-    // "Input/output error" surfaces as a 500 that says nothing useful.
+    // A photo whose file is gone has nothing to render from, and a decoder's refusal
+    // surfaces as a 500 that says nothing useful.
     const raw = getOriginalPath(library, photo.file_path);
     if (!existsSync(raw)) throw new AppError('NOT_FOUND', `original file not found: ${photo.file_path}`);
     const startedAt = Date.now();

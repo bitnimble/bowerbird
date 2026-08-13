@@ -1,6 +1,6 @@
 // EXIF 2.31 (2016) added the tags that say what zone a capture time was written
-// in. LibRaw exposes none of them - it hands back a `time_t` and nothing else
-// (DESIGN §11.1) - so they are read here, straight out of the file's own header.
+// in. `bb_read_header` carries none of them - it hands back epoch seconds and nothing
+// else (DESIGN §11.1) - so they are read here, straight out of the file's own header.
 // Bodies older than the spec write no offset at all, which is why the result is
 // nullable rather than a default of UTC.
 const OFFSET_TIME_ORIGINAL = 0x9011;

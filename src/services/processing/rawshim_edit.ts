@@ -100,7 +100,7 @@ export interface PreparedHeader {
 /** `EDIT_RUNNING` in `native/rawshim/src/ffi.rs`: not a length and not a failure, come back. */
 const RUNNING = -2;
 
-// Two frames at 60Hz. An open is seconds of LibRaw, so this is nowhere near the cost of the
+// Two frames at 60Hz. An open is seconds of decoding, so this is nowhere near the cost of the
 // work it waits on, and it is short enough that the wait adds nothing a reader could see.
 const POLL_MS = 32;
 
@@ -129,7 +129,7 @@ async function settled(job: number): Promise<number> {
  * which serialised it by accident; now it is a thread per call, and a reader who opens the
  * editor, presses Escape and opens it again has left the first one running - the client
  * cannot cancel work the native side has already started, and would not stop it by
- * abandoning the request. Ten of those in five seconds is ten simultaneous LibRaw decodes
+ * abandoning the request. Ten of those in five seconds is ten simultaneous decodes
  * of the same 61MP RAW, which is several gigabytes and the end of the process.
  *
  * The prepare is a pure function of its request, so the second caller wants exactly what
@@ -142,7 +142,7 @@ const inFlight = new Map<string, Promise<Uint8Array>>();
  * Decodes, prepares, fits the camera match and materialises the lens warp - without
  * stopping the server for the length of it.
  *
- * The open is seconds of LibRaw on the one thread that answers every other request, so
+ * The open is seconds of decoding on the one thread that answers every other request, so
  * doing it in line froze the library until it finished. This starts the work on a thread
  * the native side owns and returns a promise, so there is no worker on this side at all.
  */

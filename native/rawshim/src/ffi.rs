@@ -110,7 +110,7 @@ pub unsafe extern "C" fn bb_render_tile(
 // ---------------------------------------------------------------------------------------
 // The editor's open, without holding the caller's thread.
 //
-// It is seconds of LibRaw, and the server calls it from the one thread that answers every
+// It is seconds of decoding, and the server calls it from the one thread that answers every
 // other request - so doing it in line stopped the library dead for as long as it took. This
 // starts the work on a thread of its own and returns immediately, and the caller learns it
 // is done through a function pointer it registered rather than by blocking or polling.

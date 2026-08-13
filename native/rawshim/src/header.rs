@@ -2,14 +2,12 @@
 // orientation, capture time, GPS, exposure, and the camera and lens names.
 //
 // In Rust because it was six tables of hardcoded byte offsets in TypeScript,
-// reaching into five of LibRaw's structs - `libraw_image_sizes_t`,
-// `libraw_imgother_t`, `libraw_gps_info_t`, `libraw_iparams_t` and
-// `libraw_lensinfo_t` - one of which was reached by assuming where `sizes` sits
-// inside `libraw_data_t`. That is the same guess that motivated moving the decode
-// here (DESIGN 10.4): the offsets were right, and were checked against real files
-// from several bodies, but nothing made them stay right. bindgen resolves every
-// field from the headers the runtime library was built from, so a layout change is
-// now a compile error rather than a photo dated 1970 at the wrong coordinates.
+// reaching into five C structs, one of which was reached by assuming where another
+// sat inside a sixth. That is the same guess that motivated moving the decode here
+// (DESIGN 10.4): the offsets were right, and were checked against real files from
+// several bodies, but nothing made them stay right. rawler hands back named fields,
+// so a layout change is now a compile error rather than a photo dated 1970 at the
+// wrong coordinates.
 //
 // The struct handed back is `#[repr(C)]` and ours, which is the distinction that
 // matters: TypeScript still reads it at fixed offsets, but this one cannot change
@@ -26,16 +24,16 @@ pub struct BbHeader {
     /// Display orientation, with the masked-border crop already applied.
     pub width: u32,
     pub height: u32,
-    /// LibRaw's `sizes.flip` (0/3/5/6), 0 when unreadable.
+    /// The EXIF tag, 1 to 8, and 0 when unreadable. Not the `flip` encoding LibRaw handed over
+    /// here, which used 0/3/5/6 and is what the catalogue's older rows hold.
     pub orientation: i32,
     /// 0 for anything the camera did not record.
     pub iso: f32,
     pub shutter: f32,
     pub aperture: f32,
     pub focal: f32,
-    /// Seconds since the epoch as LibRaw's `mktime` produced it, so it is the
-    /// camera's wall clock read in *this machine's* zone. 0 when absent; the
-    /// caller re-encodes it (see `wallClockIso`).
+    /// Seconds since the epoch, from the camera's wall clock read as UTC. 0 when
+    /// absent; the caller re-encodes it (see `wallClockIso`).
     pub timestamp: i64,
     /// NaN when the file carries no parsed GPS fix.
     pub latitude: f64,

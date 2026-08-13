@@ -174,7 +174,7 @@ app.use('*', async (c, next) => {
 // worth one whatever it returns.
 //
 // A slow one is the exception, and by what it cost rather than by which route it is: an
-// editor open is seconds of LibRaw and was invisible here, which is the wrong way round -
+// editor open is seconds of decoding and was invisible here, which is the wrong way round -
 // it is the first thing anyone looks for when the app feels slow, and a list of routes
 // would only have covered the one somebody thought of.
 //

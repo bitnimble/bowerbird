@@ -2,10 +2,9 @@
 //
 // This replaces a module that read samples back into a `Buffer`, and the difference
 // is the point: that meant the native side had to hand out an address and keep it
-// valid across calls. Everything the pins actually assert - that
-// two decode routes agree, that a grade is stable, that a decode is scene-referred -
-// is a digest or a statistic, and both are cheaper to compute where the pixels
-// already are.
+// valid across calls. Everything the pins actually assert - that a grade is stable,
+// that a decode is scene-referred - is a digest or a statistic, and both are cheaper
+// to compute where the pixels already are.
 //
 // Lint keeps this out of `src/**`. Nothing here hands samples over, including the one
 // call that reads individual pixels: four triples is a summary like any other.
@@ -26,12 +25,6 @@ export interface DecodeSummary {
   samples: number;
   bytes: number;
   halved: boolean;
-  /**
-   * Whether the decode came straight out of LibRaw's processed buffer rather than
-   * through `dcraw_make_mem_image` (§10.4). The differential pin checks its two arms
-   * took different routes; without it a passing comparison proves nothing.
-   */
-  direct: boolean;
   sha1: string;
   channels: ChannelStats[];
 }

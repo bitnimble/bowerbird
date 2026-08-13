@@ -226,8 +226,8 @@ mod halving {
 
         assert!(long_edge(&halved) < long_edge(&whole));
         assert!(long_edge(&halved) >= FULL_RENDITION as usize);
-        // Close to exactly half; LibRaw rounds and the masked-border crop is halved
-        // alongside, so this is not an equality.
+        // Close to exactly half; the recommended crop is halved alongside and rounds, so
+        // this is not an equality.
         let ratio = long_edge(&halved) as f64 / long_edge(&whole) as f64;
         assert!((0.45..0.55).contains(&ratio), "halved to {ratio} of the frame");
         // Aspect must survive the halving, or the crop insets were scaled wrongly and
@@ -258,10 +258,9 @@ mod halving {
 
     #[test]
     fn produces_a_sane_picture_not_a_misplaced_struct_write() {
-        // The half_size flag is written into LibRaw's params through a bindgen-resolved
-        // offset. A wrong address would land on a neighbouring field - four_color_rgb
-        // and use_auto_wb are both nearby - so this checks the result still looks like
-        // the same photograph rather than only checking its dimensions.
+        // Halving combines each 2x2 site into one pixel, so a site taken off an odd row or
+        // column reads the colours next door: still the right size, still sharp, and green.
+        // Checked as a picture rather than as dimensions for that reason.
         let Some(path) = big() else { return };
         let whole = crate::debug::summarise(&decode(&path, 8, false, 0));
         let halved = crate::debug::summarise(&decode(&path, 8, false, FULL_RENDITION));
@@ -800,8 +799,8 @@ mod camera_match {
 
     /// An HDR job wants only the geometry, and holds a scene-linear decode already, so
     /// it fits off that rather than demosaicing the file a second time in 8-bit. The two
-    /// renders differ in tone - LibRaw auto-brightens its sRGB path where the linear one
-    /// is deliberately scene-referred - so what survives that has to be checked rather
+    /// renders differ in tone - the 8-bit path normalises where the linear one is
+    /// deliberately scene-referred - so what survives that has to be checked rather
     /// than assumed.
     ///
     /// What is pinned is the match, not the route to it. The *tier* is deliberately not
@@ -1416,7 +1415,7 @@ mod hdr_grade {
 ///
 /// A reader who opens the editor and changes their mind leaves the decode running - neither
 /// a browser abandoning a request nor Tauri dropping an invoke reaches the thread already
-/// inside LibRaw - so the question is how many can be underway at once, and the answer has
+/// inside the decode - so the question is how many can be underway at once, and the answer has
 /// to be one. Two 61MP opens together are the decode plus an f32 buffer of the same shape,
 /// each, which is where a laptop runs out of memory.
 ///

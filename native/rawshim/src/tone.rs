@@ -1,4 +1,4 @@
-// Scene-referred sensor data carries no exposure. LibRaw scales sensor saturation to
+// Scene-referred sensor data carries no exposure. The decode scales sensor saturation to
 // full range whatever the photographer metered, so declaring linear 1.0 to be the
 // display's peak makes brightness a function of how the shot was exposed rather than
 // of what was in front of the lens: measured over eight bodies, the same 1000-nit

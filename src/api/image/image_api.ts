@@ -220,7 +220,7 @@ export class ImageApi {
     const longEdge = Math.round(requested);
 
     // Before the open rather than after it. `locate` answers from the catalogue, which knows
-    // nothing about the disk, so a file that has been moved or unplugged reaches LibRaw as a
+    // nothing about the disk, so a file that has been moved or unplugged reaches the decoder as a
     // path that is not there - and comes back as a 500 quoting the server's own absolute
     // path, where every sibling route here answers 404. The reader's own library is not a
     // server error, and where it lives is not theirs to be told.
@@ -230,7 +230,7 @@ export class ImageApi {
     }
 
     const settings = this.settings.get();
-    // Awaited, not called: the open is seconds of LibRaw, and every other request this
+    // Awaited, not called: the open is seconds of decoding, and every other request this
     // server answers comes off the same thread. It runs on one the native side owns and
     // reports back through a callback (`rawshim_edit.ts`), so a reader opening the editor no
     // longer stops the grid loading for anybody, themselves included.

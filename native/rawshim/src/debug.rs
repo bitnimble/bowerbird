@@ -74,10 +74,6 @@ pub struct DecodeSummary {
     pub samples: usize,
     pub bytes: usize,
     pub halved: bool,
-    /// Whether the frame came straight out of `imgdata.image` rather than through
-    /// `dcraw_make_mem_image`. The differential pin checks its two arms took
-    /// different routes; without it a passing comparison proves nothing (10.4).
-    pub direct: bool,
     pub sha1: String,
     pub channels: Vec<Channel>,
 }
@@ -91,7 +87,6 @@ pub fn summarise(frame: &Frame) -> DecodeSummary {
         samples: frame.pixels.len(),
         bytes: bytes.len(),
         halved: frame.halved,
-        direct: frame.direct,
         sha1: sha1_hex(&bytes),
         channels: channels(&frame.pixels),
     }
@@ -604,7 +599,6 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                     samples: pixels.len(),
                     bytes: pixels.len(),
                     halved: false,
-                    direct: false,
                     sha1: sha1_hex(&to_bytes(&pixels)),
                     channels: channels(&pixels),
                 }),

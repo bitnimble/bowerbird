@@ -39,7 +39,7 @@ function build(over: {
   const libraries = { getById: jest.fn(() => null), setBinIdentity: jest.fn(), ...over.libraries } as unknown as LibrariesRepository;
   const shoots = { getById: jest.fn(() => null), ...over.shoots } as unknown as ShootsRepository;
   const albums = { getById: jest.fn(() => null), getAlbumIdsForPhoto: jest.fn(() => []), ...over.albums } as unknown as AlbumsRepository;
-  // These tests never render, so a stub keeps LibRaw and worker threads out.
+  // These tests never render, so a stub keeps the native library and worker threads out.
   const processing = {
     renderLossless: jest.fn(async () => {}),
     renderOne: jest.fn(async () => {}),
