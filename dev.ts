@@ -8,7 +8,7 @@ import { Logger } from './src/logger';
 // the rest of its life, however many times the file underneath is replaced. So
 // watch the build output too, and restart the whole process when `bun run
 // build:native` lands a new one.
-const LIB = path.join(import.meta.dir, 'native/rawshim/target/release/librawshim.so');
+const LIB = path.join(import.meta.dir, 'native/rawshim/target/quick/librawshim.so');
 const log = new Logger('dev');
 
 function start(): Bun.Subprocess {

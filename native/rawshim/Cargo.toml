@@ -99,6 +99,26 @@ overflow-checks = true
 lto = "fat"
 codegen-units = 1
 
+# What every build that is not being shipped uses: the tests, the benchmark examples and any
+# local `build:native`.
+#
+# **Same optimisation and the same overflow checks; only the whole-program link is dropped.**
+# Fat LTO into one codegen unit is worth 25% of the library's size and, measured here, nothing
+# at all in speed: a 61MP decode ran 1635-1666ms under `release` and 1687ms under this, and the
+# grade 1485-1664ms against 1481ms. What it costs is the build - 43s against 19s, and almost
+# all of it serial, since one codegen unit and a whole-program link leave nothing to run in
+# parallel. That is the wrong trade to pay on every edit and the right one to pay once, on the
+# artefact a user installs.
+#
+# `opt-level` and `overflow-checks` are deliberately not relaxed. A debug decode is six times
+# slower - measured, 229s of fixture suite against 36s - and the overflow checks are the
+# reason a wrapping index over tens of millions of samples is a loud failure rather than a
+# quietly wrong picture, which is exactly what the tests are for.
+[profile.quick]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [build-dependencies]
 bindgen = "0.72"
 

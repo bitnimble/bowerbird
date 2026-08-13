@@ -11,18 +11,17 @@
     "lint": "oxlint",
     "test": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test src",
     "test:integration": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test test/integration",
-    "test:native": "cargo test --release --manifest-path native/rawshim/Cargo.toml",
-    "test:native:full": "cargo test --release --manifest-path native/rawshim/Cargo.toml --features fixtures",
+    "test:native": "cargo test --profile quick --manifest-path native/rawshim/Cargo.toml",
+    "test:native:full": "cargo test --profile quick --manifest-path native/rawshim/Cargo.toml --features fixtures",
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e-tauri/tsconfig.json",
-    "build:native": "cargo build --release --manifest-path native/rawshim/Cargo.toml",
+    "build:native": "cargo build --profile quick --manifest-path native/rawshim/Cargo.toml",
+    "build:native:release": "cargo build --release --manifest-path native/rawshim/Cargo.toml",
     "e2e:tauri:build": "bun run scripts/build-wdio-app.ts",
     "e2e:tauri": "bun run e2e:tauri:build && bun run scripts/e2e-tauri-full.ts",
     "tauri": "bun x @tauri-apps/cli",
     "mac:build": "bun run scripts/mac-build.ts",
     "win:build": "bun run scripts/win-build.ts",
-    "android:build": "bun run scripts/android-build.ts",
-    "msys:fetch": "bun run scripts/msys-fetch.ts",
-    "termux:fetch": "bun run scripts/termux-fetch.ts"
+    "android:build": "bun run scripts/android-build.ts"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

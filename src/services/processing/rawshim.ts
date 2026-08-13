@@ -26,6 +26,10 @@ const CANDIDATES = [
   // Next to the source tree, which is a development build and what a live-mounted
   // dev container sees. Ahead of the container paths so a local `bun run
   // build:native` is what runs, rather than something the image shipped.
+  //
+  // `quick` before `release`: `build:native` writes the first, and a `release` left over from a
+  // packaging run would otherwise shadow every rebuild since.
+  path.join(import.meta.dir, '../../../native/rawshim/target/quick/librawshim.so'),
   path.join(import.meta.dir, '../../../native/rawshim/target/release/librawshim.so'),
   // The best of the image's instruction-set variants that this CPU proved it can
   // run, symlinked by the container entrypoint (§10.4). Absent when only the
