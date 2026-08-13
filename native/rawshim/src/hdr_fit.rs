@@ -1185,16 +1185,6 @@ pub fn srgb_to_rec2020() -> [[f64; 3]; 3] {
     multiply(&XYZ_TO_REC2020, &SRGB_TO_XYZ)
 }
 
-/// BT.709's transfer: 1/2.222 over a slope of 4.5, which is what dcraw's
-/// `gamma_curve(gamm[0], gamm[1], ..)` bisects its way to at LibRaw's defaults.
-///
-/// Not to be confused with `srgb_oetf` below - see `render_8bit`, its one caller, for why
-/// the distinction is now a question rather than an answer.
-fn bt709_oetf(value: f64) -> f64 {
-    let c = value.clamp(0.0, 1.0);
-    if c < 0.018 { 4.5 * c } else { 1.099 * c.powf(0.45) - 0.099 }
-}
-
 /// The sRGB transfer, IEC 61966-2-1. Out-of-gamut values clamp, which is what zimg does
 /// with them too - neither of us is gamut-mapping, just refusing to encode a negative.
 pub fn srgb_oetf(value: f64) -> f64 {
@@ -3239,14 +3229,12 @@ pub fn fit_plane(linear: &[u16], width: usize, height: usize, wide: usize) -> Pl
 /// question, so they had better agree - and what they are handed is the only thing that
 /// can make the answer differ.
 ///
-/// **In BT.709's transfer, which is not the sRGB one, and that is now a disagreement rather
-/// than a choice.** It is here because LibRaw's 8-bit path ran dcraw's `gamma_curve` at a
-/// `gamm` of 1/2.222 over a slope of 4.5, and this render existed to look like one of those:
-/// sRGB's 1/2.4 over 12.92 lifts shadows considerably further, putting level 16 where LibRaw
-/// put 8 and 32 where it put 16. But the 8-bit render is `decode_rawler::to_srgb8` now, and
-/// that applies sRGB's, so the two renders of one RAW that this doc says had better agree no
-/// longer do. Changing it is a change to what the geometry fit sees, so it wants the fixture
-/// suite in front of it rather than an edit on the way past.
+/// **In sRGB's transfer, because that is what the other render applies.** This was BT.709's -
+/// 1/2.222 over a slope of 4.5 - for as long as the 8-bit render was LibRaw's, which ran
+/// dcraw's `gamma_curve` at that `gamm`, and looking like one of those was the whole point.
+/// The 8-bit render is `decode_rawler::to_srgb8` now and applies sRGB's, so the reason to
+/// differ went with LibRaw and the difference would be a plain disagreement: sRGB's 1/2.4 over
+/// 12.92 lifts shadows considerably further, level 16 where BT.709 puts 8.
 ///
 /// **Normalised by diffuse white, not by the frame's peak**, and the difference is not
 /// cosmetic. The auto-bright this replaced was a percentile - it clipped its brightest ~1% on
@@ -3276,7 +3264,7 @@ pub fn render_srgb8(plane: &Plane, white: f64) -> crate::rgb::Rgb {
         // Rec.2020.
         let v = apply3(&to_srgb, px[0] / white, px[1] / white, px[2] / white);
         for c in 0..3 {
-            out[c] = (255.0 * bt709_oetf(v[c])).round() as u8;
+            out[c] = (255.0 * srgb_oetf(v[c])).round() as u8;
         }
     });
     crate::rgb::Rgb { width: plane.width, height: plane.height, data }
@@ -3285,6 +3273,52 @@ pub fn render_srgb8(plane: &Plane, white: f64) -> crate::rgb::Rgb {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two renders of one RAW, held to the same levels.
+    ///
+    /// `render_srgb8` drives the geometry fit off the HDR decode and `to_srgb8` is what a caller
+    /// asking for an 8-bit render gets, so a photograph fitted through one and shown through the
+    /// other is only one photograph if they agree. They disagreed for a while and nothing said
+    /// so: `render_srgb8` applied BT.709's transfer, from when it was built to match LibRaw's
+    /// 8-bit path, and the shadows were a stop apart - level 16 against 8.
+    #[test]
+    fn the_fit_renders_a_frame_the_way_a_caller_would_see_it() {
+        let levels: Vec<f64> = (0..=32).map(|step| f64::from(step) / 32.0).collect();
+        let plane = Plane {
+            width: levels.len(),
+            height: 1,
+            data: levels.iter().flat_map(|v| [*v, *v, *v]).collect(),
+        };
+        let ours = render_srgb8(&plane, 1.0);
+
+        let samples: Vec<u16> = levels
+            .iter()
+            .flat_map(|v| {
+                let level = (v * 65535.0).round() as u16;
+                [level, level, level]
+            })
+            .collect();
+        let frame = crate::frame::Frame::new(
+            levels.len(),
+            1,
+            crate::frame::Pixels::Sixteen(samples),
+        );
+        let theirs = crate::decode_rawler::to_srgb8(&frame).expect("an 8-bit render");
+        let theirs = theirs.rgb8().expect("8-bit samples");
+
+        for (level, (a, b)) in
+            levels.iter().zip(ours.data.chunks_exact(3).zip(theirs.data.chunks_exact(3)))
+        {
+            // One count, for the two roundings: `render_srgb8` carries f64 the whole way and the
+            // other quantises to 16 bits first.
+            for c in 0..3 {
+                assert!(
+                    a[c].abs_diff(b[c]) <= 1,
+                    "linear {level} renders as {a:?} for the fit and {b:?} for a caller",
+                );
+            }
+        }
+    }
 
     fn identity_colour() -> HdrColour {
         HdrColour::identity()
