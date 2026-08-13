@@ -1582,20 +1582,22 @@ mod one_open_at_a_time {
         });
 
         let served = crate::edit::served();
-        let turns = &served[before..];
-        assert_eq!(turns.len(), 2, "two opens should have taken two turns");
-        // Sorted, because which thread got its turn first is the scheduler's business.
-        let (mut a, mut b) = (turns[0], turns[1]);
-        if b.0 < a.0 {
-            std::mem::swap(&mut a, &mut b);
+        // Every turn since, not exactly two: `served` is the process's, so another test opening a
+        // fixture beside this one is one more turn here and says nothing about the lock. What the
+        // lock claims is that no two of them overlap, whoever took them.
+        let mut turns = served[before..].to_vec();
+        assert!(turns.len() >= 2, "two opens should have taken at least two turns");
+        turns.sort_by_key(|turn| turn.0);
+        for pair in turns.windows(2) {
+            let (first, next) = (pair[0], pair[1]);
+            assert!(
+                next.0 >= first.1,
+                "an open began at {}us while another was still running until {}us, so neither \
+                 waited for the other",
+                next.0,
+                first.1,
+            );
         }
-        assert!(
-            b.0 >= a.1,
-            "the second open began at {}us while the first was still running until {}us, so \
-             neither waited for the other",
-            b.0,
-            a.1,
-        );
     }
 
     /// The open carries the frame's noise, and carries one a tile will accept.

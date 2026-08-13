@@ -17,7 +17,6 @@ import type { NoiseFit } from '../../src/services/processing/rawshim_job';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { DEFAULT_SETTINGS } from '../../src/schemas/settings';
 import { dataPathForLibraryId } from '../../src/utils/paths';
-import { tilePath } from '../../web/src/api/client';
 
 const settingsForTest = () => ({ get: () => DEFAULT_SETTINGS }) as unknown as SettingsRepository;
 
@@ -92,18 +91,17 @@ test('a tile carries the frame fit the editor measured', async () => {
   });
 });
 
-// The two ends of the parameter, against each other: one side writes seven numbers into a string
-// and the other reads them back out, and a fit that survives the round trip is the whole contract.
-test('the fit the client sends is the fit the renderer is asked for', async () => {
+// A real frame's numbers rather than round ones, because the parameter is a decimal string and an
+// f32 that survives `0.0001502` will survive anything the fit produces.
+test('a fit crosses the parameter unchanged', async () => {
   const fit: NoiseFit = {
     alpha: 0.0001502,
     sigmaSq: 0.0000011,
     unifiedSigma: 1.1928239,
     darkRef: [0.1, -0.02, 0.33, 0.4],
   };
-  const res = await fetch(
-    `${origin}${tilePath('p1', { left: 100, top: 200, width: 256, height: 256 }, fit)}`,
-  );
+  const noise = [fit.alpha, fit.sigmaSq, fit.unifiedSigma, ...fit.darkRef].join(',');
+  const res = await fetch(`${origin}/image/p1/tile?${RECT}&noise=${noise}`);
   expect(res.status).toBe(200);
   expect(asked).toEqual(fit);
 });
