@@ -102,8 +102,17 @@ pub fn preview_jpeg(path: &str) -> Option<Vec<u8>> {
 /// A landscape frame is handed back untouched, which is most of them. The rest pay a decode and a
 /// re-encode, and pay it here so that every caller is right rather than each having to know.
 pub fn upright_preview_jpeg(path: &str) -> Option<Vec<u8>> {
-    let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
-    let decoder = rawler::get_decoder(&source).ok()?;
+    upright_preview_of(&rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?)
+}
+
+/// The same, from a file already in memory, which is how an edit's open reaches it.
+pub fn upright_preview_jpeg_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+    upright_preview_of(&rawler::rawsource::RawSource::new_from_slice(bytes))
+}
+
+fn upright_preview_of(source: &rawler::rawsource::RawSource) -> Option<Vec<u8>> {
+    let source = &source;
+    let decoder = rawler::get_decoder(source).ok()?;
     let params = rawler::decoders::RawDecodeParams::default();
     let jpeg = decoder.preview_jpeg(&source, &params).ok().flatten()?;
 

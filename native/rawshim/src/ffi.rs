@@ -410,7 +410,10 @@ pub unsafe extern "C" fn bb_extract_embedded(
     if path.is_null() {
         return -1;
     }
-    let Some(bytes) = (unsafe { crate::with_embedded_jpeg(path, <[u8]>::to_vec) }) else {
+    let Ok(path) = (unsafe { std::ffi::CStr::from_ptr(path) }).to_str() else {
+        return -1;
+    };
+    let Some(bytes) = crate::with_embedded_jpeg(path, <[u8]>::to_vec) else {
         return 0;
     };
     if bytes.len() > out_cap || out.is_null() {

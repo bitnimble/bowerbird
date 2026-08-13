@@ -365,7 +365,7 @@ fn fit(
     if source.width.max(source.height) < crate::hdr_fit::sample_long_edge() {
         return None;
     }
-    let jpeg = crate::embedded_jpeg_bytes(raw)?;
+    let jpeg = crate::decode_rawler::upright_preview_jpeg_bytes(raw)?;
     // Bounded on the way out, as `hdr::fit_all` bounds it: the fit linearises the preview
     // whole into f64 before resampling, so a full-size one is 576MB.
     let preview = crate::jpeg::decode(&jpeg, crate::hdr_fit::sample_long_edge()).ok()?;

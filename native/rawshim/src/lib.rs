@@ -47,7 +47,6 @@
 #![deny(unfulfilled_lint_expectations)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use crate::parallel::*;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
@@ -237,21 +236,23 @@ fn decode_frame_via(
     decode_frame_cropped(source, depth, rec2020_linear, at_least_long_edge, reference, amounts, None)
 }
 
+/// `_at_least_long_edge` is a floor rather than a size, and a frame at the sensor's own resolution
+/// clears any of them. LibRaw used it to take a cheaper half decode when the caller only wanted a
+/// small rendition; there is no equivalent here, so the whole frame is decoded and the caller fits
+/// it as it would have anyway. Kept in the signature because it still describes what the caller
+/// needs, and a decoder that can act on it would want to be told.
 fn decode_frame_cropped(
     source: DecodeSource<'_>,
     depth: u32,
     rec2020_linear: bool,
-    at_least_long_edge: u32,
-    reference: bool,
+    _at_least_long_edge: u32,
+    _reference: bool,
     amounts: galosh::Amounts,
     crop: Option<Tile>,
 ) -> Option<frame::Frame> {
     if depth != 8 && depth != 16 {
         return None;
     }
-    // `at_least_long_edge` is a floor rather than a size, and a frame at the sensor's own
-    // resolution clears any of them. LibRaw used it to take a cheaper half decode; there is no
-    // equivalent here, so the whole frame is decoded and the caller fits it as it would anyway.
     let scene = match (&source, crop) {
         (DecodeSource::Path(path), Some(tile)) => decode_rawler::decode_tile(path, tile, amounts),
         (DecodeSource::Path(path), None) => decode_rawler::decode(path, amounts),
@@ -309,24 +310,6 @@ pub struct Tile {
 }
 
 impl Tile {
-    /// The same rectangle, held inside a mosaic of `width` by `height` and aligned to whole
-    /// CFA sites.
-    ///
-    /// **The alignment is the part that matters.** Every phase of the denoise pairs rows and
-    /// columns into 2x2 sites off the array's own origin, so a window starting on an odd row
-    /// hands it the four filter colours transposed - green where it expects red - and what
-    /// comes back is a maze pattern rather than a photograph.
-    fn within(self, width: usize, height: usize) -> Tile {
-        let left = self.left.min(width.saturating_sub(2)) & !1;
-        let top = self.top.min(height.saturating_sub(2)) & !1;
-        Tile {
-            left,
-            top,
-            width: self.width.min(width - left) & !1,
-            height: self.height.min(height - top) & !1,
-        }
-    }
-
     /// The window grown by `halo` on every side, which is what a tile needs.
     ///
     /// The denoise is local with a bounded reach - the chroma pyramid goes to an eighth of the
@@ -349,36 +332,14 @@ impl Tile {
 /// given; 64 covers that and the joint upsample's own neighbourhood on the way back up.
 pub const TILE_HALO: usize = 64;
 
-/// Which of the two ways LibRaw can be handed a file. Only the embedded preview still opens one.
-enum Opened<'a> {
-    Path(&'a std::ffi::CStr),
-    Bytes(&'a [u8]),
-}
-
-impl Opened<'_> {
-    #[expect(unsafe_code)]
-    unsafe fn open(&self, raw: *mut raw::libraw_data_t) -> c_int {
-        match self {
-            Opened::Path(path) => unsafe { raw::libraw_open_file(raw, path.as_ptr()) },
-            Opened::Bytes(bytes) => unsafe {
-                raw::libraw_open_buffer(raw, bytes.as_ptr().cast(), bytes.len())
-            },
-        }
-    }
-}
-
 /// The camera's embedded preview as an owned frame, fitted to `long_edge`.
 ///
 /// The whole of an import's tile pass in one call. None when the file embeds no
 /// JPEG preview, which is a property of the file rather than an error: the caller
 /// falls back to a render.
 pub fn decode_embedded_frame(raw_path: &str, long_edge: u32) -> Option<frame::Frame> {
-    let path = std::ffi::CString::new(raw_path).ok()?;
     let decoded = guard("decode_embedded_frame", None, || {
-        #[expect(unsafe_code)]
-        unsafe {
-            with_embedded_jpeg(path.as_ptr(), |jpeg| jpeg::decode(jpeg, long_edge as usize))
-        }
+        with_embedded_jpeg(raw_path, |jpeg| jpeg::decode(jpeg, long_edge as usize))
     })?;
     let image = decoded.ok()?;
     Some(frame::Frame::new(
@@ -397,14 +358,8 @@ pub fn decode_embedded_frame(raw_path: &str, long_edge: u32) -> Option<frame::Fr
 pub fn fit_profile_for(render: &frame::Frame, raw_path: &str) -> Option<fit::Profile> {
     let source = render.rgb8()?;
     let geometry = ffi::geometry_for(raw_path)?;
-    let path = std::ffi::CString::new(raw_path).ok()?;
     let fitted = guard("fit_profile_for", None, || {
-        #[expect(unsafe_code)]
-        unsafe {
-            with_embedded_jpeg(path.as_ptr(), |jpeg| {
-                fit::fit(source, jpeg, geometry).ok().flatten()
-            })
-        }
+        with_embedded_jpeg(raw_path, |jpeg| fit::fit(source, jpeg, geometry).ok().flatten())
     })?;
     // After the fit, not inside it: the lateral aberration is measured off the render
     // alone, so it wants neither the preview nor the search (`fit::with_lateral`).
@@ -472,94 +427,26 @@ pub fn save_avif_frame(
     )
 }
 
-/// `libraw_image_formats_t`: a preview is either a JPEG or a bare bitmap.
-const LIBRAW_IMAGE_JPEG: raw::LibRaw_image_formats = 1;
-
-/// Runs `use_bytes` over the camera's embedded JPEG preview, in place.
+/// Runs `use_bytes` over the camera's embedded JPEG preview, standing it upright first.
 ///
-/// The bytes stay in LibRaw's own buffer for the duration - they are 5-14MB on a
-/// 61MP body, which embeds a full-resolution preview - and are released before
-/// this returns. Nothing copies them, and in particular nothing hands them to
-/// JavaScript, which is the whole reason this exists rather than an "extract the
-/// preview" call.
+/// **Upright is not free and is not optional.** The preview is stored as the sensor read it, so a
+/// portrait frame arrives on its side, and every caller here either decodes it to compare against
+/// an upright render or hands it to something that will display it. Turning it once here rather
+/// than at each of them is measured: left sideways, the camera match fits against unrelated content
+/// and a portrait CR2 came out 15% down on mean luma. A landscape frame, which is most of them, is
+/// passed through untouched.
 ///
-/// None when the file has no JPEG preview: some bodies embed a bitmap and some
-/// embed nothing, which is a property of the file rather than an error, and the
-/// caller falls back to a render.
-///
-/// # Safety
-/// `path` must be a NUL-terminated C string.
-#[expect(unsafe_code)]
-unsafe fn with_embedded_jpeg<T>(
-    path: *const c_char,
-    use_bytes: impl FnOnce(&[u8]) -> T,
-) -> Option<T> {
-    let path = unsafe { CStr::from_ptr(path) };
-    // rawler finds the same bytes by reading the container, where this reads them through an unpack
-    // of the thumbnail. The lookup is not the only difference: LibRaw's thumbnail comes out
-    // oriented and the JPEG rawler points at is stored as the sensor read it, so a portrait frame
-    // arrives on its side. Every caller here either decodes it to compare against an upright render
-    // or hands it to something that will display it, so it is turned once, here, rather than six
-    // times over - measured, leaving it sideways cost 15% of a portrait frame's mean luma, because
-    // the camera match then fits against unrelated content.
-    if decode_rawler::wanted()
-        && let Ok(text) = path.to_str()
-        && let Some(jpeg) = decode_rawler::upright_preview_jpeg(text)
-    {
-        return Some(use_bytes(&jpeg));
-    }
-    with_embedded_jpeg_from(Opened::Path(path), use_bytes)
-}
-
-#[expect(unsafe_code)]
-fn with_embedded_jpeg_from<T>(source: Opened<'_>, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
-    let r = unsafe { raw::libraw_init(0) };
-    if r.is_null() {
-        return None;
-    }
-
-    let result = (|| -> Option<T> {
-        if unsafe { source.open(r) } != 0 || unsafe { raw::libraw_unpack_thumb(r) } != 0 {
-            return None;
-        }
-        let mut err: c_int = 0;
-        let thumb = unsafe { raw::libraw_dcraw_make_mem_thumb(r, &mut err) };
-        if thumb.is_null() || err != 0 {
-            return None;
-        }
-        // Freed on every path below, including the one where the format is wrong.
-        let out = (|| {
-            let size = unsafe { (*thumb).data_size } as usize;
-            if unsafe { (*thumb).type_ } != LIBRAW_IMAGE_JPEG || size == 0 {
-                return None;
-            }
-            Some(use_bytes(unsafe {
-                std::slice::from_raw_parts((*thumb).data.as_ptr(), size)
-            }))
-        })();
-        unsafe { raw::libraw_dcraw_clear_mem(thumb) };
-        out
-    })();
-
-    unsafe { raw::libraw_recycle(r) };
-    unsafe { raw::libraw_close(r) };
-    result
-}
-
-pub fn embedded_jpeg_bytes(raw_bytes: &[u8]) -> Option<Vec<u8>> {
-    with_embedded_jpeg_from(Opened::Bytes(raw_bytes), |jpeg| jpeg.to_vec())
+/// None when the file has no JPEG preview: some bodies embed a bitmap and some embed nothing, which
+/// is a property of the file rather than an error, and the caller falls back to a render.
+fn with_embedded_jpeg<T>(path: &str, use_bytes: impl FnOnce(&[u8]) -> T) -> Option<T> {
+    decode_rawler::upright_preview_jpeg(path).map(|jpeg| use_bytes(&jpeg))
 }
 
 /// The camera's embedded preview as RGB, bounded by `long_edge`, for callers on this
 /// side of the boundary. None when the file embeds no JPEG preview.
 #[cfg(feature = "renditions")]
 pub fn decode_embedded_rgb(path: &str, long_edge: usize) -> Option<rgb::Rgb> {
-    let c_path = std::ffi::CString::new(path).ok()?;
-    // SAFETY: the CString outlives the call.
-    #[expect(unsafe_code)]
-    let decoded = unsafe {
-        with_embedded_jpeg(c_path.as_ptr(), |bytes| jpeg::decode(bytes, long_edge))
-    };
+    let decoded = with_embedded_jpeg(path, |bytes| jpeg::decode(bytes, long_edge));
     match decoded {
         Some(Ok(image)) => Some(image),
         Some(Err(detail)) => {

@@ -746,7 +746,6 @@ fn defringe_sweep(
     let render = crate::image::resize_to_fit(source, size);
     let preview = crate::decode_embedded_rgb(path, size).ok_or("no embedded preview")?;
     let lateral = crate::ffi::recorded_lateral(path);
-    let c_path = std::ffi::CString::new(path).map_err(|_| "a path with a nul in it")?;
 
     let finished = |amount: f64| {
         let mut frame = crate::rgb::Rgb {
@@ -776,13 +775,9 @@ fn defringe_sweep(
     // `has_lateral` is reported, and those frames are read separately.
     let base = finished(0.0);
     let geometry = crate::ffi::geometry_for(path).ok_or("no geometry")?;
-    // SAFETY: the CString outlives the call.
-    #[expect(unsafe_code)]
-    let mut profile = unsafe {
-        crate::with_embedded_jpeg(c_path.as_ptr(), |jpeg| {
-            crate::fit::fit(base.as_ref(), jpeg, geometry).ok().flatten()
-        })
-    }
+    let mut profile = crate::with_embedded_jpeg(path, |jpeg| {
+        crate::fit::fit(base.as_ref(), jpeg, geometry).ok().flatten()
+    })
     .flatten();
     // The same order the render path uses: the lateral tier reads the finished frame
     // after the fit, off the render alone.

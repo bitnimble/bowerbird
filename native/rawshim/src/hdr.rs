@@ -155,12 +155,8 @@ pub fn fit_all(
     geometry: crate::fit::Geometry,
     finished: image::Strengths,
 ) -> Option<(crate::fit::Profile, HdrMatch)> {
-    let path = std::ffi::CString::new(raw_path).ok()?;
-
-    // SAFETY: the CString outlives the call.
-    #[expect(unsafe_code)]
-    let fitted = unsafe {
-        crate::with_embedded_jpeg(path.as_ptr(), |jpeg| {
+    let fitted = {
+        crate::with_embedded_jpeg(raw_path, |jpeg| {
             // One decode, read by both halves: the geometry fit takes it below and the
             // colour fit takes it again for the plane. Sharing was rejected once, when
             // this was DCT-shrunk almost to the fit grid and arrived barely filtered; at
