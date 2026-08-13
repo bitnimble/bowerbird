@@ -8,6 +8,23 @@
 // magenta at a high-contrast edge; and the `sum_w` floor preserves the sign, because a
 // positive floor over a negative sum flips the chroma and produces exactly that spike.
 //
+// **The phases are co-sited, and that is a half-pixel bias this kernel cannot be talked out of.**
+// A 2x2 box average's centroid is at full-resolution `2k + 1`, which is where low-resolution
+// sample `k` sits, so output pixel `j` belongs at low-resolution `(j + 0.5) / 2` - a quarter of a
+// sample either side, not the 0.0 and +0.5 below. Measured on a linear ramp, whose reconstruction
+// through a normalised kernel is exact up to a displacement, the committed table is off by 0.5
+// full-resolution pixels uniformly: a translation of chroma against luma, per level.
+//
+// Swapping the phases to -0.25/+0.25 makes it **worse**, which is why they are still here. The
+// kernel is `r = 2*hypot` truncated at `r < 3`, so it reaches only 1.5 samples and was tuned for
+// taps landing on 0 and +-1, or +-0.5 and +-1.5 at the half phase; at a quarter phase the negative
+// lobes stop cancelling and the normalised centroid swings to +-1.27 pixels, alternating sign
+// between the two phases - a zigzag where there was a translation. Correcting the siting means a
+// wider kernel renormalised for quarter phases, not an edit to this table.
+//
+// `examples/jinc_table.rs` regenerates either set and reports the displacement; it reproduces the
+// table below digit for digit first, which is the only reason to believe the other one.
+//
 // The output is always twice the input, both axes - the caller crops the guide and pads the
 // result where a level is odd.
 
