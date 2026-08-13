@@ -1,9 +1,7 @@
-//! Scratch: what rawler's unpack costs, against the LibRaw figures `tests::tile_cost` prints.
+//! What rawler's unpack costs on its own, which is where the fork's work goes.
 //!
-//! The earlier evaluation (`23bfcee`) measured rawler as a whole-pipeline replacement and it lost
-//! on its develop stage, which carries the frame in f32. This measures only the part that would
-//! actually be used - the decompression to a mosaic - because the denoise already interposes
-//! between the unpack and the demosaic, so the two libraries' develop stages never meet.
+//! Only the decompression to a mosaic, unlike `decode_bench`: rawler's own develop stage carries
+//! the frame in f32 and nothing here uses it, the denoise and the demosaic being ours.
 
 fn main() {
     let files: Vec<String> = std::env::args().skip(1).collect();

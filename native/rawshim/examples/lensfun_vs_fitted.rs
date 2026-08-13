@@ -96,7 +96,7 @@ fn measure(path: &std::path::Path) -> Result<Option<Row>, String> {
     // The same pipeline `hdr::fit_all_from_preview` fits through, so the numbers mean what
     // they mean there: a bounded decode, the levels it measures, and the sRGB render the
     // preview is paired against.
-    let frame = rawshim::decode_frame_bytes(&bytes, 16, true, 0).ok_or("LibRaw declined it")?;
+    let frame = rawshim::decode_frame_bytes(&bytes, 16, true, 0).ok_or("the decode declined it")?;
     let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
     let source = hdr::Source { samples, width: frame.width, height: frame.height };
 

@@ -27,8 +27,8 @@ renditions = []
 # on every edit; `bun run test:native:full` turns it on for the final check.
 fixtures = []
 
-# Both measure the server's half - one benchmarks the rendition grade, the other compares
-# lensfun against the fitter - so neither builds without the libraries that half links.
+# Each measures the server's half - the rendition grade, lensfun against the fitter, a JPEG read
+# back for comparison - so none of them builds without the libraries that half links.
 [[example]]
 name = "bench_graded"
 required-features = ["renditions"]
@@ -49,6 +49,18 @@ required-features = ["renditions"]
 name = "lensfun_vs_fitted"
 required-features = ["renditions"]
 
+[[example]]
+name = "demosaic_psnr"
+required-features = ["renditions"]
+
+[[example]]
+name = "baseline"
+required-features = ["renditions"]
+
+[[example]]
+name = "renders"
+required-features = ["renditions"]
+
 # `filter_domain_delta`, `sdr_vs_hdr` and `denoise_before_warp` stood here. Each asked a
 # question phase 0 has since decided and implemented - which domain the filters run in,
 # what an SDR rendition costs against an HDR one, and which side of the warp the denoise
@@ -58,8 +70,8 @@ required-features = ["renditions"]
 # (§0.2, §0.2.1, §0.2.3) and in DESIGN §10.3 and §10.9; the code is at `ef8dade`.
 
 [dependencies]
-# Our fork, vendored as a submodule. It reads every format the product imports and is the
-# decoder behind `BOWERBIRD_DECODER=rawler`.
+# Our fork, vendored as a submodule. It reads every format the product imports, and it is the
+# only thing that reads them.
 rawler = { path = "../vendor/dnglab/rawler" }
 fast_image_resize = "6.1.0"
 # The intermediate a photo's renditions share: nits between the colour transform and the

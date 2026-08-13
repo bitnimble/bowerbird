@@ -1,12 +1,12 @@
-//! Does the rawler tile show the same part of the photograph as the LibRaw tile?
+//! Does a tile show the part of the photograph it was asked for?
 //!
 //! ```text
 //! tile_check <raw> [left top width height]
 //! ```
 //!
-//! The two decoders will not agree sample for sample - that is what `compare_decoders` measures -
-//! so this asks the weaker question that has to hold anyway: same dimensions, and the same content,
-//! judged by whether the tile matches the same region cut out of each decoder's whole frame.
+//! Judged against the same region cut out of the whole frame, which the tile decode has to agree
+//! with: it reads only the subbands the region touches, and everything after that runs over the
+//! region rather than the frame.
 //!
 //! Getting that wrong is the failure this exists for. A tile is named in coordinates that pass
 //! through a crop offset and an orientation, and an error in either shows up as a tile of the right

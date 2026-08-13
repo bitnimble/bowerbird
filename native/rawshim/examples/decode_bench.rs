@@ -1,4 +1,4 @@
-//! What a decode costs, on whichever path `BOWERBIRD_DECODER` selects.
+//! What a decode costs.
 //!
 //! ```text
 //! decode_bench <raw>...
@@ -21,8 +21,6 @@ fn main() {
         return;
     }
 
-    let which = std::env::var("BOWERBIRD_DECODER").unwrap_or_else(|_| "libraw".into());
-    println!("decoder: {which}");
     println!("{:>30}  {:>9}  {:>8}  {:>8}  {:>9}  {}", "file", "pixels", "first", "best", "MP/s", "checksum");
 
     let mut total_pixels = 0f64;

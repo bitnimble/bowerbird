@@ -1,8 +1,8 @@
 //! The denoise where it actually runs: inside a real decode of a real RAW.
 //!
-//! The kernels have a unit test and a parity harness; what neither covers is the plumbing
-//! between LibRaw's unpack and its demosaic - the black level, the row stride, the write
-//! back into `rawdata.raw_image`. This decodes one file twice and reports what moved.
+//! The kernels have a unit test and a parity harness; what neither covers is the plumbing between
+//! the unpack and the demosaic - the black level, the row stride, the CFA phase. This decodes one
+//! file twice and reports what moved.
 //!
 //! ```text
 //! cargo run --release --example galosh_decode -- /path/to/photo.CR3

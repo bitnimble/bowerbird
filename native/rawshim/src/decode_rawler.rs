@@ -5,17 +5,9 @@
 //! lives in `demosaic.rs`; the other three are arithmetic over coefficients rawler already carries
 //! on its `RawImage`, so this module is mostly a matter of getting them in the right order and
 //! the right space.
-//!
-//! Selected by `BOWERBIRD_DECODER=rawler`. The LibRaw path is still there and still the default,
-//! so the two can be rendered side by side on the same file.
 
 use crate::frame::{Frame, Pixels};
 use rayon::prelude::*;
-
-/// Whether the caller asked for this path rather than LibRaw's.
-pub fn wanted() -> bool {
-    std::env::var("BOWERBIRD_DECODER").is_ok_and(|value| value.eq_ignore_ascii_case("rawler"))
-}
 
 /// Decodes a RAW to a linear Rec.2020 frame, denoising the mosaic and demosaicing on the GPU.
 ///
