@@ -323,20 +323,7 @@ impl Galosh {
             smoothstep_blend_3p: kernel(
                 "smoothstep_blend_3p",
                 include_str!("../../../web/src/features/raw_edit/gpu/wgsl/galosh/smoothstep_blend_3p.wgsl"),
-                &[
-                    (0, R),
-                    (1, R),
-                    (2, R),
-                    (3, W),
-                    (4, W),
-                    (5, W),
-                    (6, R),
-                    (7, R),
-                    (8, R),
-                    (9, R),
-                    (10, R),
-                    (11, R),
-                ],
+                &[(0, R), (1, R), (2, R), (3, W), (4, W), (5, W), (6, R), (7, R), (8, R)],
             ),
             k16_inverse_fused: kernel(
                 "k16_inverse_fused",
@@ -351,9 +338,9 @@ impl Galosh {
 ///
 /// `luma` is the shrinkage threshold in units of the frame's own measured noise, so 1.0
 /// means "threshold at exactly what the sensor put there"; the reference's default is 0.5.
-/// `colour` walks four anchors - noisy, the half-res regression, the quarter-res level and
-/// the eighth - so its unit is *how far colour may be smoothed*, in scales rather than in
-/// amount, and it runs 0 to 3. Both zero is the frame untouched.
+/// `colour` walks three anchors - noisy, the half-res regression, and the quarter-res level
+/// upsampled - so its unit is *how far colour may be smoothed*, in scales rather than in
+/// amount, and it runs 0 to 2. Both zero is the frame untouched.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Amounts {
     pub luma: f32,
@@ -499,11 +486,9 @@ pub fn denoise(
     let npix = width * height;
     let (hw, hh) = (width / 2, height / 2);
     let (cq_w, cq_h) = (hw / 2, hh / 2);
-    let (ce_w, ce_h) = (cq_w / 2, cq_h / 2);
     // K16 writes exactly twice its input, so a level with an odd dimension is upsampled from
     // a cropped guide and edge-padded back out.
     let (kq_w, kq_h) = (2 * cq_w, 2 * cq_h);
-    let (ke_w, ke_h) = (2 * ce_w, 2 * ce_h);
 
     let storage = wgpu::BufferUsages::STORAGE;
     let plane = |label: &str, len: usize| {
@@ -564,12 +549,9 @@ pub fn denoise(
 
     let half = hw * hh;
     let quarter = cq_w * cq_h;
-    let eighth = ce_w * ce_h;
     let l_h_den = plane("galosh L_h_den", half);
     let l_q = plane("galosh L_q", quarter);
-    let l_e = plane("galosh L_e", eighth);
     let l_for_q = plane("galosh L_for_q", kq_w * kq_h);
-    let l_for_e = plane("galosh L_for_e", ke_w * ke_h);
     let trio = |label: &str, len: usize| [plane(label, len), plane(label, len), plane(label, len)];
     let c_h = trio("galosh C_h", half);
     // The half-res regression, and where the blend writes its answer back: nothing reads the
@@ -577,20 +559,12 @@ pub fn denoise(
     // values between two addresses.
     let c_loess_h = trio("galosh C_loess_h / C_h_den", half);
     let c_q = trio("galosh C_q", quarter);
-    let c_e = trio("galosh C_e", eighth);
     let c_loess_q = trio("galosh C_loess_q", quarter);
-    let c_loess_e = trio("galosh C_loess_e", eighth);
     let c_q_up = trio("galosh C_q_up", half);
-    let c_e_up = trio("galosh C_e_up", half);
-    let c_e_to_q = trio("galosh C_e_to_q", quarter);
-    // One scratch trio per scale, for the K16 whose output is not already the size its
-    // consumer wants. The chains use them at different times, so one of each is enough - and
-    // on a frame whose half-resolution dimensions are both even there is no padding at all.
+    // Scratch for the K16 whose output is not already the size its consumer wants - on a frame
+    // whose half-resolution dimensions are both even there is no padding at all.
     let padded_half = kq_w == hw && kq_h == hh;
-    let padded_quarter = ke_w == cq_w && ke_h == cq_h;
     let scratch_half = trio("galosh K16 scratch", if padded_half { 0 } else { kq_w * kq_h });
-    let scratch_quarter =
-        trio("galosh K16 scratch", if padded_quarter { 0 } else { ke_w * ke_h });
 
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("galosh readback"),
@@ -622,38 +596,22 @@ pub fn denoise(
     let shrink = pushes.add(&[Word::I(w), Word::I(h), Word::F(amounts.luma)]);
     let overlap = pushes.add(&[Word::I(w), Word::I(h), Word::I(hw as i32)]);
     let down_h = pushes.add(&[Word::I(hw as i32), Word::I(hh as i32)]);
-    let down_q = pushes.add(&[Word::I(cq_w as i32), Word::I(cq_h as i32)]);
     let loess_h = pushes.add(&[Word::I(hw as i32), Word::I(hh as i32), Word::F(LOESS_STRENGTH)]);
     let loess_q =
         pushes.add(&[Word::I(cq_w as i32), Word::I(cq_h as i32), Word::F(LOESS_STRENGTH)]);
-    let loess_e =
-        pushes.add(&[Word::I(ce_w as i32), Word::I(ce_h as i32), Word::F(LOESS_STRENGTH)]);
     let crop_q = pushes.add(&[
         Word::I(hw as i32),
         Word::I(hh as i32),
         Word::I(kq_w as i32),
         Word::I(kq_h as i32),
     ]);
-    let crop_e = pushes.add(&[
-        Word::I(cq_w as i32),
-        Word::I(cq_h as i32),
-        Word::I(ke_w as i32),
-        Word::I(ke_h as i32),
-    ]);
     let k16_q = pushes.add(&[Word::I(cq_w as i32), Word::I(cq_h as i32), Word::F(K16_BW)]);
-    let k16_e = pushes.add(&[Word::I(ce_w as i32), Word::I(ce_h as i32), Word::F(K16_BW)]);
     let k16_final = pushes.add(&[Word::I(hw as i32), Word::I(hh as i32), Word::F(K16_BW)]);
     let pad_to_half = pushes.add(&[
         Word::I(kq_w as i32),
         Word::I(kq_h as i32),
         Word::I(hw as i32),
         Word::I(hh as i32),
-    ]);
-    let pad_to_quarter = pushes.add(&[
-        Word::I(ke_w as i32),
-        Word::I(ke_h as i32),
-        Word::I(cq_w as i32),
-        Word::I(cq_h as i32),
     ]);
     let blend = pushes.add(&[Word::I(hw as i32), Word::I(hh as i32), Word::F(amounts.colour)]);
 
@@ -692,9 +650,7 @@ pub fn denoise(
     let (fx, fy) = groups(width, height, 16);
     let (hx, hy) = groups(hw, hh, 16);
     let (qx, qy) = groups(cq_w, cq_h, 16);
-    let (ex, ey) = groups(ce_w, ce_h, 16);
     let (kx, ky) = groups(kq_w, kq_h, 16);
-    let (kex, key) = groups(ke_w, ke_h, 16);
 
     let mut encoder = device.create_command_encoder(&Default::default());
     {
@@ -779,18 +735,11 @@ pub fn denoise(
         // Phase 7: the chroma pyramid, and the guided upsamples back up it.
         let g = bind(&galosh.box_downsample_2x, &[(0, &l_h_den), (1, &l_q)]);
         run(&galosh.box_downsample_2x, &g, down_h, qx, qy);
-        let g = bind(&galosh.box_downsample_2x, &[(0, &l_q), (1, &l_e)]);
-        run(&galosh.box_downsample_2x, &g, down_q, ex, ey);
         let g = bind(
             &galosh.box_downsample_2x_3p,
             &[(0, &c_h[0]), (1, &c_h[1]), (2, &c_h[2]), (3, &c_q[0]), (4, &c_q[1]), (5, &c_q[2])],
         );
         run(&galosh.box_downsample_2x_3p, &g, down_h, qx, qy);
-        let g = bind(
-            &galosh.box_downsample_2x_3p,
-            &[(0, &c_q[0]), (1, &c_q[1]), (2, &c_q[2]), (3, &c_e[0]), (4, &c_e[1]), (5, &c_e[2])],
-        );
-        run(&galosh.box_downsample_2x_3p, &g, down_q, ex, ey);
 
         let g = bind(&galosh.loess_chroma_3p_tiled, &loess_binds(&l_h_den, &c_h, &c_loess_h));
         let (lx, ly) = groups(hw, hh, LOESS_TILE);
@@ -798,18 +747,11 @@ pub fn denoise(
         let g = bind(&galosh.loess_chroma_3p_tiled, &loess_binds(&l_q, &c_q, &c_loess_q));
         let (lx, ly) = groups(cq_w, cq_h, LOESS_TILE);
         run(&galosh.loess_chroma_3p_tiled, &g, loess_q, lx, ly);
-        let g = bind(&galosh.loess_chroma_3p_tiled, &loess_binds(&l_e, &c_e, &c_loess_e));
-        let (lx, ly) = groups(ce_w, ce_h, LOESS_TILE);
-        run(&galosh.loess_chroma_3p_tiled, &g, loess_e, lx, ly);
 
         let g = bind(&galosh.crop_2d_topleft, &[(0, &l_h_den), (1, &l_for_q)]);
         run(&galosh.crop_2d_topleft, &g, crop_q, kx, ky);
-        let g = bind(&galosh.crop_2d_topleft, &[(0, &l_q), (1, &l_for_e)]);
-        run(&galosh.crop_2d_topleft, &g, crop_e, kex, key);
 
         let q_up_target = if padded_half { &c_q_up } else { &scratch_half };
-        let e_to_q_target = if padded_quarter { &c_e_to_q } else { &scratch_quarter };
-        let e_up_target = if padded_half { &c_e_up } else { &scratch_half };
 
         let g = bind(&galosh.k16_jbu_3p, &k16_binds(&c_loess_q, &l_for_q, q_up_target));
         run(&galosh.k16_jbu_3p, &g, k16_q, kx, ky);
@@ -820,25 +762,8 @@ pub fn denoise(
                 run(&galosh.pad_2d_edge, &g, pad_to_half, hx, hy);
             }
         }
-        let g = bind(&galosh.k16_jbu_3p, &k16_binds(&c_loess_e, &l_for_e, e_to_q_target));
-        run(&galosh.k16_jbu_3p, &g, k16_e, kex, key);
-        if !padded_quarter {
-            for at in 0..3 {
-                let g =
-                    bind(&galosh.pad_2d_edge, &[(0, &scratch_quarter[at]), (1, &c_e_to_q[at])]);
-                run(&galosh.pad_2d_edge, &g, pad_to_quarter, qx, qy);
-            }
-        }
-        let g = bind(&galosh.k16_jbu_3p, &k16_binds(&c_e_to_q, &l_for_q, e_up_target));
-        run(&galosh.k16_jbu_3p, &g, k16_q, kx, ky);
-        if !padded_half {
-            for at in 0..3 {
-                let g = bind(&galosh.pad_2d_edge, &[(0, &scratch_half[at]), (1, &c_e_up[at])]);
-                run(&galosh.pad_2d_edge, &g, pad_to_half, hx, hy);
-            }
-        }
 
-        // Phase 8: the colour strength, as a walk along those four anchors, answered back
+        // Phase 8: the colour strength, as a walk along those three anchors, answered back
         // over the regression it walks from.
         let g = bind(
             &galosh.smoothstep_blend_3p,
@@ -852,9 +777,6 @@ pub fn denoise(
                 (6, &c_q_up[0]),
                 (7, &c_q_up[1]),
                 (8, &c_q_up[2]),
-                (9, &c_e_up[0]),
-                (10, &c_e_up[1]),
-                (11, &c_e_up[2]),
             ],
         );
         run(&galosh.smoothstep_blend_3p, &g, blend, hx, hy);
