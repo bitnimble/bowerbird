@@ -7,7 +7,7 @@
 // than asked for as a second target, and the difference matters more than it sounds.
 //
 // A library's SDR rendition is not the HDR one with its highlights removed: it comes
-// off LibRaw's own sRGB output, auto-brightened and fitted to the camera's JPEG, where
+// off the decoder's own sRGB output, fitted to the camera's JPEG, where
 // the HDR one is a scene-linear decode graded against a quantile. On a daylight frame
 // the two land in nearly the same place; on a night frame they do not. Measured on the
 // neon sign, the SDR arm sat at a black level of 0.06 with a red cast where the HDR

@@ -1,17 +1,11 @@
 // Build the Android APK. Dev testing only, unsigned.
 //
-// The shell links `rawshim` without its `renditions` feature, so the only C library it
-// needs for the target is LibRaw - the editor's open never touches lensfun or libavif.
-// That matters here more than anywhere: lensfun has no prebuilt Android build anywhere and
-// wants glib, which is the one thing that would have made this a project rather than a
-// script.
-//
-// LibRaw for `aarch64-linux-android` comes from Termux, which is a prebuilt Android
-// repository and the same move osxcross-macports and MSYS2 make for the other two targets:
-//
-//   bun run scripts/termux-fetch.ts libraw libraw-static
-//
-// Linked static, so the APK carries no dependency on Termux's own prefix at runtime.
+// The shell links `rawshim` without its `renditions` feature, which now needs no C library
+// for the target at all: rawler reads the RAWs, the demosaic and the grade are WGSL, and
+// the JPEG codec either side is Rust. That matters here more than anywhere - this used to
+// need LibRaw cross-built for `aarch64-linux-android`, fetched out of Termux and linked
+// static so the APK carried no dependency on Termux's prefix, and lensfun would have been
+// worse still with no prebuilt Android build anywhere and a glib dependency behind it.
 //
 // One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with
 // NDK 27, and a JDK 17. `ANDROID_HOME` and `ANDROID_SDK_ROOT` must agree - Gradle refuses
@@ -39,16 +33,6 @@ if (!existsSync(ndk)) {
   process.exit(1);
 }
 
-// Where `termux-fetch` put LibRaw. Termux packages carry their own absolute prefix, which
-// is why this path looks like a phone's.
-const prefix = process.env.TERMUX_PREFIX ?? '/tmp/android-prefix';
-const usr = join(prefix, 'data', 'data', 'com.termux', 'files', 'usr');
-if (!existsSync(join(usr, 'lib', 'libraw.a'))) {
-  console.error(`[android-build] no LibRaw for ${TARGET} in ${usr}`);
-  console.error('[android-build] bun run scripts/termux-fetch.ts libraw libraw-static');
-  process.exit(1);
-}
-
 const toolchain = join(ndk, 'toolchains', 'llvm', 'prebuilt', 'linux-x86_64', 'bin');
 // API 24 is what the NDK's own linker wrappers are named for and what Termux builds
 // against, so the two agree about which libc symbols exist.
@@ -62,23 +46,6 @@ const env: Record<string, string> = {
   [`CC_${under}`]: clang,
   [`CXX_${under}`]: `${clang}++`,
   [`AR_${under}`]: join(toolchain, 'llvm-ar'),
-  // Only the target's `.pc` files; a host `libraw.pc` here would be an x86 ELF's flags.
-  [`PKG_CONFIG_PATH_${under}`]: join(usr, 'lib', 'pkgconfig'),
-  PKG_CONFIG_ALLOW_CROSS: '1',
-  PKG_CONFIG_LIBDIR: join(usr, 'lib', 'pkgconfig'),
-  // Read by `rawshim`'s build script rather than passed as rustflags: Tauri's Android
-  // build sets `CARGO_TARGET_<triple>_RUSTFLAGS` for its own linker arguments and
-  // overwrites whatever was there, where a build script's directives are merged.
-  RAWSHIM_LIBRAW_DIR: join(usr, 'lib'),
-  RAWSHIM_LIBRAW_STATIC: '1',
-  // The sysroot is not optional: bindgen runs its own clang, and without one it reads the
-  // host's `/usr/include` and fails on the first glibc header an Android build has no
-  // business seeing.
-  BINDGEN_EXTRA_CLANG_ARGS: [
-    `--target=${TARGET}`,
-    `--sysroot=${join(toolchain, '..', 'sysroot')}`,
-    `-I${join(usr, 'include')}`,
-  ].join(' '),
 };
 
 ensureIcons();

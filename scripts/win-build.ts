@@ -1,13 +1,11 @@
 // Cross-build the Windows app from Linux, via MinGW. Dev testing only.
 //
-// `x86_64-pc-windows-gnu`, not `-msvc`, and that choice is the whole reason this is
-// possible here. The shell takes `rawshim` without `renditions`, so it links LibRaw and its
-// own dependencies and nothing else - but they still have to exist built for Windows first,
-// and for MSVC there is no way to get them on a Linux box short of a vcpkg-from-source
-// project. MSYS2 ships them prebuilt for MinGW, and its packages are zstd tarballs over
-// HTTP, so the same trick that osxcross-macports plays for the Mac works here:
-//
-//   bun run scripts/msys-fetch.ts libraw
+// `x86_64-pc-windows-gnu`, not `-msvc`. That used to be the whole difficulty: the shell
+// takes `rawshim` without `renditions`, which once meant linking LibRaw and its own
+// dependencies built for Windows, and for MSVC there was no way to get those on a Linux box
+// short of a vcpkg-from-source project. MSYS2's prebuilt MinGW packages solved it. None of
+// that applies now - an editor build links no C at all - and the target choice is kept
+// because the toolchain is still the one that cross-builds from Linux.
 //
 // One-time host prereqs: `rustup target add x86_64-pc-windows-gnu`, and a mingw-w64 cross
 // toolchain (`gcc-mingw-w64-x86-64-posix`, `binutils-mingw-w64-x86-64`,
@@ -24,18 +22,7 @@ const TARGET = 'x86_64-pc-windows-gnu';
 const under = TARGET.replaceAll('-', '_');
 const upper = under.toUpperCase();
 
-// Where `msys-fetch` put the MSYS2 tree. It nests a `mingw64` inside the prefix, which is
-// the layout the packages carry.
-const prefix = process.env.MSYS_PREFIX ?? join(process.env.HOME ?? '', 'local', 'mingw64');
-const mingw = join(prefix, 'mingw64');
-if (!existsSync(join(mingw, 'lib', 'pkgconfig', 'libraw.pc'))) {
-  console.error(`[win-build] no LibRaw for ${TARGET} in ${mingw}`);
-  console.error('[win-build] bun run scripts/msys-fetch.ts libraw');
-  process.exit(1);
-}
-
-// The `-posix` variants: the `-win32` threading model has no `std::mutex`, which LibRaw's
-// C++ wants, and rustc's own std expects POSIX threads on this target anyway.
+// The `-posix` variants: rustc's own std expects POSIX threads on this target.
 const gcc = 'x86_64-w64-mingw32-gcc-posix';
 const gxx = 'x86_64-w64-mingw32-g++-posix';
 
@@ -56,15 +43,6 @@ const env: Record<string, string> = {
   [`CC_${under}`]: gcc,
   [`CXX_${under}`]: gxx,
   AR_x86_64_pc_windows_gnu: 'x86_64-w64-mingw32-ar',
-  // Only the target's `.pc` files: a host `libraw.pc` here would put an ELF's flags in
-  // front of a PE link.
-  [`PKG_CONFIG_PATH_${under}`]: join(mingw, 'lib', 'pkgconfig'),
-  PKG_CONFIG_ALLOW_CROSS: '1',
-  PKG_CONFIG_LIBDIR: join(mingw, 'lib', 'pkgconfig'),
-  // `build.rs` names the libraries and leaves the search path to the system, which on a
-  // cross build is the wrong system. And bindgen runs its own clang, inheriting none of it.
-  [`CARGO_TARGET_${upper}_RUSTFLAGS`]: `-L native=${join(mingw, 'lib')}`,
-  BINDGEN_EXTRA_CLANG_ARGS: `--target=${TARGET} -I${join(mingw, 'include')}`,
 };
 
 // `--no-bundle`: Tauri's NSIS bundler wants `makensis.exe`, and a folder of files is
@@ -139,7 +117,9 @@ function webview2Dirs(): string[] {
   return found;
 }
 
-const search = [join(mingw, 'bin'), ...runtimeDirs(), ...webview2Dirs()];
+// The MSYS2 tree used to be first here, for LibRaw's own DLLs. Nothing links it now, so what
+// is left is the toolchain's runtime and WebView2's loader.
+const search = [...runtimeDirs(), ...webview2Dirs()];
 
 /** What a PE imports, by name. System DLLs are not in the search path and drop out. */
 function imports(file: string): string[] {

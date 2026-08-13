@@ -5,23 +5,21 @@ version = "0.1.0"
 # `unsafe_op_in_unsafe_fn` the default, which this crate already denies.
 edition = "2024"
 
-# cdylib so Bun can dlopen it exactly like libraw.so itself. rlib so the grade
-# microbench example can link the same crate.
+# cdylib so Bun can dlopen it. rlib so the grade microbench example can link the same crate.
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["renditions"]
 
-# The server's half: building renditions, which is what wants lensfun and libavif on top
-# of LibRaw.
+# The server's half: building renditions, which is what wants lensfun and libavif.
 #
-# Off, the crate is LibRaw and Rust, which is everything the editor's open needs -
+# Off, the crate is Rust alone and links no C, which is everything the editor's open needs -
 # `edit::prepare` reads the lens spline the camera recorded in the RAW itself
 # (`lens::read_distortion`) rather than lensfun's database, and the display transform is
 # the client's GPU rather than an AVIF encoder. That is what lets the desktop and mobile
-# shells link one C library instead of four, and lensfun in particular is the one with no
-# prebuilt Android build anywhere.
+# shells ship without a native library to resolve at all, and lensfun in particular is the
+# one with no prebuilt Android build anywhere.
 renditions = []
 
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
@@ -84,8 +82,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 
 # The resize and blur are single-threaded (no `rayon` feature) - each is already
-# milliseconds, and the callers sit inside their own parallelism. LibRaw, lensfun and
-# libavif are linked on top, through build.rs.
+# milliseconds, and the callers sit inside their own parallelism. lensfun and libavif are
+# linked on top, through build.rs, and only for a `renditions` build.
 
 # An index product that wraps is a picture that comes out wrong rather than a crash, and
 # these run over tens of millions of samples. Keep that failure loud in release.

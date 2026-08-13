@@ -1,19 +1,17 @@
 // Cross-build the macOS `.app` from Linux, via osxcross. Dev testing only.
 //
 // Unsigned and unnotarised, so the first launch is right-click > Open. Modelled on
-// utai.au's `scripts/mac-build.ts`, with one difference that is the whole difficulty: the
-// shell builds `rawshim` without `renditions`, so it links LibRaw - and the target needs
-// that built for arm64 Darwin before any of this compiles. osxcross's MacPorts fetcher
-// supplies it, with the two libraries LibRaw's own build linked against:
+// utai.au's `scripts/mac-build.ts`.
 //
-//   export OSXCROSS_ROOT=~/osxcross/target MACOSX_DEPLOYMENT_TARGET=11.0
-//   export PATH="$OSXCROSS_ROOT/bin:$PATH" OSXCROSS_MACPORTS_MIRROR=https://packages.macports.org
-//   osxcross-macports install --arm64 libraw jpeg lcms2 zlib
+// **No MacPorts tree is needed any more.** The shell builds `rawshim` without
+// `renditions`, which now links no C at all - the RAW decoder is rawler, the demosaic and
+// the grade are WGSL, and the JPEG codec either side is Rust. What used to be here was a
+// MacPorts fetch of libraw, jpeg, lcms2 and zlib, and a static link of all four, done for a
+// code-signing reason: `install_name_tool` repointing the dylibs rewrote load commands in
+// page 0 of `__TEXT`, which broke the ad-hoc signature and got the process killed on arm64.
+// With nothing to relocate, none of that applies.
 //
-// Linked statically, which is a correctness decision rather than a size one - see
-// `RAWSHIM_LIBRAW_STATIC` below for the code-signing reason.
-//
-// One-time host prereqs beyond that: `rustup target add aarch64-apple-darwin` and an
+// One-time host prereqs: `rustup target add aarch64-apple-darwin` and an
 // osxcross toolchain with the Xcode-extracted macOS SDK (Apple's is not redistributable,
 // which is why this cannot be a `bun install`).
 //
@@ -60,16 +58,6 @@ const sdk =
     return found ? join(sdks, found) : undefined;
   })();
 
-// The MacPorts tree osxcross installed the C libraries into. `build.rs` finds them through
-// pkg-config, which needs pointing at the target's `.pc` files and told not to fall back to
-// the host's - a Linux `libraw.pc` here would link an ELF into a Mach-O.
-const macports = join(root, 'macports', 'pkgs', 'opt', 'local');
-if (!existsSync(join(macports, 'lib', 'pkgconfig', 'libraw.pc'))) {
-  console.error(`[mac-build] no LibRaw for ${TARGET} in ${macports}`);
-  console.error('[mac-build] osxcross-macports install --arm64 libraw jpeg lcms2 zlib');
-  process.exit(1);
-}
-
 const env: Record<string, string> = {
   ...(process.env as Record<string, string>),
   PATH: `${bin}:${process.env.PATH ?? ''}`,
@@ -78,42 +66,16 @@ const env: Record<string, string> = {
   [`CXX_${under}`]: `${clang}++`,
   ...(ar != null && { [`AR_${under}`]: ar }),
   MACOSX_DEPLOYMENT_TARGET: MAC_MIN_VERSION,
-  // Cross pkg-config, and only the target's tree: a host `libraw.pc` here would put an
-  // ELF's headers in front of a Mach-O link.
-  [`PKG_CONFIG_PATH_${under}`]: join(macports, 'lib', 'pkgconfig'),
-  PKG_CONFIG_ALLOW_CROSS: '1',
-  PKG_CONFIG_LIBDIR: join(macports, 'lib', 'pkgconfig'),
-  // `build.rs` names LibRaw but leaves the search path to the system, which on a cross build
-  // is the wrong system. This is where it actually is.
-  //
-  // The SDK first, and only because of `iconv`. Rust's std links `-liconv` on this target,
-  // and with only MacPorts on the path that resolved to its GNU build - leaving
-  // `/opt/local/lib/libiconv.2.dylib` in the load commands of a bundle that ships no such
-  // file, and GNU libiconv is LGPL where macOS provides one as a system library. Searching
-  // the SDK first hands `-liconv` the system stub instead. It shadows nothing else here:
-  // the SDK carries `.tbd` stubs where the three below are asked for as `static=`, which
-  // only an `.a` satisfies, and it has no jpeg or lcms2 at all.
-  [`CARGO_TARGET_${upper}_RUSTFLAGS`]: [
-    ...(sdk != null ? [`-L native=${join(sdk, 'usr', 'lib')}`] : []),
-    `-L native=${join(macports, 'lib')}`,
-  ].join(' '),
-  // Statically, which is not a size decision. The linker ad-hoc signs the binary, and this
-  // bundle used to be patched afterwards with `install_name_tool` to repoint
-  // `/opt/local/lib/*` at `@executable_path/../Frameworks` - which rewrites load commands in
-  // page 0 of `__TEXT`, so code directory slot 0 stops matching the file. arm64 macOS
-  // validates every page as it is paged in, so the first page dyld touched was rejected and
-  // the kernel killed the process before any app code ran: `Code Signature Invalid`,
-  // `Invalid Page`, faulting inside dyld's own header read. Rehashing the slots showed it
-  // exactly - 0 of 2159 mismatched as linked, 1 of 2159 after a single `-change`, and the
-  // MacPorts dylibs break the same way, so no ordering of the patching saves it. Linking the
-  // archive in means there is nothing to patch and the linker's signature stays valid.
-  RAWSHIM_LIBRAW_DIR: join(macports, 'lib'),
-  RAWSHIM_LIBRAW_STATIC: '1',
-  // bindgen runs its own clang over the C headers and does not inherit any of the above.
+  // The SDK on the link path, and only because of `iconv`. Rust's std links `-liconv` on
+  // this target, and it has to resolve to the system stub: a GNU libiconv would leave an
+  // absolute path in the load commands of a bundle that ships no such file, and it is LGPL
+  // where macOS provides one already.
   ...(sdk != null && {
-    SDKROOT: sdk,
-    BINDGEN_EXTRA_CLANG_ARGS: `-isysroot ${sdk} --target=${TARGET} -I${join(macports, 'include')}`,
+    [`CARGO_TARGET_${upper}_RUSTFLAGS`]: `-L native=${join(sdk, 'usr', 'lib')}`,
   }),
+  // Kept for the linker rather than for bindgen: an editor build parses no C headers at all
+  // now, so there is nothing for bindgen's own clang to be pointed at.
+  ...(sdk != null && { SDKROOT: sdk }),
 };
 
 // `tauri build` on Linux offers deb/rpm/appimage and no macOS bundler, so this builds the
@@ -173,10 +135,9 @@ mkdirSync(resources, { recursive: true });
 copyFileSync(binary, join(macos, EXE));
 chmodSync(join(macos, EXE), 0o755);
 
-// No `Frameworks`, and nothing to patch into it. LibRaw and the two libraries it wants are
-// in the binary (`RAWSHIM_LIBRAW_STATIC` above), so the only things left in the load
-// commands are macOS's own - and the linker's ad-hoc signature still describes the file it
-// signed, which is what makes the bundle launchable at all.
+// No `Frameworks`, and nothing to patch into it: the only things left in the load commands
+// are macOS's own, so the linker's ad-hoc signature still describes the file it signed,
+// which is what makes the bundle launchable at all.
 
 const icon = join(repoRoot, 'src-tauri', 'icons', 'icon.icns');
 if (existsSync(icon)) copyFileSync(icon, join(resources, 'icon.icns'));
