@@ -469,16 +469,41 @@ fn cfa_of(image: &rawler::RawImage) -> [u32; 4] {
 /// `samples` may be a region lifted out of the frame rather than the frame, in which case its origin
 /// has to sit on a whole CFA site or every colour in it is relabelled.
 fn condition(samples: &[u16], width: usize, height: usize, image: &rawler::RawImage, cfa: [u32; 4]) -> Vec<f32> {
-    let black = per_channel_black(image, cfa);
-    let white = saturation_of(image);
-    let gains = white_balance_gains(image);
+    let levels = Levels {
+        black: per_channel_black(image),
+        white: saturation_of(image),
+        gains: white_balance_gains(image),
+    };
+    normalise(samples, width, height, cfa, &levels)
+}
+
+/// What the file says about where the signal sits, read once for the frame.
+struct Levels {
+    /// By position in the 2x2, not by colour. See `per_channel_black`.
+    black: [f32; 4],
+    white: f32,
+    /// By colour, which is what the two greens share.
+    gains: [f32; 4],
+}
+
+/// The arithmetic of `condition`, over levels already read.
+///
+/// Split from the read so that a test can state four black levels and see what becomes of each,
+/// which is not something a `RawImage` can be talked into saying.
+fn normalise(samples: &[u16], width: usize, height: usize, cfa: [u32; 4], levels: &Levels) -> Vec<f32> {
+    let Levels { black, white, gains } = levels;
+    let (white, black, gains) = (*white, *black, *gains);
 
     let mut mosaic = vec![0f32; width * height];
     mosaic.par_chunks_mut(width).enumerate().for_each(|(row, out)| {
         let from = &samples[row * width..(row + 1) * width];
         for (col, (sample, slot)) in from.iter().zip(out).enumerate() {
-            let colour = cfa[(row & 1) * 2 + (col & 1)].min(3) as usize;
-            let floor = black[colour];
+            // Black by position and the gain by colour, which is not an inconsistency: black is a
+            // property of the photosite and the two greens have their own, while the white balance
+            // is a property of the colour and they share it.
+            let position = (row & 1) * 2 + (col & 1);
+            let colour = cfa[position].min(3) as usize;
+            let floor = black[position];
             let range = (white - floor).max(1.0);
             // Clamped at zero because §2.2 of the specification requires it: a negative sample in
             // the shadows can drive the low-pass sum the green stage divides by through zero, and
@@ -496,31 +521,22 @@ fn condition(samples: &[u16], width: usize, height: usize, image: &rawler::RawIm
     mosaic
 }
 
-/// The per-channel black level, in sensor counts.
+/// The black level of each position in the 2x2, in sensor counts.
 ///
-/// A Bayer sensor reports four, one per position of the 2x2, and they are not equal: the two
-/// greens in particular can differ by enough to leave a visible checkerboard if a single scalar is
-/// used for both.
-fn per_channel_black(image: &rawler::RawImage, cfa: [u32; 4]) -> [f32; 4] {
+/// **By position, not by colour, and that distinction is the whole reason this exists.** A Bayer
+/// sensor reports four and they are not equal; the two greens in particular can differ by enough to
+/// leave a visible checkerboard. Indexing by colour cannot hold that, because the two greens are one
+/// colour - it keeps whichever of them is written last and subtracts it from both.
+fn per_channel_black(image: &rawler::RawImage) -> [f32; 4] {
     let levels = &image.blacklevel.levels;
     let mut out = [0f32; 4];
     for (position, slot) in out.iter_mut().enumerate() {
-        // `blacklevel` is indexed by position in the 2x2, not by colour, when it carries four.
-        let value = if levels.len() >= 4 {
-            levels[position].as_f32()
-        } else if let Some(first) = levels.first() {
-            first.as_f32()
-        } else {
-            0.0
+        *slot = match levels.len() >= 4 {
+            true => levels[position].as_f32(),
+            false => levels.first().map_or(0.0, |first| first.as_f32()),
         };
-        *slot = value;
     }
-    // Reordered to be indexed by colour, which is how the mosaic loop reads it.
-    let mut by_colour = [0f32; 4];
-    for position in 0..4 {
-        by_colour[cfa[position].min(3) as usize] = out[position];
-    }
-    by_colour
+    out
 }
 
 /// Where the sensor saturates, in raw counts.
@@ -745,6 +761,43 @@ fn as_shot_of(image: &rawler::RawImage) -> Option<crate::white_balance::AsShot> 
 
 #[cfg(test)]
 mod tests {
+    /// Each of the four photosites has its own black level removed, the two greens included.
+    ///
+    /// **The bug this pins subtracted one green's black from both.** The four levels were read by
+    /// position, correctly, and then reordered into an array indexed by colour - where the two
+    /// greens are one entry, so whichever was written second won and the other's level was lost.
+    /// The frame it produces has a residual of the difference on every other green, a checkerboard
+    /// at the sensor's own pitch, worst in the shadows where it is the largest part of the signal.
+    #[test]
+    fn every_photosite_loses_its_own_black_level() {
+        // The four positions of an RGGB site, so the two greens are colour 1 and the ones that
+        // collapsed onto each other.
+        let cfa = [0u32, 1, 1, 2];
+        // The first green's black above the second's, deliberately. The collapse kept the second,
+        // so the first would be handed a floor *below* its own - and a residual the other way round
+        // is negative, which the clamp at zero swallows and the test never sees.
+        let levels = super::Levels {
+            black: [500.0, 528.0, 512.0, 516.0],
+            white: 16383.0,
+            gains: [1.0, 1.0, 1.0, 1.0],
+        };
+        // Every sample sits exactly on its own black level, so a correct subtraction is zero
+        // everywhere and anything left is the wrong level having been used.
+        let samples: Vec<u16> = (0..4)
+            .flat_map(|row: usize| (0..4).map(move |col: usize| levels.black[(row & 1) * 2 + (col & 1)] as u16))
+            .collect();
+
+        let out = super::normalise(&samples, 4, 4, cfa, &levels);
+        for (at, value) in out.iter().enumerate() {
+            let (row, col) = (at / 4, at % 4);
+            assert!(
+                *value < 1e-6,
+                "the sample at {row},{col} kept {value} of the black level at position {}",
+                (row & 1) * 2 + (col & 1),
+            );
+        }
+    }
+
     /// A camera reading its own neutral is what the white balance hands the matrix, so this is the
     /// one colour the matrix is not free to choose: it has to come out grey.
     ///
