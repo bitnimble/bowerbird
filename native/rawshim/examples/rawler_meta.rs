@@ -30,9 +30,33 @@ fn main() {
             println!("   samples     mean {:.1}  peak {}  sum {total}", total as f64 / n as f64, peak);
             // How much of the frame the stated white level would discard. A handful of samples is
             // hot pixels; a real fraction is highlight the metadata is wrong about.
+            //
+            // Counted over the recommended crop as well as the whole frame, because the whole frame
+            // includes the masked border the sensor never exposes, and padding out there would look
+            // exactly like a white level that is too low.
             let stated = image.whitelevel.0.iter().copied().max().unwrap_or(65535) as u16;
             let over = samples[..n].iter().filter(|s| **s > stated).count();
-            println!("   above white {over} of {n} ({:.4}%)", over as f64 / n as f64 * 100.0);
+            println!("   above white {over} of {n} ({:.4}%)  whole frame", over as f64 / n as f64 * 100.0);
+
+            if let Some(area) = image.crop_area {
+                let mut inside = 0usize;
+                let mut counted = 0usize;
+                let mut peak_inside = 0u16;
+                for row in area.p.y..(area.p.y + area.d.h).min(image.height) {
+                    for col in area.p.x..(area.p.x + area.d.w).min(image.width) {
+                        let value = samples[row * image.width + col];
+                        counted += 1;
+                        peak_inside = peak_inside.max(value);
+                        if value > stated {
+                            inside += 1;
+                        }
+                    }
+                }
+                println!(
+                    "   above white {inside} of {counted} ({:.4}%)  inside crop, peak {peak_inside}",
+                    inside as f64 / counted as f64 * 100.0
+                );
+            }
         }
     }
 }
