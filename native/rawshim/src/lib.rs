@@ -52,6 +52,8 @@ use std::os::raw::c_int;
 
 #[cfg(feature = "renditions")]
 pub mod avif;
+/// The stages between the demosaic and the grade, moving onto the GPU one at a time.
+pub mod base;
 pub mod camera_match;
 #[cfg(feature = "renditions")]
 pub mod debug;
