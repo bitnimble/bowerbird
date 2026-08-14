@@ -35,6 +35,9 @@ pub struct Base {
     defringe_apply: wgpu::ComputePipeline,
     warp_layout: wgpu::BindGroupLayout,
     warp: wgpu::ComputePipeline,
+    noise_layout: wgpu::BindGroupLayout,
+    noise_luma: wgpu::ComputePipeline,
+    noise_blocks: wgpu::ComputePipeline,
 }
 
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
@@ -153,6 +156,35 @@ impl Base {
             cache: None,
         });
 
+        let noise_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("noise"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("wgsl/noise.wgsl").into()),
+        });
+        let noise_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("noise"),
+            entries: &[
+                uniform_entry(0),
+                storage_entry(1),
+                storage_entry(2),
+                storage_entry(3),
+            ],
+        });
+        let noise_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("noise"),
+            bind_group_layouts: &[Some(&noise_layout)],
+            immediate_size: 0,
+        });
+        let noise = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&noise_pipeline_layout),
+                module: &noise_module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+
         Some(Base {
             layout,
             encode,
@@ -161,6 +193,9 @@ impl Base {
             defringe_apply: defringe("defringe_apply"),
             warp_layout,
             warp,
+            noise_layout,
+            noise_luma: noise("noise_luma"),
+            noise_blocks: noise("noise_blocks"),
         })
     }
 }
@@ -530,6 +565,183 @@ pub fn warp_lens(
     Some(gathered)
 }
 
+/// The shader's stencil, and the size of the lap array it selects a median from.
+///
+/// Tiling the frame by one number and measuring it with another leaves an estimate that is
+/// quietly wrong and a picture nobody would look at twice, so the two are held together here.
+const BLOCK: usize = 8;
+const _: () = assert!(BLOCK == crate::noise::BLOCK);
+
+/// One dispatch's constants. `transform` is `alpha` and `sigma_sq` once the coarse pass has found
+/// them, and `None` on the pass that measures the plane against itself.
+fn noise_params(
+    width: usize,
+    height: usize,
+    blocks: (usize, usize),
+    transform: Option<(f32, f32)>,
+) -> Vec<u8> {
+    let (alpha, sigma_sq) = transform.unwrap_or((0.0, 0.0));
+    // `crate::noise::stabilise`'s two constants, composed on this side so the shader evaluates the
+    // same expression the CPU does rather than a second rounding of it.
+    let c = 0.375 * alpha * alpha + sigma_sq;
+    let mut out = Vec::with_capacity(32);
+    for word in [width as u32, height as u32, blocks.0 as u32, blocks.1 as u32] {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+    for value in [alpha, c, 2.0 / alpha.max(1e-12)] {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.extend_from_slice(&u32::from(transform.is_some()).to_le_bytes());
+    out
+}
+
+/// Submits the work and brings back one pair per block: its mean level, and its sigma.
+fn read_blocks(
+    gpu: &crate::gpu::Gpu,
+    mut encoder: wgpu::CommandEncoder,
+    stats: &wgpu::Buffer,
+    count: usize,
+) -> Option<Vec<[f32; 2]>> {
+    let bytes = (count * 8) as u64;
+    let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("noise readback"),
+        size: bytes,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_buffer_to_buffer(stats, 0, &readback, 0, bytes);
+    gpu.queue.submit([encoder.finish()]);
+
+    readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+    let blocks = {
+        let mapped = readback.slice(..).get_mapped_range().ok()?;
+        mapped
+            .chunks_exact(8)
+            .map(|block| {
+                let at = |o: usize| {
+                    f32::from_le_bytes([block[o], block[o + 1], block[o + 2], block[o + 3]])
+                };
+                [at(0), at(4)]
+            })
+            .collect()
+    };
+    readback.unmap();
+    Some(blocks)
+}
+
+/// What the prepared frame's noise is, as [`crate::noise::measure`] reads it.
+///
+/// **The GPU takes the pixels and the host keeps the quantiles**, which is the same line
+/// `defringe` draws around its coefficients. The luma plane and the two block reductions are 61
+/// million pixels apiece and are where the 1021ms is; the envelope and the binning run over the
+/// ~941k block sigmas those produce - a few MB, read back once - and a quantile is the one shape a
+/// GPU has nothing to offer over a `select_nth`. The tail here calls `noise`'s own `envelope` and
+/// `typical` rather than reimplementing them, so the two paths cannot come to disagree about where
+/// a percentile sits.
+///
+/// `None` where the GPU declines, including the frame too small to bin: the CPU answers that one
+/// in microseconds and there is nothing to save.
+pub fn measure(
+    gpu: &'static crate::gpu::Gpu,
+    base: &'static Base,
+    samples: &[u16],
+    width: usize,
+    height: usize,
+) -> Option<crate::noise::Noise> {
+    let pixels = width * height;
+    let blocks = (width / BLOCK, height / BLOCK);
+    let count = blocks.0 * blocks.1;
+    if pixels == 0 || samples.len() < pixels * 3 || count == 0 {
+        return None;
+    }
+    let device = &gpu.device;
+
+    let frame = upload(gpu, samples);
+    let plane = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("noise luma"),
+        size: (pixels * 4) as u64,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: false,
+    });
+    let stats = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("noise blocks"),
+        size: (count * 8) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let group = |uniform: &wgpu::Buffer| {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("noise"),
+            layout: &base.noise_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: frame.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: plane.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: stats.as_entire_binding() },
+            ],
+        })
+    };
+    let uniform = |transform: Option<(f32, f32)>| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("noise params"),
+            contents: &noise_params(width, height, blocks, transform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        })
+    };
+
+    let coarse_group = group(&uniform(None));
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        // A pass each, as the defringe's two are: every block reads luma the pass before it wrote,
+        // and a pass is where wgpu puts that barrier.
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&base.noise_luma);
+        pass.set_bind_group(0, &coarse_group, &[]);
+        pass.dispatch_workgroups((pixels as u32).div_ceil(64), 1, 1);
+    }
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&base.noise_blocks);
+        pass.set_bind_group(0, &coarse_group, &[]);
+        pass.dispatch_workgroups((count as u32).div_ceil(64), 1, 1);
+    }
+    let coarse = read_blocks(gpu, encoder, &stats, count)?;
+
+    // One sigma to parameterise the transform with, and the round trip the split is built around:
+    // the second pass cannot be encoded until this number exists.
+    let mut all: Vec<f32> = coarse.iter().map(|block| block[1]).collect();
+    let sigma = crate::noise::envelope(&mut all).unwrap_or(1e-5).max(1e-5);
+    let alpha = (sigma * 0.1).max(1e-5);
+    let sigma_sq = (sigma * sigma).max(1e-8);
+
+    let measured_group = group(&uniform(Some((alpha, sigma_sq))));
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&base.noise_blocks);
+        pass.set_bind_group(0, &measured_group, &[]);
+        pass.dispatch_workgroups((count as u32).div_ceil(64), 1, 1);
+    }
+    let measured = read_blocks(gpu, encoder, &stats, count)?;
+
+    let mut bins: Vec<Vec<f32>> = vec![Vec::new(); crate::noise::BINS];
+    for block in &measured {
+        let bin = (block[0] * crate::noise::BINS as f32) as usize;
+        bins[bin.min(crate::noise::BINS - 1)].push(block[1]);
+    }
+    let binned: Vec<crate::noise::Bin> = bins
+        .iter_mut()
+        .map(|sigmas| crate::noise::Bin {
+            blocks: sigmas.len(),
+            sigma: crate::noise::envelope(sigmas),
+        })
+        .collect();
+    let stabilised = crate::noise::typical(&binned)
+        .map_or(1e-6, |sigma| (sigma * crate::noise::DEMOSAIC_CORRELATION).max(1e-6));
+    Some(crate::noise::Noise { stabilised, alpha, sigma_sq })
+}
+
 #[cfg(test)]
 mod tests {
     /// The coding, against the CPU it replaces, over every level a sample can hold.
@@ -693,5 +905,104 @@ mod tests {
         let mean = theirs.iter().zip(&mine).map(|(a, b)| f64::from(a.abs_diff(*b))).sum::<f64>()
             / theirs.len() as f64;
         assert!(worst <= 2, "the shader and the gather disagree by {worst} counts, mean {mean:.4}");
+    }
+
+    /// Four bands of real noise, each at its own level and its own sigma, each channel offset.
+    ///
+    /// **What the estimator reads is a percentile of a percentile, so a gentle frame proves
+    /// nothing.** A block's sigma is the median of its 96 Laplacians and a bin's is the quiet fifth
+    /// of its blocks, both of which a smooth ramp answers with the same near-zero number
+    /// everywhere - a shader that measured the wrong plane, or binned by the wrong level, would
+    /// agree with the CPU to every digit. Bands give the bins something to disagree about; the
+    /// noise is gaussian and independent per channel, so a block's median Laplacian is a sigma
+    /// rather than a step; and the channels sit at different levels, so the luma weights are
+    /// load-bearing rather than summing to one over three copies of the same number.
+    ///
+    /// The levels land mid-bin (luma is about 0.946 of the level here), which is not fussiness: a
+    /// band sitting on a bin edge splits across two, and the weighted median that picks one bin is
+    /// then a coin toss the two paths could call differently. The brightest band stops short of
+    /// the top for the reason the defringe's frame stays off both rails - a clipped channel is a
+    /// measurement of the clip.
+    fn banded(width: usize, height: usize) -> Vec<u16> {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut normal = || {
+            // Sum of twelve uniforms, minus six: mean 0, variance 1, and no dependency.
+            (0..12)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    (state >> 40) as f32 / 16777216.0
+                })
+                .sum::<f32>()
+                - 6.0
+        };
+        let bands = [(0.1156f32, 0.020f32), (0.3799, 0.008), (0.6111, 0.003), (0.7768, 0.0012)];
+        let mut out = Vec::with_capacity(width * height * 3);
+        for y in 0..height {
+            let (level, sigma) = bands[y * bands.len() / height];
+            for _ in 0..width {
+                for tint in [0.75, 1.0, 1.2] {
+                    let value = (level * tint + sigma * normal()) * 65535.0;
+                    out.push(value.clamp(0.0, 65535.0) as u16);
+                }
+            }
+        }
+        out
+    }
+
+    /// The measurement, against the CPU it replaces.
+    ///
+    /// **Not bit-equal, and it cannot be.** Every number either side reports is a quantile of
+    /// quantiles: a block's sigma is an order statistic of 96 `f32` Laplacians, a bin's is the mean
+    /// of a slice of a sort, and the frame's is whichever bin the weighted median lands in. The
+    /// per-pixel arithmetic differs in the last bit or two - the shader is free to contract a
+    /// multiply and an add into one rounding where Rust is not - and a block whose two middle
+    /// Laplacians differ by less than that can hand back the other one.
+    ///
+    /// So the bound is a fifth of a percent, relative, and it sits between two measured numbers.
+    /// The rounding alone lands at 1e-6 here. One flipped order statistic is worth about 1e-3: a
+    /// block's neighbouring Laplacians are a percent or so apart, and a bin's envelope averages
+    /// nineteen of its blocks. A structural error is nowhere near either - the divisor 6% wrong
+    /// reads 2.8% off and swapping two luma weights 3.9%, both of which this rejects by more than
+    /// an order of magnitude.
+    #[test]
+    fn the_noise_matches_the_cpu_within_a_fifth_of_a_percent() {
+        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(base) = super::device(gpu) else { return };
+
+        // Neither dimension a multiple of the block, so the partial row and column the CPU drops
+        // are dropped here too; and an odd sample count, so `upload`'s tail is exercised.
+        let (width, height) = (259usize, 131);
+        let frame = banded(width, height);
+
+        let theirs = crate::noise::measure(&frame, width, height);
+        // **Asserted before the bound.** A frame the estimator declines reports its floor, and two
+        // floors agree perfectly - so a shader that measured nothing at all would pass a relative
+        // bound against one.
+        assert!(theirs.stabilised > 0.01, "the CPU's own answer is {}", theirs.stabilised);
+
+        let mine = super::measure(gpu, base, &frame, width, height).expect("the measurement runs");
+        let off = |mine: f32, theirs: f32| (mine - theirs).abs() / theirs;
+        assert!(
+            off(mine.stabilised, theirs.stabilised) < 0.002,
+            "sigma {} against {}",
+            mine.stabilised,
+            theirs.stabilised
+        );
+        // The transform the sigma was measured through, which the client applies verbatim: a sigma
+        // that matched through a different transform would not be the same measurement.
+        assert!(
+            off(mine.alpha, theirs.alpha) < 0.002,
+            "alpha {} against {}",
+            mine.alpha,
+            theirs.alpha
+        );
+        assert!(
+            off(mine.sigma_sq, theirs.sigma_sq) < 0.002,
+            "sigma_sq {} against {}",
+            mine.sigma_sq,
+            theirs.sigma_sq
+        );
     }
 }
