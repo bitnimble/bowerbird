@@ -101,8 +101,8 @@ fn main() {
     // equally - so the interior says what this comparison's noise floor is, and only the amount by
     // which the seam exceeds it is the halo's doing.
     println!(
-        "{:>6}  {:>9} {:>8}  {:>9} {:>8}",
-        "halo", "seam max", "seam avg", "away max", "away avg",
+        "{:>6}  {:>8} {:>8} {:>8}  {:>8} {:>8}",
+        "halo", "V excess", "H excess", "baseline", "band avg", "away avg",
     );
     for halo in &halos {
         rawshim::set_tile_halo(*halo);
@@ -117,11 +117,17 @@ fn main() {
             }
         }
 
+        let (v_join, v_base) = seam_line(&assembled, &reference, side, half, true);
+        let (h_join, h_base) = seam_line(&assembled, &reference, side, half, false);
         let seam = differences(&assembled, &reference, side, half, true);
         let away = differences(&assembled, &reference, side, half, false);
         println!(
-            "{halo:>6}  {:>9} {:>8.3}  {:>9} {:>8.3}",
-            seam.0, seam.1, away.0, away.1,
+            "{halo:>6}  {:>8.3} {:>8.3} {:>8.3}  {:>8.3} {:>8.3}",
+            v_join - v_base,
+            h_join - h_base,
+            (v_base + h_base) / 2.0,
+            seam.1,
+            away.1,
         );
         write(&format!("{out}/seam-halo{halo}"), &crop(&assembled), window, window);
         let diff = crop(&amplified(&assembled, &reference));
@@ -142,6 +148,39 @@ fn main() {
         halos.len(),
     );
     eprintln!("and seams-side-by-side, reference then {halos:?}, {PANEL}px panels at 100%");
+}
+
+/// How far the join stands above its own neighbourhood, which is what a seam actually is.
+///
+/// **The statistic the other one could not provide.** A maximum cannot tell one hot pixel from a
+/// continuous line, and a mean over a band divides a one-pixel line by the width of the band - so
+/// both can rank a region that has no visible seam above one that does. What the eye picks up is a
+/// *line*: a column that differs where the columns beside it do not.
+///
+/// So each column is averaged down the whole region, which no single sample can carry, and the two
+/// columns straddling the join are compared against columns far enough out to be ordinary and near
+/// enough to be the same subject. The excess between them is the seam; the baseline is whatever
+/// this comparison cannot resolve anyway.
+fn seam_line(mine: &[u8], reference: &[u8], side: usize, half: usize, vertical: bool) -> (f64, f64) {
+    let profile = |at: usize| -> f64 {
+        let mut total = 0f64;
+        for other in 0..side {
+            let (row, col) = match vertical {
+                true => (other, at),
+                false => (at, other),
+            };
+            for channel in 0..3 {
+                let i = (row * side + col) * 3 + channel;
+                total += f64::from(mine[i].abs_diff(reference[i]));
+            }
+        }
+        total / (side * 3) as f64
+    };
+    // The quarters meet between `half - 1` and `half`, so the join is both of them.
+    let join = (profile(half - 1) + profile(half)) / 2.0;
+    let baseline: f64 =
+        (24..48).map(|d| profile(half - d) + profile(half + d)).sum::<f64>() / 48.0;
+    (join, baseline)
 }
 
 /// The worst and mean difference, within eight pixels of a seam or well away from one.

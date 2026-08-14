@@ -60,12 +60,21 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
       (the halo's redundant area) and buys the picture arriving in pieces instead of all at once.
       Worth it for a whole-image slider, where perceived speed is the point; use one rectangle
       wherever the answer is wanted whole.
-- [ ] **`TILE_HALO` looks 4x larger than it needs to be.** `examples/halo_seams.rs` cuts one
-      region four ways at each halo and compares against the same region cut as one tile, with the
-      seam's difference reported against the interior's as a floor. The seam's excess over that
-      floor: halo 0 is 0.594 of 255, 8 is 0.359, **16 is 0.075**, 32 is 0.022, 64 is 0.030, 128 is
-      0.022. The knee is at 16 and everything past it is the floor. Awaiting a look by eye at the
-      crops before moving it; 64 to 16 takes a 1024 tile's overhead from 1.5x the area to 1.06x.
+- [ ] **`TILE_HALO` can be 32, and is worth less than it looks.** `examples/halo_seams.rs` cuts a
+      region four ways at each halo against the same region cut as one tile, and measures the join
+      as a *line*: each column averaged down the whole region, the two columns straddling the join
+      against columns 24-48 out. A maximum cannot tell one hot pixel from a line and a mean over a
+      band divides a line by the band's width, so both rank regions wrongly - the first table here
+      was built on a maximum and said 16, which is not what the line says.
+
+      The join's excess over its own neighbourhood, of 255: halo 0 is 0.61/0.70 against a 0.13
+      baseline, 8 is 0.44/0.57, **16 is 0.12/0.20 against 0.06 - still a line at 2-4x**, and from
+      **24** up it is at or under the baseline and stays there to 128.
+
+      So 32, being past the knee and a multiple of four for the chroma pyramid. But the saving is
+      modest and the earlier figure oversold it: at 1024 tiles the halo is 1.27x the area at 64
+      and 1.13x at 32, while *not dividing into the frame evenly* is 1.22x on its own. Total 1.54x
+      against 1.38x - about 11% of the tiled work, where the tile grid costs more than the halo.
 - [ ] **`pass12`** is now 82% of GALOSH (4326ms of 5286). The next real optimisation, and unlike
       the table it is genuine per-pixel work.
 
