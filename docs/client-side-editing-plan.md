@@ -20,10 +20,28 @@ something measured says the 582ms is the problem.
 
 ## What blocks that
 
-- [ ] **The wasm build**, which is two things and not more: `uuid` needs its `js` feature, and
-      `gpu.rs`'s `static GPU` is `!Send + !Sync` under wgpu's WebGPU backend (`pollster::block_on`
-      cannot block a browser thread either). Everything else, rawler included, already compiles
-      for `wasm32-unknown-unknown`.
+- [x] **The wasm build**, which was two things and not more: `uuid` needed its `js` feature, and
+      `gpu.rs`'s `static GPU` was `!Send + !Sync` under wgpu's WebGPU backend
+      (`pollster::block_on` cannot block a browser thread either). Everything else, rawler
+      included, already compiled for `wasm32-unknown-unknown`.
+
+      `bun run scripts/cargo.ts build --no-default-features --target wasm32-unknown-unknown
+      --manifest-path native/rawshim/Cargo.toml` links a `.wasm` now. `gpu::device` is `None`
+      there, because the page owns the `GPUDevice` and this crate's wasm half ends at the fit.
+      Only `Gpu`'s own construction is gated, so nothing native moved.
+- [ ] **A wasm decode compiles and does not yet run**, which is the next thing and is two more.
+      Both were found by reading `decode_rawler::decode_source` after it compiled, not by a
+      compiler:
+
+      - **The demosaic is GPU-only.** `decode_source` takes `gpu::device()?` and RCD is behind
+        it, so with `None` there the whole decode returns `None` rather than falling back. This
+        is what the page's `GPUDevice` has to reach - the decode wants it as much as the grade
+        does, so "wasm ends at the fit" is where it stands today, not where it ends up.
+      - **`std::time::Instant::now()` panics on `wasm32-unknown-unknown`.** `decode_source`
+        reads the clock unconditionally for `BOWERBIRD_DECODE_PROFILE`'s laps, before it has
+        decided whether anyone asked for them.
+
+      No wasm smoke test until the first is answered: there is nothing for it to assert.
 - [x] **Threads: single, and no wasm threading is to be built.** The part in question is purely
       the entropy decode and bit-unpack into the sensor's `u16` grid - `raw_image`, rayon-parallel
       inside rawler (Sony's lossless is tiled in two dimensions). At 61MP it is 92ms on twelve
