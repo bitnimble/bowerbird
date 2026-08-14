@@ -39,6 +39,9 @@ pub struct Base {
     noise_layout: wgpu::BindGroupLayout,
     noise_luma: wgpu::ComputePipeline,
     noise_blocks: wgpu::ComputePipeline,
+    defocus_layout: wgpu::BindGroupLayout,
+    defocus_bins: wgpu::ComputePipeline,
+    defocus_residuals: wgpu::ComputePipeline,
 }
 
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
@@ -201,6 +204,38 @@ impl Base {
             })
         };
 
+        let defocus_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("defocus"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("wgsl/lanes.wgsl"),
+                    include_str!("wgsl/defocus.wgsl"),
+                )
+                .into(),
+            ),
+        });
+        let defocus_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("defocus"),
+            entries: &[uniform_entry(0), storage_entry(1), storage_entry(2), storage_entry(3)],
+        });
+        let defocus_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("defocus"),
+                bind_group_layouts: &[Some(&defocus_layout)],
+                immediate_size: 0,
+            });
+        let defocus = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&defocus_pipeline_layout),
+                module: &defocus_module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+
         Some(Base {
             layout,
             encode,
@@ -212,6 +247,9 @@ impl Base {
             noise_layout,
             noise_luma: noise("noise_luma"),
             noise_blocks: noise("noise_blocks"),
+            defocus_layout,
+            defocus_bins: defocus("defocus_bins"),
+            defocus_residuals: defocus("defocus_residuals"),
         })
     }
 }
@@ -294,8 +332,7 @@ pub fn prepare(
 /// Longitudinal chromatic aberration, as [`crate::image::finish_with`] takes it off with
 /// `Strengths::before_the_fit`.
 ///
-/// `defocus` is `measure_defocus`'s pair, already scaled by the setting - the measurement stays on
-/// the CPU for now, which is a whole-frame reduction of its own and moves separately.
+/// `defocus` is [`measure_defocus`]'s pair, already scaled by the setting.
 pub fn defringe(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
@@ -916,6 +953,241 @@ fn measure_into(
     Some(crate::noise::Noise { stabilised, alpha, sigma_sq })
 }
 
+/// Sampled points one invocation sums before the host takes over, and `defocus.wgsl`'s pair.
+const DEFOCUS_PER_SEGMENT: usize = 64;
+
+/// The shader hardcodes all three, as `noise.wgsl` hardcodes its block. A host that sized the
+/// readback by one number while the kernel binned by another would read plausible sums out of the
+/// wrong slots, which is the failure with no symptom.
+const _: () = assert!(crate::image::DEFOCUS_BINS == 6);
+const _: () = assert!(crate::image::DEFOCUS_STRIDE == 3);
+const _: () = assert!(crate::image::NOISE_BINS == 1024);
+
+/// The defocus coefficients, as [`crate::image::measure_defocus`] reads them off the coded frame.
+///
+/// **This is the last thing that kept the chain from staying resident.** [`prepare`] takes the pair
+/// as an input, and the CPU measures it from the frame *after* `tone::encode_base` has run - so a
+/// caller had to code, read back, measure and upload again, which is the round trip `prepare`
+/// exists to delete.
+///
+/// **The GPU takes the pixels and the host keeps the fit**, the same line [`measure`] draws. Both
+/// whole-frame reductions are on the GPU: the radial sums over every third pixel, and the three
+/// residual histograms each channel's noise sigma is a median of. What comes back is 24 numbers per
+/// segment and three 1024-bucket histograms - and everything downstream of that reads six points.
+/// A median of a histogram, a weighted line through six samples, and four vetoes are not
+/// arithmetic a GPU has anything to offer on, and putting them there would mean a second copy of
+/// the statistical rules rather than `image`'s own.
+///
+/// The tail is `measure_defocus`'s spelled a second time, which `sigma_from` and every constant
+/// are deliberately *not* - `the_defocus_matches_the_cpu` is what holds the two spellings together.
+///
+/// None wherever the CPU answers None: too few samples, too few bins that resolve, a coefficient
+/// past what a lens does, or two channels that disagree in sign.
+pub fn measure_defocus(
+    gpu: &'static crate::gpu::Gpu,
+    base: &'static Base,
+    samples: &[u16],
+    width: usize,
+    height: usize,
+) -> Option<(f32, f32)> {
+    if width < 3 || height < 3 || samples.len() < width * height * 3 {
+        return None;
+    }
+    let frame = upload(gpu, samples);
+    let encoder = gpu.device.create_command_encoder(&Default::default());
+    measure_defocus_into(gpu, base, encoder, &frame, width, height)
+}
+
+/// Reads a frame already in VRAM. Takes the encoder rather than borrowing one, as [`measure_into`]
+/// does and for the same reason: the answer is a host computation over what the kernels write, so
+/// this has to submit and map before it can return one.
+fn measure_defocus_into(
+    gpu: &crate::gpu::Gpu,
+    base: &Base,
+    mut encoder: wgpu::CommandEncoder,
+    frame: &wgpu::Buffer,
+    width: usize,
+    height: usize,
+) -> Option<(f32, f32)> {
+    let device = &gpu.device;
+    let bins = crate::image::DEFOCUS_BINS;
+    let rows = (height - 2).div_ceil(crate::image::DEFOCUS_STRIDE);
+    let across = (width - 2).div_ceil(crate::image::DEFOCUS_STRIDE);
+    let segments = across.div_ceil(DEFOCUS_PER_SEGMENT);
+    let partial_bytes = rows * segments * bins * 16;
+    let histogram_bytes = 3 * crate::image::NOISE_BINS * 4;
+
+    let partials = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("defocus bins"),
+        size: partial_bytes as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    // Zeroed explicitly: every other buffer here is written before it is read, and this one is
+    // added to.
+    let residuals = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("defocus residuals"),
+        contents: &vec![0u8; histogram_bytes],
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+
+    let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+    let mut params: Vec<u8> = Vec::with_capacity(48);
+    for word in [width as u32, height as u32, across as u32, rows as u32, segments as u32] {
+        params.extend_from_slice(&word.to_le_bytes());
+    }
+    for value in [cx as f32, cy as f32, (cx * cx + cy * cy) as f32] {
+        params.extend_from_slice(&value.to_le_bytes());
+    }
+    for channel in crate::image::LUMA {
+        params.extend_from_slice(&channel.to_le_bytes());
+    }
+    // `vec3f` is padded to four words and `noise_max` lands in the hole, as the defringe's `full`
+    // does - the layout the shader declares, not a coincidence.
+    params.extend_from_slice(&crate::image::NOISE_MAX.to_le_bytes());
+    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("defocus params"),
+        contents: &params,
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("defocus"),
+        layout: &base.defocus_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: frame.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: partials.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: residuals.as_entire_binding() },
+        ],
+    });
+
+    {
+        // One pass for both, unlike the defringe's and the noise's: neither kernel reads what the
+        // other writes, so there is no barrier to put between them.
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&base.defocus_bins);
+        pass.set_bind_group(0, &group, &[]);
+        let (x, y) = groups(rows * segments);
+        pass.dispatch_workgroups(x, y, 1);
+        pass.set_pipeline(&base.defocus_residuals);
+        let (x, y) = groups(width * height);
+        pass.dispatch_workgroups(x, y, 1);
+    }
+    let (packed, histograms) =
+        read_pair(gpu, encoder, (&partials, partial_bytes), (&residuals, histogram_bytes))?;
+
+    // The widening the shader could not do: an invocation sums 64 samples in `f32` where the CPU
+    // sums a row in `f64`, and the segments meet here.
+    let mut cross_red = vec![0.0f64; bins];
+    let mut cross_blue = vec![0.0f64; bins];
+    let mut square = vec![0.0f64; bins];
+    let mut counted = vec![0.0f64; bins];
+    for (at, sums) in packed.chunks_exact(16).enumerate() {
+        let value = |o: usize| {
+            f64::from(f32::from_le_bytes([sums[o], sums[o + 1], sums[o + 2], sums[o + 3]]))
+        };
+        let bin = at % bins;
+        cross_red[bin] += value(0);
+        cross_blue[bin] += value(4);
+        square[bin] += value(8);
+        counted[bin] += value(12);
+    }
+    if counted.iter().sum::<f64>() < crate::image::DEFOCUS_MIN_SAMPLES as f64 {
+        return None;
+    }
+
+    let sigmas: Vec<f64> = histograms
+        .chunks_exact(4)
+        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+        .collect::<Vec<u32>>()
+        .chunks_exact(crate::image::NOISE_BINS)
+        .map(|histogram| f64::from(crate::image::sigma_from(histogram)))
+        .collect();
+    let weight = crate::image::LUMA.map(f64::from);
+    let variance = [sigmas[0] * sigmas[0], sigmas[1] * sigmas[1], sigmas[2] * sigmas[2]];
+    let luma_variance: f64 = (0..3).map(|c| weight[c] * weight[c] * variance[c]).sum();
+    let bias = |channel: usize| 4.0 * luma_variance - 4.0 * weight[channel] * variance[channel];
+
+    let mut samples: Vec<(f64, f64, f64, f64)> = Vec::new();
+    for bin in 0..bins {
+        if counted[bin] < crate::image::DEFOCUS_MIN_PER_BIN as f64 {
+            continue;
+        }
+        let energy = square[bin] - counted[bin] * 20.0 * luma_variance;
+        if energy <= 0.0 {
+            continue;
+        }
+        let red = (cross_red[bin] - counted[bin] * bias(0)) / energy;
+        let blue = (cross_blue[bin] - counted[bin] * bias(2)) / energy;
+        samples.push(((bin as f64 + 0.5) / bins as f64, red, blue, energy));
+    }
+    if samples.len() < crate::image::DEFOCUS_MIN_BINS {
+        return None;
+    }
+    let constant_term = |pick: &dyn Fn(&(f64, f64, f64, f64)) -> f64| -> f64 {
+        let total: f64 = samples.iter().map(|s| s.3).sum();
+        let mean_at = samples.iter().map(|s| s.3 * s.0).sum::<f64>() / total;
+        let mean_k = samples.iter().map(|s| s.3 * pick(s)).sum::<f64>() / total;
+        let covariance: f64 =
+            samples.iter().map(|s| s.3 * (s.0 - mean_at) * (pick(s) - mean_k)).sum();
+        let spread: f64 = samples.iter().map(|s| s.3 * (s.0 - mean_at).powi(2)).sum();
+        let slope = match spread > 0.0 {
+            true => covariance / spread,
+            false => 0.0,
+        };
+        mean_k - slope * mean_at
+    };
+    let red = constant_term(&|s| s.1) as f32;
+    let blue = constant_term(&|s| s.2) as f32;
+    if red.abs() > crate::image::DEFOCUS_MAX || blue.abs() > crate::image::DEFOCUS_MAX {
+        return None;
+    }
+    let noise = crate::image::DEFOCUS_NOISE;
+    if red.abs() > noise && blue.abs() > noise && red * blue < 0.0 {
+        return None;
+    }
+    let (red, blue) = (red.max(0.0), blue.max(0.0));
+    match red > noise || blue > noise {
+        true => Some((red, blue)),
+        false => None,
+    }
+}
+
+/// Submits the work and brings both results back on one fence, since neither kernel reads what the
+/// other writes and a second wait would buy nothing.
+fn read_pair(
+    gpu: &crate::gpu::Gpu,
+    mut encoder: wgpu::CommandEncoder,
+    first: (&wgpu::Buffer, usize),
+    second: (&wgpu::Buffer, usize),
+) -> Option<(Vec<u8>, Vec<u8>)> {
+    let mut staged = |(source, bytes): (&wgpu::Buffer, usize)| {
+        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("defocus readback"),
+            size: bytes as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(source, 0, &readback, 0, bytes as u64);
+        readback
+    };
+    let a = staged(first);
+    let b = staged(second);
+    gpu.queue.submit([encoder.finish()]);
+
+    a.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    b.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+    let read = (
+        a.slice(..).get_mapped_range().ok()?.to_vec(),
+        b.slice(..).get_mapped_range().ok()?.to_vec(),
+    );
+    a.unmap();
+    b.unmap();
+    Some(read)
+}
+
 #[cfg(test)]
 mod tests {
     /// The coding, against the CPU it replaces, over every level a sample can hold.
@@ -1210,6 +1482,111 @@ mod tests {
             }
         }
         out
+    }
+
+    /// A frame whose red and blue are genuinely softer than its green, by the same amount
+    /// everywhere in the field.
+    ///
+    /// **A focus difference is not a colour, so it cannot be painted on.** The fit regresses
+    /// `channel - luma` on the curvature of luma, so a frame with arbitrary colour at its edges
+    /// gives it nothing to find and one where the fringe *is* a multiple of that curvature gives
+    /// it the multiple. A blur of `t` is `g + t.lap(g)` to first order, which is that same model,
+    /// so red and blue are green seen through one - flat across the field, which is what the `r^2`
+    /// split is there to keep and a lateral aberration would not survive.
+    ///
+    /// **Blocks with ramped edges rather than a grating, because the sigmas are measured too.**
+    /// The debias needs each channel's noise, and `sigma_from` reads it as the median residual of
+    /// a 3x3 mean - a frame textured *everywhere* has no quiet pixels for that median to sit
+    /// among, reads its own texture as noise, and pins itself at `NOISE_CEILING`, which two paths
+    /// would then agree on for the wrong reason. Flats are the majority here, so the median lands
+    /// among them and the number is the noise that was actually added.
+    ///
+    /// The contrast grows with radius, so the bins carry genuinely different curvature energy and
+    /// the weighting in the regression is load-bearing; the coefficient does not, so what the fit
+    /// should recover is the constant it was built with.
+    fn defocused(width: usize, height: usize) -> Vec<u16> {
+        let (cx, cy) = (width as f32 / 2.0, height as f32 / 2.0);
+        let half = (cx * cx + cy * cy).sqrt();
+        let mut blocks = vec![0.0f32; width * height];
+        for y in 0..height {
+            for x in 0..width {
+                let radius = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt() / half;
+                let amplitude = 0.10 + 0.28 * radius;
+                let up = ((x / 17) + (y / 17)) % 2 == 0;
+                blocks[y * width + x] = 0.5 + if up { amplitude } else { -amplitude };
+            }
+        }
+        // A hard step's Laplacian is two spikes a pixel wide, and the stride reads every third
+        // pixel - so half the frame's curvature would be in samples nobody looks at, and which of
+        // them get looked at would depend on where the blocks happen to start.
+        let smooth = crate::image::box_mean(&blocks, width, height, 1);
+        let curvature = crate::image::laplacian(&smooth, width, height);
+
+        let mut state = 0x853c_49e6_748f_ea9bu64;
+        let mut normal = || {
+            (0..12)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    (state >> 40) as f32 / 16777216.0
+                })
+                .sum::<f32>()
+                - 6.0
+        };
+        // Green sharp, since that is the channel autofocus works on; and a sigma per channel,
+        // because the debias indexes the three separately and one figure could not catch a
+        // transposition.
+        let softness = [0.08f32, 0.0, 0.15];
+        let sigmas = [0.0012f32, 0.0015, 0.0018];
+        let mut out = Vec::with_capacity(width * height * 3);
+        for at in 0..width * height {
+            for channel in 0..3 {
+                let value =
+                    smooth[at] + softness[channel] * curvature[at] + sigmas[channel] * normal();
+                out.push((value * 65535.0).clamp(0.0, 65535.0) as u16);
+            }
+        }
+        out
+    }
+
+    /// The defocus fit, against the CPU it replaces.
+    ///
+    /// **Not bit-equal, and it cannot be.** The sums are `f64` per row on the CPU and `f32` per
+    /// 64-sample segment here, and the shader is free to contract a multiply and an add into one
+    /// rounding where Rust is not - which lands at 2e-7, measured on RADV.
+    ///
+    /// So the bound is half a percent, and what sets it is the one place either side can take a
+    /// whole step rather than a small one: each channel's sigma is a bucket index off a
+    /// 1024-bucket histogram, and the residual it is binned from is a nine-tap mean here against
+    /// `box_mean`'s two sliding sweeps. Those agree to the last bit or two, so a pixel sitting on
+    /// a bucket edge can fall either side - and one bucket of sigma moves the debias enough to
+    /// shift the coefficient by ~0.2%. Half a percent clears that with room and still rejects a
+    /// structural error by five times over: the Laplacian's centre tap a quarter of a percent
+    /// wrong reads 2.5% off, because the fit divides one sum built from the stencil by another.
+    #[test]
+    fn the_defocus_matches_the_cpu() {
+        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(base) = super::device(gpu) else { return };
+
+        // Neither dimension a multiple of the stride or the block, so the partial segment at the
+        // end of a row is exercised rather than assumed, and an odd sample count for `upload`.
+        let (width, height) = (211usize, 149);
+        let frame = defocused(width, height);
+
+        let theirs =
+            crate::image::measure_defocus(&frame, width, height).expect("a frame the CPU fits");
+        // **Asserted before the bound**, and on the size of the fit rather than on it existing: a
+        // relative bound against a coefficient the CPU floored to nothing is a bound against
+        // nothing, and both paths declining is the way this test has failed to test anything
+        // before.
+        assert!(theirs.0 > 0.03 && theirs.1 > 0.08, "the CPU's own fit is {theirs:?}");
+
+        let mine = super::measure_defocus(gpu, base, &frame, width, height)
+            .expect("the measurement runs");
+        let off = |mine: f32, theirs: f32| (mine - theirs).abs() / theirs;
+        assert!(off(mine.0, theirs.0) < 0.005, "red {} against {}", mine.0, theirs.0);
+        assert!(off(mine.1, theirs.1) < 0.005, "blue {} against {}", mine.1, theirs.1);
     }
 
     /// The measurement, against the CPU it replaces.
