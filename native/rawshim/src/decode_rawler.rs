@@ -143,7 +143,7 @@ pub fn decode_tile(
     // Grown by what reads past the tile, and by the denoise's own window, then aligned to whole CFA
     // sites so the pattern inside the region is the pattern the frame has. An odd origin would
     // relabel every colour in it.
-    let reach = RCD_MARGIN + crate::TILE_HALO;
+    let reach = RCD_MARGIN + crate::tile_halo();
     let left = (origin.0 + tile.left).saturating_sub(reach) & !1;
     let top = (origin.1 + tile.top).saturating_sub(reach) & !1;
     let right = (origin.0 + tile.left + tile.width + reach).min(frame_w);

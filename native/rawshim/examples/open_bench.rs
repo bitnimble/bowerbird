@@ -210,6 +210,22 @@ fn mosaic_stages(width: usize, height: usize) {
             );
         });
 
+        // **Is being handed a fit the same as measuring one?** The loupe assumes it: a tile is
+        // given the frame's fit so that it predicts the export, which measures its own. If the two
+        // are not the same denoise then every tile disagrees with the render it exists to
+        // preview, everywhere and not only at a seam.
+        let mut measured = mosaic.clone();
+        rawshim::galosh::denoise(gpu, kernels, &mut measured, width, height, amounts);
+        let mut given = mosaic.clone();
+        rawshim::galosh::denoise_with(gpu, kernels, &mut given, width, height, amounts, fit);
+        let worst = measured
+            .iter()
+            .zip(&given)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
+        println!("  {:<34} worst {worst:e}", "a measured fit vs a given one");
+        drop((measured, given));
+
         kernel_by_kernel(gpu, kernels, &mosaic, width, height, amounts, fit);
 
         // The same denoise over tiles, which is what a Detail slider would have to re-run if it

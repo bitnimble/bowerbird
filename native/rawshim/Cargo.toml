@@ -65,6 +65,11 @@ required-features = ["renditions"]
 name = "renders"
 required-features = ["renditions"]
 
+# Writes the crops it exists to be looked at, which is libavif.
+[[example]]
+name = "halo_seams"
+required-features = ["renditions"]
+
 # `filter_domain_delta`, `sdr_vs_hdr` and `denoise_before_warp` stood here. Each asked a
 # question phase 0 has since decided and implemented - which domain the filters run in,
 # what an SDR rendition costs against an HDR one, and which side of the warp the denoise

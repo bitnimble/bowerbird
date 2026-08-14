@@ -18,9 +18,13 @@ forgotten. Numbers are a 61MP ARW (9504x6336) on a Radeon 780M iGPU unless state
       `gpu.rs`'s `static GPU` is `!Send + !Sync` under wgpu's WebGPU backend (`pollster::block_on`
       cannot block a browser thread either). Everything else, rawler included, already compiles
       for `wasm32-unknown-unknown`.
-- [ ] **Decide about threads.** rawler's decode is 92ms across twelve cores. Single-threaded wasm
-      is the alternative to `SharedArrayBuffer` and the cross-origin isolation that was
-      deliberately deleted.
+- [ ] **Decide about threads, and it looks like single-threaded wins.** The part in question is
+      purely the entropy decode and bit-unpack into the sensor's `u16` grid - `raw_image`, which
+      is rayon-parallel inside rawler (Sony's lossless is tiled in two dimensions). At 61MP it is
+      92ms on twelve cores and **389ms on one**, 4.2x; `condition` is 26ms against 193ms, 7.4x.
+      So the whole irreducibly-CPU half is 582ms single-threaded, and `condition` is a third of
+      that and is already on the list to become a kernel. Against that, `SharedArrayBuffer` and
+      the cross-origin isolation the page would carry for it.
 - [ ] **Serve the stored camera match.** `camera_match_store.ts` holds it; nothing exposes it. The
       client needs the 5KB blob to skip a 600-700ms fit.
 - [ ] **Make the RAW cacheable.** `image_api.ts`'s `download()` sends `Cache-Control: no-cache`.
@@ -51,13 +55,29 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
       is now 85-91ms/MP flat from 0.04MP to 60MP.
 - [ ] **Tile RCD at 1024.** 1040ms whole-frame against 467ms, bit-identical over 180,652,032
       samples. Faster because 3.1GB of planes costs more than a 4% halo saves.
-- [ ] **Do not tile GALOSH into many tiles - run one rectangle.** A stage-sized region is 423ms
-      against 5286ms for the frame. Seventy tiles is still 7382ms, and the gap is the halo's
-      redundant area, which is inherent to overlapping.
+- [ ] **Tile GALOSH for progress, not for throughput.** A stage-sized region is 423ms against
+      5286ms for the frame, and seventy tiles is 7382ms - so tiling costs about 40% in total work
+      (the halo's redundant area) and buys the picture arriving in pieces instead of all at once.
+      Worth it for a whole-image slider, where perceived speed is the point; use one rectangle
+      wherever the answer is wanted whole.
+- [ ] **`TILE_HALO` looks 4x larger than it needs to be.** `examples/halo_seams.rs` cuts one
+      region four ways at each halo and compares against the same region cut as one tile, with the
+      seam's difference reported against the interior's as a floor. The seam's excess over that
+      floor: halo 0 is 0.594 of 255, 8 is 0.359, **16 is 0.075**, 32 is 0.022, 64 is 0.030, 128 is
+      0.022. The knee is at 16 and everything past it is the floor. Awaiting a look by eye at the
+      crops before moving it; 64 to 16 takes a 1024 tile's overhead from 1.5x the area to 1.06x.
 - [ ] **`pass12`** is now 82% of GALOSH (4326ms of 5286). The next real optimisation, and unlike
       the table it is genuine per-pixel work.
-- [ ] **Check whether `TILE_HALO = 64` is measured or a safe guess.** It is the whole of GALOSH's
-      tiling tax - 1.5x the area at 1024 tiles.
+
+## Open, and found while measuring the halo
+
+- [ ] **A region denoised on its own differs from the whole frame denoised, in its interior, by
+      about 1.15 of 255 on a real photograph.** Not the halo - it holds at every halo up to 512,
+      and it is as large well away from a seam as at one. Not the decode either: `tile_check` puts
+      a tile against the same region of the frame at `mean 0.0 worst 0` with the denoise off. And
+      not `Fit::Given` against `Fit::Measure`, which `open_bench` measures at `worst 0e0`.
+      Whatever it is, the loupe rests on it - a tile is handed the frame's fit so that it predicts
+      the export, and the export denoises the frame whole.
 
 ## Falls out of the above
 

@@ -325,7 +325,27 @@ impl Tile {
 ///
 /// A multiple of four, because the chroma pyramid's smallest level is a quarter of what it is
 /// given; 64 covers that and the joint upsample's own neighbourhood on the way back up.
+///
+/// **Reasoned rather than measured**, which is what `examples/halo_seams.rs` exists to settle: it
+/// is the whole of what tiling the denoise costs, since a tile decodes and denoises its halo on
+/// every side and throws it away.
 pub const TILE_HALO: usize = 64;
+
+/// Set by the seam harness to cut one frame at several halos from one process, which is the only
+/// way to put the results beside each other. `usize::MAX` is the constant above.
+static TILE_HALO_OVERRIDE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(usize::MAX);
+
+pub fn set_tile_halo(halo: usize) {
+    TILE_HALO_OVERRIDE.store(halo, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn tile_halo() -> usize {
+    match TILE_HALO_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+        usize::MAX => TILE_HALO,
+        set => set,
+    }
+}
 
 /// The camera's embedded preview as an owned frame, fitted to `long_edge`.
 ///
