@@ -505,6 +505,44 @@ pub fn stop_after(dispatches: usize) {
     STOP_AFTER.store(dispatches, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The inverse-GAT table, kept between calls.
+///
+/// **What made a denoise cost the same whatever it was given.** `build_inv_lut.wgsl` says so in
+/// its own first paragraph - the table depends on nothing but (α, σ²), so its cost is the same at
+/// any resolution - and it was built afresh on every call regardless: 373ms of a 61MP frame's
+/// 5690ms, and 373ms of a 1152px tile's 507ms. A call was therefore ~395ms plus ~88ms per
+/// megapixel, which is why cutting a frame into seventy tiles cost 34s where the frame whole cost
+/// 5.7s. Nothing else in the chain has a dispatch whose size the region does not set.
+///
+/// Held as the values rather than as the buffers because 32KB is nothing to upload and a buffer
+/// would have to be shared across calls that can run at once. Bounded, and moved to the front on
+/// a hit, so a library interleaving a few photographs keeps all of their tables rather than
+/// thrashing one slot - and so it cannot grow with the library either.
+struct Table {
+    alpha: u32,
+    sigma_sq: u32,
+    d: Vec<u8>,
+    x: Vec<u8>,
+    params: Vec<u8>,
+}
+
+/// Enough for a few photographs in flight, at 32KB each.
+const TABLES_KEPT: usize = 4;
+
+static TABLES: std::sync::Mutex<Vec<Table>> = std::sync::Mutex::new(Vec::new());
+
+/// How many tables have been summed, which is the only way to ask whether a call reused one.
+///
+/// Two frames denoised against one table are a picture rather than a failure, and a key that
+/// never matches is only slow - so neither shows up in the samples a test could compare. This is
+/// what the test asserts on instead.
+static TABLES_BUILT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The pair keyed on its bits, since what has to match is the number the shader will read.
+fn table_key(fit: &NoiseFit) -> (u32, u32) {
+    (fit.alpha.to_bits(), fit.sigma_sq.to_bits())
+}
+
 /// A LOESS dispatch's seven buffers: the guide first, as the kernel declares them.
 fn loess_binds<'a>(
     guide: &'a wgpu::Buffer,
@@ -720,9 +758,37 @@ fn run(
         contents: &seed_bytes,
         usage: storage | wgpu::BufferUsages::COPY_SRC,
     });
-    let lut_d = plane("galosh lut_d", 4096);
-    let lut_x = plane("galosh lut_x", 4096);
-    let lut_params = plane("galosh lut_params", 8);
+    // Written from a kept table on a hit and read back into one on a miss, so these three carry
+    // both transfer usages where the rest of the chain's planes carry neither.
+    let table_usage = storage | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
+    let table_plane = |label: &str, len: usize| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: (len * 4) as u64,
+            usage: table_usage,
+            mapped_at_creation: false,
+        })
+    };
+    let lut_d = table_plane("galosh lut_d", 4096);
+    let lut_x = table_plane("galosh lut_x", 4096);
+    let lut_params = table_plane("galosh lut_params", 8);
+
+    // Only where the caller brought the fit. Without one, (α, σ²) are what Phase 0 is about to
+    // measure on the GPU, so there is nothing to look the table up by until the run that would
+    // have used it has already happened - and that run is the once-per-photograph one anyway.
+    // The tiles and the slider ticks this exists for all arrive with a fit in hand.
+    let kept = supplied.filter(|_| !fit_only).and_then(|fit| {
+        let (alpha, sigma_sq) = table_key(&fit);
+        let mut tables = TABLES.lock().unwrap_or_else(|held| held.into_inner());
+        let at = tables.iter().position(|t| t.alpha == alpha && t.sigma_sq == sigma_sq)?;
+        let table = tables.remove(at);
+        gpu.queue.write_buffer(&lut_d, 0, &table.d);
+        gpu.queue.write_buffer(&lut_x, 0, &table.x);
+        gpu.queue.write_buffer(&lut_params, 0, &table.params);
+        tables.insert(0, table);
+        Some(())
+    });
+    let build_the_table = kept.is_none();
     let partial = plane("galosh partial", DR_WORKGROUPS as usize * 10);
     let partial_resid = plane("galosh partial resid", DR_WORKGROUPS as usize * 4);
 
@@ -890,7 +956,8 @@ fn run(
         run(&galosh.gat_forward_full, &g, wh, fx, fy);
         // The table that undoes the GAT, which only the last phase reads: a fit stops before it,
         // and the series it sums is long enough that leaving it in doubles what a fit costs.
-        if !fit_only {
+        // Skipped outright where a previous call already summed it for this (α, σ²) - see `Table`.
+        if !fit_only && build_the_table {
             let g = bind(
                 &galosh.build_inv_lut,
                 &[(0, &params), (1, &lut_d), (2, &lut_x), (3, &lut_params)],
@@ -1027,6 +1094,25 @@ fn run(
         encoder.copy_buffer_to_buffer(&raw, 0, &readback, 0, (npix * 4) as u64);
     }
     encoder.copy_buffer_to_buffer(&params, 0, &fitted, 0, 32 * 4);
+    // Taken on the way past, so keeping the table costs this run one 32KB copy onto a map it was
+    // already going to wait for, rather than a submit of its own.
+    let table_out = (build_the_table && !fit_only && supplied.is_some()).then(|| {
+        let mut staged = |label: &str, len: usize, from: &wgpu::Buffer| {
+            let out = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: (len * 4) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(from, 0, &out, 0, (len * 4) as u64);
+            out
+        };
+        (
+            staged("galosh lut_d out", 4096, &lut_d),
+            staged("galosh lut_x out", 4096, &lut_x),
+            staged("galosh lut_params out", 8, &lut_params),
+        )
+    });
     lap("record");
     gpu.queue.submit([encoder.finish()]);
 
@@ -1035,8 +1121,30 @@ fn run(
     if !fit_only {
         readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
     }
+    if let Some((d, x, params)) = &table_out {
+        for buffer in [d, x, params] {
+            buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        }
+    }
     device.poll(wgpu::PollType::wait_indefinitely()).expect("the denoise finished");
     lap("dispatch");
+    if let (Some((d, x, table_params)), Some(fit)) = (&table_out, supplied) {
+        let taken = |buffer: &wgpu::Buffer| {
+            let mapped = buffer.slice(..).get_mapped_range().expect("the table mapped");
+            let out = mapped.to_vec();
+            drop(mapped);
+            buffer.unmap();
+            out
+        };
+        let (alpha, sigma_sq) = table_key(&fit);
+        let mut tables = TABLES.lock().unwrap_or_else(|held| held.into_inner());
+        tables.insert(
+            0,
+            Table { alpha, sigma_sq, d: taken(d), x: taken(x), params: taken(table_params) },
+        );
+        tables.truncate(TABLES_KEPT);
+        TABLES_BUILT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     if !fit_only {
         let slice = readback.slice(..);
         let mapped = slice.get_mapped_range().expect("the readback mapped");
@@ -1132,6 +1240,61 @@ mod tests {
         // And the top is headroom against the fit reading low, not a limit to stop at.
         assert!((Amounts::from_sliders(100.0, 100.0).luma - 2.0).abs() < 1e-6);
         assert_eq!(Amounts::from_sliders(0.0, 0.0).does_anything(), false);
+    }
+
+    /// A kept table is reused for its own (α, σ²), and summed again for any other.
+    ///
+    /// **Both ways of getting this wrong are silent.** One table serving two fits is a frame
+    /// denoised against another frame's sensor, which is a picture rather than an error; a key
+    /// that never matches is only slow, which is invisible to anything comparing samples and is
+    /// the whole point of keeping the table. Neither shows up in the output, so the samples are
+    /// only half of what this asserts - the other half is how many tables were summed, which is
+    /// the decision itself.
+    ///
+    /// The mosaic is synthesised because what is compared is one run against another over
+    /// whatever was handed in, and the fits are stated rather than measured so the keys are known
+    /// to differ.
+    #[test]
+    fn a_kept_table_belongs_to_the_fit_it_was_built_for() {
+        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(kernels) = device(gpu) else { return };
+
+        let (w, h) = (192usize, 192usize);
+        let mosaic: Vec<f32> = (0..w * h)
+            .map(|at| 0.2 + 0.6 * ((at % 97) as f32 / 97.0) + ((at % 13) as f32 / 13.0) * 0.05)
+            .collect();
+        let amounts = Amounts::from_sliders(50.0, 50.0);
+        let denoised = |fit: super::NoiseFit| {
+            let mut out = mosaic.clone();
+            super::denoise_with(gpu, kernels, &mut out, w, h, amounts, fit);
+            out
+        };
+        let built = || super::TABLES_BUILT.load(std::sync::atomic::Ordering::Relaxed);
+
+        // Unique to this test, since the tables outlive a single one and the suite shares a
+        // process: a fit another test had already summed would make the first run a hit.
+        let one = super::NoiseFit {
+            alpha: 0.0021_7,
+            sigma_sq: 1.13e-5,
+            unified_sigma: 0.9,
+            dark_ref: [0.0; 4],
+        };
+        // A different sensor in the two numbers the table is a function of and nothing else, so a
+        // key ignoring either would collide here.
+        let other = super::NoiseFit { alpha: 0.0079_3, sigma_sq: 4.41e-5, ..one };
+
+        let before = built();
+        let first = denoised(one);
+        assert_eq!(built(), before + 1, "the first run of a new fit did not sum a table");
+
+        let between = denoised(other);
+        assert_eq!(built(), before + 2, "a different fit reused another fit's table");
+
+        let again = denoised(one);
+        assert_eq!(built(), before + 2, "a fit already summed was summed a second time");
+
+        assert_eq!(first, again, "the kept table changed what the same fit produced");
+        assert_ne!(first, between, "two different fits denoised to the same frame");
     }
 
     #[test]
