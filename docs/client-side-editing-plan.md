@@ -48,12 +48,23 @@ something measured says the 582ms is the problem.
 73% of the open is CPU work with a GPU sibling already in the tree. This has to happen whether or
 not the client does the open, and it has to happen *before* wasm runs any of it single-threaded.
 
-- [ ] **sharpen, 2967ms** - 37% of the whole open, the single largest item, and nothing had
-      measured it. `image::finish_in_strips` already carries a halo and a one-strip-vs-many test.
-- [ ] **code and defringe, 1124ms**
-- [ ] **noise measure, 988ms**
-- [ ] **lens warp, 650ms** - `geometry.wgsl` already does this gather for the draw
-- [ ] **levels quantile, 167ms** - `peak.wgsl` already does a sampled quantile
+**The prize is the transfers, not the stages.** RCD leaves the frame in VRAM and reads it back;
+the grade uploads it again. At 61MP that is 361MB each way to run pointwise arithmetic on a CPU.
+So a stage is worth moving even where the stage itself is cheap, and the last one to move is
+worth more than its own timing.
+
+- [x] **the coding** (`2743056`, `base.rs`). Within a count of the CPU over every level a sample
+      can hold, which is what `f32` costs against a table built in `f64`.
+- [ ] **defringe**, the rest of `code, defringe`'s 1170ms. A 5-point Laplacian of luma subtracted
+      from red and blue - local, and the coefficients are a whole-frame reduction of their own
+      (`measure_defocus`) that can move separately.
+- [ ] **noise measure, 1021ms**
+- [ ] **lens warp, 639ms**
+- [ ] **levels quantile, 158ms** - `peak.wgsl` already does a sampled quantile
+- [ ] ~~**sharpen, 2926ms**~~ - **skip it entirely.** A GPU sharpener is replacing it, so its
+      parity, its performance and the round trip through system memory it currently forces are all
+      about to stop existing. Do not design the residency around it: reading back before it and
+      uploading after is fine in the meantime, because both go when it does.
 
 ## Tiling
 
