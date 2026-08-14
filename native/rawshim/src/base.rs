@@ -301,7 +301,7 @@ pub fn prepare(
     out: (usize, usize),
     levels: crate::tone::Anchored,
     reference_white_nits: f64,
-    defocus: (f32, f32),
+    strengths: crate::image::Strengths,
     lens: &crate::fit::Lens,
 ) -> Option<Vec<u16>> {
     let (sw, sh) = source;
@@ -312,6 +312,27 @@ pub fn prepare(
     let frame = upload(gpu, samples);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     encode_base_into(gpu, base, &mut encoder, &frame, samples.len(), levels, reference_white_nits);
+
+    // **Measured here rather than handed in, which is why it had to move onto the GPU too.** The
+    // pair describes the *coded* frame - `finish_in_strips` takes it after `encode_base` - so a
+    // caller supplying it would have to code, read back, measure and upload again, the round trip
+    // this function exists to delete. The reduction reads the buffer the pass above just wrote and
+    // only the two numbers come back.
+    let defocus = match strengths.defringe > 0.0 {
+        true => {
+            let taken = std::mem::replace(
+                &mut encoder,
+                gpu.device.create_command_encoder(&Default::default()),
+            );
+            measure_defocus_into(gpu, base, taken, &frame, sw, sh)
+                .map(|(red, blue)| {
+                    let scale = strengths.defringe.clamp(0.0, 1.0) as f32;
+                    (red * scale, blue * scale)
+                })
+                .unwrap_or((0.0, 0.0))
+        }
+        false => (0.0, 0.0),
+    };
     if defringes(samples.len(), sw, sh, defocus) {
         defringe_into(gpu, base, &mut encoder, &frame, sw, sh, defocus);
     }
@@ -1393,7 +1414,20 @@ mod tests {
         let (width, height) = (257usize, 181);
         let frame = edged(width, height);
         let levels = crate::tone::Levels { white: 8133.0, peak: 13783.0 }.anchored();
-        let defocus = (0.031f32, -0.017f32);
+        // The strengths `prepare` takes, and the pair it will measure for itself off the coded
+        // frame - taken here the same way so the staged side is the same arithmetic rather than a
+        // number chosen to agree with it.
+        let strengths = crate::image::Strengths { sharpen: 0.0, defringe: 1.0 };
+        let defocus = {
+            let mut coded = frame.clone();
+            super::encode_base(gpu, base, &mut coded, levels, 203.0).expect("the coding runs");
+            super::measure_defocus(gpu, base, &coded, width, height)
+                .map(|(red, blue)| {
+                    let scale = strengths.defringe.clamp(0.0, 1.0) as f32;
+                    (red * scale, blue * scale)
+                })
+                .unwrap_or((0.0, 0.0))
+        };
         let knots = vec![0.0, 40.0, 160.0, 380.0];
         let lens = crate::fit::Lens {
             crop: crate::image::fill_crop(&knots, width, height),
@@ -1420,7 +1454,7 @@ mod tests {
                 (width, height),
                 levels,
                 203.0,
-                defocus,
+                strengths,
                 lens,
             )
             .expect("the chain runs")
