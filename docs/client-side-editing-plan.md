@@ -75,13 +75,21 @@ share one buffer this whole section buys correctness and nothing else.
       encode -> defringe -> warp into one encoder and reads back once: six transfers become two.
       Pinned bit-identical against the three called in sequence, which is the right bound here -
       the same shaders on the same data, so any difference would be plumbing rather than tolerance.
-- [ ] **`measure_defocus` on the GPU, which is what blocks using `prepare` at all.** It takes the
-      defocus pair as an input, and the CPU measures that pair from the **coded** frame -
-      `finish_in_strips` calls it after `encode_base`. So a caller today has to code, read back,
-      measure, and upload again, which is the round trip `prepare` exists to delete. Everything
-      else is ready; this is the last thing in the way.
-- [ ] **Then wire `edit::open` and `job::Base::build` to `prepare`**, which is where the measured
-      win finally lands. Nothing calls it yet.
+- [x] **`measure_defocus` on the GPU** (`dc77d63`), which was the gate: `prepare` takes the pair as
+      an input and the CPU measured it from the *coded* frame, so a caller had to code, read back,
+      measure and upload again. Within 0.5% relative.
+- [ ] **Find out why the chain makes the next CPU stage eight times slower.** This is the blocker,
+      and it is measured rather than suspected. Wired into `edit::open`, `prepare` runs the coding,
+      the defringe and the warp in **1097ms** against the CPU's 1706ms, with all 279 fixture tests
+      green and the pinned renders unmoved - and `noise::measure` after it goes from **983ms to
+      7910ms**. It is not the GPU noise port: the *CPU* measure shows the same 7910ms behind the
+      chain, and both return to 983ms when the chain is removed. It is not the machine: 23GB free.
+      A 61MP open is 11.5s chained against 5.5s unchained, so the call site is reverted and
+      `prepare` sits tested and unused until this is understood.
+
+      The guess, written down as one: a chained open holds three 361MB buffers - the frame, its
+      warped copy, the readback - and wgpu reclaims on a later poll rather than on drop, so the
+      CPU's own 241MB plane is allocated against a process that has not given them back yet.
 - [x] **The noise measure is wired** (`e19350f`), being the one stage that pays an upload and no
       readback. Correct - the fixture suite passes with it live - and **not faster**: 987ms against
       958ms.
