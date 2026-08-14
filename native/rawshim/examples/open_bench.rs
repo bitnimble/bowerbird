@@ -131,6 +131,13 @@ fn request(camera_match: Option<Vec<u8>>) -> rawshim::edit::EditRequest {
 
 const REPEATS: usize = 3;
 
+/// One run, in milliseconds, for a sweep too long to repeat.
+fn time(mut run: impl FnMut()) -> u128 {
+    let began = std::time::Instant::now();
+    run();
+    began.elapsed().as_millis()
+}
+
 /// The median of a few runs, and the spread, because this machine's numbers move.
 fn repeat(label: &str, mut run: impl FnMut()) -> u128 {
     let mut taken: Vec<u128> = (0..REPEATS)
@@ -228,35 +235,54 @@ fn mosaic_stages(width: usize, height: usize) {
 
         kernel_by_kernel(gpu, kernels, &mosaic, width, height, amounts, fit);
 
-        // The same denoise over tiles, which is what a Detail slider would have to re-run if it
-        // could not name one rectangle.
-        for side in [1024usize, 2048] {
-            let across = width.div_ceil(side);
-            let down = height.div_ceil(side);
-            repeat(&format!("galosh in {across}x{down} tiles of {side}"), || {
+        // What tiling costs, against the halo and against the tile size, which are two separate
+        // taxes and not one: the halo grows every region, and a tile size that does not divide the
+        // frame leaves the last row and column of tiles mostly outside it. Both are reported as
+        // the area actually put through the denoise, so the wall clock can be checked against it.
+        let frame_mp = (width * height) as f64 / 1e6;
+        println!(
+            "\n  {:>5} {:>5}  {:>7} {:>9} {:>7}  {:>9}",
+            "tile", "halo", "tiles", "MP done", "vs 1x", "ms",
+        );
+        for side in [512usize, 1024, 2048] {
+            for halo in [16usize, 32, 64] {
+                let (mut tiles, mut area) = (0usize, 0usize);
                 for_each_tile(width, height, side, halo, |region| {
-                    let mut window = cut(&mosaic, width, region);
-                    rawshim::galosh::denoise_with(
-                        gpu, kernels, &mut window, region.w, region.h, amounts, fit,
-                    );
+                    tiles += 1;
+                    area += region.w * region.h;
                 });
-            });
-
-            let mut worst = 0f32;
-            for_each_tile(width, height, side, halo, |region| {
-                let mut window = cut(&mosaic, width, region);
-                rawshim::galosh::denoise_with(
-                    gpu, kernels, &mut window, region.w, region.h, amounts, fit,
+                let done = area as f64 / 1e6;
+                let taken = time(|| {
+                    for_each_tile(width, height, side, halo, |region| {
+                        let mut window = cut(&mosaic, width, region);
+                        rawshim::galosh::denoise_with(
+                            gpu, kernels, &mut window, region.w, region.h, amounts, fit,
+                        );
+                    });
+                });
+                println!(
+                    "  {side:>5} {halo:>5}  {tiles:>7} {done:>9.1} {:>6.2}x  {taken:>7}ms",
+                    done / frame_mp,
                 );
-                for row in region.y0..region.y1 {
-                    for col in region.x0..region.x1 {
-                        let mine = window[(row - region.top) * region.w + (col - region.left)];
-                        worst = worst.max((mine - whole[row * width + col]).abs());
-                    }
-                }
-            });
-            println!("  {:<34} worst {worst:e}", "  vs the whole frame");
+            }
         }
+
+        // Once, at the size and halo that ship, so the sweep above is known to be measuring runs
+        // that agree with the frame rather than runs that merely finish.
+        let mut worst = 0f32;
+        for_each_tile(width, height, 1024, rawshim::TILE_HALO, |region| {
+            let mut window = cut(&mosaic, width, region);
+            rawshim::galosh::denoise_with(
+                gpu, kernels, &mut window, region.w, region.h, amounts, fit,
+            );
+            for row in region.y0..region.y1 {
+                for col in region.x0..region.x1 {
+                    let mine = window[(row - region.top) * region.w + (col - region.left)];
+                    worst = worst.max((mine - whole[row * width + col]).abs());
+                }
+            }
+        });
+        println!("  {:<34} worst {worst:e}", "  1024 tiles vs the whole frame");
         drop(whole);
     }
 

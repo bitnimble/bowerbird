@@ -79,10 +79,19 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
       of 255 at halo 0 against the worst photograph's 0.70, and **it is at the baseline from 32 in
       every configuration, while 16 is still 5-9x above it**.
 
-      So 32, being past the knee and a multiple of four for the chroma pyramid. But the saving is
-      modest and the earlier figure oversold it: at 1024 tiles the halo is 1.27x the area at 64
-      and 1.13x at 32, while *not dividing into the frame evenly* is 1.22x on its own. Total 1.54x
-      against 1.38x - about 11% of the tiled work, where the tile grid costs more than the halo.
+      So 32, being past the knee and a multiple of four for the chroma pyramid. Measured over a
+      61MP frame, as the area actually put through the denoise and the wall clock beside it:
+
+      | tile | halo 16 | halo 32 | halo 64 |
+      |------|---------|---------|---------|
+      | 512  | 1.12x, 6148ms | 1.26x, 6761ms | 1.54x, 8113ms |
+      | 1024 | 1.06x, 5595ms | 1.12x, 5868ms | 1.26x, 6619ms |
+      | 2048 | 1.03x, 5396ms | 1.06x, 5526ms | 1.12x, 5816ms |
+
+      Whole frame is 5311ms, and the wall clock tracks the area to within a percent or two - the
+      per-call floor is gone, so tiling costs area and nothing else. **The tile size decides how
+      much the halo costs**: at 2048 the whole 16-to-64 range is 9%, at 512 it is 37%. So take the
+      halo the seam asks for and buy it back with a larger tile, rather than the other way round.
 - [ ] **`pass12`** is now 82% of GALOSH (4326ms of 5286). The next real optimisation, and unlike
       the table it is genuine per-pixel work.
 
