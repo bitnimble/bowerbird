@@ -91,6 +91,11 @@ fn main() {
     write(&format!("{out}/seam-reference"), &crop(&reference), window, window);
 
     eprintln!("region roughness {:.1} of 255, so it is texture rather than sky", roughness(&reference));
+    // Tighter than the individual crops, because the strip is for looking at several halos at once
+    // and a panel that has to be scaled down to fit beside its neighbours is no longer 100%.
+    const PANEL: usize = 256;
+    let panel = |image: &[u8]| centred(image, side, PANEL.min(side));
+    let mut strip = vec![panel(&reference)];
     // **The control, and the reason the table has two halves.** A tile and a frame can differ for
     // reasons that have nothing to do with a seam, and such a difference lands on every pixel
     // equally - so the interior says what this comparison's noise floor is, and only the amount by
@@ -121,12 +126,22 @@ fn main() {
         write(&format!("{out}/seam-halo{halo}"), &crop(&assembled), window, window);
         let diff = crop(&amplified(&assembled, &reference));
         write(&format!("{out}/diff-halo{halo}"), &diff, window, window);
+        strip.push(panel(&assembled));
     }
     rawshim::set_tile_halo(usize::MAX);
+
+    // The reference and every halo in one row, so they are judged against each other rather than
+    // against a memory of the last one - which is the whole difficulty with a difference this
+    // small. Still 100%: the panels are cropped tighter, never scaled.
+    let side_by_side = alongside(&strip, PANEL.min(side));
+    let across = strip.len() * (PANEL.min(side) + GUTTER) - GUTTER;
+    write(&format!("{out}/seams-side-by-side"), &side_by_side, across, PANEL.min(side));
+
     eprintln!(
         "\nwrote {} pairs to {out}: {window}x{window} at 100%, both seams crossing in the middle",
         halos.len(),
     );
+    eprintln!("and seams-side-by-side, reference then {halos:?}, {PANEL}px panels at 100%");
 }
 
 /// The worst and mean difference, within eight pixels of a seam or well away from one.
@@ -159,6 +174,24 @@ fn differences(mine: &[u8], reference: &[u8], side: usize, half: usize, seam: bo
         }
     }
     (worst, total / counted.max(1) as f64)
+}
+
+/// White between the panels, since the seam being looked for is a faint line and a black gutter
+/// against a dark photograph is one more of those.
+const GUTTER: usize = 4;
+
+/// Square panels in a row, left to right, separated by a gutter.
+fn alongside(panels: &[Vec<u8>], panel: usize) -> Vec<u8> {
+    let across = panels.len() * (panel + GUTTER) - GUTTER;
+    let mut out = vec![255u8; across * panel * 3];
+    for (at, image) in panels.iter().enumerate() {
+        let left = at * (panel + GUTTER);
+        for row in 0..panel {
+            let to = (row * across + left) * 3;
+            out[to..to + panel * 3].copy_from_slice(&image[row * panel * 3..(row + 1) * panel * 3]);
+        }
+    }
+    out
 }
 
 /// A `window`-sided square from the middle of a `side`-sided image.
