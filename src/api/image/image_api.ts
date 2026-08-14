@@ -186,6 +186,10 @@ export class ImageApi {
     app.get('/:photoId/prepared', (c) => this.servePrepared(c));
     // One tile of the photograph at rendition quality, which is what the loupe magnifies.
     app.get('/:photoId/tile', (c) => this.serveTile(c));
+    // The camera match this photograph was fitted with, for a client that is going to open the
+    // RAW itself. Half a second of fitting that depends on nothing but the file, so a client
+    // holding it skips the slowest part of an open it did not have to do at all.
+    app.get('/:photoId/camera-match', (c) => this.serveCameraMatch(c));
     this.routes = app;
   }
 
@@ -328,6 +332,31 @@ export class ImageApi {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': 'inline',
         'Cache-Control': 'no-store',
+        ...TIMING_ALLOW_ORIGIN,
+      },
+    });
+  }
+
+  /**
+   * The stored camera match, or a 404 where nothing has fitted this photograph yet.
+   *
+   * **Bytes, opaquely.** `camera_match.rs` writes it and reads it back; nothing on this side
+   * interprets it, and a build that cannot read a blob ignores it and refits, so there is no
+   * version to negotiate here. Immutable under a per-photo URL: a match is a function of the file
+   * alone, so a client that has one never needs to ask again.
+   */
+  private serveCameraMatch(c: Context): Response {
+    const photoId = c.req.param('photoId');
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+    const { library } = this.photos.locate(photoId);
+    const match = readCameraMatch(getDataPath(library), photoId);
+    if (match == null) {
+      throw new AppError('NOT_FOUND', `no camera match has been fitted for ${photoId}`);
+    }
+    return new Response(Uint8Array.from(match), {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Cache-Control': 'public, max-age=31536000, immutable',
         ...TIMING_ALLOW_ORIGIN,
       },
     });
