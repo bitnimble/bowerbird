@@ -241,7 +241,15 @@ pub fn levels(samples: &[u16], quantile: f64) -> Levels {
         let brightest = samples[i].max(samples[i + 1]).max(samples[i + 2]);
         histogram[brightest as usize] += 1;
     }
+    scan(&histogram, counted, quantile)
+}
 
+/// The walk up the bins, once something has counted them.
+///
+/// Split out for `base::levels`, which builds the same histogram on the GPU and cannot walk it
+/// there: 65536 serial bins are microseconds, and a second spelling of the two marks and the
+/// fallback is exactly the drift `the_levels_match_the_cpu` is held against.
+pub(crate) fn scan(histogram: &[u32], counted: usize, quantile: f64) -> Levels {
     let mut highest = 0usize;
     let mut peak: isize = -1;
     let mut white: isize = -1;
