@@ -1378,7 +1378,7 @@ fn local_extrema(plane: &[f32], width: usize, height: usize, radius: usize) -> (
 ///
 /// The window shrinks at the border rather than clamping the samples, so an edge pixel is
 /// the mean of what is actually there instead of one sample counted several times.
-fn box_mean(plane: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
+pub(crate) fn box_mean(plane: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
     let mut horizontal: Vec<f32> = vec![0.0; width * height];
     horizontal.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
         let source = &plane[y * width..(y + 1) * width];
@@ -1437,8 +1437,8 @@ fn box_mean(plane: &[f32], width: usize, height: usize, radius: usize) -> Vec<f3
 }
 
 /// Bins in the noise estimate's histogram, over a high-pass magnitude of 0..`NOISE_MAX`.
-const NOISE_BINS: usize = 1024;
-const NOISE_MAX: f32 = 0.08;
+pub(crate) const NOISE_BINS: usize = 1024;
+pub(crate) const NOISE_MAX: f32 = 0.08;
 
 /// Where the noise estimate stops believing itself, as a fraction of full scale.
 ///
@@ -1464,7 +1464,7 @@ const NOISE_CEILING: f32 = 0.02;
 /// The denoise this was written for runs on the mosaic now and fits its own model
 /// (`crate::galosh`); what still asks is the defringe, which needs each channel's noise to
 /// debias its regression.
-fn sigma_from(bins: &[u32]) -> f32 {
+pub(crate) fn sigma_from(bins: &[u32]) -> f32 {
     // Bin 0 is a residual under 0.008% of full scale, which is below a quantisation step
     // at any depth this runs at - so it is the "did not vary at all" bin, and the median
     // is taken over everything above it.
@@ -1791,18 +1791,18 @@ fn recombine<T: Sample>(
 }
 
 /// Samples of real curvature the estimate needs before it will believe itself.
-const DEFOCUS_MIN_SAMPLES: usize = 2000;
+pub(crate) const DEFOCUS_MIN_SAMPLES: usize = 2000;
 
 /// Every nth pixel in each direction the estimate reads.
 ///
 /// The coefficient is one number for the whole frame, so a 24MP frame at 3 still offers a
 /// million samples and reading them all buys nothing.
-const DEFOCUS_STRIDE: usize = 3;
+pub(crate) const DEFOCUS_STRIDE: usize = 3;
 
 /// Beyond this it is not a focus difference, it is a frame the model had no business
 /// being fitted on. A coefficient is a blur difference in pixels squared; the worst real
 /// measurement is a small fraction of one.
-const DEFOCUS_MAX: f32 = 0.5;
+pub(crate) const DEFOCUS_MAX: f32 = 0.5;
 
 /// Below this a coefficient is indistinguishable from zero, so it neither corrects
 /// anything nor gets a vote on whether the other channel is believable.
@@ -1810,14 +1810,14 @@ const DEFOCUS_MAX: f32 = 0.5;
 /// Measured against a channel that is genuinely defocused: IMG_8408's blue reads 0.148
 /// where its red reads -0.011, and treating that -0.011 as a real disagreement threw the
 /// whole frame away.
-const DEFOCUS_NOISE: f32 = 0.02;
+pub(crate) const DEFOCUS_NOISE: f32 = 0.02;
 
 /// The five-point Laplacian of a plane, clamped at the border.
 ///
 /// The regressor and the correction both read this, and they must read the same thing:
 /// the coefficient is fitted as "colour per unit of curvature", so a correction taken
 /// against a differently-scaled curvature is a differently-scaled correction.
-fn laplacian(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
+pub(crate) fn laplacian(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; width * height];
     out.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
         for (x, slot) in row.iter_mut().enumerate() {
@@ -1835,14 +1835,14 @@ fn laplacian(plane: &[f32], width: usize, height: usize) -> Vec<f32> {
 /// Radial bins the defocus fit accumulates into, uniform in r^2.
 ///
 /// Enough to fit a line through and few enough that each holds a real sample count.
-const DEFOCUS_BINS: usize = 6;
+pub(crate) const DEFOCUS_BINS: usize = 6;
 
 /// Samples a bin needs before its own coefficient is believed.
-const DEFOCUS_MIN_PER_BIN: usize = 200;
+pub(crate) const DEFOCUS_MIN_PER_BIN: usize = 200;
 
 /// Bins that must resolve before the constant and the `r^2` term can be told apart. Two
 /// points fit a line exactly and prove nothing about whether the profile is one.
-const DEFOCUS_MIN_BINS: usize = 3;
+pub(crate) const DEFOCUS_MIN_BINS: usize = 3;
 
 /// One radial bin's running sums, for `measure_defocus`.
 #[derive(Default)]
