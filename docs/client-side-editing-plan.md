@@ -33,7 +33,12 @@ something measured says the 582ms is the problem.
       `wasm-bindgen-rayon` stays available if something measured later says otherwise.
 - [ ] **Serve the stored camera match.** `camera_match_store.ts` holds it; nothing exposes it. The
       client needs the 5KB blob to skip a 600-700ms fit.
-- [ ] **Make the RAW cacheable.** `image_api.ts`'s `download()` sends `Cache-Control: no-cache`.
+- [x] **The RAW is already cacheable, and this item was aimed at the wrong function.** `download()`
+      does send `no-cache`, but `/download/original` does not go through it - it goes through
+      `serve`, which carries an ETag off the file's size and mtime and answers a conditional GET
+      with a 304. So a client that revalidates never re-fetches the 72MB. `immutable` would save
+      the revalidation round trip and is not worth it: it would also let a RAW replaced in place go
+      unnoticed, which is a stale picture in exchange for one small request.
 
 ## Memory, if the RAW is decoded in a tab
 

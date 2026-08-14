@@ -1219,7 +1219,7 @@ export class RawEditPresenter {
  *
  * A `u32` length, that much JSON, then the samples - one framing for both transports, and
  * in the body rather than in an `X-Prepared` response header because a matched frame's
- * description is 11KB and a reverse proxy answers 502 rather than forward a header that
+ * description is 32KB and a reverse proxy answers 502 rather than forward a header that
  * size.
  *
  * A view over those bytes rather than a copy of them. Both transports pad the JSON to four

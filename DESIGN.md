@@ -25,16 +25,16 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | Web framework | Hono |
 | Validation | Zod v4 |
 | Database | SQLite via `bun:sqlite` |
-| Image processing | `native/rawshim`, a Rust library over LibRaw + libavif, called via `bun:ffi` (§10.4) |
-| RAW decoding | Per-format dispatch (header sniff → fastest reader); Sony ARW and Canon CR3 via LibRaw `bun:ffi` |
-| Metadata extraction | LibRaw header parse (no pixel decode), per-format dispatch |
+| Image processing | `native/rawshim`, a Rust library over our rawler fork + libavif, called via `bun:ffi` (§10.4) |
+| RAW decoding | `rawler`, our vendored fork, in `native/rawshim`; the demosaic and the mosaic denoise are WGSL on the GPU |
+| Metadata extraction | rawler header parse (no pixel decode), per-format dispatch |
 | Testing | Bun's built-in test runner (`bun test`, run via `bun run test`) |
 | Logging | `src/logger.ts`, levelled and scoped; `console` is banned everywhere else by lint (§14.3) |
 | Package manager | `bun install` (no npm/pnpm/yarn) |
 
 ### System Dependencies
 
-- **LibRaw**, must be installed on the host system. The Bun process loads `libraw.so` / `libraw.dylib` via FFI. On Debian/Ubuntu: `apt install libraw-dev`. On macOS: `brew install libraw`.
+- **No RAW decoder to install.** `rawler` is a vendored Rust submodule (`native/vendor/dnglab`) compiled into `rawshim`, so a checkout needs `git submodule update --init` and nothing from a package manager. The C that is left is lensfun and libavif, and only a `renditions` build links those.
 - **lensfun**, the lens geometry database the fit checks before searching for its own curve (§10.8). Linked by `native/rawshim`: `apt install liblensfun-dev` / `brew install lensfun`, and the runtime needs the `lensfun-data` XML that comes with it, or every Canon frame silently falls back to fitting its own geometry.
 - **libavif**, which writes every AVIF this app produces and reads the ones a download asks for as JPEG, in process (`avif.rs`, §10.7) - so `libavif-dev` at build time and `libavif16` at runtime. ffmpeg's own avif muxer writes no `colr` box and so cannot tag a still as HDR at all, which is the whole reason this library rather than that muxer.
 - **ffmpeg and `avifenc`**, at development time only. Nothing the server serves goes through either any more; they are the reference arm the linked encode is held against (§10.7), so they are installed in the Dockerfile's `dev` stage - which is what `docker-compose.dev.yml` runs the integration tests in - and not in the image that ships. ffmpeg needs libzimg for the `zscale` filter for that.
@@ -49,13 +49,13 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | `zod` | Schema validation (v4) |
 | `@parcel/watcher` | Filesystem watching (§9.8); native, with prebuilt bindings for every platform this runs on |
 
-There is no image-processing package. Everything that touches pixels is in `native/rawshim` (§10.4), which links LibRaw, lensfun and libavif directly and does the rest in Rust.
+There is no image-processing package. Everything that touches pixels is in `native/rawshim` (§10.4), which compiles our rawler fork in, links lensfun and libavif for a `renditions` build, and does the rest in Rust and WGSL.
 
 Testing uses Bun's built-in `bun test` runner, so there is no test-framework dependency.
 
 Entity IDs are eight lowercase alphanumerics (`[a-z0-9]{8}`, ~41 bits), drawn from the runtime built-in `crypto.getRandomValues`, no third-party ID package. Short because an ID is carried in every URL. Single-case because an ID is also a rendition's filename, and macOS and Windows fold two IDs differing only in case into one file - which no primary key would catch, because the rows really are distinct. At those odds a library will not see a collision, but the ID is a primary key, so one is caught at the INSERT rather than assumed away: every creator draws through `withNewId` (`db/constraints.ts`), which redraws up to five times on `SQLITE_CONSTRAINT_PRIMARYKEY` and lets every other constraint failure through untouched. A creator that must commit to an ID before the insert - a library, whose data directory and bin are made under it - draws through `unusedId` instead.
 
-RAW decoding and RAW metadata extraction are **dispatched per format**: a cheap header sniff (magic bytes / EXIF `Make`) selects the fastest maintained reader for that format, so each format can use its optimal library rather than a single lowest-common-denominator one. Sony ARW and Canon CR3 both decode via LibRaw (fast, actively maintained), so the dispatch currently resolves to one reader. Additional formats are added by registering another reader behind the same interface; Sony RAW is the priority when a reader supports only a subset of formats.
+RAW decoding is **one reader**: `rawler`, vendored as a fork at `native/vendor/dnglab`. It reads every format the product imports and it is the only thing that reads them, so there is no per-format dispatch left to describe - what used to be a header sniff choosing between readers is now a single `get_decoder` call. What the fork buys over upstream is a region decode (`raw_image_region`), which is what makes a loupe tile cost a partial unpack rather than a whole frame.
 
 No other third-party dependencies should be added without explicit approval.
 
@@ -119,24 +119,24 @@ bowerbird/
 │   │   │   └── tests/
 │   │   │       └── albums_service.test.ts
 │   │   ├── sync/
-│   │   │   ├── sync_service.ts     # Library sync algorithm (integration-tested; needs bun:sqlite + LibRaw)
+│   │   │   ├── sync_service.ts     # Library sync algorithm (integration-tested; needs bun:sqlite + rawshim)
 │   │   │   └── tests/
 │   │   │       ├── sync_algorithm.test.ts  # pure diff / move-detection
 │   │   │       └── sync_locks.test.ts      # the leased row (§9.7)
 │   │   └── processing/
 │   │       ├── processing_service.ts  # Rendition generation orchestrator
 │   │       ├── processing_worker.ts   # Bun worker thread for image processing
-│   │       ├── raw_decoder.ts         # LibRaw FFI bindings
-│   │       ├── metadata.ts            # Per-format metadata extraction (LibRaw header parse)
+│   │       ├── raw_decoder.ts         # rawshim FFI bindings
+│   │       ├── metadata.ts            # Metadata extraction (rawler header parse, no pixel decode)
 │   │       └── tests/
-│   │           └── processing_service.test.ts   # (raw_decoder/metadata: integration-tested via LibRaw)
+│   │           └── processing_service.test.ts   # (raw_decoder/metadata: integration-tested via rawshim)
 │   └── utils/
 │       ├── hash.ts                 # File hash computation
 │       ├── files.ts                # File system helpers (recursive listing, etc.)
 │       ├── scope.ts                # Is this path part of this library (§9.1); scan and watcher share it
 │       └── paths.ts                # Path computation helpers (rendition paths, bin paths)
 ├── test/
-│   ├── integration/               # bun:test suites needing real bun:sqlite + LibRaw (run in-container)
+│   ├── integration/               # bun:test suites needing real bun:sqlite + rawshim (run in-container)
 │   └── fixtures/                  # one real file per format (ARW, CR3) for decode/metadata tests
 ├── web/                          # the web client: separate app, own build (§18)
 │   ├── e2e/                      # Playwright specs + throwaway library fixture
@@ -221,7 +221,7 @@ CREATE TABLE photos (
   file_size         INTEGER,        -- bytes at last scan; with date_updated, the sync stat quick-check (§9.1)
   width             INTEGER NOT NULL,  -- display (upright) pixel width, post-orientation
   height            INTEGER NOT NULL,  -- display (upright) pixel height, post-orientation
-  orientation       INTEGER NOT NULL DEFAULT 0,  -- LibRaw flip orientation code; informational + hash input only, NOT to be applied to renditions (§11)
+  orientation       INTEGER NOT NULL DEFAULT 0,  -- EXIF flip orientation code; informational + hash input only, NOT to be applied to renditions (§11)
   is_missing        INTEGER NOT NULL DEFAULT 0,
   is_deleted        INTEGER NOT NULL DEFAULT 0,
   date_taken        TEXT,
@@ -1417,6 +1417,14 @@ A failure sweeps *every* derivative of that photo, not just the stage that faile
 The embedded JPEG carries its own EXIF orientation, so the decode reads tag 0x0112 out of IFD0 and turns the frame; a render is already baked upright by the decoder (§11.1) and must not be rotated again. A file with no JPEG preview (some bodies embed a bitmap, or nothing) is a property of the file rather than an error, so an `embedded` request falls back to a render. The result reports what was **actually** used and `photos.rendition_source` records it, so the client can state which pixels are on screen instead of leaving the user to guess.
 
 ### 10.4 The native layer (`native/rawshim`, `raw_decoder.ts`)
+
+> **Status: the decoder described below is LibRaw's, and it is gone.** RAW decoding is our vendored
+> `rawler` fork (`native/vendor/dnglab`), the demosaic is RCD in WGSL (`native/rawshim/src/wgsl/rcd.wgsl`,
+> specified in `docs/rcd-algorithm-spec.md`), and the mosaic denoise is GALOSH on the GPU beside it.
+> So `imgdata.image`, `user_qual`, `half_size`, the PPG-against-AHD table and the C accessors are all
+> history. What is still true, and why this stays: the *shape* of the boundary is unchanged - a command
+> and a result over `bun:ffi`, no pointers held across calls - and the measurements here are what the
+> numbers since are compared against. Read the mechanism as history and the reasoning as current.
 
 Everything that touches pixels is in one Rust library, called from TypeScript over `bun:ffi`. It links LibRaw for the RAW decode, lensfun for the lens database and libavif for every AVIF, read or written (§10.1). Everything in between is the crate's own Rust: the resampling and filtering in `image.rs` and `fit.rs`, the JPEG in `jpeg.rs`. TypeScript orchestrates: it passes a path and a job, and gets back a written file, a struct of scalars, or a count.
 
