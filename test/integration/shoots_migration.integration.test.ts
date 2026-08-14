@@ -7,7 +7,7 @@ import { expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { runMigrations } from '../../src/db/migrations';
 
-const LIB = '00000000-0000-4000-8000-0000000000b1';
+const LIB = 'lib000b1';
 
 // The shape `main` created, before a shoot was identified by its folder.
 function oldDatabase(): Database {

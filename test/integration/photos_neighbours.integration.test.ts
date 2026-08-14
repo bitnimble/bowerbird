@@ -12,14 +12,14 @@ import type { Ordering } from '../../src/schemas/common';
 // pin both halves of that - the walk sees every photograph, and the listing it is
 // taken from still sees one row per stack.
 
-const LIBRARY = '00000000-0000-4000-8000-000000000001';
-const OTHER = '00000000-0000-4000-8000-000000000002';
-const SHOOT = '00000000-0000-4000-8000-000000000010';
+const LIBRARY = 'lib00001';
+const OTHER = 'lib00002';
+const SHOOT = 'sht00010';
 const NO_FILTERS = { includeDeleted: false } as const;
 const ORDERINGS: Ordering[] = ['taken_asc', 'taken_desc', 'added_asc', 'added_desc'];
 
 function photoId(n: number): string {
-  return `00000000-0000-4000-8000-1000000000${String(n).padStart(2, '0')}`;
+  return `photo${String(n).padStart(3, '0')}`;
 }
 
 function setUp(): { db: Database; photos: PhotosRepository; stacks: StacksService } {

@@ -409,13 +409,13 @@ test('a neighbour rebuilt while it was warmed is painted at the URL it was warme
 });
 
 test('a photo the catalogue does not have says so, with the reason', async ({ page }) => {
-  await page.goto('/photos/11111111-1111-4111-8111-111111111111');
+  await page.goto('/photos/photo001');
 
   // The other side of the state the viewer spent so long getting wrong: this is
   // the only thing that may render "not found", and it carries the read's own
   // error rather than whatever a list fetch last left behind.
   await expect(page.locator('.empty__title')).toHaveText('Photo not found');
-  await expect(page.getByText(/photo not found: 11111111/)).toBeVisible();
+  await expect(page.getByText(/photo not found: photo001/)).toBeVisible();
 });
 
 // Two detail fetches can be in flight at once - stepping is faster than the

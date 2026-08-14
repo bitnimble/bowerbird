@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
+import { withNewId } from '../../db/constraints';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
+import { newId } from '../../schemas/id';
 import type { Library, LibrarySyncStatus } from '../../schemas/libraries';
 import { isSupportedFile, scanLibraryTree, type ScannedDir, type ScannedFile } from '../../utils/scan';
 import { isDirInScope, isFileInScope, libraryScope, type LibraryScope } from '../../utils/scope';
@@ -313,7 +314,7 @@ export class SyncService implements LibraryLifecycleListener {
       paths: scopePaths?.length,
     });
     const startedAt = Date.now();
-    const owner = randomUUID();
+    const owner = newId();
     if (!this.syncLocks.acquire(libraryId, owner)) {
       throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
     }
@@ -884,7 +885,7 @@ export class SyncService implements LibraryLifecycleListener {
       throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
     }
 
-    const owner = randomUUID();
+    const owner = newId();
     if (!this.syncLocks.acquire(libraryId, owner)) {
       throw new AppError('SYNC_IN_PROGRESS', 'a sync is already running for this library');
     }
@@ -1055,33 +1056,33 @@ export class SyncService implements LibraryLifecycleListener {
     addedAt: string,
     binned?: { deleted_from_path: string },
   ): string {
-    const id = randomUUID();
-    this.photos.insertFromSync({
-      id,
-      binned,
-      library_id: libraryId,
-      shoot_id: shootId,
-      file_hash: entry.fileHash,
-      file_path: entry.filePath,
-      width: entry.metadata.width,
-      height: entry.metadata.height,
-      orientation: entry.metadata.orientation,
-      date_taken: entry.metadata.dateTaken,
-      date_taken_offset: entry.metadata.dateTakenOffset,
-      date_added: addedAt,
-      date_updated: entry.metadata.mtime,
-      file_size: entry.metadata.fileSize,
-      latitude: entry.metadata.latitude,
-      longitude: entry.metadata.longitude,
-      iso: entry.metadata.iso,
-      shutter_speed: entry.metadata.shutterSpeed,
-      aperture: entry.metadata.aperture,
-      focal_length: entry.metadata.focalLength,
-      camera_make: entry.metadata.cameraMake,
-      camera_model: entry.metadata.cameraModel,
-      lens_model: entry.metadata.lensModel,
-    });
-    return id;
+    return withNewId((id) =>
+      this.photos.insertFromSync({
+        id,
+        binned,
+        library_id: libraryId,
+        shoot_id: shootId,
+        file_hash: entry.fileHash,
+        file_path: entry.filePath,
+        width: entry.metadata.width,
+        height: entry.metadata.height,
+        orientation: entry.metadata.orientation,
+        date_taken: entry.metadata.dateTaken,
+        date_taken_offset: entry.metadata.dateTakenOffset,
+        date_added: addedAt,
+        date_updated: entry.metadata.mtime,
+        file_size: entry.metadata.fileSize,
+        latitude: entry.metadata.latitude,
+        longitude: entry.metadata.longitude,
+        iso: entry.metadata.iso,
+        shutter_speed: entry.metadata.shutterSpeed,
+        aperture: entry.metadata.aperture,
+        focal_length: entry.metadata.focalLength,
+        camera_make: entry.metadata.cameraMake,
+        camera_model: entry.metadata.cameraModel,
+        lens_model: entry.metadata.lensModel,
+      }),
+    );
   }
 
   // Brings the shoots into step with the folders the scan just saw (§9.4.1).
@@ -1169,22 +1170,23 @@ export class SyncService implements LibraryLifecycleListener {
 
       for (const folder of wanted) {
         const dir = seen.get(folder);
-        const shoot = {
-          id: randomUUID(),
-          parent_id: enclosing(folder),
-          library_id: library.id,
-          folder_path: folder,
-          name: folder.slice(folder.lastIndexOf('/') + 1),
-          description: null,
-          // No explicit choice was made, so the library's own answer is the
-          // closest thing to one.
-          ordering: library.ordering,
-          folder_dev: dir?.dev ?? null,
-          folder_ino: dir?.ino ?? null,
-          folder_birthtime: dir?.birthtimeMs ?? null,
-        };
-        this.shoots.insert(shoot);
-        byFolder.set(folder, shoot.id);
+        const id = withNewId((candidate) =>
+          this.shoots.insert({
+            id: candidate,
+            parent_id: enclosing(folder),
+            library_id: library.id,
+            folder_path: folder,
+            name: folder.slice(folder.lastIndexOf('/') + 1),
+            description: null,
+            // No explicit choice was made, so the library's own answer is the
+            // closest thing to one.
+            ordering: library.ordering,
+            folder_dev: dir?.dev ?? null,
+            folder_ino: dir?.ino ?? null,
+            folder_birthtime: dir?.birthtimeMs ?? null,
+          }),
+        );
+        byFolder.set(folder, id);
         changed++;
       }
 

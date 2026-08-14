@@ -12,7 +12,7 @@ import { photoPath, renditionVersion, type Expansion, type PhotosStore } from '.
 import type { Span } from '../../ui/virtual_rows';
 
 function filename(filePath: string, id: string): string {
-  return filePath.split('/').pop() ?? id.slice(0, 8);
+  return filePath.split('/').pop() ?? id;
 }
 
 // The scroller's id, so the grid's own scrollbar can name what it controls.

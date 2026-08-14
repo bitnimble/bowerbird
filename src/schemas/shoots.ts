@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OrderingSchema, UuidSchema } from './common';
+import { OrderingSchema, IdSchema } from './common';
 
 // A shoot name seeds its folder at create time (§4.3), so it must be a single
 // on-disk segment: otherwise `path.join` could escape the library root (path
@@ -13,7 +13,7 @@ export const ShootNameSchema = z
   });
 
 export const CreateShootRequestSchema = z.object({
-  library_id: UuidSchema,
+  library_id: IdSchema,
   // Which folder the shoot's own folder is created in, relative to the library
   // root, where "" is the root itself. The parent shoot is derived from it
   // rather than chosen alongside it, so the shoot tree can never disagree with
@@ -30,7 +30,7 @@ export const UpdateShootRequestSchema = z.object({
   name: ShootNameSchema.optional(),
   description: z.string().optional(),
   ordering: OrderingSchema.optional(),
-  banner_photo_id: UuidSchema.nullable().optional(),
+  banner_photo_id: IdSchema.nullable().optional(),
 });
 export type UpdateShootRequest = z.infer<typeof UpdateShootRequestSchema>;
 
@@ -55,13 +55,13 @@ export const ShootRemovalSchema = z.object({
 export type ShootRemoval = z.infer<typeof ShootRemovalSchema>;
 
 export const ShootSchema = z.object({
-  id: UuidSchema,
-  parent_id: UuidSchema.nullable(),
-  library_id: UuidSchema,
+  id: IdSchema,
+  parent_id: IdSchema.nullable(),
+  library_id: IdSchema,
   folder_path: z.string(),
   name: z.string(),
   description: z.string().nullable(),
-  banner_photo_id: UuidSchema.nullable(),
+  banner_photo_id: IdSchema.nullable(),
   ordering: OrderingSchema,
   photo_count: z.number().int(),
 });

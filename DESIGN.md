@@ -53,7 +53,7 @@ There is no image-processing package. Everything that touches pixels is in `nati
 
 Testing uses Bun's built-in `bun test` runner, so there is no test-framework dependency.
 
-Entity IDs (UUID v4) are generated with the runtime built-in `crypto.randomUUID()`, no third-party UUID package.
+Entity IDs are eight lowercase alphanumerics (`[a-z0-9]{8}`, ~41 bits), drawn from the runtime built-in `crypto.getRandomValues`, no third-party ID package. Short because an ID is carried in every URL. Single-case because an ID is also a rendition's filename, and macOS and Windows fold two IDs differing only in case into one file - which no primary key would catch, because the rows really are distinct. At those odds a library will not see a collision, but the ID is a primary key, so one is caught at the INSERT rather than assumed away: every creator draws through `withNewId` (`db/constraints.ts`), which redraws up to five times on `SQLITE_CONSTRAINT_PRIMARYKEY` and lets every other constraint failure through untouched. A creator that must commit to an ID before the insert - a library, whose data directory and bin are made under it - draws through `unusedId` instead.
 
 RAW decoding and RAW metadata extraction are **dispatched per format**: a cheap header sniff (magic bytes / EXIF `Make`) selects the fastest maintained reader for that format, so each format can use its optimal library rather than a single lowest-common-denominator one. Sony ARW and Canon CR3 both decode via LibRaw (fast, actively maintained), so the dispatch currently resolves to one reader. Additional formats are added by registering another reader behind the same interface; Sony RAW is the priority when a reader supports only a subset of formats.
 
@@ -171,7 +171,7 @@ const photosApi = new PhotosApi(photosService);
 
 All `datetime` columns are stored as TEXT in ISO 8601 format with a `Z` suffix (e.g. `2024-06-15T04:30:00.000Z`), so lexicographic (byte) comparison equals chronological order and the `date_added`/`date_taken` ordering indexes (§4.2) sort correctly. `date_added` is a true instant, normalized to UTC from the server's offset (which shifts across DST). `date_taken` is not an instant: EXIF records a naive wall clock, so §11.1 stores that wall clock re-encoded as UTC and the client formats it back in UTC (`captureDateTime`), leaving a capture time reading as the camera wrote it on any machine in any zone.
 
-All UUIDs are v4, stored as TEXT.
+All entity IDs are stored as TEXT (§3).
 
 Foreign keys are enforced. `bun:sqlite` does not enable this by default, so `migrations.ts`/`connection.ts` must run `PRAGMA foreign_keys = ON` on every connection. The schema is acyclic (no table pair references each other) so migrations can be created in dependency order.
 
@@ -381,7 +381,7 @@ The exceptions to what the two library settings (§4.1) say in general. Both are
 ```sql
 CREATE TABLE sync_locks (
   library_id    TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE,
-  owner         TEXT NOT NULL,   -- UUID, one per acquire rather than per process
+  owner         TEXT NOT NULL,   -- one per acquire rather than per process
   started_at    TEXT NOT NULL,   -- toISOString(), UTC, which is what makes the comparison valid
   refreshed_at  TEXT NOT NULL
 );
@@ -522,7 +522,7 @@ export const PaginationSchema = z.object({
 });
 export type Pagination = z.infer<typeof PaginationSchema>;
 
-export const UuidSchema = z.uuid();  // Zod v4 top-level format API
+export const IdSchema = z.string().regex(/^[0-9a-z]{8}$/);
 
 // Every list endpoint accepts this filter. Default excludes soft-deleted rows.
 // NB: use z.stringbool(), NOT z.coerce.boolean(), the latter runs Boolean("false")
@@ -533,7 +533,7 @@ export const SoftDeleteFilterSchema = z.object({
 export type SoftDeleteFilter = z.infer<typeof SoftDeleteFilterSchema>;
 
 export const PhotoIdListSchema = z.object({
-  photo_ids: z.array(UuidSchema).min(1).max(1000),  // max bounds per-request file moves and keeps IN(...) under SQLite's variable limit
+  photo_ids: z.array(IdSchema).min(1).max(1000),  // max bounds per-request file moves and keeps IN(...) under SQLite's variable limit
 });
 ```
 
@@ -551,7 +551,7 @@ export const CreateLibraryRequestSchema = z.object({
 });
 
 export const LibrarySchema = z.object({
-  id: UuidSchema,
+  id: IdSchema,
   root_path: z.string(),
   bin_name: z.string().nullable(),             // null = no bin folder (§4.1)
   read_only: z.boolean(),
@@ -579,7 +579,7 @@ export const FolderRuleSchema = z.object({           // §4.7
 });
 
 export const LibrarySyncStatusSchema = z.object({
-  library_id: UuidSchema,
+  library_id: IdSchema,
   status: z.enum(['idle', 'scanning', 'processing']),
   photos_scanned: z.number().int(),
   photos_added: z.number().int(),
@@ -595,9 +595,9 @@ export const LibrarySyncStatusSchema = z.object({
 
 ```typescript
 export const PhotoSummarySchema = z.object({
-  id: UuidSchema,
-  library_id: UuidSchema,
-  shoot_id: UuidSchema.nullable(),
+  id: IdSchema,
+  library_id: IdSchema,
+  shoot_id: IdSchema.nullable(),
   width: z.number().int().positive(),   // display/upright dims, match the served rendition
   height: z.number().int().positive(),
   ordering_date: z.string().nullable(),  // ISO datetime, resolved based on library/shoot/album ordering; NULL for a taken_* ordering when date_taken is NULL (sorts last, §5.1)
@@ -670,7 +670,7 @@ export const PhotoTargetSchema = z.union([PhotoIdListSchema, z.object({ selectio
 
 ```typescript
 export const CreateShootRequestSchema = z.object({
-  library_id: UuidSchema,
+  library_id: IdSchema,
   parent_path: z.string().default(''),  // root-relative folder the shoot's folder goes in; '' is the library root
   name: z.string().min(1),
   description: z.string().optional(),
@@ -681,17 +681,17 @@ export const UpdateShootRequestSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   ordering: OrderingSchema.optional(),
-  banner_photo_id: UuidSchema.nullable().optional(),  // null clears the banner (§4.6)
+  banner_photo_id: IdSchema.nullable().optional(),  // null clears the banner (§4.6)
 });
 
 export const ShootSchema = z.object({
-  id: UuidSchema,
-  parent_id: UuidSchema.nullable(),
-  library_id: UuidSchema,
+  id: IdSchema,
+  parent_id: IdSchema.nullable(),
+  library_id: IdSchema,
   folder_path: z.string(),
   name: z.string(),
   description: z.string().nullable(),
-  banner_photo_id: UuidSchema.nullable(),
+  banner_photo_id: IdSchema.nullable(),
   ordering: OrderingSchema,
 });
 
@@ -715,14 +715,14 @@ export const CreateAlbumRequestSchema = z.object({
 export const UpdateAlbumRequestSchema = z.object({
   name: z.string().min(1).optional(),
   ordering: OrderingSchema.optional(),
-  banner_photo_id: UuidSchema.nullable().optional(),  // null clears the banner (§4.6)
+  banner_photo_id: IdSchema.nullable().optional(),  // null clears the banner (§4.6)
 });
 
 export const AlbumSchema = z.object({
-  id: UuidSchema,
+  id: IdSchema,
   name: z.string(),
   ordering: OrderingSchema,
-  banner_photo_id: UuidSchema.nullable(),
+  banner_photo_id: IdSchema.nullable(),
 });
 ```
 
@@ -746,7 +746,7 @@ Generated files live **outside every library root**, under `DATA_DIR` (§15), on
 │   ├── full-hdr/       # the same, PQ
 │   ├── max/            # native-resolution AVIF (§10.5)
 │   └── max-hdr/
-│       └── <photo_uuid>.avif   # every rendition is named by photo id
+│       └── <photo id>.avif   # every rendition is named by photo id
 ```
 
 ### Path Resolution
@@ -876,7 +876,7 @@ This service handles the full sync algorithm. See §9 for the detailed algorithm
 
 | Method | Description |
 |---|---|
-| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created inside `parent_path` (the library root when it is empty); `folder_path` is stored as the full root-relative path (§4.3). A `parent_path` that resolves outside the library root is refused: a shoot's photographs must be inside the library. In a **read-only** library a folder that does not exist yet is refused too (`READ_ONLY`, §4.1) - a shoot *is* a folder, so making one is a write; mirroring already makes a shoot per folder holding photographs, so most exist before anyone asks. `parent_id` is **derived**, not requested: it is the most-specific shoot whose folder contains the new one, which is the same rule that decides which shoot a photo belongs to (§9.4), so the tree can never disagree with the folders on disk. That also means a shoot can sit under a plain folder that is not a shoot itself. If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (renditions are keyed by photo UUID, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. The folder is `stat`ed either way and its identity recorded (§4.3), so a shoot can be followed through a rename from the moment it exists rather than from its first scan. Creating a shoot for a folder that carries a `plain` or `excluded` rule (§4.7) clears that rule: the user is answering the same question again, the other way. |
+| `create(request)` | Creates a shoot record. The folder is named after the shoot `name`, created inside `parent_path` (the library root when it is empty); `folder_path` is stored as the full root-relative path (§4.3). A `parent_path` that resolves outside the library root is refused: a shoot's photographs must be inside the library. In a **read-only** library a folder that does not exist yet is refused too (`READ_ONLY`, §4.1) - a shoot *is* a folder, so making one is a write; mirroring already makes a shoot per folder holding photographs, so most exist before anyone asks. `parent_id` is **derived**, not requested: it is the most-specific shoot whose folder contains the new one, which is the same rule that decides which shoot a photo belongs to (§9.4), so the tree can never disagree with the folders on disk. That also means a shoot can sit under a plain folder that is not a shoot itself. If the folder does not exist, it is created. If it **already exists**, it is kept as-is and its photos are **adopted**: every existing non-deleted photo record whose `file_path` falls under this folder and for which this shoot is the most-specific matching shoot (i.e. not already claimed by a more-specific descendant shoot) has its `shoot_id` set to the new shoot. No files move on disk and no reprocessing occurs (renditions are keyed by photo id, unaffected by shoot membership). This mirrors the sync reconciliation rule (§9.4) and makes an orphaned folder from a prior shoot delete re-adoptable. RAW files physically present but not yet in the DB are picked up by the next sync, which will assign them to this shoot via the same reconciliation. The folder is `stat`ed either way and its identity recorded (§4.3), so a shoot can be followed through a rename from the moment it exists rather than from its first scan. Creating a shoot for a folder that carries a `plain` or `excluded` rule (§4.7) clears that rule: the user is answering the same question again, the other way. |
 | `get(shootId)` | Returns a shoot by ID. |
 | `list(libraryId)` | Returns all shoots in a library. |
 | `addPhotos(shootId, photoIds)` | Moves photo files on disk into the shoot's folder. Updates each photo's `file_path` and `shoot_id` in the DB. A photo can only belong to one shoot; if it already belongs to another, it is moved out of the old shoot folder. If a file with the same name already exists in the destination folder, append a numeric suffix (e.g. `IMG_0001_1.ARW`, `IMG_0001_2.ARW`) so no existing file is overwritten and no two records share a `file_path` (§12.1). Refused with `READ_ONLY` in a read-only library: membership is decided by the folder a file sits in, so this *is* a file move, and a database-only override would be reverted by the next mirroring sync. Albums are the grouping that needs no write. |
@@ -1038,7 +1038,7 @@ Process in this order within a database transaction:
 1. **Moves:** Update `file_path` for each moved photo. Clear `is_missing` if it was set. **Reconcile shoot membership from the destination path:** if `newFilePath` falls under a known shoot's `folder_path`, set the photo's `shoot_id` to the **most-specific (longest-matching) `folder_path`** shoot (so a file under `NYC/Day1` maps to `Day1`, not the ancestor `NYC`); if it moved out to the library root (or a non-shoot folder), clear `shoot_id`. This keeps DB shoot membership consistent with files the user relocated on disk directly (rather than via the shoots API).
 2. **Modifications:** Update `file_hash`, `width`, `height`, `orientation`, `date_updated`, and both pending flags for each modified photo, plus any other changed metadata columns (GPS, `date_taken`). Clear `is_missing` if it was set.
 3. **Additions:** Insert new photo records:
-   - `id` = new UUID v4 (`crypto.randomUUID()`)
+   - `id` = a new entity ID, drawn through `withNewId` (§3)
    - `library_id` = the library being synced
    - `file_path` = relative path from disk scan
    - `file_hash` = computed hash
@@ -1126,7 +1126,7 @@ No generation guard on those writes, unlike the ones after the scan: the sync le
 
 ### 9.7 Sync Lock
 
-Sync is locked **per library**, so two different libraries can sync concurrently while the same library cannot be synced twice at once. The lock is a **leased row** in `sync_locks`, keyed by library id and holding an owner UUID minted per acquire, plus the ISO instants the lease started and was last refreshed. It guards the catalogue rather than the tree, which is where it belongs: the tree is what a read-only library forbids writing to, and a lock file at the root was one write per library that had nothing to do with the photographs.
+Sync is locked **per library**, so two different libraries can sync concurrently while the same library cannot be synced twice at once. The lock is a **leased row** in `sync_locks`, keyed by library id and holding an owner token minted per acquire, plus the ISO instants the lease started and was last refreshed. It guards the catalogue rather than the tree, which is where it belongs: the tree is what a read-only library forbids writing to, and a lock file at the root was one write per library that had nothing to do with the photographs.
 
 - `syncLibrary(id)` acquires the lease with a single upsert whose `WHERE` clause is the staleness test, so there is no check-then-claim window; if a live holder keeps it, `SYNC_IN_PROGRESS` (409).
 - `syncAll()` acquires each library's lease independently as it processes it; a library whose lease is held is collected and **re-attempted once** at the end of the loop, by which point a lease left by a killed process has lapsed.
@@ -1201,9 +1201,9 @@ Processing converts RAW files into **renditions**: derived copies of one photo, 
 
 | Rendition | Constraint | Why it exists | Output path |
 |---|---|---|---|
-| `grid` | Longest edge = `GRID_RENDITION_SIZE` (default 800px) | The library grid. Always SDR | `<DATA_DIR>/<library id>/renditions/grid/<photo_uuid>.avif` |
-| `full` | Longest edge = `FULL_RENDITION_SIZE` (default 3840px) | The photo view | `<DATA_DIR>/<library id>/renditions/full[-hdr]/<photo_uuid>.avif` |
-| `max` | Native resolution, never fitted | Pixel-peeping (§10.5) | `<DATA_DIR>/<library id>/renditions/max[-hdr]/<photo_uuid>.avif` |
+| `grid` | Longest edge = `GRID_RENDITION_SIZE` (default 800px) | The library grid. Always SDR | `<DATA_DIR>/<library id>/renditions/grid/<photo id>.avif` |
+| `full` | Longest edge = `FULL_RENDITION_SIZE` (default 3840px) | The photo view | `<DATA_DIR>/<library id>/renditions/full[-hdr]/<photo id>.avif` |
+| `max` | Native resolution, never fitted | Pixel-peeping (§10.5) | `<DATA_DIR>/<library id>/renditions/max[-hdr]/<photo id>.avif` |
 
 Sizes and quality come from configuration (§15). Nothing in the pipeline hardcodes them.
 
@@ -1321,7 +1321,7 @@ Each worker:
 2. Decodes the RAW once, through `native/rawshim` (§10.4) → an RGB bitmap **already rotated to display orientation** (the decoder applies the EXIF flip; the raw buffer carries no EXIF for a downstream library to auto-rotate from). Lazily, and a **tile job never reaches it**: the grid tile comes off the embedded JPEG, so a tile-only pass opens the file for its preview and demosaics nothing (§10.1).
 3. Fits the camera-match profile once, if the library asked for it (§10.8), then denoises and defringes the decode once.
 4. Grades, transfers and encodes each target off that shared base, at the target's own size and for the display it is meant for.
-5. On any failure, deletes every output the job names, if present (best-effort unlink), before reporting - so a failed job leaves no partial rendition and a failed reprocess does not leave the prior run's stale ones on disk (both share the UUID-keyed path). This upholds the §10.2 no-rendition invariant.
+5. On any failure, deletes every output the job names, if present (best-effort unlink), before reporting - so a failed job leaves no partial rendition and a failed reprocess does not leave the prior run's stale ones on disk (both share the id-keyed path). This upholds the §10.2 no-rendition invariant.
 6. Sends back `{ photoId, success: true, source }` or `{ photoId, success: false, error: string }`.
 
 **The decode never enters the JS heap, and never leaves Rust at all.** Steps 2-4 happen inside one `bb_run_job` call: TypeScript sends the job as JSON and gets JSON back, so a 60MP frame is decoded, fitted, graded and encoded without its pixels - or an address to them - crossing the FFI boundary. Nothing is freed by hand. The base is an owned `Vec<u16>` in a local, and the last rendition to read it hands it back before its encode allocates anything - 366MB at 61MP, released across the longest stage of the job (§10.7).

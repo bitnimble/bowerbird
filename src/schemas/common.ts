@@ -11,7 +11,7 @@ export const PaginationSchema = z.object({
 });
 export type Pagination = z.infer<typeof PaginationSchema>;
 
-export const UuidSchema = z.uuid();
+export const IdSchema = z.string().regex(/^[0-9a-z]{8}$/);
 
 // Where a rendition's pixels come from (§10.2). 'embedded' lifts the camera's own
 // JPEG out of the RAW, which needs no demosaic; 'render' demosaics at full
@@ -34,5 +34,5 @@ export const SoftDeleteFilterSchema = z.object({
 // a larger selection names it by position instead (PhotoSelectionSchema), or
 // chunks. 400 on overflow beats a 500 or a stalled request.
 export const PhotoIdListSchema = z.object({
-  photo_ids: z.array(UuidSchema).min(1).max(1000),
+  photo_ids: z.array(IdSchema).min(1).max(1000),
 });

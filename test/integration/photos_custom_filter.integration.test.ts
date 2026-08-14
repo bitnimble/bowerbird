@@ -5,7 +5,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { createDatabase } from '../../src/db/connection';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
 
-const LIB = '00000000-0000-4000-8000-0000000000c5';
+const LIB = 'lib000c5';
 let db: ReturnType<typeof createDatabase>;
 let photos: PhotosRepository;
 

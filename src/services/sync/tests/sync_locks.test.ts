@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createDatabase } from '../../../db/connection';
 import { LEASE_MS, SyncLocksRepository } from '../sync_locks_repository';
 
-const LIB = '00000000-0000-4000-8000-000000000100';
+const LIB = 'lib00100';
 
 let db: ReturnType<typeof createDatabase>;
 let locks: SyncLocksRepository;

@@ -18,7 +18,7 @@ import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { SyncService, type ProcessingTrigger } from '../../src/services/sync/sync_service';
 import { SyncLocksRepository } from '../../src/services/sync/sync_locks_repository';
 
-const LIB = '00000000-0000-4000-8000-0000000000ce';
+const LIB = 'lib000ce';
 
 // The files are never opened: the extractor is injected, and the hash comes off
 // its answer rather than the bytes. mtime and size are the file's real ones, so

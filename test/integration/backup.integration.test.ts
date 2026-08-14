@@ -14,8 +14,8 @@ import { holdAgainstUse, restoreBackup } from '../../src/services/maintenance/re
 import { deleteBackupFile } from '../../src/utils/deletions';
 import { backupsDir } from '../../src/utils/paths';
 
-const LIB = '00000000-0000-4000-8000-00000000ab01';
-const LATER = '00000000-0000-4000-8000-00000000ab02';
+const LIB = 'lib0ab01';
+const LATER = 'lib0ab02';
 
 let dir: string;
 let dbPath: string;

@@ -16,7 +16,7 @@ import { SyncService } from '../../src/services/sync/sync_service';
 import { SyncLocksRepository } from '../../src/services/sync/sync_locks_repository';
 import { extractMetadata } from '../../src/services/processing/metadata';
 
-const LIB = '00000000-0000-4000-8000-0000000000ef';
+const LIB = 'lib000ef';
 const flush = () => new Promise((r) => setTimeout(r, 10));
 
 let root: string;

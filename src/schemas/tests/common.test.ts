@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'bun:test';
 import { SoftDeleteFilterSchema, PaginationSchema, OrderingSchema, PhotoIdListSchema } from '../common';
+import { newId } from '../id';
 
-const uuid = '11111111-1111-4111-8111-111111111111';
+const id = 'photo001';
 
 describe('SoftDeleteFilterSchema', () => {
   it('parses the string "false" as false and defaults to false', () => {
@@ -21,11 +22,12 @@ describe('PaginationSchema', () => {
 });
 
 describe('PhotoIdListSchema', () => {
-  it('requires 1-1000 valid UUIDs', () => {
-    expect(PhotoIdListSchema.parse({ photo_ids: [uuid] }).photo_ids).toEqual([uuid]);
+  it('requires 1-1000 valid ids', () => {
+    expect(PhotoIdListSchema.parse({ photo_ids: [newId()] }).photo_ids).toHaveLength(1);
+    expect(PhotoIdListSchema.parse({ photo_ids: [id] }).photo_ids).toEqual([id]);
     expect(() => PhotoIdListSchema.parse({ photo_ids: [] })).toThrow();
-    expect(() => PhotoIdListSchema.parse({ photo_ids: ['not-a-uuid'] })).toThrow();
-    expect(() => PhotoIdListSchema.parse({ photo_ids: Array(1001).fill(uuid) })).toThrow();
+    expect(() => PhotoIdListSchema.parse({ photo_ids: ['not-an-id'] })).toThrow();
+    expect(() => PhotoIdListSchema.parse({ photo_ids: Array(1001).fill(id) })).toThrow();
   });
 });
 

@@ -15,10 +15,10 @@ import type { ProcessingService } from '../../src/services/processing/processing
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { dataPathForLibraryId } from '../../src/utils/paths';
 
-const LIB = '00000000-0000-4000-8000-0000000000ba';
-const SHOOT = '00000000-0000-4000-8000-0000000000bb';
-const ALBUM = '00000000-0000-4000-8000-0000000000bc';
-const PHOTO = '00000000-0000-4000-8000-0000000000bd';
+const LIB = 'lib000ba';
+const SHOOT = 'sht000bb';
+const ALBUM = 'alb000bc';
+const PHOTO = 'pht000bd';
 
 let root: string;
 let db: ReturnType<typeof createDatabase>;
@@ -127,7 +127,7 @@ test('restoring onto an occupied path suffixes rather than overwriting a live ph
 // The Bin holds originals, so it sits beside the photographs rather than in the
 // disposable tree the data directory is (DESIGN §12.3).
 test('a photo in the library root bins to <root>/Bin, never into the data directory', async () => {
-  const LOOSE = '00000000-0000-4000-8000-0000000000be';
+  const LOOSE = 'pht000be';
   writeFileSync(path.join(root, 'loose.arw'), 'RAW');
   db.query(
     `INSERT INTO photos (id, library_id, shoot_id, file_path, width, height, date_added, needs_tile, needs_renditions)

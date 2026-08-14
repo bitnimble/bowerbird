@@ -1,8 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
-import { isUniqueViolation } from '../../db/constraints';
+import { isUniqueViolation, withNewId } from '../../db/constraints';
 import type { CreateShootRequest, Shoot, UpdateShootRequest } from '../../schemas/shoots';
 import type { Library } from '../../schemas/libraries';
 import { ensureDir, moveIntoDir } from '../../utils/files';
@@ -66,20 +65,22 @@ export class ShootsService {
     // rename before then is still followed (§9.4.1).
     const identity = statSync(absFolder, { throwIfNoEntry: false });
 
-    const id = randomUUID();
+    let id: string;
     try {
-      this.shoots.insert({
-        id,
-        parent_id: parent?.id ?? null,
-        library_id: library.id,
-        folder_path: folderPath,
-        name: request.name,
-        description: request.description ?? null,
-        ordering: request.ordering,
-        folder_dev: identity?.dev ?? null,
-        folder_ino: identity?.ino ?? null,
-        folder_birthtime: identity?.birthtimeMs ?? null,
-      });
+      id = withNewId((candidate) =>
+        this.shoots.insert({
+          id: candidate,
+          parent_id: parent?.id ?? null,
+          library_id: library.id,
+          folder_path: folderPath,
+          name: request.name,
+          description: request.description ?? null,
+          ordering: request.ordering,
+          folder_dev: identity?.dev ?? null,
+          folder_ino: identity?.ino ?? null,
+          folder_birthtime: identity?.birthtimeMs ?? null,
+        }),
+      );
     } catch (err) {
       // getByFolderPath above catches the common case; a concurrent create of the
       // same folder can still pass it before either commits and lose the race here.

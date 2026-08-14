@@ -15,7 +15,7 @@ import { SyncService } from '../../src/services/sync/sync_service';
 import { SyncLocksRepository } from '../../src/services/sync/sync_locks_repository';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
-const LIB = '00000000-0000-4000-8000-000000000001';
+const LIB = 'lib00001';
 const DEBOUNCE = 150;
 
 let root: string;

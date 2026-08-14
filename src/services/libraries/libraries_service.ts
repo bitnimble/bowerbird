@@ -1,10 +1,9 @@
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { rename } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { config } from '../../config';
-import { isUniqueViolation } from '../../db/constraints';
+import { isUniqueViolation, unusedId } from '../../db/constraints';
 import { Logger } from '../../logger';
 import { DEFAULT_LIBRARY_SETTINGS, type CreateLibraryRequest, type Library, type UpdateLibraryRequest } from '../../schemas/libraries';
 import { deleteDataDirectory, deleteEmptyBinFolder } from '../../utils/deletions';
@@ -121,7 +120,9 @@ export class LibrariesService {
     }
 
     const library: Library = {
-      id: randomUUID(),
+      // Settled here rather than redrawn at the insert: the rendition directories
+      // and the bin below are made under this id, and a later draw would leave them.
+      id: unusedId((candidate) => this.repo.getById(candidate) != null),
       root_path: request.root_path,
       bin_name: binName,
       read_only: request.read_only,

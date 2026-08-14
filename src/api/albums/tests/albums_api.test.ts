@@ -8,7 +8,7 @@ import type { AlbumsService } from '../../../services/albums/albums_service';
 import type { PhotosService } from '../../../services/photos/photos_service';
 import { AlbumsApi } from '../albums_api';
 
-const PID = '11111111-1111-4111-8111-111111111111';
+const PID = 'photo001';
 const album: Album = { id: 'a1', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const emptyList: PhotoListResponse = { photos: [], total: 0, offset: 0, limit: 100, ordering: 'taken_asc' };
 

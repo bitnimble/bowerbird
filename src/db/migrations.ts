@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS libraries (
 -- expiry clears it, so nothing deletes these on the way up.
 CREATE TABLE IF NOT EXISTS sync_locks (
   library_id    TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE,
-  owner         TEXT NOT NULL,   -- UUID, one per acquire rather than per process
+  owner         TEXT NOT NULL,   -- one per acquire rather than per process
   started_at    TEXT NOT NULL,   -- toISOString(), UTC, which is what makes the comparison valid
   refreshed_at  TEXT NOT NULL
 );
@@ -261,10 +261,8 @@ CREATE TABLE IF NOT EXISTS photo_edits (
   updated_at TEXT NOT NULL
 ) WITHOUT ROWID;
 
--- The undo stack, as one JSON array per photo rather than a row per step. A row
--- per delta would be ~72 bytes of repeated UUID each, in the table and again in
--- the index, for a key nothing ever queries by: a single step is never read
--- without the rest of its history, because undo walks the array.
+-- The undo stack, as one JSON array per photo rather than a row per step: a single
+-- step is never read without the rest of its history, because undo walks the array.
 --
 -- WITHOUT ROWID on both, because a TEXT primary key is not the rowid - SQLite
 -- aliases only INTEGER PRIMARY KEY - so an ordinary table would make every read

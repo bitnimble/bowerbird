@@ -5,7 +5,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { createDatabase } from '../../src/db/connection';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
 
-const LIB = '00000000-0000-4000-8000-0000000000df';
+const LIB = 'lib000df';
 let db: ReturnType<typeof createDatabase>;
 let photos: PhotosRepository;
 
@@ -20,9 +20,9 @@ beforeAll(() => {
   db = createDatabase(':memory:');
   db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(LIB, '/tmp/bb-filter', 'lib', 'added_desc');
   photos = new PhotosRepository(db);
-  insert('11111111-1111-4111-8111-111111111111', false);
-  insert('22222222-2222-4222-8222-222222222222', true);
-  insert('33333333-3333-4333-8333-333333333333', true);
+  insert('photo001', false);
+  insert('photo002', true);
+  insert('photo003', true);
 });
 
 afterAll(() => db.close());

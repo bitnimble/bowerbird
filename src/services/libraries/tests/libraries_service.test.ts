@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AppError } from '../../../errors';
 import { config } from '../../../config';
+import { IdSchema } from '../../../schemas/common';
 import type { Library } from '../../../schemas/libraries';
 import { renditionDirs } from '../../processing/renditions';
 import { containsPath, getDataPath } from '../../../utils/paths';
@@ -149,7 +150,7 @@ describe('LibrariesService.create', () => {
       expect(library.root_path).toBe(root);
       expect(library.name).toBe(path.basename(root));
       expect(library.ordering).toBe('added_asc');
-      expect(library.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(() => IdSchema.parse(library.id)).not.toThrow();
       // The bin folder's identity rides into the INSERT, since the row it would
       // otherwise be written to does not exist yet (§12.3).
       expect(insert).toHaveBeenCalledWith({ ...library, identity: expect.objectContaining({ ino: expect.any(Number) }) });

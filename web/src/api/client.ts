@@ -122,7 +122,7 @@ function commandName(method: string, path: string): string {
     .split('?')[0]!
     .replace(/^\/(api|image)\//, '')
     .split('/')
-    .map((part) => (/^[0-9a-f-]{16,}$/i.test(part) ? ':id' : part))
+    .map((part) => (/^[0-9a-z]{8}$/.test(part) ? ':id' : part))
     .join('/');
   return `${method.toLowerCase()}:${route}`;
 }

@@ -21,7 +21,7 @@ import { SyncLocksRepository } from '../../src/services/sync/sync_locks_reposito
 import { extractMetadata } from '../../src/services/processing/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
-const LIB = '00000000-0000-4000-8000-0000000000fb';
+const LIB = 'lib000fb';
 
 const SIDECAR = `<x:xmpmeta xmlns:x="adobe:ns:meta/">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">

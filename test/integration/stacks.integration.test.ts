@@ -6,13 +6,13 @@ import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { StacksRepository } from '../../src/services/stacks/stacks_repository';
 import { StacksService } from '../../src/services/stacks/stacks_service';
 
-const LIBRARY = '00000000-0000-4000-8000-000000000001';
-const OTHER_LIBRARY = '00000000-0000-4000-8000-000000000002';
-const SHOOT = '00000000-0000-4000-8000-000000000010';
-const ALBUM = '00000000-0000-4000-8000-000000000020';
+const LIBRARY = 'lib00001';
+const OTHER_LIBRARY = 'lib00002';
+const SHOOT = 'sht00010';
+const ALBUM = 'alb00020';
 
 function photoId(n: number): string {
-  return `00000000-0000-4000-8000-1000000000${String(n).padStart(2, '0')}`;
+  return `photo${String(n).padStart(3, '0')}`;
 }
 
 function setUp(): { db: Database; stacks: StacksService; photos: PhotosRepository; repo: StacksRepository } {
@@ -393,7 +393,7 @@ describe('stacks', () => {
   test('an id that is not a photo does not make up the numbers', () => {
     const { db, stacks } = context;
     const only = insertPhoto(db, 1, { minute: 1 });
-    expect(() => stacks.create([only, '00000000-0000-4000-8000-9999deadbeef'])).toThrow(/at least two/);
+    expect(() => stacks.create([only, 'deadbeef'])).toThrow(/at least two/);
   });
 
   test('removing nothing leaves an automatic stack in detection hands', () => {

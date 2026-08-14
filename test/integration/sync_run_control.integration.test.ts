@@ -17,7 +17,7 @@ import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import { SyncService, type ProcessingTrigger } from '../../src/services/sync/sync_service';
 import { SyncLocksRepository } from '../../src/services/sync/sync_locks_repository';
 
-const LIB = '00000000-0000-4000-8000-0000000000ce';
+const LIB = 'lib000ce';
 const flush = (): Promise<unknown> => new Promise((r) => setTimeout(r, 10));
 
 // The files never get opened: the extractor is injected, and the hash is computed

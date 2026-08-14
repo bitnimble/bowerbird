@@ -30,8 +30,8 @@ function buildApp(over: Partial<PhotosService> = {}) {
   return { app, service, processing };
 }
 
-const PID = '11111111-1111-4111-8111-111111111111';
-const BATCH = '22222222-2222-4222-8222-222222222222';
+const PID = 'photo001';
+const BATCH = 'batch001';
 
 const selectionStatus = async (app: Hono, ranges: { start: number; end: number }[]): Promise<number> => {
   const res = await app.request('/api/photos/delete', {

@@ -133,7 +133,7 @@ test('grades through the camera match, as the renditions do', async ({ page }) =
  * and the page still looks like it is working.
  */
 test('says why an id it cannot open failed', async ({ page }) => {
-  const missing = '00000000-0000-0000-0000-000000000000';
+  const missing = 'nosuchid';
   // `?edit` skips the viewer's empty state so the editor's own open path is what fails.
   await page.goto(`/photos/${missing}?edit=1`);
 

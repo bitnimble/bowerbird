@@ -35,7 +35,7 @@ test('the embedded preview carries its own EXIF orientation', () => {
 test('the rendition settings live on the library and round-trip', () => {
   const db = createDatabase(':memory:');
   const libraries = new LibrariesRepository(db);
-  const id = '00000000-0000-4000-8000-0000000000c1';
+  const id = 'lib000c1';
   try {
     db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(id, '/tmp/x', 'lib', 'added_desc');
 

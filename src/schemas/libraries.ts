@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OrderingSchema, RenditionSourceSchema, UuidSchema } from './common';
+import { OrderingSchema, RenditionSourceSchema, IdSchema } from './common';
 
 // One folder name, not a path: it names the library's single bin, at its root,
 // and the rest of that bin's layout mirrors the folders photographs came from
@@ -34,7 +34,7 @@ export const CreateLibraryRequestSchema = z.object({
 export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
 
 export const LibrarySchema = z.object({
-  id: UuidSchema,
+  id: IdSchema,
   root_path: z.string(),
   // NULL means this library has no bin at all (§4.1). The bin folder's recorded
   // identity is deliberately not here: it would leak into every API response.
@@ -128,7 +128,7 @@ export const UpdateLibraryRequestSchema = z.object({
 export type UpdateLibraryRequest = z.infer<typeof UpdateLibraryRequestSchema>;
 
 export const LibrarySyncStatusSchema = z.object({
-  library_id: UuidSchema,
+  library_id: IdSchema,
   status: z.enum(['idle', 'scanning', 'processing']),
   // How many files the scan will look at, and how many it has looked at so far.
   // The pair is the scan's progress while `status` is 'scanning' (§9.6), and both

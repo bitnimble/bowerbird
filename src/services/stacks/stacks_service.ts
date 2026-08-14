@@ -1,3 +1,4 @@
+import { withNewId } from '../../db/constraints';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import type { PhotoSummary } from '../../schemas/photos';
@@ -108,12 +109,12 @@ export class StacksService {
     // catalogue, and nothing in the grid could show a stack that spans two.
     if (libraryId == null) throw new AppError('VALIDATION_ERROR', 'a stack cannot span libraries');
 
-    const id = crypto.randomUUID();
-    this.stacks.transaction(() => {
+    const id = this.stacks.transaction(() => {
       const emptied = this.stacks.stackIdsOf(photoIds);
-      this.stacks.create(id, libraryId, 'manual', new Date().toISOString());
-      this.stacks.addPhotos(id, photoIds);
+      const stackId = withNewId((candidate) => this.stacks.create(candidate, libraryId, 'manual', new Date().toISOString()));
+      this.stacks.addPhotos(stackId, photoIds);
       this.pruneStacks(emptied);
+      return stackId;
     });
     log.info('created a stack', { stack: id, photos: photoIds.length });
     return this.get(id);
@@ -210,8 +211,7 @@ export class StacksService {
       for (const stackId of this.stacks.autoStackIds(libraryId)) this.stacks.dissolve(stackId, false);
       const now = new Date().toISOString();
       for (const photoIds of members) {
-        const id = crypto.randomUUID();
-        this.stacks.create(id, libraryId, 'auto', now);
+        const id = withNewId((candidate) => this.stacks.create(candidate, libraryId, 'auto', now));
         this.stacks.addPhotos(id, photoIds);
       }
     });

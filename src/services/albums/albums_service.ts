@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { withNewId } from '../../db/constraints';
 import { AppError } from '../../errors';
 import type { Album, CreateAlbumRequest, UpdateAlbumRequest } from '../../schemas/albums';
 import type { PhotosRepository } from '../photos/photos_repository';
@@ -11,8 +11,9 @@ export class AlbumsService {
   ) {}
 
   create(request: CreateAlbumRequest): Album {
-    const id = randomUUID();
-    this.repo.insert({ id, name: request.name, ordering: request.ordering });
+    const id = withNewId((candidate) =>
+      this.repo.insert({ id: candidate, name: request.name, ordering: request.ordering }),
+    );
     return { id, name: request.name, ordering: request.ordering, banner_photo_id: null, photo_count: 0 };
   }
 

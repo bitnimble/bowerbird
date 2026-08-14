@@ -5,7 +5,7 @@ import { createDatabase } from '../../src/db/connection';
 import { ShootsRepository } from '../../src/services/shoots/shoots_repository';
 import type { Ordering } from '../../src/schemas/common';
 
-const LIB = '00000000-0000-4000-8000-000000000abc';
+const LIB = 'lib000ab';
 
 let db: ReturnType<typeof createDatabase>;
 let shoots: ShootsRepository;

@@ -14,6 +14,7 @@ import {
   type Triage,
   type ViewerRendition,
 } from '../../api/client';
+import { newId } from '../../../../src/schemas/id';
 import type { AlbumsPresenter } from '../albums/albums_presenter';
 import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { AppSettingsPresenter } from '../settings/app_settings_presenter';
@@ -1127,7 +1128,7 @@ export class PhotosPresenter {
   // these have left the collection, and the ids themselves are something neither
   // side should be carrying a million of (§12.3).
   async deletePhotos(target: PhotoTarget): Promise<void> {
-    const batch = crypto.randomUUID();
+    const batch = newId();
     let deleted: number;
     try {
       // How many it took, from the server: a selection can name positions that

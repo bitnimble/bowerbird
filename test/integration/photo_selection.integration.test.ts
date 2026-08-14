@@ -7,12 +7,12 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { createDatabase } from '../../src/db/connection';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
 
-const LIB = '00000000-0000-4000-8000-0000000000d1';
+const LIB = 'lib000d1';
 const COUNT = 250;
 let db: ReturnType<typeof createDatabase>;
 let photos: PhotosRepository;
 
-const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const id = (n: number) => `photo${String(n).padStart(3, '0')}`;
 
 beforeAll(() => {
   db = createDatabase(':memory:');

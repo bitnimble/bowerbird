@@ -19,7 +19,7 @@ import { extractMetadata } from '../../src/services/processing/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
 const RUNNER = path.join(import.meta.dir, 'helpers/sync_once.ts');
-const LIB = '00000000-0000-4000-8000-0000000000b8';
+const LIB = 'lib000b8';
 const COPIES = 6; // enough scan work that the loser is still inside the winner's run
 
 let dir: string;

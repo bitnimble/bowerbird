@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { createDatabase } from '../../src/db/connection';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
 
-const LIB = '00000000-0000-4000-8000-000000000abc';
+const LIB = 'lib000ab';
 
 let db: ReturnType<typeof createDatabase>;
 let photos: PhotosRepository;
@@ -68,7 +68,7 @@ test('setMissing marks missing only when file_path still matches the scanned pat
 // deliberately the reverse of capture order here: returning these in the order
 // they were written is exactly the failure, and it is invisible on a small library.
 test('listPendingProcessing queues photos in the library grid order', () => {
-  const ORD = '00000000-0000-4000-8000-000000000ord';
+  const ORD = 'lib000rd';
   db.query('INSERT INTO libraries (id, root_path, name, ordering) VALUES (?, ?, ?, ?)').run(ORD, '/tmp/bb-ordering', 'lib', 'taken_asc');
   const taken: [string, string | null][] = [
     ['newest', '2024-03-01T00:00:00.000Z'],

@@ -17,7 +17,7 @@ import { SyncLocksRepository } from '../../src/services/sync/sync_locks_reposito
 import { extractMetadata } from '../../src/services/processing/metadata';
 
 const FIXTURE = path.join(import.meta.dir, '../fixtures/DSC02981.ARW');
-const LIB = '00000000-0000-4000-8000-0000000000ab';
+const LIB = 'lib000ab';
 
 let root: string;
 let db: ReturnType<typeof createDatabase>;

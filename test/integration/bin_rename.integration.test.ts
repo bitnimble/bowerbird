@@ -12,8 +12,8 @@ import { LibrariesRepository } from '../../src/services/libraries/libraries_repo
 import { LibrariesService } from '../../src/services/libraries/libraries_service';
 import { PhotosRepository } from '../../src/services/photos/photos_repository';
 
-const LIB = '00000000-0000-4000-8000-0000000000e1';
-const PHOTO = '00000000-0000-4000-8000-0000000000e2';
+const LIB = 'lib000e1';
+const PHOTO = 'pht000e2';
 
 let root: string;
 let db: ReturnType<typeof createDatabase>;
@@ -119,7 +119,7 @@ test('a request that both sets read_only and renames the bin is refused before e
 // ones - whose files are out among the photographs - must not be dragged into it.
 test('renaming the bin leaves a formerly-read-only library\'s in-place rows alone', async () => {
   makeLibrary('Bin');
-  const IN_PLACE = '00000000-0000-4000-8000-0000000000e3';
+  const IN_PLACE = 'pht000e3';
   mkdirSync(abs('Trip'), { recursive: true });
   writeFileSync(abs('Trip/b.arw'), 'RAW');
   db.query(

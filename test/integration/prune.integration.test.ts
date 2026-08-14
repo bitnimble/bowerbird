@@ -12,10 +12,10 @@ import { PhotosRepository } from '../../src/services/photos/photos_repository';
 import { PruneService } from '../../src/services/maintenance/prune_service';
 import { dataPathForLibraryId } from '../../src/utils/paths';
 
-const LIB = '00000000-0000-4000-8000-00000000ab01';
-const LIVE = '11111111-1111-4111-8111-111111111111';
-const GONE = '22222222-2222-4222-8222-222222222222';
-const BINNED = '33333333-3333-4333-8333-333333333333';
+const LIB = 'lib0ab01';
+const LIVE = 'photo001';
+const GONE = 'photo002';
+const BINNED = 'photo003';
 
 let root: string;
 let db: ReturnType<typeof createDatabase>;

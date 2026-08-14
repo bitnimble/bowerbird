@@ -38,7 +38,7 @@ const UPCOMING_SHOWN = 20;
 /** The gutter between the two photos in split mode, in px. */
 export const SPLIT_GAP = 16;
 
-// A separator no UUID contains, so `keepers` can take a key apart again. Splitting
+// A separator no id contains, so `keepers` can take a key apart again. Splitting
 // rather than testing for a substring is what keeps one id sitting inside another
 // from reading as a hit.
 const SEPARATOR = '|';

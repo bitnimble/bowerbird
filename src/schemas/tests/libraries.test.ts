@@ -24,7 +24,7 @@ describe('inferredLibraryName', () => {
 describe('LibrarySchema.name', () => {
   it('requires a non-empty name', () => {
     const library = {
-      id: '00000000-0000-4000-8000-000000000001',
+      id: 'lib00001',
       root_path: '/photos',
       bin_name: 'Bin',
       read_only: false,
