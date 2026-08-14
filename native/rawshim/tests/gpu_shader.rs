@@ -192,6 +192,10 @@ fn uniform(colour: &HdrColour, peak_samples: u32) -> Vec<u8> {
         f_push(&mut words, 0.0);
     }
     words.push(0); // has_keystone
+    // The blur's working texture, which this probe never builds: one texel per pixel and a
+    // window of one, so `detail.wgsl` would be an identity if anything read it.
+    words.push(1); // detail_long
+    words.push(1); // detail_step
     // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
     // exactly the fields is rejected as too small. Same rule as `gpu::uniform`.
     while words.len() % 4 != 0 {

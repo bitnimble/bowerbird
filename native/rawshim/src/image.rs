@@ -761,6 +761,126 @@ impl PlanarWarp {
         Some(warp)
     }
 
+    /// The frame's own gather, restricted to one window of it and reading one region of the
+    /// source.
+    ///
+    /// **What a loupe tile needs, and what it did not have.** A lens correction is a function of
+    /// radius in the *photograph*, so a crop warped as though it were the frame bends by the
+    /// whole correction across a few hundred pixels and lifts its own corners as if they were the
+    /// frame's. The magnified rectangle then holds neither what the stage shows nor what the
+    /// export writes - it is a different picture of a slightly different place, and which place
+    /// moves with the loupe.
+    ///
+    /// `window` is the rectangle of the *corrected* frame to produce, and `region` the part of
+    /// the uncorrected frame the caller has decoded. Both in the photograph's own pixels. The
+    /// gather is the frame's throughout: the plan normalises by the whole frame's half-diagonal
+    /// and the falloff reads the whole frame's radius, so only where the samples are read from
+    /// changes.
+    ///
+    /// [`footprint`] answers what `region` has to be. None where the lens is an identity, which
+    /// is a caller that can decode its window and skip this entirely.
+    ///
+    /// [`footprint`]: PlanarWarp::footprint
+    pub fn for_lens_window(
+        full: (usize, usize),
+        window: (usize, usize, usize, usize),
+        region: (usize, usize, usize, usize),
+        lens: &crate::fit::Lens,
+        sampling: Sampling,
+    ) -> Option<PlanarWarp> {
+        if lens.is_identity() {
+            return None;
+        }
+        let (out_width, out_height) = (window.2, window.3);
+        let mut warp = PlanarWarp::new(
+            region.2,
+            region.3,
+            out_width,
+            out_height,
+            lens.distortion.as_deref().unwrap_or_default(),
+            lens.crop,
+            lens.falloff,
+            &lens.channels(),
+            sampling,
+        );
+        let half_full =
+            ((full.0 as f64 / 2.0).powi(2) + (full.1 as f64 / 2.0).powi(2)).sqrt();
+        warp.half = half_full;
+        // The source is the frame at its own scale, so a step is a pixel; what changes is where
+        // the frame's centre falls in the buffer, which is the region's origin back off it.
+        warp.step = (half_full, half_full);
+        warp.centre = (
+            full.0 as f64 / 2.0 - region.0 as f64,
+            full.1 as f64 / 2.0 - region.1 as f64,
+        );
+        warp.edge = ((region.2 - 1) as f64, (region.3 - 1) as f64);
+        // The window as the plan already expresses a crop: an origin and a unit stride, in the
+        // frame's own pixels, with no straighten or turn - those belong to the reader's geometry
+        // and a tile is named in coordinates that already have them.
+        warp.plan = Plan {
+            half_full,
+            full: (full.0 as f64, full.1 as f64),
+            origin: (window.0 as f64, window.1 as f64),
+            stride: (1.0, 1.0),
+            cos: 1.0,
+            sin: 0.0,
+            rotate: 0,
+            keystone: None,
+        };
+        Some(warp)
+    }
+
+    /// The part of the source this gather actually reads, in the source's own pixels.
+    ///
+    /// For a caller that has to *decode* that part before the gather can run: build the warp
+    /// against the whole frame, ask what it reads, then decode it. The bicubic tap reads two
+    /// pixels either side of the position it lands on, which is what the margin below is.
+    ///
+    /// Every output pixel rather than the window's border: the ratio curve is not monotone for
+    /// every lens, so an extreme can sit inside the rectangle rather than on its edge, and a
+    /// footprint that missed one would leave a strip of black down the magnified picture.
+    pub fn footprint(&self) -> (usize, usize, usize, usize) {
+        // The same three lines as the gather in `map_u16`, which is the loop this has to agree
+        // with; a tile whose region is too small reads zeros at its edge and the pins that hold
+        // it against the rendition fail on the picture.
+        const TAP: f64 = 2.0;
+        let (width, height) = self.size;
+        let tables: Vec<&Vec<f64>> = match self.per_channel.is_empty() {
+            true => vec![&self.shared],
+            false => self.per_channel.iter().collect(),
+        };
+        // By row and reduced, because the largest window this is asked for is a 2048px tile grown
+        // by the guided filter's reach on every side - six megapixels of it, and it stands between
+        // the request and the decode.
+        let box_of = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| {
+            (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3))
+        };
+        let (left, top, right, bottom) = (0..height)
+            .into_par_iter()
+            .map(|y| {
+                let mut bounds = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+                for x in 0..width {
+                    let (dx, dy) = self.plan.at(x as f64 + 0.5, y as f64 + 0.5, (width, height));
+                    let t = (dx * dx + dy * dy) * RATIO_TABLE_LAST as f64;
+                    let slot =
+                        if t < RATIO_TABLE_LAST as f64 { t as usize } else { RATIO_TABLE_LAST - 1 };
+                    for table in &tables {
+                        let low = table[slot];
+                        let ratio = low + (table[slot + 1] - low) * (t - slot as f64);
+                        let px = self.centre.0 - 0.5 + dx * ratio * self.step.0;
+                        let py = self.centre.1 - 0.5 + dy * ratio * self.step.1;
+                        bounds = box_of(bounds, (px, py, px, py));
+                    }
+                }
+                bounds
+            })
+            .reduce(|| (f64::MAX, f64::MAX, f64::MIN, f64::MIN), box_of);
+        let start = |v: f64| (v - TAP).floor().max(0.0) as usize;
+        let end = |v: f64, limit: usize| ((v + TAP).ceil().max(0.0) as usize + 1).min(limit);
+        let (x0, y0) = (start(left), start(top));
+        (x0, y0, end(right, self.source_width) - x0, end(bottom, self.source_height) - y0)
+    }
+
     /// A warp for a lens that moves pixels or lifts corners, or None when it would be
     /// an identity gather.
     pub fn for_lens(
@@ -2020,7 +2140,7 @@ impl Strengths {
     /// The defringe reads a five-point Laplacian and nothing else, so it reaches one pixel.
     /// Richardson-Lucy adds the point spread once per convolution, twice per iteration, and
     /// the anti-ringing clamp adds its own window on top.
-    fn halo(&self) -> usize {
+    pub fn halo(&self) -> usize {
         let fringe = usize::from(self.defringe > 0.0);
         let deconvolve = match self.sharpen > 0.0 {
             true => 2 * DECONVOLVE_RADIUS * DECONVOLVE_ITERATIONS + DECONVOLVE_RADIUS,
@@ -2178,6 +2298,73 @@ mod tests {
     /// both reach, so a frame that agrees strip by strip with one stage off says nothing
     /// about the other.
     const EVERY_STAGE: Strengths = Strengths { sharpen: 0.6, defringe: 0.5 };
+
+    /// A lens that moves pixels every way this gather can be asked to: a radial curve, a rescale,
+    /// a vignette and a lateral shift per channel.
+    fn bent() -> crate::fit::Lens {
+        crate::fit::Lens {
+            distortion: Some(vec![0.0, 0.004, 0.011, 0.022, 0.038]),
+            crop: 1.02,
+            falloff: Some((0.31, -0.04)),
+            tca: Some([vec![0.0, 0.0004, 0.0009], vec![0.0, -0.0005, -0.0011]]),
+        }
+    }
+
+    /// A window of the frame's gather is the frame's gather, over that window.
+    ///
+    /// **The whole of what a loupe tile needs from the lens.** A tile is a rectangle of the
+    /// corrected picture, and it used to be produced by warping its crop as though the crop were
+    /// the photograph - a different correction, at a different radius, from a different place. So
+    /// what this asks is the only thing that makes a tile the export's pixels: take the window
+    /// out of a frame warped whole, and take the same window warped alone, and get the same
+    /// numbers. Exactly the same, not nearly: both are the same table read at the same radius.
+    #[test]
+    fn a_window_of_the_gather_is_the_gather_over_that_window() {
+        let (width, height) = (320usize, 240usize);
+        let frame: Vec<u16> = (0..width * height * 3)
+            .map(|i| ((i * 7919) % 60000 + 2000) as u16)
+            .collect();
+        let lens = bent();
+        let whole = PlanarWarp::for_lens(width, height, width, height, &lens, Sampling::Bicubic)
+            .expect("the lens bends")
+            .apply_u16(&frame);
+
+        for window in [(0, 0, width, height), (40, 30, 64, 48), (width - 70, height - 50, 64, 48)] {
+            let probe =
+                PlanarWarp::for_lens_window((width, height), window, (0, 0, width, height), &lens, Sampling::Bicubic)
+                    .expect("the lens bends");
+            let region = probe.footprint();
+            assert!(
+                region.0 + region.2 <= width && region.1 + region.3 <= height,
+                "{region:?} is not inside the frame",
+            );
+
+            // The decode a caller would do, which is the region and nothing else.
+            let mut cut = vec![0u16; region.2 * region.3 * 3];
+            for row in 0..region.3 {
+                let from = ((region.1 + row) * width + region.0) * 3;
+                let to = row * region.2 * 3;
+                cut[to..to + region.2 * 3].copy_from_slice(&frame[from..from + region.2 * 3]);
+            }
+            let tile =
+                PlanarWarp::for_lens_window((width, height), window, region, &lens, Sampling::Bicubic)
+                    .expect("the lens bends")
+                    .apply_u16(&cut);
+
+            for row in 0..window.3 {
+                for col in 0..window.2 {
+                    for channel in 0..3 {
+                        let from = ((window.1 + row) * width + window.0 + col) * 3 + channel;
+                        let to = (row * window.2 + col) * 3 + channel;
+                        assert_eq!(
+                            whole[from], tile[to],
+                            "{window:?} differs at {col},{row} channel {channel}",
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn resizes_to_a_long_edge_keeping_aspect() {

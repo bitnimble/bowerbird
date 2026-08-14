@@ -5,7 +5,7 @@
 // questions was an end-to-end run that opened a real RAW - which could only say that *something*
 // changed, and said it slowly.
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { RawEditPresenter } from '../raw_edit_presenter';
+import { RawEditPresenter, TILE_QUIET_MS } from '../raw_edit_presenter';
 import { RawEditStore } from '../raw_edit_store';
 import type { Region } from '../gpu/edit_pipeline';
 import { neutralEdits } from '../../../../../src/schemas/photo_edits';
@@ -105,6 +105,20 @@ class Pipeline {
 
   attachLoupe(): void {
     /* the canvas is the component's, and nothing here has one */
+  }
+
+  /**
+   * What the tick last measured the scene's top end to be, in nits.
+   *
+   * The real one reads it back off the GPU per tile request, because it moves with every slider;
+   * a tile handed nothing rolls its highlights into whatever its own crop reached.
+   */
+  scenePeakNits: number | null = 4130.5;
+  scenePeakCalls = 0;
+
+  scenePeak(): Promise<number | null> {
+    this.scenePeakCalls += 1;
+    return Promise.resolve(this.scenePeakNits);
   }
 
   /** The words the shader would be handed for the last frame asked for. */
@@ -720,5 +734,33 @@ describe('the loupe', () => {
     expect(store.tool).toBe('loupe');
     expect(store.cropping).toBe(false);
     expect(store.keystoning).toBe(false);
+  });
+
+  /**
+   * The tile a settled pointer asks for carries what the crop cannot measure about the photograph.
+   *
+   * Three things travel: the frame's noise fit and levels off the open, and the scene peak the
+   * tick measured on its last draw - which is why the peak is *read* here rather than kept, and
+   * why this asserts the pipeline was asked for one. Without it the server measures all three off
+   * the few hundred thousand pixels under the glass, which is the class of fault the loupe has
+   * had three of.
+   *
+   * The request itself goes nowhere - there is no server under a unit test - and it does not need
+   * to: `tile_path.test.ts` pins what the query says, and what this catches is the wiring in
+   * between, which throws rather than lying when it is wrong.
+   */
+  test('asks the tick for the scene peak when the pointer settles', async () => {
+    fitted();
+    store.noiseFit = { alpha: 0.0001, sigmaSq: 0.000001, unifiedSigma: 1.19, darkRef: [0, 0, 0, 0] };
+    store.levels = { white: 8133, peak: 13783 };
+    // A photograph is open, which is what the tiles are addressed by; the rest of the harness
+    // stands in for an open the way `beforeEach` does for the device and the canvas.
+    Object.assign(presenter, { photoId: 'a-photo-id' });
+    presenter.setLoupe(true);
+    presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+    expect(pipeline.scenePeakCalls).toBe(0);
+
+    await Bun.sleep(TILE_QUIET_MS + 50);
+    expect(pipeline.scenePeakCalls).toBe(1);
   });
 });

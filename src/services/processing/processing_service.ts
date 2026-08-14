@@ -19,7 +19,7 @@ import type {
   RenditionSource,
 } from './processing_types';
 import { renderTile } from './rawshim_job';
-import type { JobAdjust, JobGeometry, NoiseFit } from './rawshim_job';
+import type { JobAdjust, JobGeometry, JobLevels, NoiseFit } from './rawshim_job';
 import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
@@ -291,6 +291,8 @@ export class ProcessingService {
     library: Library,
     tile: [number, number, number, number],
     noiseFit?: NoiseFit,
+    levels?: JobLevels,
+    scenePeak?: number,
   ): Buffer {
     const dataPath = getDataPath(library);
     return renderTile({
@@ -300,6 +302,12 @@ export class ProcessingService {
       // own noise, which is between half and half again the photograph's, so the loupe would stop
       // predicting the export and start changing as the reader pans.
       noiseFit,
+      // The same argument about the grade rather than the denoise: a crop's own diffuse white is
+      // a third of the frame's over anything dark, and the whole picture is coded against it.
+      levels,
+      // And the top end, which the roll-off compresses into the display: a crop of shadow reaches
+      // nowhere near the photograph's, so its highlights would be rolled by a different curve.
+      scenePeak,
       targets: [],
       grade: this.grade(),
       matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,

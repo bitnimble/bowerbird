@@ -8,7 +8,7 @@ import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
 import { headerOf, prepareEditAsync } from '../../services/processing/rawshim_edit';
 import { readCameraMatch, writeCameraMatch } from '../../services/processing/camera_match_store';
-import { transcodeJpeg, type NoiseFit } from '../../services/processing/rawshim_job';
+import { transcodeJpeg, type JobLevels, type NoiseFit } from '../../services/processing/rawshim_job';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
 import type { BasicPhoto } from '../../services/photos/photos_repository';
@@ -35,6 +35,8 @@ type TileRenderer = (
   library: Library,
   tile: [number, number, number, number],
   noiseFit?: NoiseFit,
+  levels?: JobLevels,
+  scenePeak?: number,
 ) => Uint8Array;
 
 const JPEG_QUALITY = 92;
@@ -88,6 +90,36 @@ function noiseFitOf(words: string | undefined): NoiseFit | undefined {
     number,
   ];
   return { alpha, sigmaSq, unifiedSigma, darkRef };
+}
+
+/**
+ * The photograph's diffuse white and scene peak, off a tile request's `levels` parameter.
+ *
+ * The editor's open measured them over the whole frame and the loupe hands them back, for the
+ * reason `job::Base::build` gives: a crop's own quantile describes where the reader is pointing,
+ * so a tile that measured its own was coded against a white that moved with the glass. Dropped
+ * rather than refused when it is malformed, exactly as the fit above is - the far side can reach
+ * both answers itself, worse but not wrongly.
+ */
+function levelsOf(words: string | undefined): JobLevels | undefined {
+  if (words == null) return undefined;
+  const parts = words.split(',').map(Number);
+  if (parts.length !== 2 || parts.some((value) => !Number.isFinite(value))) return undefined;
+  const [white, peak] = parts as [number, number];
+  return { white, peak };
+}
+
+/**
+ * The frame's scene peak in nits, off a tile request's `scenePeak` parameter.
+ *
+ * The editor's tick measures it over the whole frame every time it draws; a tile left to measure
+ * its own rolls its highlights into whatever the crop reached. Dropped rather than refused when
+ * it is not a peak, as the two above are.
+ */
+function scenePeakOf(nits: string | undefined): number | undefined {
+  if (nits == null) return undefined;
+  const found = Number(nits);
+  return Number.isFinite(found) && found > 0 ? found : undefined;
 }
 
 // The viewer reports the weight of the rendition it is showing, and reads it off
@@ -210,6 +242,8 @@ export class ImageApi {
       library,
       [left, top, width, height],
       noiseFitOf(c.req.query('noise')),
+      levelsOf(c.req.query('levels')),
+      scenePeakOf(c.req.query('scenePeak')),
     );
     log.info('rendered a loupe tile', {
       photoId,

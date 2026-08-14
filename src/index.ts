@@ -120,10 +120,11 @@ const photosApi = new PhotosApi(photosService, processingService);
 const albumsApi = new AlbumsApi(albumsService, photosService);
 const shootsApi = new ShootsApi(shootsService, photosService);
 const stacksApi = new StacksApi(stacksService, photosService);
-const imageApi = new ImageApi(photosService, settingsRepo, {
-  renderTile: (rawFilePath, photoId, library, tile, noiseFit) =>
-    processingService.renderTile(rawFilePath, photoId, library, tile, noiseFit),
-});
+// The service itself rather than an arrow forwarding its arguments. TypeScript accepts a
+// function that declares *fewer* parameters than the type it satisfies, so an arrow here silently
+// drops whatever the route learns to send next - which is how the loupe's `levels` and
+// `scenePeak` reached this line and went no further, leaving every tile measuring its own.
+const imageApi = new ImageApi(photosService, settingsRepo, processingService);
 
 // With no configured allowlist, mirror back any origin on the same host the
 // request arrived at (plus loopback). That lets the web client work on

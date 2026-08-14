@@ -102,6 +102,26 @@ pub struct Job {
     /// loupe wants and what a client too old to send it gets.
     #[serde(default)]
     pub noise_fit: Option<crate::galosh::NoiseFit>,
+    /// The whole frame's diffuse white and scene peak, for a tile that would otherwise read its
+    /// crop's.
+    ///
+    /// Only a tile reads it, and for the reason `noise_fit` above is here: everything downstream
+    /// is coded and graded against these two numbers, and a crop's own quantile is a property of
+    /// where the reader is pointing rather than of the photograph. A dark corner of the fixture
+    /// reads a diffuse white a third of the frame's, so a loupe over it lifted the crop to
+    /// reference white and rolled nothing.
+    #[serde(default)]
+    pub levels: Option<tone::Levels>,
+    /// The whole frame's scene peak in nits, as the editor's tick measured it, for a tile whose
+    /// crop reaches nowhere near it.
+    ///
+    /// The third thing only a tile is handed, and the last of the three: it is what the highlight
+    /// roll-off compresses into the display, measured on the GPU through the whole colour
+    /// transform, so a crop measuring its own rolls a different curve from the picture the loupe
+    /// is held over. Unlike the other two it moves with the reader's edits, which is why it comes
+    /// per request rather than once at the open.
+    #[serde(default)]
+    pub scene_peak: Option<f64>,
     /// This photograph's camera match, if the caller has one stored (`crate::camera_match`).
     ///
     /// Fitting it is half a second and depends on nothing but the file, so a caller that keeps
@@ -271,41 +291,47 @@ fn save_avif(image: crate::rgb::RgbRef<'_>, target: &Target) -> Result<(), Strin
 /// to, the coding, the camera match, and the denoise. What is left per target is the resize,
 /// the warp, and then one dispatch carrying the colour transform, the roll-off into that
 /// display's peak and the transfer - followed by the encode.
-struct Base {
+pub(crate) struct Base {
     /// Normalised PQ Rec.2020 (`tone::encode_base`), denoised and defringed, at the largest
     /// size any target wants.
-    samples: Vec<u16>,
-    width: usize,
-    height: usize,
+    pub(crate) samples: Vec<u16>,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
     /// The frame's own diffuse white and scene peak, off the *unresized* decode, and the pair
     /// the samples above were coded against.
-    levels: tone::Anchored,
-    matched: Option<crate::hdr_fit::HdrMatch>,
+    pub(crate) levels: tone::Anchored,
+    pub(crate) matched: Option<crate::hdr_fit::HdrMatch>,
     /// The match this build had to fit, for the caller to keep. None where it supplied one.
-    fitted_now: Option<Vec<u8>>,
+    pub(crate) fitted_now: Option<Vec<u8>>,
     /// The illuminant the decode balanced against, which the stored temperature and tint move
     /// away from. Read off the processor and carried, because the decode is the only place it
     /// exists.
-    as_shot: Option<crate::white_balance::AsShot>,
+    pub(crate) as_shot: Option<crate::white_balance::AsShot>,
+    /// For a tile, where the rectangle asked for sits inside the larger one decoded for it.
+    asked: Option<Grown>,
 }
 
 impl Base {
-    fn build(job: &Job, size: u32) -> Result<Base, String> {
+    pub(crate) fn build(job: &Job, size: u32) -> Result<Base, String> {
         // Denoised inside the decode, on the mosaic, which is the only place the noise is
         // still one photosite's own (`crate::galosh`).
         //
         // A tile takes the same route with the demosaic and the denoise both restricted to it,
         // and at the sensor's own scale: a loupe is magnifying, so fitting the tile to a size
         // would throw away the pixels it exists to show.
-        let frame = match job.tile {
+        // Refused rather than falling through to the whole frame: a tile that cannot be placed in
+        // its photograph is a magnifier of nothing, and decoding 24 megapixels to answer a request
+        // for a few hundred thousand is the one mistake this route exists to avoid.
+        let asked = job.tile.map(|tile| grown(job, tile)).transpose()?;
+        let frame = match &asked {
             // `job.noise_fit` is the frame's, measured at the editor's open and handed back with
             // the request: a tile that fits its own is denoised at its own crop's strength rather
             // than the photograph's, which is a loupe that disagrees with the export it exists to
             // predict and changes as the reader pans. Refused rather than trusted where it does
             // not describe a sensor, since it crosses the API from a client.
-            Some([left, top, width, height]) => crate::decode_tile(
+            Some(grown) => crate::decode_tile(
                 &job.raw_file_path,
-                crate::Tile { left, top, width, height },
+                grown.decode,
                 16,
                 true,
                 job.amounts(),
@@ -319,6 +345,20 @@ impl Base {
         }
         .ok_or("could not decode the RAW scene-linear")?;
         let (width, height) = (frame.width, frame.height);
+        // What came back is the rectangle that was asked for, or nothing is: `decode_tile` trims
+        // its region to whole CFA sites and takes the trim off the *far* edge, so a region flush
+        // against the sensor's own can come back a pixel short - and everything below is sized
+        // from the window rather than from this, down to the buffer the GPU is handed. Refused
+        // rather than corrected, because a tile one pixel narrower than the reader asked for is
+        // not the rectangle the glass is drawing.
+        if let Some(grown) = &asked {
+            if (width, height) != (grown.decode.width, grown.decode.height) {
+                return Err(format!(
+                    "the decoder answered {width}x{height} for a {}x{} region",
+                    grown.decode.width, grown.decode.height,
+                ));
+            }
+        }
 
         // Fitted once, before anything is written: every rendition of one photo has to get
         // the same transform, and the render has to match the camera's JPEG the grid tile is
@@ -340,7 +380,17 @@ impl Base {
             .ok_or("the render needs a 16-bit scene-linear decode")?;
         // Floored here and carried, so the white the frame is *coded* against and the white
         // the shader is told about are one number rather than two computed alike.
-        let levels = tone::levels(&samples, job.grade.white_quantile).anchored();
+        //
+        // The editor's, where a tile was handed them: a quantile of a crop describes where the
+        // reader is pointing rather than the photograph, so a tile measuring its own is graded
+        // against a white that changes as the loupe moves - and over anything dark, against one
+        // far below the frame's, which lifts the crop to reference white. Refused rather than
+        // trusted where they do not describe a frame, since they cross the API from a client.
+        let levels = match job.levels.filter(|_| job.tile.is_some()).filter(tone::Levels::usable) {
+            Some(given) => given,
+            None => tone::levels(&samples, job.grade.white_quantile),
+        }
+        .anchored();
         // Read off the levels and coded against them, once, here. Everything below this line
         // - the filters, the resize, the warp, the shader - reads normalised PQ rather than
         // sensor levels, and `tone::encode_base` says what that buys.
@@ -351,8 +401,139 @@ impl Base {
         // pixels of the frame they read, so this is the one size at which they mean what they
         // were tuned to mean.
         hdr::filter_base(&mut samples, width, height, job.strengths().before_the_fit());
-        Ok(Base { samples, width, height, levels, matched, as_shot, fitted_now })
+        Ok(Base { samples, width, height, levels, matched, as_shot, fitted_now, asked })
     }
+}
+
+/// What a tile request becomes: a region to decode, the window of the corrected frame to build
+/// out of it, and where the rectangle actually asked for sits inside that window.
+struct Grown {
+    /// The part of the *uncorrected* frame to decode, which the lens decides.
+    decode: crate::Tile,
+    /// The window of the corrected frame to produce: `(left, top, width, height)` in the
+    /// photograph's own pixels.
+    window: (usize, usize, usize, usize),
+    /// `[left, top, width, height]` of the asked-for tile within that window.
+    keep: [usize; 4],
+    /// The photograph the window is a piece of.
+    frame: (usize, usize),
+    /// Its lens, resolved once here so the footprint and the gather cannot disagree about
+    /// whether there is one.
+    lens: Option<crate::fit::Lens>,
+}
+
+/// How far past a tile the presence sliders read, in the photograph's pixels.
+///
+/// **The guided filter is two windows deep**, and both are fractions of the working texture the
+/// blur is built on - so in the picture's own pixels the reach is that fraction of the whole
+/// photograph, whatever size the frame holding it is. A tile without it fits its models against
+/// an edge the photograph does not have, and the Clarity along the rim of the glass is a filter
+/// looking at nothing.
+///
+/// Zero where none of the three is asked for, which is what most tiles are: this is four times
+/// the decode for a 400px tile, and it buys nothing at all when the sliders are at rest.
+fn presence_reach(job: &Job, frame: (usize, usize)) -> usize {
+    let presence = [job.adjust.clarity, job.adjust.texture, job.adjust.dehaze];
+    if presence.iter().all(|value| *value == 0.0) {
+        return 0;
+    }
+    let long = frame.0.max(frame.1);
+    let working = crate::gpu::detail_long(long);
+    // Texels of the working texture, then back into the photograph's own pixels at the rate that
+    // texture shrinks it by - rounded up, because a reach one pixel short is a filtered edge.
+    crate::gpu::detail_reach(working) * long.div_ceil(working.max(1) as usize)
+}
+
+/// Everything a tile's rectangle implies, before anything is read off the disk.
+///
+/// **A tile is a rectangle of the corrected picture, not of the sensor.** That is what the client
+/// names - its frame is `edit::open`'s, with the lens already materialised into it - and what a
+/// rendition would write there. Two things follow, and neither was true before:
+///
+/// - The gather has to be the *frame's*, over this window ([`image::PlanarWarp::for_lens_window`]).
+///   A crop warped as though it were the photograph corrects at the wrong radius and lifts its own
+///   corners as if they were the frame's.
+/// - What to decode is then whatever that window gathers *from*, which the warp itself answers.
+///   The distortion moves a corner of a 24MP frame by tens of pixels, so the region is not the
+///   window and cannot be assumed to be.
+///
+/// On top of that the window is grown by the reach of everything that runs after the gather. **A
+/// deconvolution reads 42 pixels past what it writes** (`image::Strengths::halo`): the decode's
+/// own halo is eaten by the demosaic and the mosaic denoise long before the sharpen, so a tile
+/// built at exactly the rectangle asked for rings along all four edges - and the loupe's tile is
+/// only half again its glass, so at high magnification that ringing is inside what the reader is
+/// looking at. [`graded`] cuts the window back to `keep` once every one of those stages has run.
+///
+/// Refuses a rectangle that is not inside the photograph, and a file that will not say how large
+/// the photograph is - which is the same case `decode_tile` declines, reported here because this
+/// runs first and the two failures are not the same thing to read in a log.
+fn grown(job: &Job, [left, top, width, height]: [usize; 4]) -> Result<Grown, String> {
+    let header = crate::header::read_path(&job.raw_file_path)
+        .ok_or("the file will not say how large the photograph is")?;
+    let frame = (header.width as usize, header.height as usize);
+    if left + width > frame.0 || top + height > frame.1 {
+        return Err(format!(
+            "a tile of {width}x{height} at {left},{top} is outside a {}x{} photograph",
+            frame.0, frame.1,
+        ));
+    }
+    // The stored match's, and only where this job would grade through one at all: `matched_for`
+    // makes the same choice for the colour, and a footprint measured for a lens the gather then
+    // does not apply would decode the wrong region.
+    let lens = match job.match_embedded_jpeg {
+        true => job
+            .camera_match
+            .as_deref()
+            .and_then(crate::camera_match::decode)
+            .map(|matched| matched.lens)
+            .filter(|lens| !lens.is_identity()),
+        false => None,
+    };
+
+    // **Added, not maxed: the two stages are sequential and each reads what the one before it
+    // wrote.** The blur the presence sliders read is built from the *sharpened* window, so a kept
+    // pixel needs every pixel the blur averages into it to be far enough inside the window that
+    // the deconvolution had real context there - the blur's reach *plus* the sharpen's, not
+    // whichever is larger. At `max` the outermost 42 pixels of the window are sharpened against a
+    // clamped edge and the blur reads them, which is a tile that differs from its export in
+    // exactly the case a reader is most likely to have set up: Clarity on a sharpened photograph.
+    let reach = job.strengths().halo() + presence_reach(job, frame);
+    // Down to a whole texel of the blur's working texture, which is what lets that texture be the
+    // photograph's own texels rather than a set of its own between them (`gpu::detail_step`).
+    let step = crate::gpu::detail_step(frame.0.max(frame.1)) as usize;
+    let start = |value: usize| (value.saturating_sub(reach) / step) * step;
+    let (window_left, window_top) = (start(left), start(top));
+    let window = (
+        window_left,
+        window_top,
+        (left + width + reach).min(frame.0) - window_left,
+        (top + height + reach).min(frame.1) - window_top,
+    );
+    let keep = [left - window_left, top - window_top, width, height];
+
+    // What that window reads. Built against the whole frame first because the answer is the
+    // question - the gather has to exist before it can say what it gathers from - and it is a
+    // couple of tables either way.
+    let decode = match lens.as_ref().and_then(|lens| {
+        crate::image::PlanarWarp::for_lens_window(
+            frame,
+            window,
+            (0, 0, frame.0, frame.1),
+            lens,
+            crate::image::Sampling::Bicubic,
+        )
+    }) {
+        Some(probe) => probe.footprint(),
+        // Nothing to correct, so the window is its own region.
+        None => window,
+    };
+    Ok(Grown {
+        decode: crate::Tile { left: decode.0, top: decode.1, width: decode.2, height: decode.3 },
+        window,
+        keep,
+        frame,
+        lens,
+    })
 }
 
 /// This photograph's camera match: the caller's, if it kept one, and otherwise a fresh fit for
@@ -428,27 +609,7 @@ const TILE_SPEED: i32 = 10;
 ///
 /// No size fitting: a magnifier that resampled would be answering a different question.
 pub fn tile(job: &Job) -> Option<Vec<u8>> {
-    // A tile discards the match it may have fitted: the caller keeps one off the paths that
-    // build a whole photograph, and a loupe is not the place to be writing to a catalogue.
-    let Base { samples, width, height, levels, matched, as_shot, fitted_now: _ } =
-        Base::build(job, 0).ok()?;
-    let source = crate::hdr::Source { samples: &samples, width, height };
-    let scene = crate::tone::SceneGrade::new(
-        matched.as_ref().map(|m| &m.colour),
-        levels,
-        job.grade.reference_white_nits,
-        job.exposure,
-        job.adjust,
-        as_shot,
-    );
-    let (coded, out_width, out_height) = crate::hdr::graded_with(
-        &source,
-        &scene,
-        matched.as_ref().map(|m| &m.lens),
-        crate::hdr_args::Size { width: width as u32, height: height as u32 },
-        job.grade.peak_nits,
-        crate::gpu::Output::Pq,
-    );
+    let (coded, out_width, out_height) = graded(job)?;
     let (primaries, transfer, matrix) = crate::hdr_args::cicp();
     crate::avif::encode_still(
         std::borrow::Cow::Owned(coded),
@@ -462,6 +623,94 @@ pub fn tile(job: &Job) -> Option<Vec<u8>> {
         },
     )
     .ok()
+}
+
+/// The tile's pixels, before an encoder has been anywhere near them.
+///
+/// Split from the encode so a test can hold a tile against the same rectangle of the whole
+/// render, which is the claim the loupe makes and the one an AVIF cannot be asked about.
+pub(crate) fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
+    // A tile discards the match it may have fitted: the caller keeps one off the paths that
+    // build a whole photograph, and a loupe is not the place to be writing to a catalogue.
+    let Base { samples, width, height, levels, matched, as_shot, asked, fitted_now: _ } =
+        Base::build(job, 0).ok()?;
+    // A job with no rectangle is not a tile: this whole path is the window and what surrounds it,
+    // and the route that reaches here refuses a request without one long before the decode.
+    let grown = asked?;
+    let scene = crate::tone::SceneGrade::new(
+        matched.as_ref().map(|m| &m.colour),
+        levels,
+        job.grade.reference_white_nits,
+        job.exposure,
+        job.adjust,
+        as_shot,
+    );
+
+    // The frame's own gather, over this window of it. Not `Cut::from_base`, which would take the
+    // crop for the whole photograph and correct it at its own radius; the reader's geometry is not
+    // applied either, because a tile is named in coordinates that already carry it.
+    let mut cut = crate::hdr::Cut {
+        samples: match grown.lens.as_ref().and_then(|lens| {
+            crate::image::PlanarWarp::for_lens_window(
+                grown.frame,
+                grown.window,
+                (grown.decode.left, grown.decode.top, width, height),
+                lens,
+                crate::image::Sampling::Bicubic,
+            )
+        }) {
+            Some(warp) => warp.apply_u16(&samples),
+            // No optics to correct, so the region decoded is the window itself.
+            None => samples,
+        },
+        width: grown.window.2,
+        height: grown.window.3,
+    };
+    // As `run` sharpens, and where it sharpens: the deconvolution undoes the *gather's* own
+    // resample, so it belongs after it and before the colour transform. A tile skipped it
+    // entirely, and showed a softer photograph than the export at the one magnification a reader
+    // could have seen the difference at.
+    cut.sharpen(job.sharpen);
+    let (samples, width, height) = (cut.samples, cut.width, cut.height);
+
+    let gpu = crate::gpu::device()?;
+    let grade = crate::gpu::Grade {
+        // The photograph's, where this frame is a window on one: `detail.wgsl` blurs at a
+        // fraction of it, and a tile answering from its own dimensions would apply a Clarity
+        // twelve times finer than the export's.
+        photograph_long: grown.frame.0.max(grown.frame.1),
+        ..scene.gpu_grade(width, height, job.grade.peak_nits, crate::gpu::Output::Pq)
+    };
+    // The editor's, where it sent one: the roll-off's input is a reduction over the frame it is
+    // handed, so a tile left to measure its own compresses its highlights into whatever the crop
+    // happens to reach. Nothing is refused here - `peak.wgsl` floors its own answer at one nit
+    // and this takes the same floor - since a number that is not a peak is a picture rather than
+    // a failure.
+    let peak = match job.scene_peak.filter(|nits| nits.is_finite() && *nits >= 1.0) {
+        Some(nits) => gpu.given_peak(nits as f32),
+        None => gpu.scene_peak(),
+    };
+    let coded = gpu.upload(&samples, &grade, &peak).encode(&grade);
+
+    // **Last, after the grade rather than before it.** The presence sliders read a blur built
+    // from the frame that goes up, so the window has to still be carrying its halo when it does -
+    // cutting first would leave the guided filter fitting its models against an edge that is not
+    // in the photograph.
+    Some(keep_only(coded, width, grown.keep))
+}
+
+/// One rectangle of a graded frame, which for a tile is the part of it the reader asked for.
+fn keep_only(
+    frame: Vec<u16>,
+    stride: usize,
+    [left, top, width, height]: [usize; 4],
+) -> (Vec<u16>, usize, usize) {
+    let mut samples = Vec::with_capacity(width * height * 3);
+    for row in 0..height {
+        let from = ((top + row) * stride + left) * 3;
+        samples.extend_from_slice(&frame[from..from + width * 3]);
+    }
+    (samples, width, height)
 }
 
 /// Everything one photo owes, in the order that shares the most work.
@@ -500,7 +749,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         return Ok(outcome);
     }
 
-    let Base { samples, width, height, levels, matched, as_shot, fitted_now } =
+    let Base { samples, width, height, levels, matched, as_shot, fitted_now, asked: _ } =
         Base::build(job, largest_size(&rendered))?;
     outcome.camera_match = fitted_now;
     let lens = matched.as_ref().map(|m| &m.lens);
@@ -630,5 +879,53 @@ fn write(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The loupe's job, as `rawshim_job.ts` renders it.
+    ///
+    /// The two whole-frame quantities a tile is handed are the only fields on this struct that
+    /// nothing on either side reads, so a rename or a shape that stopped matching would not
+    /// surface as an error anywhere: serde would leave them `None` and the tile would quietly go
+    /// back to measuring its crop's. Which is a picture, and a plausible one - the grade still
+    /// runs, on a diffuse white that belongs to wherever the reader happened to be pointing.
+    #[test]
+    fn a_tile_job_carries_what_the_crop_cannot_measure() {
+        let job: Job = serde_json::from_str(
+            r#"{
+                "rawFilePath": "/photos/a.arw",
+                "matchEmbeddedJpeg": true,
+                "tile": [100, 200, 256, 256],
+                "noiseFit": {
+                    "alpha": 0.0001502,
+                    "sigmaSq": 0.0000011,
+                    "unifiedSigma": 1.1928239,
+                    "darkRef": [0.1, -0.02, 0.33, 0.4]
+                },
+                "levels": { "white": 8133.5, "peak": 13783 },
+                "scenePeak": 4130.5,
+                "denoiseLuminance": 20,
+                "denoiseColour": 30,
+                "sharpen": 1,
+                "defringe": 1,
+                "exposure": 0.5,
+                "grade": {
+                    "peakNits": 1000,
+                    "referenceWhiteNits": 203,
+                    "whiteQuantile": 0.9
+                },
+                "targets": []
+            }"#,
+        )
+        .expect("the job the tile route sends parses");
+
+        assert_eq!(job.tile, Some([100, 200, 256, 256]));
+        assert_eq!(job.levels, Some(tone::Levels { white: 8133.5, peak: 13783.0 }));
+        assert_eq!(job.scene_peak, Some(4130.5));
+        assert_eq!(job.noise_fit.map(|fit| fit.alpha), Some(0.0001502));
+    }
 }
 

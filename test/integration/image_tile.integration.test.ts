@@ -13,7 +13,7 @@ import { ImageApi } from '../../src/api/image/image_api';
 import type { Library } from '../../src/schemas/libraries';
 import type { BasicPhoto } from '../../src/services/photos/photos_repository';
 import type { PhotosService } from '../../src/services/photos/photos_service';
-import type { NoiseFit } from '../../src/services/processing/rawshim_job';
+import type { JobLevels, NoiseFit } from '../../src/services/processing/rawshim_job';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { DEFAULT_SETTINGS } from '../../src/schemas/settings';
 import { dataPathForLibraryId } from '../../src/utils/paths';
@@ -27,6 +27,8 @@ let root: string;
 let server: ReturnType<typeof Bun.serve>;
 let origin: string;
 let asked: NoiseFit | undefined;
+let askedLevels: JobLevels | undefined;
+let askedPeak: number | undefined;
 
 beforeAll(() => {
   root = mkdtempSync(path.join(tmpdir(), 'bb-tile-'));
@@ -61,8 +63,10 @@ beforeAll(() => {
   app.route(
     '/image',
     new ImageApi(photos, settingsForTest(), {
-      renderTile: (_raw, _photoId, _library, _tile, noiseFit) => {
+      renderTile: (_raw, _photoId, _library, _tile, noiseFit, levels, scenePeak) => {
         asked = noiseFit;
+        askedLevels = levels;
+        askedPeak = scenePeak;
         return new Uint8Array([1, 2, 3]);
       },
     }).routes,
@@ -125,4 +129,45 @@ test.each([
   const res = await fetch(`${origin}/image/p1/tile?${RECT}&noise=${noise}`);
   expect(res.status).toBe(200);
   expect(asked).toBeUndefined();
+});
+
+// The frame's diffuse white and scene peak, which the crop cannot measure for itself: the base is
+// coded by dividing by white, so a tile that reads its own lifts a dark part of a photograph
+// towards reference white and rolls its highlights into a peak barely above it.
+test('a tile carries the levels the editor measured', async () => {
+  const res = await fetch(`${origin}/image/p1/tile?${RECT}&levels=8133.5,13783`);
+  expect(res.status).toBe(200);
+  expect(askedLevels).toEqual({ white: 8133.5, peak: 13783 });
+});
+
+test.each([
+  ['too few numbers', '8133'],
+  ['too many', '8133,13783,1'],
+  ['not numbers', 'white,peak'],
+  ['empty', ''],
+])('a %s levels parameter is ignored', async (_name, levels) => {
+  askedLevels = { white: 1, peak: 1 };
+  const res = await fetch(`${origin}/image/p1/tile?${RECT}&levels=${levels}`);
+  expect(res.status).toBe(200);
+  expect(askedLevels).toBeUndefined();
+});
+
+// The third whole-frame quantity, and the one that moves with the reader's sliders: what the
+// highlight roll-off compresses into the display, measured by the editor's own tick.
+test('a tile carries the scene peak the tick measured', async () => {
+  const res = await fetch(`${origin}/image/p1/tile?${RECT}&scenePeak=4130.5`);
+  expect(res.status).toBe(200);
+  expect(askedPeak).toBe(4130.5);
+});
+
+test.each([
+  ['zero', '0'],
+  ['negative', '-1'],
+  ['not a number', 'bright'],
+  ['empty', ''],
+])('a %s scene peak is ignored', async (_name, peak) => {
+  askedPeak = 1;
+  const res = await fetch(`${origin}/image/p1/tile?${RECT}&scenePeak=${peak}`);
+  expect(res.status).toBe(200);
+  expect(askedPeak).toBeUndefined();
 });

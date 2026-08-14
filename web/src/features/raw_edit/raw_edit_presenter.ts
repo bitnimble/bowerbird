@@ -21,7 +21,7 @@ import {
   editFeatures,
   editLimits,
 } from './gpu/edit_pipeline';
-import type { NoiseFit } from '../../../../src/services/processing/rawshim_job';
+import type { JobLevels, NoiseFit } from '../../../../src/services/processing/rawshim_job';
 import { readSetting, writeSetting } from '../../app/local_setting';
 import {
   LOUPE_MAX_MAGNIFICATION,
@@ -58,7 +58,7 @@ const DENOISE_QUIET_MS = 120;
  * costs sharpness the reader has not asked for yet, where waiting on the denoise costs them the
  * answer to the slider they are holding.
  */
-const TILE_QUIET_MS = 200;
+export const TILE_QUIET_MS = 200;
 
 const CROP_TO_FIT_KEY = 'bowerbird.edit.cropToFit';
 
@@ -472,7 +472,17 @@ export class RawEditPresenter {
       if (photoId != null && this.tiles == null) {
         this.tiles = new LoupeTiles(
           photoId,
-          (id, rect, signal) => fetchTile(id, rect, signal, this.store.noiseFit),
+          async (id, rect, signal) =>
+            fetchTile(
+              id,
+              rect,
+              signal,
+              this.store.noiseFit,
+              this.store.levels,
+              // Read now rather than kept on the store: it is the tick's own measurement and it
+              // moves with every slider, so the current one is the one this tile is graded with.
+              (await this.pipeline?.scenePeak()) ?? null,
+            ),
           // A tile landing is not a state change anything renders from directly - the glass is
           // a canvas - so this asks for the draw that will put it there.
           () => this.drawLoupe(this.store.loupeBox),
@@ -1073,6 +1083,7 @@ export class RawEditPresenter {
     this.store.matched = false;
     this.store.asShot = null;
     this.store.noiseFit = null;
+    this.store.levels = null;
   }
 
   @action.bound
@@ -1090,6 +1101,7 @@ export class RawEditPresenter {
     this.store.matched = header.matched;
     this.store.asShot = header.asShot;
     this.store.noiseFit = header.noiseFit ?? null;
+    this.store.levels = { white: header.white, peak: header.peak };
     // Whatever the document already says - an imported sidecar routinely arrives cropped - so
     // the first frame drawn is the picture rather than the frame it was taken out of. The frame
     // has only just arrived, so this is the first shape there has been and it seeds the region.
@@ -1135,8 +1147,11 @@ async function fetchTile(
   rect: TileRect,
   signal: AbortSignal,
   noiseFit: NoiseFit | null,
+  levels: JobLevels | null,
+  scenePeak: number | null,
 ): Promise<Blob> {
-  const reply = await send('get:tile', 'GET', tilePath(photoId, rect, noiseFit), undefined, signal);
+  const path = tilePath(photoId, rect, noiseFit, levels, scenePeak);
+  const reply = await send('get:tile', 'GET', path, undefined, signal);
   if (reply.status < 200 || reply.status >= 300) {
     throw new Error(`could not render that tile: ${reply.status}`);
   }

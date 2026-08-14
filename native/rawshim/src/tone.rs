@@ -161,13 +161,25 @@ fn sample_at(k: usize, pixels: usize, counted: usize) -> usize {
 /// anyway". This makes that threshold explicit and repeatable instead of accidental.
 const PEAK_QUANTILE: f64 = 0.9999;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Levels {
     pub white: f64,
     pub peak: f64,
 }
 
 impl Levels {
+    /// Whether these are levels to be handed rather than ones to refuse and measure again.
+    ///
+    /// For the one caller that does not measure its own - a loupe tile, whose crop is not the
+    /// photograph these describe - so they arrive across the API from a client and are no longer
+    /// the decode's own arithmetic. Wide on purpose: a white below one is what [`anchored`]
+    /// floors anyway, and a peak under it would roll the highlights the wrong way.
+    ///
+    /// [`anchored`]: Levels::anchored
+    pub fn usable(&self) -> bool {
+        self.white.is_finite() && self.peak.is_finite() && self.white >= 1.0 && self.peak >= self.white
+    }
+
     /// The same levels with a white the pipeline can divide by.
     ///
     /// **One floor, in one place.** Both the coding and the grade divide by diffuse white, and
@@ -326,6 +338,8 @@ impl<'a> SceneGrade<'a> {
         crate::gpu::Grade {
             width,
             height,
+            // Its own, which every whole frame's is. A tile overrides it with the photograph's.
+            photograph_long: width.max(height),
             colour: self.matched,
             white: self.levels.white,
             source_level: self.levels.peak,

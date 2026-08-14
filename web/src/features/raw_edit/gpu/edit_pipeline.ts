@@ -789,10 +789,18 @@ export class EditPipeline {
     });
     const momentsLayout = this.device.createBindGroupLayout({ entries: [read16, wrote32] });
     const boxLayout = this.device.createBindGroupLayout({ entries: [read32, wrote32] });
+    // Both of these read `edit.detail_long`, which is how wide the window is as a share of the
+    // *photograph* rather than of the texture in front of them - the same texture holds a whole
+    // frame here and a loupe tile on the server.
+    const uniform = { binding: 0, visibility: COMPUTE, buffer: { type: 'uniform' as const } };
     // The mean needs the guide as well as what it is averaging, to know which taps describe
     // the same surface as the texel it is writing.
-    const meanLayout = this.device.createBindGroupLayout({ entries: [read16, read32, wrote32] });
-    const applyLayout = this.device.createBindGroupLayout({ entries: [read16, read32, written] });
+    const meanLayout = this.device.createBindGroupLayout({
+      entries: [uniform, read16, read32, wrote32],
+    });
+    const applyLayout = this.device.createBindGroupLayout({
+      entries: [uniform, read16, read32, written],
+    });
 
     const module = this.device.createShaderModule({ code: DETAIL, label: 'detail' });
     const pipelineFor = (entryPoint: string, layout: GPUBindGroupLayout) =>
@@ -844,6 +852,7 @@ export class EditPipeline {
         ]);
       } else if (name === 'window_mean') {
         run(pipeline, meanLayout, [
+          { binding: 0, resource: { buffer: this.uniform } },
           { binding: 2, resource: this.base.createView() },
           { binding: 15, resource: held.createView() },
           { binding: 16, resource: spare.createView() },
@@ -851,6 +860,7 @@ export class EditPipeline {
         [held, spare] = [spare, held];
       } else if (name === 'apply_guided') {
         run(pipeline, applyLayout, [
+          { binding: 0, resource: { buffer: this.uniform } },
           { binding: 2, resource: this.base.createView() },
           { binding: 15, resource: held.createView() },
           { binding: 3, resource: this.detail.createView() },
@@ -1474,6 +1484,43 @@ export class EditPipeline {
         // whatever asked for a tick will find out from the tick.
       })
       .finally(() => counted.destroy());
+  }
+
+  /**
+   * The scene peak the last tick measured, in nits, for the loupe to send with a tile.
+   *
+   * **A tile is a crop, and this is a reduction over the frame.** The server would otherwise
+   * measure it over the few hundred thousand pixels the reader is pointing at, and the roll-off
+   * would compress the magnified highlights into whatever that crop reached - `renderLoupe` says
+   * why the tick refuses to do the same thing.
+   *
+   * Null where nothing has measured one: an unmatched frame grades its neutral arm and never
+   * runs the pass, which is the case the server also skips.
+   *
+   * Read on demand rather than kept current, because the demand is rare - a tile is asked for
+   * once the pointer has been still - and a readback per tick would be a stall per tick.
+   */
+  async scenePeak(): Promise<number | null> {
+    if (!this.header.matched) return null;
+    const staging = this.device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    try {
+      const encoder = this.device.createCommandEncoder();
+      encoder.copyBufferToBuffer(this.peak, 0, staging, 0, 4);
+      this.device.queue.submit([encoder.finish()]);
+      await staging.mapAsync(GPUMapMode.READ);
+      const nits = new Float32Array(staging.getMappedRange())[0] ?? 0;
+      staging.unmap();
+      return nits > 0 ? nits : null;
+    } catch {
+      // A device lost, or a frame that has never been drawn. The tile is rendered without it and
+      // measures its own, which is what every caller got before this existed.
+      return null;
+    } finally {
+      staging.destroy();
+    }
   }
 
   private measurePeak(encoder: GPUCommandEncoder): void {

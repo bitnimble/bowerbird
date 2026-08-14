@@ -57,6 +57,18 @@ export interface NoiseFit {
   darkRef: [number, number, number, number];
 }
 
+/**
+ * A photograph's diffuse white and scene peak, as `tone::Levels` measured them over the whole
+ * frame - the pair everything downstream is coded and graded against.
+ *
+ * Opaque here in the same way the fit above is: the editor's open reports them, the client holds
+ * them for the session, and a tile hands them back so the crop is graded as the photograph is.
+ */
+export interface JobLevels {
+  white: number;
+  peak: number;
+}
+
 export interface Job {
   rawFilePath: string;
   matchEmbeddedJpeg: boolean;
@@ -68,6 +80,22 @@ export interface Job {
    * editor behind it wants.
    */
   noiseFit?: NoiseFit;
+  /**
+   * The whole frame's levels, for a tile that would otherwise read its crop's.
+   *
+   * Only `renderTile` sends it, for the reason `noiseFit` above is: a crop's diffuse white is a
+   * property of where the loupe is pointing, and the grade divides by it. Absent means "measure
+   * them", which is right for every job that holds the whole frame.
+   */
+  levels?: JobLevels;
+  /**
+   * The whole frame's scene peak in nits, for a tile whose crop reaches nowhere near it.
+   *
+   * What the highlight roll-off compresses into the display, measured through the colour
+   * transform. Only `renderTile` sends it, and unlike the two above it moves with the reader's
+   * edits - so it is read off the editor's own tick per request rather than kept from the open.
+   */
+  scenePeak?: number;
   /**
    * One tile of the photograph rather than the whole of it: `[left, top, width, height]` in the
    * decoded image's own pixels, and only for `renderTile`.
