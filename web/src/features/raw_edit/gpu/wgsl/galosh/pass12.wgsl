@@ -194,34 +194,122 @@ fn pilot_block(at: i32) -> Block {
   );
 }
 
-/// How many of a row's magnitudes sort at or below a bit pattern.
-fn below(h: Half, pattern: u32) -> f32 {
-  let lo = select(vec4f(0.0), vec4f(1.0), bitcast<vec4u>(abs(h.lo)) <= vec4u(pattern));
-  let hi = select(vec4f(0.0), vec4f(1.0), bitcast<vec4u>(abs(h.hi)) <= vec4u(pattern));
-  return dot(lo, vec4f(1.0)) + dot(hi, vec4f(1.0));
+/// One row of a block as the bit patterns of its magnitudes, which sort as the magnitudes do.
+struct Bits {
+  lo: vec4u,
+  hi: vec4u,
+};
+
+struct Bits16 {
+  a: Bits,
+  b: Bits,
+};
+
+struct Bits32 {
+  a: Bits,
+  b: Bits,
+  c: Bits,
+  d: Bits,
+};
+
+fn bits_of(h: Half) -> Bits {
+  return Bits(bitcast<vec4u>(abs(h.lo)), bitcast<vec4u>(abs(h.hi)));
+}
+
+fn reversed(x: Bits) -> Bits {
+  return Bits(x.hi.wzyx, x.lo.wzyx);
+}
+
+/// Four ascending, from a bitonic four.
+fn clean4(v: vec4u) -> vec4u {
+  let a = min(v.xy, v.zw);
+  let b = max(v.xy, v.zw);
+  let l = min(vec2u(a.x, b.x), vec2u(a.y, b.y));
+  let h = max(vec2u(a.x, b.x), vec2u(a.y, b.y));
+  return vec4u(l.x, h.x, l.y, h.y);
+}
+
+fn sort4(v: vec4u) -> vec4u {
+  return clean4(vec4u(min(v.x, v.y), max(v.x, v.y), max(v.z, v.w), min(v.z, v.w)));
+}
+
+/// Eight ascending, from a bitonic eight.
+fn clean8(x: Bits) -> Bits {
+  return Bits(clean4(min(x.lo, x.hi)), clean4(max(x.lo, x.hi)));
+}
+
+fn sort8(x: Bits) -> Bits {
+  return clean8(Bits(sort4(x.lo), sort4(x.hi).wzyx));
+}
+
+/// Sixteen ascending, from a bitonic sixteen.
+fn clean16(p: Bits, q: Bits) -> Bits16 {
+  let l = Bits(min(p.lo, q.lo), min(p.hi, q.hi));
+  let h = Bits(max(p.lo, q.lo), max(p.hi, q.hi));
+  return Bits16(clean8(l), clean8(h));
+}
+
+/// Sixteen ascending, from two ascending eights: reversing the second makes them one bitonic.
+fn merge16(a: Bits, b: Bits) -> Bits16 {
+  return clean16(a, reversed(b));
+}
+
+/// Thirty-two ascending, from two ascending sixteens.
+fn merge32(a: Bits16, b: Bits16) -> Bits32 {
+  let x0 = reversed(b.b);
+  let x1 = reversed(b.a);
+  let l = clean16(
+    Bits(min(a.a.lo, x0.lo), min(a.a.hi, x0.hi)),
+    Bits(min(a.b.lo, x1.lo), min(a.b.hi, x1.hi)),
+  );
+  let h = clean16(
+    Bits(max(a.a.lo, x0.lo), max(a.a.hi, x0.hi)),
+    Bits(max(a.b.lo, x1.lo), max(a.b.hi, x1.hi)),
+  );
+  return Bits32(l.a, l.b, h.a, h.b);
 }
 
 /// The MAD of the 63 AC coefficients, as a per-coefficient variance.
 ///
-/// The reference partially selection-sorts the magnitudes to reach the median. A binary
-/// search over their *bit patterns* answers the same question with no array to sort: the
-/// IEEE encoding of a non-negative float is monotonic in its value, so the k-th smallest
-/// pattern is the k-th smallest magnitude, exactly.
+/// What is sorted is the magnitudes' *bit patterns*: the IEEE encoding of a non-negative float
+/// is monotonic in its value, so the k-th smallest pattern is the k-th smallest magnitude,
+/// exactly. A network rather than a loop because every index has to be a constant, for the
+/// reason the header gives - and a network rather than the bisection over the pattern space it
+/// replaced, which was equally exact but spent 31 rounds counting all 64 against a midpoint:
+/// 1625ms of this kernel's 4354ms on a 61MP frame.
 fn mad_sigma_y_sq(b: Block) -> f32 {
-  let rank = (BP - 1) / 2;
-  var lo = 0u;
-  var hi = 0x7f800000u;
-  while (lo < hi) {
-    let mid = lo + (hi - lo) / 2u;
-    var count = below(b.r0, mid) + below(b.r1, mid) + below(b.r2, mid) + below(b.r3, mid)
-      + below(b.r4, mid) + below(b.r5, mid) + below(b.r6, mid) + below(b.r7, mid);
-    // The DC term is not one of the 63.
-    if (bitcast<u32>(abs(b.r0.lo.x)) <= mid) {
-      count -= 1.0;
-    }
-    if (i32(count) > rank) { hi = mid; } else { lo = mid + 1u; }
-  }
-  let sy = bitcast<f32>(lo) / 0.6745;
+  var head = bits_of(b.r0);
+  // The DC term is not one of the 63; no magnitude's pattern reaches this one, so it sorts past
+  // all of them and out of the rank below.
+  head.lo.x = 0xffffffffu;
+
+  let ab = merge32(
+    merge16(sort8(head), sort8(bits_of(b.r1))),
+    merge16(sort8(bits_of(b.r2)), sort8(bits_of(b.r3))),
+  );
+  let cd = merge32(
+    merge16(sort8(bits_of(b.r4)), sort8(bits_of(b.r5))),
+    merge16(sort8(bits_of(b.r6)), sort8(bits_of(b.r7))),
+  );
+
+  // The last merge stops at its first step, which already separates the 32 smallest of the 64
+  // from the 32 largest: the largest of those is the 32nd, so what would have put them in order
+  // is a max instead.
+  let x0 = reversed(cd.d);
+  let x1 = reversed(cd.c);
+  let x2 = reversed(cd.b);
+  let x3 = reversed(cd.a);
+  let l0 = Bits(min(ab.a.lo, x0.lo), min(ab.a.hi, x0.hi));
+  let l1 = Bits(min(ab.b.lo, x1.lo), min(ab.b.hi, x1.hi));
+  let l2 = Bits(min(ab.c.lo, x2.lo), min(ab.c.hi, x2.hi));
+  let l3 = Bits(min(ab.d.lo, x3.lo), min(ab.d.hi, x3.hi));
+  let top = max(
+    max(max(l0.lo, l0.hi), max(l1.lo, l1.hi)),
+    max(max(l2.lo, l2.hi), max(l3.lo, l3.hi)),
+  );
+  let pair = max(top.xy, top.zw);
+
+  let sy = bitcast<f32>(max(pair.x, pair.y)) / 0.6745;
   return (sy * sy) / f32(BP);
 }
 
