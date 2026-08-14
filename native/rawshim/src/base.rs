@@ -242,6 +242,55 @@ fn storage_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+/// The coding, the defringe and the lens warp over one resident frame - one upload in front of
+/// them and one readback behind, instead of a pair around each.
+///
+/// **This is what the module is for.** The stages were worth a third of their own time and none of
+/// the render's: at 61MP each was carrying 361MB up and 361MB back for the privilege of running
+/// pointwise arithmetic somewhere else, and the warp wired in alone measured 588-610ms against the
+/// CPU's 639ms. Four transfers become two here, and the sharpen behind it is the only reason the
+/// second one is still there.
+///
+/// A stage whose inputs say it does nothing is left out of the chain rather than run as an
+/// identity, so the result is `out`-sized where the lens warps and `source`-sized where it does
+/// not. None where the frame is too small to be worth the trip, which is the caller's cue for the
+/// CPU path.
+pub fn prepare(
+    gpu: &'static crate::gpu::Gpu,
+    base: &'static Base,
+    samples: &[u16],
+    source: (usize, usize),
+    out: (usize, usize),
+    levels: crate::tone::Anchored,
+    reference_white_nits: f64,
+    defocus: (f32, f32),
+    lens: &crate::fit::Lens,
+) -> Option<Vec<u16>> {
+    let (sw, sh) = source;
+    if sw == 0 || sh == 0 || samples.len() < sw * sh * 3 {
+        return None;
+    }
+
+    let frame = upload(gpu, samples);
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    encode_base_into(gpu, base, &mut encoder, &frame, samples.len(), levels, reference_white_nits);
+    if defringes(samples.len(), sw, sh, defocus) {
+        defringe_into(gpu, base, &mut encoder, &frame, sw, sh, defocus);
+    }
+
+    if !warps(samples.len(), source, out, lens) {
+        let mut prepared = vec![0u16; samples.len()];
+        read_back(gpu, encoder, &frame, samples.len().div_ceil(2), &mut prepared)?;
+        return Some(prepared);
+    }
+    let words = (out.0 * out.1 * 3).div_ceil(2);
+    let warped = warped_buffer(gpu, words);
+    warp_lens_into(gpu, base, &mut encoder, &frame, &warped, source, out, lens);
+    let mut prepared = vec![0u16; out.0 * out.1 * 3];
+    read_back(gpu, encoder, &warped, words, &mut prepared)?;
+    Some(prepared)
+}
+
 /// Longitudinal chromatic aberration, as [`crate::image::finish_with`] takes it off with
 /// `Strengths::before_the_fit`.
 ///
@@ -255,16 +304,37 @@ pub fn defringe(
     height: usize,
     defocus: (f32, f32),
 ) -> Option<()> {
-    // The same refusal `image::finish_in_strips` makes: a frame with no room for the stencil has
-    // no curvature to read, and the border fill would be the whole of it.
-    if width < 3 || height < 3 || defocus == (0.0, 0.0) || samples.len() < width * height * 3 {
+    if !defringes(samples.len(), width, height, defocus) {
         return Some(());
     }
+    let frame = upload(gpu, samples);
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    defringe_into(gpu, base, &mut encoder, &frame, width, height, defocus);
+    read_back(gpu, encoder, &frame, (width * height * 3).div_ceil(2), samples)
+}
+
+/// The same refusal `image::finish_in_strips` makes: a frame with no room for the stencil has no
+/// curvature to read, and the border fill would be the whole of it.
+///
+/// Asked rather than discovered, because [`prepare`] has to know before it uploads whether the
+/// stage is in the chain at all.
+fn defringes(samples: usize, width: usize, height: usize, defocus: (f32, f32)) -> bool {
+    width >= 3 && height >= 3 && defocus != (0.0, 0.0) && samples >= width * height * 3
+}
+
+/// Records the correction against a frame already in VRAM. `defringes` is its precondition.
+fn defringe_into(
+    gpu: &crate::gpu::Gpu,
+    base: &Base,
+    encoder: &mut wgpu::CommandEncoder,
+    frame: &wgpu::Buffer,
+    width: usize,
+    height: usize,
+    defocus: (f32, f32),
+) {
     let device = &gpu.device;
     let pixels = width * height;
-    let words = (pixels * 3).div_ceil(2);
 
-    let frame = upload(gpu, samples);
     let luma = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("defringe luma"),
         size: (pixels * 4) as u64,
@@ -300,7 +370,6 @@ pub fn defringe(
         ],
     });
 
-    let mut encoder = device.create_command_encoder(&Default::default());
     {
         // A pass each, because the second reads every value the first wrote and a pass is where
         // wgpu puts that barrier.
@@ -317,7 +386,6 @@ pub fn defringe(
         let (x, y) = groups(pixels.div_ceil(2));
         pass.dispatch_workgroups(x, y, 1);
     }
-    read_back(gpu, encoder, &frame, words, samples)
 }
 
 /// A megabyte at a time, for the reason `galosh` and `demosaic` give: the staged copy would
@@ -401,9 +469,8 @@ fn read_back(
 
 /// Scene-linear levels to normalised PQ, as [`crate::tone::encode_base`] does it.
 ///
-/// Takes and returns the frame rather than leaving it on the GPU, which is not where this ends up
-/// - the point of the module is that the stages chain over one resident buffer - but is what lets
-/// it be held against the CPU one stage at a time while they move across.
+/// Takes and returns the frame rather than leaving it on the GPU, which [`prepare`] is the version
+/// that does not: this spelling is what lets the stage be held against the CPU on its own.
 pub fn encode_base(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
@@ -411,16 +478,31 @@ pub fn encode_base(
     levels: crate::tone::Anchored,
     reference_white_nits: f64,
 ) -> Option<()> {
-    let device = &gpu.device;
     let words = samples.len().div_ceil(2);
     if words == 0 {
         return Some(());
     }
-
     let frame = upload(gpu, samples);
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    encode_base_into(gpu, base, &mut encoder, &frame, samples.len(), levels, reference_white_nits);
+    read_back(gpu, encoder, &frame, words, samples)
+}
+
+/// Records the coding against a frame already in VRAM, `count` samples of it.
+fn encode_base_into(
+    gpu: &crate::gpu::Gpu,
+    base: &Base,
+    encoder: &mut wgpu::CommandEncoder,
+    frame: &wgpu::Buffer,
+    count: usize,
+    levels: crate::tone::Anchored,
+    reference_white_nits: f64,
+) {
+    let device = &gpu.device;
+    let words = count.div_ceil(2);
     let params = [
         words as u32,
-        samples.len() as u32,
+        count as u32,
         ((reference_white_nits / levels.white) as f32).to_bits(),
         0,
     ];
@@ -443,7 +525,6 @@ pub fn encode_base(
         ],
     });
 
-    let mut encoder = device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&base.encode);
@@ -451,7 +532,6 @@ pub fn encode_base(
         let (x, y) = groups(words);
         pass.dispatch_workgroups(x, y, 1);
     }
-    read_back(gpu, encoder, &frame, words, samples)
 }
 
 /// `image::channel_ratio_table` for all three channels end to end, as `f32`.
@@ -528,28 +608,67 @@ pub fn warp_lens(
     out: (usize, usize),
     lens: &crate::fit::Lens,
 ) -> Option<Vec<u16>> {
-    let (sw, sh) = source;
-    let (width, height) = out;
-    // `map_u16`'s own refusal on `sw < 2`, and `for_lens`'s on an identity. The shader indexes
-    // `sw - 2u` unsigned, so a one-pixel source would read the far end of the buffer.
-    if lens.is_identity() || sw < 2 || sh < 2 || width == 0 || height == 0 {
+    if !warps(samples.len(), source, out, lens) {
         return None;
     }
-    if samples.len() < sw * sh * 3 {
-        return None;
-    }
-
-    let device = &gpu.device;
-    let pixels = width * height;
+    let pixels = out.0 * out.1;
     let words = (pixels * 3).div_ceil(2);
 
     let frame = upload(gpu, samples);
-    let warped = device.create_buffer(&wgpu::BufferDescriptor {
+    let warped = warped_buffer(gpu, words);
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    warp_lens_into(gpu, base, &mut encoder, &frame, &warped, source, out, lens);
+    let mut gathered = vec![0u16; pixels * 3];
+    read_back(gpu, encoder, &warped, words, &mut gathered)?;
+    Some(gathered)
+}
+
+/// `map_u16`'s own refusal on `sw < 2`, and `for_lens`'s on an identity. The shader indexes
+/// `sw - 2u` unsigned, so a one-pixel source would read the far end of the buffer.
+///
+/// Asked rather than discovered, for [`prepare`]'s sake: whether the warp runs is which buffer
+/// holds the prepared frame.
+fn warps(
+    samples: usize,
+    source: (usize, usize),
+    out: (usize, usize),
+    lens: &crate::fit::Lens,
+) -> bool {
+    let (sw, sh) = source;
+    !lens.is_identity()
+        && sw >= 2
+        && sh >= 2
+        && out.0 > 0
+        && out.1 > 0
+        && samples >= sw * sh * 3
+}
+
+/// The gather's destination, which cannot be its source.
+fn warped_buffer(gpu: &crate::gpu::Gpu, words: usize) -> wgpu::Buffer {
+    gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("warp out"),
         size: (words * 4) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
-    });
+    })
+}
+
+/// Records the gather from one resident frame onto another. `warps` is its precondition.
+fn warp_lens_into(
+    gpu: &crate::gpu::Gpu,
+    base: &Base,
+    encoder: &mut wgpu::CommandEncoder,
+    frame: &wgpu::Buffer,
+    warped: &wgpu::Buffer,
+    source: (usize, usize),
+    out: (usize, usize),
+    lens: &crate::fit::Lens,
+) {
+    let device = &gpu.device;
+    let (sw, sh) = source;
+    let (width, height) = out;
+    let pixels = width * height;
+
     let ratios = float_storage(gpu, "warp ratios", &ratio_tables(lens));
     let lifts = float_storage(gpu, "warp lifts", &lift_table(lens.falloff));
 
@@ -590,7 +709,6 @@ pub fn warp_lens(
         ],
     });
 
-    let mut encoder = device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&base.warp);
@@ -598,9 +716,6 @@ pub fn warp_lens(
         let (x, y) = groups(pixels.div_ceil(2));
         pass.dispatch_workgroups(x, y, 1);
     }
-    let mut gathered = vec![0u16; pixels * 3];
-    read_back(gpu, encoder, &warped, words, &mut gathered)?;
-    Some(gathered)
 }
 
 /// The shader's stencil, and the size of the lap array it selects a median from.
@@ -687,15 +802,34 @@ pub fn measure(
     width: usize,
     height: usize,
 ) -> Option<crate::noise::Noise> {
+    if width * height == 0 || samples.len() < width * height * 3 {
+        return None;
+    }
+    let frame = upload(gpu, samples);
+    let encoder = gpu.device.create_command_encoder(&Default::default());
+    measure_into(gpu, base, encoder, &frame, width, height)
+}
+
+/// Reads a frame already in VRAM, and the one stage that takes its encoder rather than borrowing
+/// one: the transform the second reduction runs under is a quantile of the first's output, so this
+/// has to submit and map before it can record the rest. Whatever the caller had recorded goes down
+/// with the coarse pass.
+fn measure_into(
+    gpu: &crate::gpu::Gpu,
+    base: &Base,
+    mut encoder: wgpu::CommandEncoder,
+    frame: &wgpu::Buffer,
+    width: usize,
+    height: usize,
+) -> Option<crate::noise::Noise> {
     let pixels = width * height;
     let blocks = (width / BLOCK, height / BLOCK);
     let count = blocks.0 * blocks.1;
-    if pixels == 0 || samples.len() < pixels * 3 || count == 0 {
+    if count == 0 {
         return None;
     }
     let device = &gpu.device;
 
-    let frame = upload(gpu, samples);
     let plane = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("noise luma"),
         size: (pixels * 4) as u64,
@@ -729,7 +863,6 @@ pub fn measure(
     };
 
     let coarse_group = group(&uniform(None));
-    let mut encoder = device.create_command_encoder(&Default::default());
     {
         // A pass each, as the defringe's two are: every block reads luma the pass before it wrote,
         // and a pass is where wgpu puts that barrier.
@@ -969,6 +1102,70 @@ mod tests {
         let mean = theirs.iter().zip(&mine).map(|(a, b)| f64::from(a.abs_diff(*b))).sum::<f64>()
             / theirs.len() as f64;
         assert!(worst <= 2, "the shader and the gather disagree by {worst} counts, mean {mean:.4}");
+    }
+
+    /// The chain against the three public functions it collapses, on the same frame.
+    ///
+    /// **Bit-equal, unlike every other test here, and it has to be.** The others hold a shader
+    /// against a CPU that computes the same thing differently; this holds the same shaders on the
+    /// same data against themselves, and every stage writes u16 back into the same packed buffer -
+    /// so the readbacks the chain deletes were copies, not roundings. A count of difference is a
+    /// bug in the plumbing.
+    ///
+    /// Both branches, because which buffer holds the answer is what the warp's absence changes.
+    #[test]
+    fn prepare_is_the_three_stages_over_one_buffer() {
+        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(base) = super::device(gpu) else { return };
+
+        let (width, height) = (257usize, 181);
+        let frame = edged(width, height);
+        let levels = crate::tone::Levels { white: 8133.0, peak: 13783.0 }.anchored();
+        let defocus = (0.031f32, -0.017f32);
+        let knots = vec![0.0, 40.0, 160.0, 380.0];
+        let lens = crate::fit::Lens {
+            crop: crate::image::fill_crop(&knots, width, height),
+            distortion: Some(knots),
+            falloff: Some((0.25, 0.1)),
+            tca: Some([vec![0.0, 24.0, 60.0], vec![0.0, -18.0, -44.0]]),
+        };
+
+        let staged = |lens: &crate::fit::Lens| {
+            let mut samples = frame.clone();
+            super::encode_base(gpu, base, &mut samples, levels, 203.0).expect("the coding runs");
+            super::defringe(gpu, base, &mut samples, width, height, defocus)
+                .expect("the defringe runs");
+            let gathered =
+                super::warp_lens(gpu, base, &samples, (width, height), (width, height), lens);
+            gathered.unwrap_or(samples)
+        };
+        let chained = |lens: &crate::fit::Lens| {
+            super::prepare(
+                gpu,
+                base,
+                &frame,
+                (width, height),
+                (width, height),
+                levels,
+                203.0,
+                defocus,
+                lens,
+            )
+            .expect("the chain runs")
+        };
+        let differing = |mine: &[u16], theirs: &[u16]| {
+            assert_eq!(mine.len(), theirs.len(), "the chain returned a different frame");
+            mine.iter().zip(theirs).filter(|(a, b)| a != b).count()
+        };
+
+        let theirs = staged(&lens);
+        // The stages have to have moved the frame before an equality on them means anything: two
+        // chains that both did nothing agree perfectly.
+        assert!(differing(&theirs, &frame) > frame.len() / 2, "the stages left the frame alone");
+        assert_eq!(differing(&chained(&lens), &theirs), 0, "the chained frame differs");
+
+        let identity = crate::fit::Lens::none();
+        assert_eq!(differing(&chained(&identity), &staged(&identity)), 0, "unwarped, it differs");
     }
 
     /// Four bands of real noise, each at its own level and its own sigma, each channel offset.
