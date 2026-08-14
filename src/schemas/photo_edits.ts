@@ -94,6 +94,23 @@ export const EditDocSchema = z
     cropTop: z.number().min(0).max(1).default(0),
     cropRight: z.number().min(0).max(1).default(1),
     cropBottom: z.number().min(0).max(1).default(1),
+
+    // The rectangle the reader framed, which the four above are fitted out of when "crop to
+    // fit" trims the wedges a straighten leaves.
+    //
+    // **Not a second answer to the same question**, which is what the missing `hasCrop` flag
+    // above would have been. This is the fit's *input* and those are its output, and the fit
+    // is lossy - a rectangle pulled in off a 40-degree straighten cannot say what it was
+    // before - so without these the reader's framing is gone the moment it is applied, and
+    // walking the slider back gives them the trimmed rectangle rather than the one they chose.
+    //
+    // Null where nothing has been fitted yet, which reads as the crop above: an imported
+    // sidecar arrives cropped and that rectangle is the reader's, not a fit of anything. Only
+    // the editor writes these; every renderer reads the crop.
+    framedLeft: z.number().min(0).max(1).nullable().default(null),
+    framedTop: z.number().min(0).max(1).nullable().default(null),
+    framedRight: z.number().min(0).max(1).nullable().default(null),
+    framedBottom: z.number().min(0).max(1).nullable().default(null),
     /** Straighten, in degrees. Camera Raw's range, and its sign. */
     cropAngle: z.number().min(-45).max(45).default(0),
     /**

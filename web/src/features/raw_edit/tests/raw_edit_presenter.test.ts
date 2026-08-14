@@ -103,6 +103,11 @@ class Pipeline {
     this.loupeDraws += 1;
   }
 
+  /** A GPU that answers the instant it is asked, which is what a fake one is. */
+  drawn(): Promise<undefined> {
+    return Promise.resolve(undefined);
+  }
+
   attachLoupe(): void {
     /* the canvas is the component's, and nothing here has one */
   }
@@ -149,11 +154,15 @@ let frames: FrameRequestCallback[] = [];
  * Queued rather than run where they are asked for: the presenter coalesces onto *one*
  * outstanding frame, so a callback that runs inside `requestAnimationFrame` itself leaves the
  * handle set forever and every later request is dropped as already pending.
+ *
+ * Awaited because the presenter waits for the GPU before it asks for another - a tick that has
+ * been submitted and not landed is one the next request holds off for.
  */
-function drawn(): number {
+async function drawn(): Promise<number> {
   const due = frames;
   frames = [];
   for (const frame of due) frame(0);
+  await Promise.resolve();
   return pipeline.draws;
 }
 
@@ -238,20 +247,20 @@ describe('the perspective tool', () => {
   // The bug this test exists for: closing the tool pushed the new geometry and never asked for
   // a frame. A crop hides that - the picture changes shape and the stage refits - and a
   // correction does not, so the corrected photograph simply never appeared.
-  test('draws the picture again when a tool opens or closes', () => {
+  test('draws the picture again when a tool opens or closes', async () => {
     presenter.setGuides(LEANING, true);
-    const before = drawn();
+    const before = await drawn();
 
     presenter.setKeystoning(true);
-    const opened = drawn();
+    const opened = await drawn();
     expect(opened).toBeGreaterThan(before);
 
     presenter.setKeystoning(false);
-    const closed = drawn();
+    const closed = await drawn();
     expect(closed).toBeGreaterThan(opened);
 
     presenter.setCropping(true);
-    expect(drawn()).toBeGreaterThan(closed);
+    expect(await drawn()).toBeGreaterThan(closed);
   });
 
   test('clearing takes the correction and the guides together', () => {
@@ -273,11 +282,11 @@ describe('the perspective tool', () => {
  * slider wired to its neighbour is a *wrong number*, not a canvas that failed to change.
  */
 describe('a slider reaching the picture', () => {
-  test('carries the exposure in stops, and asks for a frame', () => {
-    const before = drawn();
+  test('carries the exposure in stops, and asks for a frame', async () => {
+    const before = await drawn();
 
     presenter.settleExposure(1.25);
-    expect(drawn()).toBeGreaterThan(before);
+    expect(await drawn()).toBeGreaterThan(before);
 
     const { floats, at } = pipeline.uniform();
     // Stops rather than a gain: `colour.wgsl` is what raises it, so a host that converted here
@@ -285,7 +294,7 @@ describe('a slider reaching the picture', () => {
     expect(floats[at.exposure]).toBeCloseTo(1.25, 6);
   });
 
-  test('puts each tone and presence slider in its own slot', () => {
+  test('puts each tone and presence slider in its own slot', async () => {
     // All at once and all different, because the failure being guarded against is two of them
     // swapped - which no single-slider check can see.
     presenter.settle({
@@ -300,7 +309,7 @@ describe('a slider reaching the picture', () => {
       vibrance: 99,
       saturation: -12,
     });
-    drawn();
+    await drawn();
 
     const { floats, at } = pipeline.uniform();
     expect(floats[at.contrast]).toBe(11);
@@ -315,15 +324,15 @@ describe('a slider reaching the picture', () => {
     expect(floats[at.sat_adjust]).toBe(-12);
   });
 
-  test('leaves the white balance as the frame own until the reader moves it', () => {
+  test('leaves the white balance as the frame own until the reader moves it', async () => {
     store.asShot = { temperature: 5487.3, tint: 11.4 };
 
-    drawn();
+    await drawn();
     // Nothing set, so the shader is told to use the illuminant the camera recorded.
     expect(pipeline.uniform().ints[editOffsets().at.balance_set]).toBe(0);
 
     presenter.settleBalance({ temperature: 6000 });
-    drawn();
+    await drawn();
 
     const { floats, ints, at } = pipeline.uniform();
     // Both halves, because half a white balance reads as a colour cast.
@@ -359,10 +368,10 @@ describe('a slider reaching the picture', () => {
     expect(pipeline.denoise).toEqual({ luminance: 60, colour: 21 });
   });
 
-  test('sends the geometry the reader chose, not the one the tool is showing', () => {
+  test('sends the geometry the reader chose, not the one the tool is showing', async () => {
     presenter.settleStraighten(6);
     presenter.settleCrop({ left: 0.2, top: 0.1, right: 0.8, bottom: 0.9 });
-    drawn();
+    await drawn();
 
     const { floats, ints, at } = pipeline.uniform();
     expect(floats[at.crop_left]).toBeCloseTo(0.2, 6);
@@ -372,7 +381,7 @@ describe('a slider reaching the picture', () => {
     expect(ints[at.output_height]).toBe(store.output.height);
   });
 
-  test('sends the perspective correction the guides produced', () => {
+  test('sends the perspective correction the guides produced', async () => {
     presenter.setGuides(
       [
         { x1: 0.2, y1: 0.05, x2: 0.3, y2: 0.95 },
@@ -380,7 +389,7 @@ describe('a slider reaching the picture', () => {
       ],
       true,
     );
-    drawn();
+    await drawn();
 
     const { floats, ints, at } = pipeline.uniform();
     expect(ints[at.has_keystone]).toBe(1);
@@ -406,10 +415,10 @@ describe('a slider reaching the picture', () => {
  * it lasted.
  */
 describe('the window each frame is drawn at', () => {
-  test('never reads a window bigger than the picture it is on', () => {
+  test('never reads a window bigger than the picture it is on', async () => {
     for (const angle of [1, 2, 3, 4, 5, 6, 7, 8]) {
       presenter.previewStraighten(angle);
-      drawn();
+      await drawn();
     }
 
     expect(pipeline.frames.length).toBeGreaterThan(4);
@@ -419,11 +428,11 @@ describe('the window each frame is drawn at', () => {
     }
   });
 
-  test('lands on a canvas of its own shape, on every frame of a drag', () => {
+  test('lands on a canvas of its own shape, on every frame of a drag', async () => {
     const shapes: string[] = [];
     for (const angle of [0.5, 1, 2, 3, 4, 5, 6, 7]) {
       presenter.previewStraighten(angle);
-      drawn();
+      await drawn();
       shapes.push(`${canvas.width}x${canvas.height}`);
     }
 
@@ -438,28 +447,56 @@ describe('the window each frame is drawn at', () => {
     }
   });
 
-  test('lands on a canvas of its own shape when the zoom moves too', () => {
+  test('lands on a canvas of its own shape when the zoom moves too', async () => {
     presenter.showRegion({ x: 100, y: 100, width: 1200, height: 675 });
-    drawn();
+    await drawn();
 
     const last = pipeline.frames.at(-1)!;
     expect(last.stage.width / last.stage.height).toBeCloseTo(1200 / 675, 2);
   });
 
-  test('follows a shape that changed, and leaves a zoom that did not alone', () => {
+  test('follows a shape that changed, and leaves a zoom that did not alone', async () => {
     presenter.showRegion({ x: 100, y: 100, width: 1000, height: 750 });
-    drawn();
+    await drawn();
 
     // A slider that leaves the picture the size it was must not throw the reader's zoom away.
     presenter.previewExposure(1);
-    drawn();
+    await drawn();
     expect(store.region).toEqual({ x: 100, y: 100, width: 1000, height: 750 });
 
     // One that changes the shape has to, or the window is measured against a picture that is
     // no longer there.
     presenter.previewStraighten(6);
-    drawn();
+    await drawn();
     expect(store.region).toEqual({ x: 0, y: 0, ...store.output });
+  });
+
+  /**
+   * The lag this exists for: `getCurrentTexture` blocks the main thread once the swapchain is
+   * full, so a drag that asks for a frame faster than the GPU returns them stalls inside the
+   * draw call - and the slider under the hand freezes for as long as the picture takes.
+   */
+  test('never has two ticks on the GPU at once, however fast the slider moves', async () => {
+    let landed: (() => void) | null = null;
+    pipeline.drawn = () => new Promise<undefined>((resolve) => {
+      landed = () => resolve(undefined);
+    });
+
+    presenter.previewExposure(0.5);
+    frames.splice(0).forEach((frame) => frame(0));
+    expect(pipeline.draws).toBe(1);
+
+    // A whole drag's worth of positions while the first one is still drawing.
+    for (const ev of [0.6, 0.7, 0.8, 0.9]) presenter.previewExposure(ev);
+    frames.splice(0).forEach((frame) => frame(0));
+    expect(pipeline.draws).toBe(1);
+
+    // And the last of them - not the four - the moment the GPU comes back.
+    landed!();
+    await Promise.resolve();
+    frames.splice(0).forEach((frame) => frame(0));
+    expect(pipeline.draws).toBe(2);
+    expect(pipeline.exposure).toBe(0.9);
   });
 });
 
@@ -620,6 +657,80 @@ describe('cropping to what the geometry left', () => {
     expect(store.doc?.cropRight).toBe(0.8);
   });
 
+  /**
+   * A rectangle the reader chose is what the wedges get trimmed out of, not the frame.
+   *
+   * Levelling a horizon on a photograph already cropped to a corner used to hand most of the
+   * frame back - the fit replaced the crop rather than taking the blank out of it.
+   */
+  test('trims out of the rectangle the reader chose, not out of the frame', () => {
+    presenter.settleCrop({ left: 0, top: 0, right: 0.5, bottom: 0.5 });
+    presenter.settleStraighten(6);
+
+    const doc = store.doc!;
+    expect(doc.cropRight).toBeLessThanOrEqual(0.5);
+    expect(doc.cropBottom).toBeLessThanOrEqual(0.5);
+    // And most of that quarter is kept rather than a token rectangle in the middle of it. Less
+    // than a straighten costs a whole frame, because a corner of the quarter is a corner of the
+    // frame and so sits under two of the wedges.
+    const kept = ((doc.cropRight - doc.cropLeft) * (doc.cropBottom - doc.cropTop)) / 0.25;
+    expect(kept).toBeGreaterThan(0.7);
+  });
+
+  /**
+   * The fit is a function of that rectangle and the geometry, so it is repeatable.
+   *
+   * Taking the *document's* crop as the reference would make each move trim what the last one
+   * already trimmed: a sweep out to the end of the slider and back would keep the crop from the
+   * end of it, and the frame would never come back.
+   */
+  test('gives the whole of the reader rectangle back on the way to zero', () => {
+    presenter.settleCrop({ left: 0.1, top: 0.1, right: 0.9, bottom: 0.9 });
+    presenter.settleStraighten(40);
+    expect(store.doc!.cropRight - store.doc!.cropLeft).toBeLessThan(0.8);
+
+    presenter.settleStraighten(0);
+    expect(store.doc?.cropLeft).toBeCloseTo(0.1, 10);
+    expect(store.doc?.cropTop).toBeCloseTo(0.1, 10);
+    expect(store.doc?.cropRight).toBeCloseTo(0.9, 10);
+    expect(store.doc?.cropBottom).toBeCloseTo(0.9, 10);
+  });
+
+  /**
+   * And across a reload, which is the whole reason the framing is on the document.
+   *
+   * Held on the presenter it survived a drag and nothing else: the crop the reader came back to
+   * was the trimmed one, so it became the rectangle the next straighten trimmed *again*, and
+   * every session that touched the slider took another bite.
+   */
+  test('gives it back after a reload, not the rectangle the straighten left', () => {
+    presenter.settleCrop({ left: 0, top: 0, right: 0.5, bottom: 0.5 });
+    presenter.settleStraighten(40);
+    const stored = store.doc!;
+    expect(stored.cropRight).toBeLessThan(0.5);
+
+    // The editor opened again on what the server kept, which is this document and no more.
+    const reopened = new RawEditStore();
+    reopened.doc = { ...stored };
+    reopened.width = 4000;
+    reopened.height = 3000;
+    reopened.status = 'live';
+    const after = new RawEditPresenter(reopened);
+    Object.assign(after, {
+      pipeline: new Pipeline(),
+      canvas,
+      device: { limits: { maxTextureDimension2D: 8192 } },
+      box: { width: 1000, height: 750 },
+      shown: { width: 4000, height: 3000 },
+    });
+
+    after.settleStraighten(0);
+    expect(reopened.doc?.cropLeft).toBeCloseTo(0, 10);
+    expect(reopened.doc?.cropTop).toBeCloseTo(0, 10);
+    expect(reopened.doc?.cropRight).toBeCloseTo(0.5, 10);
+    expect(reopened.doc?.cropBottom).toBeCloseTo(0.5, 10);
+  });
+
   test('insets the crop after a correction', () => {
     presenter.setGuides(LEANING, true);
 
@@ -640,26 +751,28 @@ describe('the loupe', () => {
   const BOX = { width: 1000, height: 750 };
 
   /** The view the loupe is held over: the whole 4000x3000 picture, fitted. */
-  function fitted(): void {
+  async function fitted(): Promise<void> {
     presenter.showRegion({ x: 0, y: 0, width: 4000, height: 3000 });
-    drawn();
+    await drawn();
   }
 
-  test('magnifies the point under the pointer, not the middle of the picture', () => {
-    fitted();
+  test('magnifies the point under the pointer, not the middle of the picture', async () => {
+    await fitted();
     presenter.setLoupe(true);
     // A quarter across and a quarter down the stage is a quarter into the region.
     presenter.moveLoupe({ x: 250, y: 187.5 }, BOX);
+    await drawn();
 
     const region = pipeline.loupeRegion!;
     expect(region.x + region.width / 2).toBeCloseTo(1000, 0);
     expect(region.y + region.height / 2).toBeCloseTo(750, 0);
   });
 
-  test('shows a square of source pixels the magnification decides', () => {
-    fitted();
+  test('shows a square of source pixels the magnification decides', async () => {
+    await fitted();
     presenter.setLoupe(true);
     presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+    await drawn();
 
     // 400 screen pixels at 2x is 200 of the photograph's own, and the box is square whatever
     // shape the stage is.
@@ -668,14 +781,16 @@ describe('the loupe', () => {
     expect(region.height).toBeCloseTo(200, 5);
   });
 
-  test('a wheel notch narrows the window, and the ends hold', () => {
-    fitted();
+  test('a wheel notch narrows the window, and the ends hold', async () => {
+    await fitted();
     presenter.setLoupe(true);
     presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+    await drawn();
     const before = pipeline.loupeRegion!.width;
 
     // Away from the reader is more magnification, which is fewer source pixels.
     presenter.zoomLoupe(-1, BOX);
+    await drawn();
     expect(pipeline.loupeRegion!.width).toBeLessThan(before);
 
     for (let notch = 0; notch < 40; notch++) presenter.zoomLoupe(-1, BOX);
@@ -684,13 +799,14 @@ describe('the loupe', () => {
     expect(store.loupeMagnification).toBe(1);
   });
 
-  test('magnifies what the reader is already zoomed into', () => {
+  test('magnifies what the reader is already zoomed into', async () => {
     // Half the picture on the stage, so one stage pixel is half a source pixel - and the loupe
     // still answers in the photograph's own pixels rather than the view's.
     presenter.showRegion({ x: 1000, y: 750, width: 2000, height: 1500 });
-    drawn();
+    await drawn();
     presenter.setLoupe(true);
     presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+    await drawn();
 
     const region = pipeline.loupeRegion!;
     expect(region.x + region.width / 2).toBeCloseTo(2000, 0);
@@ -698,27 +814,34 @@ describe('the loupe', () => {
     expect(region.width).toBeCloseTo(200, 5);
   });
 
-  test('draws nothing once the pointer has left, and forgets where it was on close', () => {
-    fitted();
+  test('draws nothing once the pointer has left, and forgets where it was on close', async () => {
+    await fitted();
     presenter.setLoupe(true);
     presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+    await drawn();
     const drew = pipeline.loupeDraws;
 
     presenter.moveLoupe(null, BOX);
+    await drawn();
     expect(pipeline.loupeDraws).toBe(drew);
     expect(store.loupeAt).toBeNull();
 
+    // And a glass put away takes the draw it was owed with it, rather than magnifying one
+    // last window onto a canvas nobody is looking at.
     presenter.moveLoupe({ x: 500, y: 375 }, BOX);
     presenter.setLoupe(false);
+    await drawn();
+    expect(pipeline.loupeDraws).toBe(drew);
     expect(store.loupeAt).toBeNull();
   });
 
-  test('parks against the edge rather than magnifying past it', () => {
-    fitted();
+  test('parks against the edge rather than magnifying past it', async () => {
+    await fitted();
     presenter.setLoupe(true);
     // A drag that ran off the corner: the glass stops on the picture, which is all there is to
     // magnify.
     presenter.moveLoupe({ x: -300, y: 2000 }, BOX);
+    await drawn();
 
     expect(store.loupeAt).toEqual({ x: 0, y: 750 });
     const region = pipeline.loupeRegion!;
