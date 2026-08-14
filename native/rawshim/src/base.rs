@@ -340,6 +340,7 @@ pub fn prepare(
     if !warps(samples.len(), source, out, lens) {
         let mut prepared = vec![0u16; samples.len()];
         read_back(gpu, encoder, &frame, samples.len().div_ceil(2), &mut prepared)?;
+        reclaim(gpu, [frame]);
         return Some(prepared);
     }
     let words = (out.0 * out.1 * 3).div_ceil(2);
@@ -347,7 +348,22 @@ pub fn prepare(
     warp_lens_into(gpu, base, &mut encoder, &frame, &warped, source, out, lens);
     let mut prepared = vec![0u16; out.0 * out.1 * 3];
     read_back(gpu, encoder, &warped, words, &mut prepared)?;
+    reclaim(gpu, [frame, warped]);
     Some(prepared)
+}
+
+/// Hands the frame's buffers back before the caller's next stage asks for memory of its own.
+///
+/// **wgpu frees on a poll, not on a drop.** `read_back` polls and *then* the buffers go out of
+/// scope, so without this they are queued for destruction and released only whenever something
+/// polls next - which, for an open, is after the sharpen has run. Measured on a 61MP frame: a
+/// chained open held 722MB of frame and warped copy through a CPU sharpen that then ran 700-900ms
+/// slower than the same sharpen on the same pixels without them.
+fn reclaim<const N: usize>(gpu: &crate::gpu::Gpu, buffers: [wgpu::Buffer; N]) {
+    for buffer in buffers {
+        buffer.destroy();
+    }
+    gpu.device.poll(wgpu::PollType::Poll).ok();
 }
 
 /// Longitudinal chromatic aberration, as [`crate::image::finish_with`] takes it off with

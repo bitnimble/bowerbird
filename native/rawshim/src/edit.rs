@@ -336,6 +336,41 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
         // rendition would have had to floor - but it is what `encode_base` takes, and the
         // client is sent `prepared.levels` unfloored, so the two agree by that check rather
         // than by the floor.
+        // **The coding, the defringe and the warp over one resident frame.** Apart, each carried
+        // 361MB up and back to run a few instructions a pixel, and the warp wired in alone measured
+        // no faster than the CPU it replaced. `base::prepare` measures its own defocus off the
+        // frame it has just coded, so nothing has to come back between the stages.
+        let chained = crate::gpu::device().and_then(crate::base::device).and_then(|base| {
+            let gpu = crate::gpu::device()?;
+            let (width, height) = (prepared.width, prepared.height);
+            let none = crate::fit::Lens::none();
+            crate::base::prepare(
+                gpu,
+                base,
+                &prepared.samples,
+                (width, height),
+                (width, height),
+                prepared.levels.anchored(),
+                request.grade.reference_white_nits,
+                request.strengths.before_the_fit(),
+                matched.as_ref().map_or(&none, |m| &m.lens),
+            )
+        });
+        if let Some(samples) = chained {
+            prepared.samples = samples;
+            lap("code, defringe, warp");
+            crate::hdr::filter_base(
+                &mut prepared.samples,
+                prepared.width,
+                prepared.height,
+                Strengths { sharpen: request.strengths.sharpen, ..Default::default() },
+            );
+            lap("sharpen");
+            let out = payload(prepared, matched.as_ref(), frame.as_shot, request, keep, noise_fit);
+            lap("noise measure, header");
+            return Ok(out);
+        }
+
         crate::tone::encode_base(
             &mut prepared.samples,
             prepared.levels.anchored(),
