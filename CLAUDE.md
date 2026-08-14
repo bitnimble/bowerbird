@@ -2,8 +2,10 @@
 
 ## Running the suites
 
-The e2e suite takes about five minutes; the native and unit suites take seconds. Start a long
-run in the background and then **do something else or wait for the completion notification**.
+The e2e suite takes about five minutes and the fixture suite (`test:native:full`, which decodes
+real RAWs) about a minute; `test:native`, `test`, `typecheck` and `lint` take seconds. Start a
+long run in the background and then **do something else or wait for the completion
+notification**.
 
 **Run e2e once, at the end.** It is the final check before handing work back, not a step between
 edits: five minutes an iteration is most of an afternoon spent watching a browser start. The fast
@@ -12,6 +14,23 @@ almost everything and answer it in seconds, so iterate against those and let e2e
 finished thing. The exception is a change *to* an e2e spec or to the machinery it drives, where
 the suite is the only thing that can say whether the change works; even then, run the one spec
 (`bun run --cwd web test:e2e -- <name>`) rather than all of them.
+
+**Run what the change could have moved, and nothing else.** The set to cover is what has changed
+since the last green run, not everything touched this session, and the suites do not overlap:
+Rust is `test:native`, `web/src` and `src` are `bun run test` with `typecheck` and `lint`, and a
+markdown file is none of them. A doc edit cannot move a Rust assertion, so running the native
+suite after one is a minute spent proving something that was already known - and the habit is
+worse than the minute, because a check that is run reflexively stops being read.
+
+**Scope to the test, not the suite, when the change is specific.** Both runners take a filter -
+`bun run scripts/cargo.ts test --profile quick --tests --manifest-path native/rawshim/Cargo.toml
+<name>` and `bun test <path>` - so a change to one kernel is answered by the test that pins that
+kernel, in seconds. Widen only as far as the change reaches.
+
+**The whole set is for a sweeping change**, and those are recognisable: a shared type, a shader
+both hosts read, a constant crossing the FFI, a rename through several modules, or a rebase.
+There the point is precisely that you cannot predict what moved, which is the one case where
+running everything is reasoning rather than habit.
 
 **Never poll a background job's output file.** Re-reading it in a loop tells you nothing the
 notification would not, and the output is piped through `tail` in any case, so the file stays
