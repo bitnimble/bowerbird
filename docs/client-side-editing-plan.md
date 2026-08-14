@@ -71,9 +71,17 @@ fixture tests green with the pinned renders unmoved) and it is **588-610ms again
 CPU never had to do. The stage timings were never the prize; the transfers are. Until the stages
 share one buffer this whole section buys correctness and nothing else.
 
-- [ ] **Chain them over one resident frame.** One upload, encode -> defringe -> warp in one
-      encoder, one readback. That is the change that makes the four above worth having, and the
-      one that starts closing on RCD's readback and the grade's upload either side.
+- [x] **Chain them over one resident frame** (`442112a`). `base::prepare` uploads once, records
+      encode -> defringe -> warp into one encoder and reads back once: six transfers become two.
+      Pinned bit-identical against the three called in sequence, which is the right bound here -
+      the same shaders on the same data, so any difference would be plumbing rather than tolerance.
+- [ ] **`measure_defocus` on the GPU, which is what blocks using `prepare` at all.** It takes the
+      defocus pair as an input, and the CPU measures that pair from the **coded** frame -
+      `finish_in_strips` calls it after `encode_base`. So a caller today has to code, read back,
+      measure, and upload again, which is the round trip `prepare` exists to delete. Everything
+      else is ready; this is the last thing in the way.
+- [ ] **Then wire `edit::open` and `job::Base::build` to `prepare`**, which is where the measured
+      win finally lands. Nothing calls it yet.
 - [ ] ~~**sharpen, 2926ms**~~ - **skip it entirely.** A GPU sharpener is replacing it, so its
       parity, its performance and the round trip through system memory it currently forces are all
       about to stop existing. Do not design the residency around it: reading back before it and
