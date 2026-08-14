@@ -184,7 +184,7 @@ fn mosaic_stages(width: usize, height: usize) {
 
         // The halo is the denoise's own rather than the demosaic's: the chroma pyramid goes to a
         // quarter of what it is handed and the joint upsample reads a neighbourhood coming back.
-        let halo = rawshim::TILE_HALO;
+        let halo = rawshim::EDITOR_TILE_HALO;
 
         // One region at a time, over a range of sizes. Tiling costs far more than the halo can
         // account for, so what this separates is the part of a call that scales with the region
@@ -270,7 +270,9 @@ fn mosaic_stages(width: usize, height: usize) {
         // Once, at the size and halo that ship, so the sweep above is known to be measuring runs
         // that agree with the frame rather than runs that merely finish.
         let mut worst = 0f32;
-        for_each_tile(width, height, 1024, rawshim::TILE_HALO, |region| {
+        // The exact one, since what this asserts is that a tiled denoise can be bit-identical to
+        // the frame denoised whole - which is the reason a rendition takes 64.
+        for_each_tile(width, height, 1024, rawshim::RENDITION_TILE_HALO, |region| {
             let mut window = cut(&mosaic, width, region);
             rawshim::galosh::denoise_with(
                 gpu, kernels, &mut window, region.w, region.h, amounts, fit,

@@ -231,7 +231,7 @@ fn decode_frame_cropped(
     rec2020_linear: bool,
     at_least_long_edge: u32,
     amounts: galosh::Amounts,
-    crop: Option<Tile>,
+    crop: Option<(Tile, usize)>,
     fit: galosh::Fit,
 ) -> Option<frame::Frame> {
     if depth != 8 && depth != 16 {
@@ -239,8 +239,8 @@ fn decode_frame_cropped(
     }
     let scene = match (&source, crop) {
         // A tile is magnifying, so it is never halved however small the caller's floor is.
-        (DecodeSource::Path(path), Some(tile)) => {
-            decode_rawler::decode_tile(path, tile, amounts, fit)
+        (DecodeSource::Path(path), Some((tile, halo))) => {
+            decode_rawler::decode_tile(path, tile, amounts, fit, halo)
         }
         (DecodeSource::Path(path), None) => decode_rawler::decode_fitted(path, amounts, at_least_long_edge),
         // A tile of an in-memory source has no caller, so it is refused rather than read to a file
@@ -276,6 +276,10 @@ fn decode_frame_cropped(
 /// the tile measures its own, which is a different number - between 0.49 and 1.51 times the frame's
 /// on the fixtures - and the strength it denoises at, so the magnifier stops predicting the export
 /// and starts moving as the reader pans.
+///
+/// `halo` is how much context the denoise is given either side, and it is the caller's because the
+/// two callers want different answers: `RENDITION_TILE_HALO` where the tile has to match what a
+/// render would produce, `EDITOR_TILE_HALO` where it is drawn and then replaced.
 pub fn decode_tile(
     path: &str,
     crop: Tile,
@@ -283,6 +287,7 @@ pub fn decode_tile(
     rec2020_linear: bool,
     amounts: galosh::Amounts,
     fit: galosh::Fit,
+    halo: usize,
 ) -> Option<frame::Frame> {
     decode_frame_cropped(
         DecodeSource::Path(path),
@@ -290,7 +295,7 @@ pub fn decode_tile(
         rec2020_linear,
         0,
         amounts,
-        Some(crop),
+        Some((crop, halo)),
         fit,
     )
 }
@@ -321,18 +326,29 @@ impl Tile {
     }
 }
 
-/// How much context the mosaic denoise needs either side of a tile.
+/// How much context the mosaic denoise needs either side of a tile, where what a seam costs is
+/// worth more than what it costs to avoid.
 ///
-/// A multiple of four, because the chroma pyramid's smallest level is a quarter of what it is
-/// given; 64 covers that and the joint upsample's own neighbourhood on the way back up.
+/// **64 is where the join is exact and 32 is where it stops being visible**, and they are not the
+/// same question. Measured by `examples/halo_seams.rs` over photographs and by
+/// `examples/halo_pattern.rs` over a field built to be worse than any of them: the join's excess
+/// over its own neighbourhood falls to the baseline at 32 and stays there, while 16 is still a
+/// line at several times it. At 64 a tiled denoise is bit-identical to the frame denoised whole.
 ///
-/// **Reasoned rather than measured**, which is what `examples/halo_seams.rs` exists to settle: it
-/// is the whole of what tiling the denoise costs, since a tile decodes and denoises its halo on
-/// every side and throws it away.
-pub const TILE_HALO: usize = 64;
+/// A rendition is kept and looked at later, so it takes the exact one. So does the loupe, whose
+/// whole purpose is to predict what a rendition will be - a magnifier denoised differently from
+/// the export is a magnifier that lies, which is worse than a slower one.
+pub const RENDITION_TILE_HALO: usize = 64;
 
-/// Set by the seam harness to cut one frame at several halos from one process, which is the only
-/// way to put the results beside each other. `usize::MAX` is the constant above.
+/// The same, for a tile the editor draws and then replaces.
+///
+/// Past the knee, and a multiple of four for the chroma pyramid. What it buys is set by the tile
+/// size rather than by itself: over a 61MP frame the whole 16-to-64 range is 9% at 2048 tiles and
+/// 37% at 512, so the halo is cheap and small tiles are not.
+pub const EDITOR_TILE_HALO: usize = 32;
+
+/// Set by the seam harnesses to cut one frame at several halos from one process, which is the only
+/// way to put the results beside each other. `usize::MAX` leaves the caller's own choice alone.
 static TILE_HALO_OVERRIDE: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(usize::MAX);
 
@@ -340,9 +356,10 @@ pub fn set_tile_halo(halo: usize) {
     TILE_HALO_OVERRIDE.store(halo, std::sync::atomic::Ordering::Relaxed);
 }
 
-pub fn tile_halo() -> usize {
+/// The halo to use, which is the caller's unless a harness has taken the choice away.
+pub fn tile_halo(asked: usize) -> usize {
     match TILE_HALO_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
-        usize::MAX => TILE_HALO,
+        usize::MAX => asked,
         set => set,
     }
 }
@@ -676,11 +693,12 @@ mod tests {
         // loupe asks its second question with them already up.
         let warm = Tile { left: 2000, top: 1400, width: 400, height: 400 };
         let sliders = galosh::Amounts::from_sliders(40.0, 40.0);
-        decode_tile(&path, warm, 16, true, sliders, galosh::Fit::Measure);
+        decode_tile(&path, warm, 16, true, sliders, galosh::Fit::Measure, RENDITION_TILE_HALO);
         for side in [400usize, 700] {
             let crop = Tile { left: 2000, top: 1400, width: side, height: side };
             let started = std::time::Instant::now();
-            let tile = decode_tile(&path, crop, 16, true, sliders, galosh::Fit::Measure);
+            let tile =
+                decode_tile(&path, crop, 16, true, sliders, galosh::Fit::Measure, RENDITION_TILE_HALO);
             let took = started.elapsed().as_millis();
             let frame = tile.expect("the tile decodes");
             println!(

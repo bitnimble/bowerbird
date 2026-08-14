@@ -64,7 +64,9 @@ fn main() {
 
     let cut = |left: usize, top: usize, width: usize, height: usize| -> Vec<u8> {
         let tile = rawshim::Tile { left, top, width, height };
-        let frame = rawshim::decode_tile(&path, tile, 8, false, amounts, rawshim::galosh::Fit::Given(fit))
+        // Whatever is passed here is overridden by `set_tile_halo` for the whole sweep, which is
+        // the point of the harness; the constant only names what a caller would have asked for.
+        let frame = rawshim::decode_tile(&path, tile, 8, false, amounts, rawshim::galosh::Fit::Given(fit), rawshim::RENDITION_TILE_HALO)
             .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
         let rawshim::frame::Pixels::Eight(pixels) = frame.pixels else {
             panic!("not an 8-bit tile")

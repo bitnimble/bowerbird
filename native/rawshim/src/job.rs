@@ -338,6 +338,10 @@ impl Base {
                 job.noise_fit
                     .filter(crate::galosh::NoiseFit::usable)
                     .map_or(crate::galosh::Fit::Measure, crate::galosh::Fit::Given),
+                // The rendition's, not the editor's, though a loupe is an editor feature: what it
+                // is for is showing what the export will be, and a magnifier denoised to a
+                // different standard from the export is one that lies.
+                crate::RENDITION_TILE_HALO,
             ),
             None => {
                 crate::decode_frame_denoised(&job.raw_file_path, 16, true, size, job.amounts())

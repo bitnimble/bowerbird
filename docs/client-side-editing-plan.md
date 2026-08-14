@@ -60,7 +60,13 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
       (the halo's redundant area) and buys the picture arriving in pieces instead of all at once.
       Worth it for a whole-image slider, where perceived speed is the point; use one rectangle
       wherever the answer is wanted whole.
-- [ ] **`TILE_HALO` can be 32, and is worth less than it looks.** `examples/halo_seams.rs` cuts a
+- [x] **The halo is two constants, 32 and 64** (`RENDITION_TILE_HALO`, `EDITOR_TILE_HALO`), chosen
+      at the call site. 64 is where a tiled denoise is bit-identical to the frame denoised whole;
+      32 is where the seam stops being measurable. A rendition is kept and looked at later, so it
+      takes the exact one - and so does the loupe, whose whole purpose is to predict a rendition.
+      Nothing in production moves today: the loupe is the only thing that tiles, and it was
+      already on 64. What 32 is for is the editor's own tiling, below.
+- [ ] **~~`TILE_HALO` can be 32~~, and is worth less than it looks.** `examples/halo_seams.rs` cuts a
       region four ways at each halo against the same region cut as one tile, and measures the join
       as a *line*: each column averaged down the whole region, the two columns straddling the join
       against columns 24-48 out. A maximum cannot tell one hot pixel from a line and a mean over a

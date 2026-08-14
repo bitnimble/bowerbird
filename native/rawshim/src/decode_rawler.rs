@@ -123,6 +123,7 @@ pub fn decode_tile(
     tile: crate::Tile,
     amounts: crate::galosh::Amounts,
     fit: crate::galosh::Fit,
+    halo: usize,
 ) -> Option<Frame> {
     let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
     let decoder = rawler::get_decoder(&source).ok()?;
@@ -143,7 +144,7 @@ pub fn decode_tile(
     // Grown by what reads past the tile, and by the denoise's own window, then aligned to whole CFA
     // sites so the pattern inside the region is the pattern the frame has. An odd origin would
     // relabel every colour in it.
-    let reach = RCD_MARGIN + crate::tile_halo();
+    let reach = RCD_MARGIN + crate::tile_halo(halo);
     let left = (origin.0 + tile.left).saturating_sub(reach) & !1;
     let top = (origin.1 + tile.top).saturating_sub(reach) & !1;
     let right = (origin.0 + tile.left + tile.width + reach).min(frame_w);

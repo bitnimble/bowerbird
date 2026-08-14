@@ -34,9 +34,10 @@ fn main() {
 
     // Twice, because the first pays for the GPU pipelines the frame decode already built and a
     // loupe's second tile is the one that matters.
-    rawshim::decode_rawler::decode_tile(&path, tile, amounts, rawshim::galosh::Fit::Measure);
+    let halo = rawshim::RENDITION_TILE_HALO;
+    rawshim::decode_rawler::decode_tile(&path, tile, amounts, rawshim::galosh::Fit::Measure, halo);
     let started = std::time::Instant::now();
-    let Some(cut) = rawshim::decode_rawler::decode_tile(&path, tile, amounts, rawshim::galosh::Fit::Measure) else {
+    let Some(cut) = rawshim::decode_rawler::decode_tile(&path, tile, amounts, rawshim::galosh::Fit::Measure, halo) else {
         eprintln!("the tile declined");
         return;
     };

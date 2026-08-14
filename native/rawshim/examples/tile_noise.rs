@@ -95,7 +95,7 @@ fn main() {
             }
             let tile = rawshim::Tile { left, top, width: 512, height: 512 };
             let Some(cut) =
-                rawshim::decode_tile(&path, tile, 16, true, amounts, rawshim::galosh::Fit::Measure)
+                rawshim::decode_tile(&path, tile, 16, true, amounts, rawshim::galosh::Fit::Measure, rawshim::RENDITION_TILE_HALO)
             else {
                 println!("{name:>16}  the tile at {left},{top} declined");
                 continue;

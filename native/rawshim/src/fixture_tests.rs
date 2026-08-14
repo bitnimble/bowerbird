@@ -231,6 +231,7 @@ mod decode_geometry {
                 true,
                 amounts,
                 crate::galosh::Fit::Measure,
+                crate::RENDITION_TILE_HALO,
             )
             .unwrap_or_else(|| panic!("the {width}x{height} tile at {left},{top} declined"));
             assert_eq!((frame.width, frame.height), (width, height));
@@ -278,10 +279,11 @@ mod decode_geometry {
             .expect("the frame's fit");
 
         let tile = crate::Tile { left: 2000, top: 1400, width: 512, height: 512 };
-        let given = crate::decode_tile(&path, tile, 16, true, amounts, crate::galosh::Fit::Given(frame))
+        let halo = crate::RENDITION_TILE_HALO;
+        let given = crate::decode_tile(&path, tile, 16, true, amounts, crate::galosh::Fit::Given(frame), halo)
             .and_then(|f| f.noise)
             .expect("the tile decodes");
-        let own = crate::decode_tile(&path, tile, 16, true, amounts, crate::galosh::Fit::Measure)
+        let own = crate::decode_tile(&path, tile, 16, true, amounts, crate::galosh::Fit::Measure, halo)
             .and_then(|f| f.noise)
             .expect("the tile decodes");
 
