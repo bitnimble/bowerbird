@@ -86,25 +86,21 @@ worth more than its own timing.
 - [x] **lens warp** (`fcd4577`). Within 2 counts, mean 0.167. Uploads the ratio table rather than
       evaluating the spline, because the CPU gather reads that table and its 4096 buckets are part
       of the answer a rendition already committed to.
-- [ ] **levels quantile, 158ms.** The last unported stage, and the arithmetic is worked out - it
-      just was not worth starting with other work mid-flight.
+- [x] **levels quantile.** The last unported stage, and the one that came back **exact** - the
+      histogram, the per-pixel max and the walk are all integer, so `the_levels_match_the_cpu`
+      asserts equality rather than a bound.
 
-      `tone::sample_at` is `(k * pixels / counted) * 3`, which needs 52 bits at 61MP where WGSL has
-      no u64. But `counted` is `min(pixels, QUANTILE_SAMPLES)` and `QUANTILE_SAMPLES` is `1 << 20`,
-      so there are only two cases and both fit `u32`:
+      `tone::sample_at` is `(k * pixels / counted) * 3`, 52 bits at 61MP where WGSL has no u64.
+      `counted` is `min(pixels, QUANTILE_SAMPLES)` and `QUANTILE_SAMPLES` is `1 << 20`, so with
+      `whole = pixels / counted` and `rest = pixels % counted` taken on the host it is
+      `k * whole + (k * rest) / counted`, and splitting `k` at bit 10 keeps every intermediate
+      inside `u32`. The two cases are one expression rather than a branch: where `counted` is the
+      whole frame, `whole` is 1 and `rest` is 0, so the shifted term is 0 with it - which is also
+      the only reason the shift may stand in for the divide.
 
-      - `counted == pixels`, and the k-th sample is the k-th pixel.
-      - `counted == 2^20`. Take `whole = pixels / counted` and `rest = pixels % counted`, so
-        `pixel = k * whole + (k * rest) / counted`. With `k < 2^20` and `rest < 2^20` the product is
-        40 bits, so split `k` into `a = k >> 10` and `b = k & 1023`, both under `2^10`, and let
-        `A = a * rest` and `B = b * rest`, both under `2^30`. Then
-        `(k * rest) >> 20  ==  (A >> 10) + ((((A & 1023) << 10) + B) >> 20)`, every intermediate
-        inside `u32`.
-
-      Worth doing because parity here can be **exact**: the histogram, the per-pixel max and the
-      scan up the bins are all integer, and only the quantile threshold is float. Keep the walk up
-      the 65536 bins on the host - it is a serial scan over 256KB, which is microseconds and the one
-      shape a GPU has nothing to offer.
+      The walk up the 65536 bins stays on the host, and is `tone::scan` itself: the CPU builds its
+      histogram and calls it, this reads one back and calls it, so the marks and the fallback
+      cannot come to disagree.
 
 **Ported is not wired, and wired is not faster.** `apply_lens` takes the GPU now (`7b39847`, 277
 fixture tests green with the pinned renders unmoved) and it is **588-610ms against the CPU's
@@ -142,6 +138,13 @@ share one buffer this whole section buys correctness and nothing else.
       `6f02531` took it back out). It is the one stage paying an upload and no readback, and it is
       still not faster: 987ms against 958ms, because its median is compute bound. It goes in when
       the median below is fixed.
+- [ ] **The levels quantile is ported but deliberately *not* wired either**, and unlike the noise
+      measure it is not a kernel that needs fixing. It is 296-311ms against the CPU's 156-170ms,
+      and essentially all of that is the 361MB upload: the kernel reads a million samples whatever
+      the sensor, so it would be nearly free riding an upload already paid for. The only one going
+      past is `prepare`'s, and that is the wrong one - it codes a frame a rendition may have
+      resized, where the levels are deliberately the *unresized* photograph's so that every size
+      of it anchors alike. It goes in when something uploads the decode before the resize.
 - [ ] **Give the block reduction a median that is not a selection sort.** That is where the noise
       measure's time goes, and the transfer is not: at 61MP the frame is 1188 x 792 blocks, each
       taking the CPU's exact order statistic by partial selection - 48 passes over 96 laps, twice

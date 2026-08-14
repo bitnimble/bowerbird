@@ -42,6 +42,8 @@ pub struct Base {
     defocus_layout: wgpu::BindGroupLayout,
     defocus_bins: wgpu::ComputePipeline,
     defocus_residuals: wgpu::ComputePipeline,
+    levels_layout: wgpu::BindGroupLayout,
+    levels: wgpu::ComputePipeline,
 }
 
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
@@ -236,6 +238,36 @@ impl Base {
             })
         };
 
+        let levels_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("levels"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("wgsl/lanes.wgsl"),
+                    include_str!("wgsl/levels.wgsl"),
+                )
+                .into(),
+            ),
+        });
+        let levels_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("levels"),
+            entries: &[uniform_entry(0), storage_entry(1), storage_entry(2)],
+        });
+        let levels_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("levels"),
+                bind_group_layouts: &[Some(&levels_layout)],
+                immediate_size: 0,
+            });
+        let levels = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("levels"),
+            layout: Some(&levels_pipeline_layout),
+            module: &levels_module,
+            entry_point: Some("levels"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         Some(Base {
             layout,
             encode,
@@ -250,6 +282,8 @@ impl Base {
             defocus_layout,
             defocus_bins: defocus("defocus_bins"),
             defocus_residuals: defocus("defocus_residuals"),
+            levels_layout,
+            levels,
         })
     }
 }
@@ -1111,8 +1145,8 @@ fn measure_defocus_into(
         let (x, y) = groups(width * height);
         pass.dispatch_workgroups(x, y, 1);
     }
-    let (packed, histograms) =
-        read_pair(gpu, encoder, (&partials, partial_bytes), (&residuals, histogram_bytes))?;
+    let [packed, histograms] =
+        read_all(gpu, encoder, [(&partials, partial_bytes), (&residuals, histogram_bytes)])?;
 
     // The widening the shader could not do: an invocation sums 64 samples in `f32` where the CPU
     // sums a row in `f64`, and the segments meet here.
@@ -1191,38 +1225,131 @@ fn measure_defocus_into(
     }
 }
 
-/// Submits the work and brings both results back on one fence, since neither kernel reads what the
-/// other writes and a second wait would buy nothing.
-fn read_pair(
+/// The shader divides by `QUANTILE_SAMPLES` with a shift, having no `u64` to divide with. A host
+/// that sampled by one count while the kernel divided by another would read plausible levels off
+/// the wrong pixels, which is the failure with no symptom.
+const _: () = assert!(crate::tone::QUANTILE_SAMPLES == 1 << 20);
+
+/// The frame's diffuse white and peak, as [`crate::tone::levels`] reads them.
+///
+/// **The GPU counts the pixels and the host walks the bins**, the same line [`measure`] and
+/// [`measure_defocus`] draw. The count is a million sampled pixels of a frame that is already
+/// there; the walk is a serial scan over 65536 counts, microseconds, and the one shape a GPU has
+/// nothing to offer on. So the tail is `tone::scan` itself rather than a second spelling of it.
+///
+/// **Exactly the CPU's answer, not nearly.** The histogram, the per-pixel max and the scan are
+/// all integer - only the quantile marks are float, and they are taken on the host from the same
+/// `counted`. `the_levels_match_the_cpu` asserts equality, and a tolerance here would be hiding
+/// something rather than allowing for it.
+///
+/// **Ported and deliberately not wired**, as [`measure`] is. On its own it pays a 361MB upload to
+/// run a kernel over a million samples: measured on a 61MP frame, 296-311ms against the CPU's
+/// 156-170ms. Riding an upload someone else has already paid would be nearly free - but the only
+/// one going past is [`prepare`]'s, and that codes a frame a rendition may have resized, where
+/// these are deliberately the *unresized* photograph's so that every size of it anchors alike
+/// (`hdr::prepare_with`). So the fold that would pay for this is not the one that fits here.
+pub fn levels(
+    gpu: &'static crate::gpu::Gpu,
+    base: &'static Base,
+    samples: &[u16],
+    quantile: f64,
+) -> Option<crate::tone::Levels> {
+    if samples.len() < 3 {
+        return None;
+    }
+    let frame = upload(gpu, samples);
+    let encoder = gpu.device.create_command_encoder(&Default::default());
+    levels_into(gpu, base, encoder, &frame, samples.len() / 3, quantile)
+}
+
+/// Reads a frame already in VRAM. Takes the encoder rather than borrowing one, as
+/// [`measure_defocus_into`] does and for the same reason: the answer is a host walk over what the
+/// kernel writes, so this has to submit and map before it can return one.
+fn levels_into(
+    gpu: &crate::gpu::Gpu,
+    base: &Base,
+    mut encoder: wgpu::CommandEncoder,
+    frame: &wgpu::Buffer,
+    pixels: usize,
+    quantile: f64,
+) -> Option<crate::tone::Levels> {
+    let device = &gpu.device;
+    let counted = pixels.min(crate::tone::QUANTILE_SAMPLES);
+    let bins = usize::from(u16::MAX) + 1;
+    let histogram_bytes = bins * 4;
+
+    // Zeroed explicitly, being the one buffer here that is added to rather than written.
+    let histogram = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("levels histogram"),
+        contents: &vec![0u8; histogram_bytes],
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    });
+
+    let mut params: Vec<u8> = Vec::with_capacity(16);
+    for word in [counted as u32, (pixels / counted) as u32, (pixels % counted) as u32, 0] {
+        params.extend_from_slice(&word.to_le_bytes());
+    }
+    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("levels params"),
+        contents: &params,
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("levels"),
+        layout: &base.levels_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: frame.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: histogram.as_entire_binding() },
+        ],
+    });
+
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&base.levels);
+        pass.set_bind_group(0, &group, &[]);
+        let (x, y) = groups(counted);
+        pass.dispatch_workgroups(x, y, 1);
+    }
+    let [counts] = read_all(gpu, encoder, [(&histogram, histogram_bytes)])?;
+
+    let counts: Vec<u32> = counts
+        .chunks_exact(4)
+        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+        .collect();
+    Some(crate::tone::scan(&counts, counted, quantile))
+}
+
+/// Submits the work and brings every result back on one fence, since no kernel here reads what
+/// another writes and a second wait would buy nothing.
+fn read_all<const N: usize>(
     gpu: &crate::gpu::Gpu,
     mut encoder: wgpu::CommandEncoder,
-    first: (&wgpu::Buffer, usize),
-    second: (&wgpu::Buffer, usize),
-) -> Option<(Vec<u8>, Vec<u8>)> {
-    let mut staged = |(source, bytes): (&wgpu::Buffer, usize)| {
+    sources: [(&wgpu::Buffer, usize); N],
+) -> Option<[Vec<u8>; N]> {
+    let staged = sources.map(|(source, bytes)| {
         let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("defocus readback"),
+            label: Some("base readback"),
             size: bytes as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
         encoder.copy_buffer_to_buffer(source, 0, &readback, 0, bytes as u64);
         readback
-    };
-    let a = staged(first);
-    let b = staged(second);
+    });
     gpu.queue.submit([encoder.finish()]);
 
-    a.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    b.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    for readback in &staged {
+        readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    }
     gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
-    let read = (
-        a.slice(..).get_mapped_range().ok()?.to_vec(),
-        b.slice(..).get_mapped_range().ok()?.to_vec(),
-    );
-    a.unmap();
-    b.unmap();
-    Some(read)
+    let mut read = Vec::with_capacity(N);
+    for readback in &staged {
+        read.push(readback.slice(..).get_mapped_range().ok()?.to_vec());
+        readback.unmap();
+    }
+    read.try_into().ok()
 }
 
 #[cfg(test)]
@@ -1598,6 +1725,74 @@ mod tests {
             }
         }
         out
+    }
+
+    /// A frame whose brightest component spreads over the levels: a spatial ramp under a
+    /// per-pixel scatter, so the bins carry uneven counts rather than a flat block of one.
+    ///
+    /// Scattered by a hash rather than by anything periodic in the index, because the quantile
+    /// reads a *strided* subset of the pixels - a pattern with a period near that stride would
+    /// give the subset a distribution the whole frame does not have, and the two paths would
+    /// still agree while agreeing about the wrong frame.
+    ///
+    /// The brightest channel rotates, so a kernel that read one fixed channel instead of the
+    /// maximum of three would be counting something else.
+    fn spread(width: usize, height: usize) -> Vec<u16> {
+        let mut out = Vec::with_capacity(width * height * 3);
+        for at in 0..width * height {
+            let mut hash = (at as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            hash ^= hash >> 29;
+            hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            hash ^= hash >> 32;
+            let (x, y) = (at % width, at / width);
+            let ramp = (x * 12000 / width + y * 8000 / height) as u64;
+            let level = (ramp + hash % 30000) as u16;
+            let lead = (hash >> 40) % 3;
+            for channel in 0..3u64 {
+                out.push(match channel == lead {
+                    true => level,
+                    false => (u32::from(level) * 3 / 4) as u16,
+                });
+            }
+        }
+        out
+    }
+
+    /// The quantiles, against the CPU they replace, on both sides of the sample count.
+    ///
+    /// **Equal, not close, and that is the point of porting this one.** Everything either side
+    /// does is integer - the brightest component, the 65536 bins, the walk up them - and the two
+    /// float marks are taken once on the host from a `counted` both agree on. A tolerance would
+    /// only be covering for the one thing that actually goes wrong here, which is the shader
+    /// landing on the wrong *pixel*.
+    ///
+    /// Both cases of that indexing, because they are not the same arithmetic. Under
+    /// `QUANTILE_SAMPLES` the k-th sample is the k-th pixel; over it the offset is a 40-bit
+    /// product WGSL has no `u64` for, split at bit 10 by `pixel_at`. The large frame here has
+    /// `whole` 3 and `rest` 187541, so `k * rest` reaches 2e11 - a shader that tried that in one
+    /// `u32` would wrap, and a small frame alone would never ask it to.
+    #[test]
+    fn the_levels_match_the_cpu() {
+        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(base) = super::device(gpu) else { return };
+
+        for (width, height) in [(211usize, 149usize), (2111, 1579)] {
+            let frame = spread(width, height);
+            // Odd either side, so `upload`'s half-word tail is exercised rather than assumed.
+            assert_eq!(frame.len() % 2, 1, "{width}x{height} was picked for an odd sample count");
+
+            let theirs = crate::tone::levels(&frame, 0.995);
+            // **Asserted before the comparison.** A frame with too few distinct levels to reach
+            // either mark reports the same fallback for both, and two fallbacks agree perfectly -
+            // so a kernel that counted nothing would pass an equality against one.
+            assert!(
+                theirs.white > 0.0 && theirs.peak > theirs.white && theirs.peak < 65535.0,
+                "the CPU's own answer at {width}x{height} is {theirs:?}"
+            );
+
+            let mine = super::levels(gpu, base, &frame, 0.995).expect("the count runs");
+            assert_eq!(mine, theirs, "at {width}x{height}");
+        }
     }
 
     /// The defocus fit, against the CPU it replaces.
