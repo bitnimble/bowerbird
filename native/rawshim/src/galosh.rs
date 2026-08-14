@@ -486,6 +486,25 @@ impl Amounts {
     }
 }
 
+/// How many dispatches a run records before it stops, which is `usize::MAX` for everything but
+/// the profile sweep.
+///
+/// Set by `examples/open_bench.rs` to price the chain one kernel at a time: sweeping the count and
+/// differencing consecutive runs is what says which of the twenty dispatches a call's cost is in,
+/// and that is not answerable from the outside - the whole chain is one compute pass, so it
+/// submits and completes as a unit. A count rather than a phase because the question the sweep was
+/// written for turned out to be "which kernel", not "which phase".
+///
+/// The buffers stay sized for the whole run, so a truncated call differs from a full one only in
+/// the dispatches it did not record. That is what makes the difference between two counts the cost
+/// of the kernels between them, rather than the cost of a differently-shaped allocation.
+static STOP_AFTER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(usize::MAX);
+
+pub fn stop_after(dispatches: usize) {
+    STOP_AFTER.store(dispatches, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A LOESS dispatch's seven buffers: the guide first, as the kernel declares them.
 fn loess_binds<'a>(
     guide: &'a wgpu::Buffer,
@@ -616,6 +635,18 @@ fn run(
     assert!(width % 2 == 0 && height % 2 == 0, "the mosaic's dimensions pair into 2x2 sites");
     assert_eq!(mosaic.len(), width * height, "one sample per photosite");
 
+    // The same switch the decode and the open report through, because what this splits out is
+    // the part of a call that does not scale with the region: a run over tiles pays it per tile,
+    // and at a few hundred tiles that decides whether tiling is worth anything at all.
+    let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
+    let mut mark = std::time::Instant::now();
+    let mut lap = |name: &str| {
+        if profile {
+            eprintln!("    galosh {name}: {}ms", mark.elapsed().as_millis());
+        }
+        mark = std::time::Instant::now();
+    };
+
     let device = &gpu.device;
     let (w, h) = (width as i32, height as i32);
     let npix = width * height;
@@ -653,6 +684,7 @@ fn run(
         }
         gpu.queue.write_buffer(&raw, (at * CHUNK * 4) as u64, &bytes);
     }
+    lap("upload");
 
     // Two full-resolution scratch planes carry four roles between them, because a plane at
     // 61MP is 240MB. `full_a` is the GAT frame until the chroma has been taken out of it,
@@ -807,6 +839,7 @@ fn run(
     let (qx, qy) = groups(cq_w, cq_h, 16);
     let (kx, ky) = groups(kq_w, kq_h, 16);
 
+    lap("allocate");
     let mut encoder = device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -815,10 +848,13 @@ fn run(
         // are zero-length above, which is what makes skipping them the whole saving rather than
         // half of it.
         let done = std::cell::Cell::new(false);
+        let stop_after = STOP_AFTER.load(std::sync::atomic::Ordering::Relaxed);
+        let recorded = std::cell::Cell::new(0usize);
         let mut run = |kernel: &Kernel, group: &wgpu::BindGroup, offset: u32, x: u32, y: u32| {
-            if done.get() {
+            if done.get() || recorded.get() >= stop_after {
                 return;
             }
+            recorded.set(recorded.get() + 1);
             pass.set_pipeline(&kernel.pipeline);
             pass.set_bind_group(0, group, &[offset]);
             pass.dispatch_workgroups(x, y, 1);
@@ -991,6 +1027,7 @@ fn run(
         encoder.copy_buffer_to_buffer(&raw, 0, &readback, 0, (npix * 4) as u64);
     }
     encoder.copy_buffer_to_buffer(&params, 0, &fitted, 0, 32 * 4);
+    lap("record");
     gpu.queue.submit([encoder.finish()]);
 
     let model_slice = fitted.slice(..);
@@ -999,6 +1036,7 @@ fn run(
         readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
     }
     device.poll(wgpu::PollType::wait_indefinitely()).expect("the denoise finished");
+    lap("dispatch");
     if !fit_only {
         let slice = readback.slice(..);
         let mapped = slice.get_mapped_range().expect("the readback mapped");
@@ -1006,6 +1044,7 @@ fn run(
             *sample = f32::from_ne_bytes([word[0], word[1], word[2], word[3]]);
         }
     }
+    lap("read back");
     let measured = {
         let mapped = model_slice.get_mapped_range().expect("the model mapped");
         fit_of(&mapped)

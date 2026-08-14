@@ -281,9 +281,21 @@ pub fn served() -> Vec<(u64, u64)> {
 /// The open itself, with the turn already taken.
 fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     {
+        // The same switch and the same shape as `decode_rawler::decode_source`, so an open reads
+        // as one run of laps rather than as a decode that reports and a half that does not.
+        let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
+        let mut mark = std::time::Instant::now();
+        let mut lap = |name: &str| {
+            if profile {
+                eprintln!("  open {name}: {}ms", mark.elapsed().as_millis());
+            }
+            mark = std::time::Instant::now();
+        };
+
         let frame =
             crate::decode_frame_bytes(bytes, 16, true, request.long_edge, crate::galosh::Fit::Only)
                 .ok_or("the decoder could not read this file")?;
+        lap("decode");
         let noise_fit = frame.noise;
         let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
         let source = hdr::Source { samples, width: frame.width, height: frame.height };
@@ -300,7 +312,9 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
             true => None,
             false => matched.as_ref().map(crate::camera_match::encode),
         };
+        lap(if had_one { "camera match (supplied)" } else { "camera match (fitted)" });
         let mut prepared = hdr::prepare(&source, None, &request.grade);
+        lap("levels");
 
         // The same refusal `tone::grade` makes, and for the same reason: the grade divides
         // by diffuse white, and `tone::levels` reports zero when the white quantile lands on
@@ -341,6 +355,7 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
             )
         };
         filter(&mut prepared, request.strengths.before_the_fit());
+        lap("code, defringe");
         if let Some(colour) = matched.as_ref() {
             if let Some(warped) = crate::hdr_fit::apply_lens(
                 &prepared.samples,
@@ -351,8 +366,12 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
                 prepared.samples = warped;
             }
         }
+        lap("lens warp");
         filter(&mut prepared, Strengths { sharpen: request.strengths.sharpen, ..Default::default() });
-        Ok(payload(prepared, matched.as_ref(), frame.as_shot, request, keep, noise_fit))
+        lap("sharpen");
+        let out = payload(prepared, matched.as_ref(), frame.as_shot, request, keep, noise_fit);
+        lap("noise measure, header");
+        Ok(out)
     }
 }
 
