@@ -477,11 +477,14 @@ fn payload(
         // Last, on the buffer as it will be sent: the warp resamples and the sharpen amplifies,
         // and a tick denoises what comes out of both rather than what went into them.
         //
-        // **The one stage worth moving before the chain closes.** Every other port pays an upload
-        // and a readback of a 361MB frame to save less than that costs, which is why the warp came
-        // out no faster than the CPU it replaced; this one hands back three numbers, so it pays
-        // the upload only. The CPU's own is four whole-frame passes and 958ms.
-        noise: measured(&prepared),
+        // **On the CPU, and `base::measure` is deliberately not called here.** It is ported and
+        // pinned within 0.2% (`base.rs`), and it costs 987ms alone against this 958ms - the median
+        // it takes per block is a 48-pass selection over 96 laps, so the reduction is compute
+        // bound rather than transfer bound and moving it buys nothing yet. Worse, run *after* the
+        // chain above it measured 7962ms, which is the chain's own buffers still resident: a
+        // frame, its warped copy and a readback are a gigabyte on an integrated GPU, and this
+        // wants another. It goes back when the median does.
+        noise: crate::noise::measure(&prepared.samples, prepared.width, prepared.height),
         noise_fit,
         camera_match,
         samples_len: prepared.samples.len() * 2,
@@ -489,21 +492,7 @@ fn payload(
     Prepared { header, samples: prepared.samples }
 }
 
-/// The frame's noise, off the GPU where there is one.
-///
-/// Falls through on a machine with no device, and on a frame the reduction declines - both arrive
-/// as `None`, and the CPU below answers each the same way it always did.
-fn measured(prepared: &HdrPrepared) -> crate::noise::Noise {
-    crate::gpu::device()
-        .and_then(crate::base::device)
-        .and_then(|base| {
-            let gpu = crate::gpu::device()?;
-            crate::base::measure(gpu, base, &prepared.samples, prepared.width, prepared.height)
-        })
-        .unwrap_or_else(|| {
-            crate::noise::measure(&prepared.samples, prepared.width, prepared.height)
-        })
-}
+
 
 /// The wire form: a little-endian `u32` header length, that many bytes of JSON, then the
 /// samples as little-endian `u16`.
