@@ -31,8 +31,10 @@ something measured says the 582ms is the problem.
       photograph, and a third of that is `condition`, which becomes a kernel anyway. Not worth
       `SharedArrayBuffer` and the cross-origin isolation the whole page would carry for it.
       `wasm-bindgen-rayon` stays available if something measured later says otherwise.
-- [ ] **Serve the stored camera match.** `camera_match_store.ts` holds it; nothing exposes it. The
-      client needs the 5KB blob to skip a 600-700ms fit.
+- [x] **The camera match is served** (`9e11861`), at `/image/:id/camera-match`, immutable under a
+      per-photo URL because a match is a function of the file alone. Bytes, opaquely: a build that
+      cannot read a blob ignores it and refits, so there is no version to negotiate at that
+      boundary.
 - [x] **The RAW is already cacheable, and this item was aimed at the wrong function.** `download()`
       does send `no-cache`, but `/download/original` does not go through it - it goes through
       `serve`, which carries an ETag off the file's size and mtime and answers a conditional GET
@@ -102,9 +104,10 @@ share one buffer this whole section buys correctness and nothing else.
       `prepare`. On a 61MP frame, against the CPU path: code + defringe + warp **1695ms to 956ms**,
       and the open after its levels **5201ms to 4709ms**. 279 fixture tests green, pinned renders
       unmoved, and `decode_bench`'s checksums identical to before any of this existed.
-- [x] **The noise measure is wired** (`e19350f`), being the one stage that pays an upload and no
-      readback. Correct - the fixture suite passes with it live - and **not faster**: 987ms against
-      958ms.
+- [ ] **The noise measure is ported but deliberately *not* wired** (`e19350f` wired it,
+      `6f02531` took it back out). It is the one stage paying an upload and no readback, and it is
+      still not faster: 987ms against 958ms, because its median is compute bound. It goes in when
+      the median below is fixed.
 - [ ] **Give the block reduction a median that is not a selection sort.** That is where the noise
       measure's time goes, and the transfer is not: at 61MP the frame is 1188 x 792 blocks, each
       taking the CPU's exact order statistic by partial selection - 48 passes over 96 laps, twice
