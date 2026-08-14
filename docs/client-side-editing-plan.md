@@ -4,14 +4,11 @@ Investigation is not finished; this is the list as it stands, so nothing measure
 forgotten. Numbers are a 61MP ARW (9504x6336) on a Radeon 780M iGPU unless stated, from
 `native/rawshim/examples/open_bench.rs`.
 
-**Two things want settling before any of it is built**, and neither is about the client:
-
-1. The interior discrepancy under "Open" below. A region denoised alone is not the frame denoised
-   whole, by more than a seam is, and the loupe already rests on the assumption that it is. That
-   is a correctness question about what ships today, and tiling anything makes it wider.
-2. Whether the CPU stages move to the GPU *first*. They are 73% of the open, they are needed
-   whether or not the client ever opens a RAW, and going to wasm before they move means
-   single-threading 5.9s of work that should not be on a CPU at all.
+**Order, decided.** The CPU stages move to the GPU first, because parity is checkable there: the
+WGSL is held against the CPU it replaces by fixtures that already exist, where a wasm port is a
+second thing to trust at the same time. Then the client move, single-threaded - no
+`wasm-bindgen-rayon`, no `SharedArrayBuffer`, no cross-origin isolation, none of it until
+something measured says the 582ms is the problem.
 
 ## The move
 
@@ -27,13 +24,13 @@ forgotten. Numbers are a 61MP ARW (9504x6336) on a Radeon 780M iGPU unless state
       `gpu.rs`'s `static GPU` is `!Send + !Sync` under wgpu's WebGPU backend (`pollster::block_on`
       cannot block a browser thread either). Everything else, rawler included, already compiles
       for `wasm32-unknown-unknown`.
-- [ ] **Decide about threads, and it looks like single-threaded wins.** The part in question is
-      purely the entropy decode and bit-unpack into the sensor's `u16` grid - `raw_image`, which
-      is rayon-parallel inside rawler (Sony's lossless is tiled in two dimensions). At 61MP it is
-      92ms on twelve cores and **389ms on one**, 4.2x; `condition` is 26ms against 193ms, 7.4x.
-      So the whole irreducibly-CPU half is 582ms single-threaded, and `condition` is a third of
-      that and is already on the list to become a kernel. Against that, `SharedArrayBuffer` and
-      the cross-origin isolation the page would carry for it.
+- [x] **Threads: single, and no wasm threading is to be built.** The part in question is purely
+      the entropy decode and bit-unpack into the sensor's `u16` grid - `raw_image`, rayon-parallel
+      inside rawler (Sony's lossless is tiled in two dimensions). At 61MP it is 92ms on twelve
+      cores and 389ms on one, 4.2x; `condition` is 26ms against 193ms, 7.4x. So 582ms once per
+      photograph, and a third of that is `condition`, which becomes a kernel anyway. Not worth
+      `SharedArrayBuffer` and the cross-origin isolation the whole page would carry for it.
+      `wasm-bindgen-rayon` stays available if something measured later says otherwise.
 - [ ] **Serve the stored camera match.** `camera_match_store.ts` holds it; nothing exposes it. The
       client needs the 5KB blob to skip a 600-700ms fit.
 - [ ] **Make the RAW cacheable.** `image_api.ts`'s `download()` sends `Cache-Control: no-cache`.
@@ -62,22 +59,32 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
 
 - [x] **Keep the inverse-GAT table** (`40def3d`). The 395ms per-call fixed cost is gone; a denoise
       is now 85-91ms/MP flat from 0.04MP to 60MP.
-- [ ] **Tile RCD at 1024.** 1040ms whole-frame against 467ms, bit-identical over 180,652,032
-      samples. Faster because 3.1GB of planes costs more than a 4% halo saves.
-- [ ] **Tile GALOSH for progress, not for throughput.** A stage-sized region is 423ms against
-      5286ms for the frame, and seventy tiles is 7382ms - so tiling costs about 40% in total work
-      (the halo's redundant area) and buys the picture arriving in pieces instead of all at once.
-      Worth it for a whole-image slider, where perceived speed is the point; use one rectangle
-      wherever the answer is wanted whole.
+- [x] **The whole decode tiles at 2048, renders included** (`decode_rawler::denoise_in_tiles`,
+      `demosaic_in_tiles`). A render is now assembled from the same regions at the same halo as
+      the loupe that predicts it, rather than two routes that ought to agree. Output is unchanged
+      - the 266-test fixture suite passes with the pinned renders untouched, same decode checksum
+      - and it is *faster*: 1068ms against 1385ms at 61MP, 56.4 MP/s against 43.5, because 3.1GB
+      of RCD planes costs an integrated GPU more than a halo saves. It also bounds the GPU, which
+      is what makes a 61MP open viable on a phone or in a tab.
+
+      One trap, found by the fixtures: the halo has to be grown in the **sensor's** coordinates
+      and clamped to the sensor, not to the crop. The crop is inset from the readable area, so
+      there is real mosaic outside it and the whole-frame demosaic read it. Clamping to the crop
+      border-fills the frame's own edge - it moved the first six samples of a pinned render and
+      nothing else in the row.
+- [ ] **Tile GALOSH finer for progress, not for throughput.** A stage-sized region is 423ms
+      against 5286ms for the frame, so a whole-image slider can show the picture arriving in
+      pieces. That is a latency-against-throughput call and separate from the decode's own tiling
+      above, which is sized for memory and parity.
 - [x] **The halo is two constants, 32 and 64** (`RENDITION_TILE_HALO`, `EDITOR_TILE_HALO`), chosen
       at the call site. 64 is where a tiled denoise is bit-identical to the frame denoised whole;
       32 is where the seam stops being measurable. A rendition is kept and looked at later, so it
       takes the exact one - and so does the loupe, whose whole purpose is to predict a rendition.
       Nothing in production moves today: the loupe is the only thing that tiles, and it was
       already on 64. What 32 is for is the editor's own tiling, below.
-- [ ] **Pick the tile size from this, not the halo.** The halo is settled; what is not is how big
-      an editor tile should be. Over a 61MP frame, as the area actually put through the denoise
-      with the wall clock beside it, against 5311ms for the frame whole:
+- [x] **The tile is 2048** (`decode_rawler::RENDER_TILE`), which is where the halo stops mattering.
+      Over a 61MP frame, as the area actually put through the denoise with the wall clock beside
+      it, against 5311ms for the frame whole:
 
       | tile | halo 16 | halo 32 | halo 64 |
       |------|---------|---------|---------|
@@ -103,8 +110,11 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
       and it is as large well away from a seam as at one. Not the decode either: `tile_check` puts
       a tile against the same region of the frame at `mean 0.0 worst 0` with the denoise off. And
       not `Fit::Given` against `Fit::Measure`, which `open_bench` measures at `worst 0e0`.
-      Whatever it is, the loupe rests on it - a tile is handed the frame's fit so that it predicts
-      the export, and the export denoises the frame whole.
+
+      **Largely defused rather than explained**, now the render tiles the same way the loupe does:
+      both sides are regions of the same size at the same halo, so whatever this is applies to
+      both. It still wants finding, because it says something is not local that is assumed to be -
+      and `tile_check` should now be re-run against the tiled render to see what is left of it.
 
 ## Falls out of the above
 

@@ -362,17 +362,29 @@ fn decode_source(
 
     lap("condition");
     let gpu = crate::gpu::device()?;
+    // **Tiled, and at the halo a loupe takes.** A render assembled from the same regions as the
+    // magnifier that predicts it is the same arithmetic rather than two routes that ought to
+    // agree, which is the argument `job::Base::build` already makes about handing a tile the
+    // frame's fit. It also bounds the GPU: whole-frame RCD is 3.1GB of planes at 61MP.
+    //
+    // `Fit::Measure` becomes a whole-frame fit and then a tiled denoise against it, which is the
+    // same denoise - `open_bench` puts a measured fit against a given one at `worst 0e0`. The fit
+    // has to be whole-frame either way, since Phase 0 reduces over everything it is shown and a
+    // tile's own statistics are not the photograph's.
     let noise = crate::galosh::device(gpu).and_then(|kernels| match fit {
         crate::galosh::Fit::Only => {
             Some(crate::galosh::fit(gpu, kernels, &mosaic, width, height))
         }
         _ if !amounts.does_anything() => None,
         crate::galosh::Fit::Measure => {
-            Some(crate::galosh::denoise(gpu, kernels, &mut mosaic, width, height, amounts))
+            let measured = crate::galosh::fit(gpu, kernels, &mosaic, width, height);
+            denoise_in_tiles(gpu, kernels, &mut mosaic, width, height, amounts, measured);
+            Some(measured)
         }
-        crate::galosh::Fit::Given(fit) => Some(crate::galosh::denoise_with(
-            gpu, kernels, &mut mosaic, width, height, amounts, fit,
-        )),
+        crate::galosh::Fit::Given(fit) => {
+            denoise_in_tiles(gpu, kernels, &mut mosaic, width, height, amounts, fit);
+            Some(fit)
+        }
     });
 
     lap("denoise");
@@ -403,9 +415,8 @@ fn decode_source(
         }
         false => {
             let rcd = crate::demosaic::device(gpu)?;
-            let pixels = crate::demosaic::demosaic_with(gpu, rcd, &mosaic, width, height, cfa, |rgb| {
-                to_rec2020(rgb, width, crop, matrix)
-            })?;
+            let pixels =
+                demosaic_in_tiles(gpu, rcd, &mosaic, width, height, cfa, crop, matrix)?;
             (pixels, crop)
         }
     };
@@ -430,6 +441,169 @@ fn decode_source(
         as_shot: as_shot_of(&image),
         noise,
     })
+}
+
+/// How wide a tile the denoise and the demosaic are cut into, for a whole frame as much as for a
+/// loupe.
+///
+/// **Measured against the halo rather than chosen.** Over a 61MP frame the whole 16-to-64 halo
+/// range costs 9% at this size and 37% at 512, so a large tile is what makes a generous halo
+/// affordable; and 2048 at halo 32 is cheaper than 512 at any halo at all. Smaller than this buys
+/// only finer progressive updates, which is a latency question and not this module's.
+const RENDER_TILE: usize = 2048;
+
+/// A tile and the haloed region that has to be decoded to produce it, in one space.
+#[derive(Clone, Copy)]
+struct Region {
+    left: usize,
+    top: usize,
+    w: usize,
+    h: usize,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+}
+
+/// Every tile of a `width` x `height` field, each grown by `halo` and aligned to whole CFA sites.
+///
+/// Aligned down to even and trimmed to even for the reason `decode_tile` gives: an odd origin
+/// relabels every colour in the region, and the denoise pairs samples into 2x2 sites. Clamped at
+/// the field's own edge, where there is nothing to grow into.
+fn tiles_of(width: usize, height: usize, halo: usize, mut visit: impl FnMut(Region)) {
+    for ty in 0..height.div_ceil(RENDER_TILE) {
+        for tx in 0..width.div_ceil(RENDER_TILE) {
+            let (x0, y0) = (tx * RENDER_TILE, ty * RENDER_TILE);
+            let (x1, y1) = ((x0 + RENDER_TILE).min(width), (y0 + RENDER_TILE).min(height));
+            let left = x0.saturating_sub(halo) & !1;
+            let top = y0.saturating_sub(halo) & !1;
+            let right = (x1 + halo).min(width);
+            let bottom = (y1 + halo).min(height);
+            let (right, bottom) = (right - ((right - left) & 1), bottom - ((bottom - top) & 1));
+            if right <= left || bottom <= top {
+                continue;
+            }
+            visit(Region {
+                left,
+                top,
+                w: right - left,
+                h: bottom - top,
+                x0,
+                y0,
+                x1: x1.min(right),
+                y1: y1.min(bottom),
+            });
+        }
+    }
+}
+
+fn window_of(mosaic: &[f32], stride: usize, region: Region) -> Vec<f32> {
+    let mut out = vec![0f32; region.w * region.h];
+    for row in 0..region.h {
+        let from = (region.top + row) * stride + region.left;
+        out[row * region.w..(row + 1) * region.w].copy_from_slice(&mosaic[from..from + region.w]);
+    }
+    out
+}
+
+/// The mosaic denoise, tile by tile, over a frame's worth of it.
+///
+/// **Read from a copy and written to the original**, because a tile's halo reaches into its
+/// neighbours: filtering in place would have every tile after the first reading samples that had
+/// already been filtered, which is a second denoise applied in a band the width of the halo. The
+/// copy is one plane - 241MB at 61MP - against the gigabytes tiling takes off the GPU.
+fn denoise_in_tiles(
+    gpu: &'static crate::gpu::Gpu,
+    kernels: &'static crate::galosh::Galosh,
+    mosaic: &mut [f32],
+    width: usize,
+    height: usize,
+    amounts: crate::galosh::Amounts,
+    fit: crate::galosh::NoiseFit,
+) {
+    let source = mosaic.to_vec();
+    tiles_of(width, height, crate::RENDITION_TILE_HALO, |region| {
+        let mut window = window_of(&source, width, region);
+        crate::galosh::denoise_with(
+            gpu, kernels, &mut window, region.w, region.h, amounts, fit,
+        );
+        let span = region.x1 - region.x0;
+        for row in region.y0..region.y1 {
+            let to = row * width + region.x0;
+            let from = (row - region.top) * region.w + (region.x0 - region.left);
+            mosaic[to..to + span].copy_from_slice(&window[from..from + span]);
+        }
+    });
+}
+
+/// The demosaic and the colour transform, tile by tile, straight into the cropped frame.
+///
+/// Tiled over the *crop* rather than the sensor, since that is the frame being built; the region
+/// each tile needs is that rectangle in sensor coordinates grown by RCD's own margin. Whole-frame
+/// RCD holds thirteen planes at once - 3.1GB at 61MP - which is the allocation this removes.
+fn demosaic_in_tiles(
+    gpu: &'static crate::gpu::Gpu,
+    rcd: &'static crate::demosaic::Rcd,
+    mosaic: &[f32],
+    width: usize,
+    height: usize,
+    cfa: [u32; 4],
+    crop: (usize, usize, usize, usize),
+    matrix: [[f32; 3]; 3],
+) -> Option<Vec<u16>> {
+    let (crop_left, crop_top, crop_w, crop_h) = crop;
+    let mut out = vec![0u16; crop_w * crop_h * 3];
+
+    for ty in 0..crop_h.div_ceil(RENDER_TILE) {
+        for tx in 0..crop_w.div_ceil(RENDER_TILE) {
+            let (tx0, ty0) = (tx * RENDER_TILE, ty * RENDER_TILE);
+            let (tx1, ty1) =
+                ((tx0 + RENDER_TILE).min(crop_w), (ty0 + RENDER_TILE).min(crop_h));
+            // **Grown in the sensor's coordinates and clamped to the sensor, not to the crop.**
+            // The crop is inset from the readable area, so there is real mosaic outside it, and
+            // the whole-frame demosaic this replaces read that: it ran over everything and was
+            // cropped afterwards. Clamping the halo to the crop instead border-fills the frame's
+            // own edge, which came out as the first six samples of a pinned render moving and
+            // nothing else in the row.
+            let (sx0, sy0) = (crop_left + tx0, crop_top + ty0);
+            let (sx1, sy1) = (crop_left + tx1, crop_top + ty1);
+            let left = sx0.saturating_sub(RCD_MARGIN) & !1;
+            let top = sy0.saturating_sub(RCD_MARGIN) & !1;
+            let right = (sx1 + RCD_MARGIN).min(width);
+            let bottom = (sy1 + RCD_MARGIN).min(height);
+            let (right, bottom) =
+                (right - ((right - left) & 1), bottom - ((bottom - top) & 1));
+            if right <= left || bottom <= top {
+                continue;
+            }
+            let region =
+                Region { left, top, w: right - left, h: bottom - top, x0: 0, y0: 0, x1: 0, y1: 0 };
+
+            let window = window_of(mosaic, width, region);
+            // Where this tile sits inside its own region, which is where the halo ends.
+            let inner = (
+                sx0 - left,
+                sy0 - top,
+                (sx1 - sx0).min(region.w - (sx0 - left)),
+                (sy1 - sy0).min(region.h - (sy0 - top)),
+            );
+            let rgb = crate::demosaic::demosaic_with(
+                gpu,
+                rcd,
+                &window,
+                region.w,
+                region.h,
+                cfa,
+                |bytes| to_rec2020(bytes, region.w, inner, matrix),
+            )?;
+            for row in 0..inner.3 {
+                let to = ((ty0 + row) * crop_w + tx0) * 3;
+                let from = row * inner.2 * 3;
+                out[to..to + inner.2 * 3].copy_from_slice(&rgb[from..from + inner.2 * 3]);
+            }
+        }
+    }
+    Some(out)
 }
 
 /// How far past a tile the pipeline reads, in sensor pixels.
