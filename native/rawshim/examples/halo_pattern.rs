@@ -80,10 +80,15 @@ fn main() {
     write(&format!("{out}/pattern-reference"), &shown, side, side);
     write(&format!("{out}/pattern-noisy"), &render(gpu, rcd, &mosaic, side, cfa), side, side);
 
-    // Narrow enough that five of them fit beside each other without being scaled, which would
-    // stop them being 100% and lose the thing they exist to show.
-    const WIDE: usize = 192;
-    let mut strip = vec![column(&shown, side, WIDE)];
+    // **A square on where the two seams cross, and the difference strip is cut the same.** A
+    // column carries the vertical seam and only one row of the horizontal one, so a strip made of
+    // columns shows whichever seam happens to run down it and hides the other - and comparing a
+    // narrow picture against a whole-frame difference is comparing two zoom levels.
+    const WINDOW: usize = 256;
+    let mut strip = vec![centred(&shown, side, WINDOW)];
+    // The reference against itself, which is black, so the two strips have the same panels in the
+    // same places and can be read one above the other.
+    let mut diffs = vec![vec![0u8; WINDOW * WINDOW * 3]];
 
     let half = side / 2;
     println!("{:>6}  {:>9} {:>9} {:>9}", "halo", "V excess", "H excess", "baseline");
@@ -123,7 +128,7 @@ fn main() {
         );
         let shown = render(gpu, rcd, &assembled, side, cfa);
         write(&format!("{out}/pattern-halo{halo}"), &shown, side, side);
-        strip.push(column(&shown, side, WIDE));
+        strip.push(centred(&shown, side, WINDOW));
         // Amplified hard, because the whole point of the pattern is that the seam is a fraction of
         // a count: at 64x a difference of 0.004 is mid grey, and at that gain the noise floor is
         // visible too, which is what stops the picture reading as worse than it is.
@@ -132,12 +137,29 @@ fn main() {
             .zip(&reference)
             .map(|(a, b)| ((a - b).abs() * 64.0).min(1.0))
             .collect();
-        write(&format!("{out}/diff-halo{halo}"), &render(gpu, rcd, &diff, side, cfa), side, side);
+        let shown_diff = render(gpu, rcd, &diff, side, cfa);
+        write(&format!("{out}/diff-halo{halo}"), &shown_diff, side, side);
+        diffs.push(centred(&shown_diff, side, WINDOW));
     }
-    let across = strip.len() * (WIDE + 4) - 4;
-    write(&format!("{out}/pattern-side-by-side"), &alongside(&strip, WIDE, side), across, side);
+    let wide = |n: usize| n * (WINDOW + 4) - 4;
+    write(
+        &format!("{out}/pattern-side-by-side"),
+        &alongside(&strip, WINDOW, WINDOW),
+        wide(strip.len()),
+        WINDOW,
+    );
+    // The same squares, so the picture and the difference are read at one zoom and one crop.
+    write(
+        &format!("{out}/diff-side-by-side"),
+        &alongside(&diffs, WINDOW, WINDOW),
+        wide(diffs.len()),
+        WINDOW,
+    );
     eprintln!("\nwrote the pattern and {} halos to {out}", halos.len());
-    eprintln!("and pattern-side-by-side, reference then {halos:?}, {WIDE}px columns at 100%");
+    eprintln!(
+        "pattern-side-by-side is the reference then {halos:?}; diff-side-by-side is {halos:?}",
+    );
+    eprintln!("both {WINDOW}px squares at 100%, on where the two seams cross");
 }
 
 /// The mosaic, one photosite at a time, in the domain `condition` leaves a real decode in.
@@ -152,13 +174,21 @@ fn pattern(width: usize, height: usize, cfa: [u32; 4], swing: f32, noise: f32) -
 
     for row in 0..height {
         for col in 0..width {
-            let band = (row * BANDS / height).min(BANDS - 1);
+            // **Nothing in the pattern may line up with where the tiles meet.** Both seams fall at
+            // the middle, so a band boundary there is a discontinuity of this file's own making
+            // being read as the denoise's, and the zone plate's centre there is the one place it
+            // is lowest frequency and so easiest. Measured with them aligned, the horizontal seam
+            // came out 4.5x the vertical one and neither number was about the halo. The bands are
+            // rolled half a band down and the plate is off-centre, so the seams cross ordinary
+            // content in both directions.
             let tall = height / BANDS;
-            let (x, y) = (col as f32, row as f32);
-            let (cx, cy) = (width as f32 / 2.0, tall as f32 / 2.0);
+            let rolled = (row + tall / 2) % height;
+            let band = (rolled / tall).min(BANDS - 1);
+            let x = col as f32;
+            let (cx, cy) = (width as f32 * 0.37, tall as f32 * 0.61);
             // A chirp in radius, so one ring of it sits at every frequency the pyramid has a level
             // for, and at every orientation.
-            let local = y - (band * tall) as f32;
+            let local = (rolled % tall) as f32;
             let r2 = (x - cx) * (x - cx) + (local - cy) * (local - cy);
             let sweep = (r2 * 0.00035).cos();
 
@@ -281,16 +311,14 @@ fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
         .expect("the JPEG writes");
 }
 
-/// A `wide` column centred on the vertical seam, the full height of the pattern.
-///
-/// A column rather than the square the photograph harness cuts, because the seam here has four
-/// different subjects to cross and the interesting thing is which of them it survives.
-fn column(rgb: &[u8], side: usize, wide: usize) -> Vec<u8> {
-    let left = (side - wide) / 2;
-    let mut out = vec![0u8; wide * side * 3];
-    for row in 0..side {
-        let from = (row * side + left) * 3;
-        out[row * wide * 3..(row + 1) * wide * 3].copy_from_slice(&rgb[from..from + wide * 3]);
+/// A `window`-sided square from the middle, which is where the two seams cross.
+fn centred(rgb: &[u8], side: usize, window: usize) -> Vec<u8> {
+    let from = (side - window) / 2;
+    let mut out = vec![0u8; window * window * 3];
+    for row in 0..window {
+        let at = ((from + row) * side + from) * 3;
+        out[row * window * 3..(row + 1) * window * 3]
+            .copy_from_slice(&rgb[at..at + window * 3]);
     }
     out
 }
