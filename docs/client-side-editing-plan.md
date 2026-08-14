@@ -53,14 +53,27 @@ the grade uploads it again. At 61MP that is 361MB each way to run pointwise arit
 So a stage is worth moving even where the stage itself is cheap, and the last one to move is
 worth more than its own timing.
 
-- [x] **the coding** (`2743056`, `base.rs`). Within a count of the CPU over every level a sample
-      can hold, which is what `f32` costs against a table built in `f64`.
-- [ ] **defringe**, the rest of `code, defringe`'s 1170ms. A 5-point Laplacian of luma subtracted
-      from red and blue - local, and the coefficients are a whole-frame reduction of their own
-      (`measure_defocus`) that can move separately.
-- [ ] **noise measure, 1021ms**
-- [ ] **lens warp, 639ms**
-- [ ] **levels quantile, 158ms** - `peak.wgsl` already does a sampled quantile
+- [x] **the coding** (`2743056`). Within a count of the CPU over every level a sample can hold.
+- [x] **defringe** (`7f02072`). Composing it with `recombine` leaves one add per channel; the
+      1170ms was the planar split, the strips and the interleave, none of which a shader needs.
+- [x] **noise measure** (`8ecfd9a`). Within 0.2% relative; the quantiles stay on the CPU, where
+      they run over ~941k block sigmas rather than pixels.
+- [x] **lens warp** (`fcd4577`). Within 2 counts, mean 0.167. Uploads the ratio table rather than
+      evaluating the spline, because the CPU gather reads that table and its 4096 buckets are part
+      of the answer a rendition already committed to.
+- [ ] **levels quantile, 158ms.** Parked: the sampling index is `k * pixels / counted`, 52 bits at
+      61MP, and WGSL has no u64. Soluble with a split product, but it would also cost the exact
+      integer parity that made this one attractive, for the smallest stage on the list.
+
+**Ported is not wired, and wired is not faster.** `apply_lens` takes the GPU now (`7b39847`, 277
+fixture tests green with the pinned renders unmoved) and it is **588-610ms against the CPU's
+639ms** - no faster, because a stage on its own uploads 361MB and reads it back, which is what the
+CPU never had to do. The stage timings were never the prize; the transfers are. Until the stages
+share one buffer this whole section buys correctness and nothing else.
+
+- [ ] **Chain them over one resident frame.** One upload, encode -> defringe -> warp in one
+      encoder, one readback. That is the change that makes the four above worth having, and the
+      one that starts closing on RCD's readback and the grade's upload either side.
 - [ ] ~~**sharpen, 2926ms**~~ - **skip it entirely.** A GPU sharpener is replacing it, so its
       parity, its performance and the round trip through system memory it currently forces are all
       about to stop existing. Do not design the residency around it: reading back before it and
