@@ -88,7 +88,7 @@ fn main() {
     // 100% and the corner where they meet, which is where a short halo has least context of all.
     let window = (side / 2).min(512);
     let crop = |image: &[u8]| centred(image, side, window);
-    write(&format!("{out}/seam-reference.avif"), &crop(&reference), window, window);
+    write(&format!("{out}/seam-reference"), &crop(&reference), window, window);
 
     eprintln!("region roughness {:.1} of 255, so it is texture rather than sky", roughness(&reference));
     // **The control, and the reason the table has two halves.** A tile and a frame can differ for
@@ -118,9 +118,9 @@ fn main() {
             "{halo:>6}  {:>9} {:>8.3}  {:>9} {:>8.3}",
             seam.0, seam.1, away.0, away.1,
         );
-        write(&format!("{out}/seam-halo{halo}.avif"), &crop(&assembled), window, window);
+        write(&format!("{out}/seam-halo{halo}"), &crop(&assembled), window, window);
         let diff = crop(&amplified(&assembled, &reference));
-        write(&format!("{out}/diff-halo{halo}.avif"), &diff, window, window);
+        write(&format!("{out}/diff-halo{halo}"), &diff, window, window);
     }
     rawshim::set_tile_halo(usize::MAX);
     eprintln!(
@@ -203,9 +203,13 @@ fn triple(text: &str) -> Option<(usize, usize, usize)> {
     }
 }
 
-/// Lossless enough to judge a seam by: quantizer 0 and no chroma subsampling, so what survives is
-/// the 8-bit YCbCr rounding rather than anything the encoder chose to discard.
-fn write(path: &str, rgb: &[u8], width: usize, height: usize) {
+/// Both forms, because these exist to be looked at and neither opens everywhere.
+///
+/// Lossless enough to judge a seam by in each case: the AVIF is quantizer 0 with no chroma
+/// subsampling, the JPEG is quality 100 and `crate::jpeg` is 4:4:4 already, so what survives is
+/// the 8-bit YCbCr rounding rather than anything either encoder chose to discard. A seam that only
+/// one of them shows is the encoder rather than the halo, which is worth being able to check.
+fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
     rawshim::avif::encode_rendition(
         std::borrow::Cow::Borrowed(rgb),
         width,
@@ -213,7 +217,11 @@ fn write(path: &str, rgb: &[u8], width: usize, height: usize) {
         0,
         6,
         true,
-        path,
+        &format!("{stem}.avif"),
     )
     .expect("the crop encodes");
+
+    let image = rawshim::rgb::RgbRef { width, height, data: rgb };
+    let jpeg = rawshim::jpeg::encode(image, 100).expect("the crop encodes as JPEG");
+    std::fs::write(format!("{stem}.jpg"), jpeg).expect("the JPEG writes");
 }
