@@ -82,6 +82,15 @@ share one buffer this whole section buys correctness and nothing else.
       else is ready; this is the last thing in the way.
 - [ ] **Then wire `edit::open` and `job::Base::build` to `prepare`**, which is where the measured
       win finally lands. Nothing calls it yet.
+- [x] **The noise measure is wired** (`e19350f`), being the one stage that pays an upload and no
+      readback. Correct - the fixture suite passes with it live - and **not faster**: 987ms against
+      958ms.
+- [ ] **Give the block reduction a median that is not a selection sort.** That is where the noise
+      measure's time goes, and the transfer is not: at 61MP the frame is 1188 x 792 blocks, each
+      taking the CPU's exact order statistic by partial selection - 48 passes over 96 laps, twice
+      over, so about 8.7 billion comparisons, every one of them indexing a private array
+      dynamically and spilling to scratch. A bitonic pass over 96, or a histogram, held to the
+      same order statistic.
 - [ ] ~~**sharpen, 2926ms**~~ - **skip it entirely.** A GPU sharpener is replacing it, so its
       parity, its performance and the round trip through system memory it currently forces are all
       about to stop existing. Do not design the residency around it: reading back before it and
