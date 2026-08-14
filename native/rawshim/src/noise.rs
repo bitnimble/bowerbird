@@ -38,7 +38,7 @@ use serde::Serialize;
 pub const BINS: usize = 32;
 
 /// The 8x8 neighbourhood a block statistic is taken over.
-const BLOCK: usize = 8;
+pub(crate) const BLOCK: usize = 8;
 
 /// A bin with fewer blocks than this has no envelope worth taking, and is filled from its
 /// neighbours instead.
@@ -75,7 +75,7 @@ const MIN_BLOCKS: usize = 20;
 /// can ever be handed - 3.11 against 4.79 on the ISO 2000 crop with the denoise off entirely.
 /// Raising this further only smears; the editor asymptotes around 1.0 there whatever it is set
 /// to.
-const DEMOSAIC_CORRELATION: f32 = 3.0;
+pub(crate) const DEMOSAIC_CORRELATION: f32 = 3.0;
 
 /// What a tick is told about its input's noise.
 #[derive(Serialize, Clone)]
@@ -161,7 +161,7 @@ fn blocks(level_plane: &[f32], noise_plane: &[f32], width: usize, height: usize)
 ///
 /// Everything above that is carrying a picture as well as noise. A plain median would count
 /// texture as noise, which on a detailed frame reads several times high.
-fn envelope(sigmas: &mut [f32]) -> Option<f32> {
+pub(crate) fn envelope(sigmas: &mut [f32]) -> Option<f32> {
     if sigmas.len() < MIN_BLOCKS {
         return None;
     }
@@ -243,7 +243,7 @@ pub fn sample(samples: &[u16], width: usize, height: usize) -> (Vec<Bin>, f32, f
 /// `None` where no bin held enough blocks to measure, which is a frame the denoise declines
 /// rather than one whose noise is very small - the difference matters, because a floor that had
 /// been through [`DEMOSAIC_CORRELATION`] would no longer read as "nothing".
-fn typical(binned: &[Bin]) -> Option<f32> {
+pub(crate) fn typical(binned: &[Bin]) -> Option<f32> {
     let measured: Vec<&Bin> = binned.iter().filter(|bin| bin.sigma.is_some()).collect();
     let total: usize = measured.iter().map(|bin| bin.blocks).sum();
     if total == 0 {
