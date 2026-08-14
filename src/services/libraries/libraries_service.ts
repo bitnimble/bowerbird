@@ -108,16 +108,21 @@ export class LibrariesService {
     if (!request.read_only && binName == null) {
       throw new AppError('VALIDATION_ERROR', 'a writable library needs a bin_name; send read_only to have no bin folder');
     }
-    // The scan skips whatever is at this path sight unseen (§12.3), so adopting a
-    // folder the user already keeps there would drop everything inside from the
-    // import without saying so. Asked for a different name instead, which is why
-    // the name is a field on the create form at all.
-    if (binName != null && existsSync(path.join(request.root_path, binName))) {
-      throw new AppError(
-        'VALIDATION_ERROR',
-        `a folder named "${binName}" already exists at ${request.root_path}: choose another bin folder name, or the photographs inside it would never be imported`,
-      );
+    // A folder already sitting at that name is adopted rather than refused
+    // (§12.3): the bin channel walks it on the first sync and imports what it
+    // holds as already-binned, so nothing inside is dropped in silence. The Add
+    // dialog says so before the create; here it is only worth a line in the log.
+    //
+    // A *file* of that name is refused, and refused here: `mkdir` would fail on
+    // it several steps later, by which point the data directory has been made
+    // and there is no library row to ever prune it against.
+    const binPath = binName == null ? null : path.join(request.root_path, binName);
+    const occupant = binPath == null ? null : statSync(binPath, { throwIfNoEntry: false });
+    if (occupant != null && !occupant.isDirectory()) {
+      throw new AppError('VALIDATION_ERROR', `${binPath} is a file, not a folder: choose another bin folder name`);
     }
+    const adopted = occupant != null;
+    if (adopted) log.info('the bin folder was already there and is adopted', { root: request.root_path, bin: binName });
 
     const library: Library = {
       // Settled here rather than redrawn at the insert: the rendition directories
@@ -153,9 +158,9 @@ export class LibrariesService {
     try {
       this.repo.insert({ ...library, identity: bin?.identity });
     } catch (err) {
-      // A bin left behind by a failed insert is then refused by the check above,
-      // so the library could never be created with that bin name again.
-      if (bin != null) {
+      // Only the one this create made: an adopted folder is the photographer's,
+      // and a failed insert is no reason to take an empty one of theirs away.
+      if (bin != null && !adopted) {
         await deleteEmptyBinFolder(library, bin.path).catch((e: unknown) =>
           log.error('could not remove the bin folder a failed create left behind', { path: bin.path, err: e }),
         );

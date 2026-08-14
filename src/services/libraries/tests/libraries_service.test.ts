@@ -1,5 +1,5 @@
 import { describe, it, expect, jest } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AppError } from '../../../errors';
@@ -96,8 +96,7 @@ describe('LibrariesService.create', () => {
       await expect(service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'taken_desc', include_subfolders: true, mirror_shoots: true })).rejects.toMatchObject({
         code: 'CONFLICT',
       });
-      // A bin left behind by a failed insert is refused by the "already exists"
-      // check next time, so the library could never be created with that name.
+      // A root with no library for it is left as the app found it.
       expect(existsSync(path.join(root, 'Bin'))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -201,20 +200,60 @@ describe('LibrariesService.create', () => {
     }
   });
 
-  // Adopting the folder would exclude it from every scan, so whatever the user
-  // keeps in it would never be imported and nothing would say so.
-  it('refuses a root that already holds a folder of the bin name, and takes another name', async () => {
+  // Nothing inside is lost by adopting it: the bin channel walks the folder on
+  // the first sync and imports what it holds as already-binned (§12.3).
+  it('adopts a folder the root already holds at the bin name, identity and all', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-'));
     const insert = jest.fn();
     try {
       mkdirSync(path.join(root, 'Bin'));
+      const existing = statSync(path.join(root, 'Bin'));
       const service = build(mockRepo({ insert }));
-      await expect(service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, mirror_shoots: true })).rejects.toMatchObject(
-        { code: 'VALIDATION_ERROR' },
-      );
+      const library = await service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, mirror_shoots: true });
 
-      const library = await service.create({ root_path: root, bin_name: 'Deleted', read_only: false, ordering: 'added_asc', include_subfolders: true, mirror_shoots: true });
-      expect(library.bin_name).toBe('Deleted');
+      expect(library.bin_name).toBe('Bin');
+      // The folder that was there, not a second one made beside it: the identity
+      // written at the insert is what a later rename is followed by (§9.1.1).
+      expect(insert).toHaveBeenCalledWith({ ...library, identity: expect.objectContaining({ ino: existing.ino }) });
+      rmSync(getDataPath(library), { recursive: true, force: true });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // A file cannot be adopted, and the refusal has to come before the data
+  // directory is made: nothing prunes one whose library row was never inserted.
+  it('refuses a file sitting at the bin name, before anything is written', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-binfile-'));
+    const insert = jest.fn();
+    try {
+      writeFileSync(path.join(root, 'Bin'), '');
+      const dataDirs = (): number => (existsSync(config.dataDir) ? readdirSync(config.dataDir).length : 0);
+      const before = dataDirs();
+      const service = build(mockRepo({ insert }));
+      await expect(service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, mirror_shoots: true })).rejects.toMatchObject({
+        code: 'VALIDATION_ERROR',
+      });
+      expect(insert).not.toHaveBeenCalled();
+      // Nothing prunes a data directory whose library row was never inserted.
+      expect(dataDirs()).toBe(before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // An empty folder of the photographer's, taken away by a create that failed
+  // for something else entirely.
+  it('leaves an adopted bin folder behind when the insert fails', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-adopt-fail-'));
+    const insert = jest.fn(() => {
+      throw new Error('nope');
+    });
+    try {
+      mkdirSync(path.join(root, 'Bin'));
+      const service = build(mockRepo({ getByRootPath: jest.fn(() => null), insert }));
+      await expect(service.create({ root_path: root, bin_name: 'Bin', read_only: false, ordering: 'added_asc', include_subfolders: true, mirror_shoots: true })).rejects.toThrow('nope');
+      expect(existsSync(path.join(root, 'Bin'))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

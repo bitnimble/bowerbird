@@ -55,8 +55,7 @@ export async function deleteDataDirectory(dataPath: string): Promise<void> {
 }
 
 // The bin folder a failed library create (or a failed flag clear) left behind,
-// which the "a folder of that name already exists" refusal would otherwise make
-// permanent: the library could never be created with that bin name again.
+// so a root the app has no library for is left as the app found it.
 //
 // Both guards matter, because this runs on an error path where the thing it is
 // about to delete is a directory the app believes it just created and might be

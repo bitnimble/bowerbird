@@ -17,9 +17,9 @@ export const CreateLibraryRequestSchema = z.object({
   // Refused over a root that is actually writable only in the other direction -
   // a false here over a root that is not is a READ_ONLY (§4.1).
   read_only: z.boolean().default(false),
-  // A root that already holds this folder is refused rather than adopted, since
-  // its contents would silently never import. Forced to null when `read_only` is
-  // set: a bin is a folder the app makes under the root.
+  // A root that already holds this folder has it adopted: the bin channel walks
+  // it and imports what it holds as already-binned (§12.3). Forced to null when
+  // `read_only` is set: a bin is a folder the app makes under the root.
   bin_name: BinNameSchema.nullable().default('Bin'),
   // Omitted or blank: named after the root folder (a year leaf includes its
   // parent) and that name is stored, not held as a placeholder.

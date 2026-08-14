@@ -12,7 +12,6 @@ export function TextField({
   onKeyDown,
   grow = false,
   disabled = false,
-  invalid = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -24,11 +23,9 @@ export function TextField({
   onKeyDown?: (event: React.KeyboardEvent) => void;
   grow?: boolean;
   disabled?: boolean;
-  /** Marks the box as holding an answer that cannot be submitted. */
-  invalid?: boolean;
 }): JSX.Element {
   return (
-    <span className={`ui-input${grow ? ' ui-input--grow' : ''}${invalid ? ' ui-input--invalid' : ''}`}>
+    <span className={`ui-input${grow ? ' ui-input--grow' : ''}`}>
       {icon}
       <Input
         value={value}
@@ -36,7 +33,6 @@ export function TextField({
         placeholder={placeholder}
         autoFocus={autoFocus}
         disabled={disabled}
-        aria-invalid={invalid || undefined}
         onBlur={onBlur}
         onKeyDown={onKeyDown}
         onValueChange={onChange}

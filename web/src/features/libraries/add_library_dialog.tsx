@@ -70,18 +70,18 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     if (!nameTouched) setName(path === '' ? '' : inferredLibraryName(path));
   }, [path, nameTouched]);
 
-  // The scan skips whatever sits at this name in the root, so a folder the user
-  // already keeps there would be adopted as the bin and everything inside it
-  // would silently never import. The server refuses that outright; asking here
-  // means the answer arrives while the name is still being chosen.
+  // A folder already sitting at this name becomes the bin, so the photographs
+  // inside it import as deleted rather than as part of the collection. Said here
+  // rather than left to the create, so the reader can pick another name while the
+  // name is still being chosen.
   //
   // Only answerable while the walk is standing on the folder the box names, which
-  // is every path reached by clicking. A path typed but not opened leaves the
-  // question to the create.
+  // is every path reached by clicking. A path typed but not opened goes ahead
+  // unwarned.
   const root = path.trim();
   const bin = binName.trim();
   const listing = browser.store.listing;
-  const binTaken = bin !== '' && listing?.path === root && listing.directories.some((directory) => directory.name === bin);
+  const binExists = bin !== '' && listing?.path === root && listing.directories.some((directory) => directory.name === bin);
   // A folder the server cannot write in can only be added read-only, so the box
   // is ticked and locked for it rather than letting the create fail.
   const unwritable = listing?.path === root && listing.writable === false;
@@ -168,10 +168,10 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
             <Text variant="label" as="span">
               Bin folder name
             </Text>
-            <TextField grow label="Bin folder name" value={binName} onChange={setBinName} invalid={binTaken} />
-            <Text variant="mono" as="p" className={binTaken ? 'field__error' : undefined}>
-              {binTaken
-                ? `${root} already has a folder called "${bin}". Pick another name: the library never scans this folder, so everything already inside it would be left out.`
+            <TextField grow label="Bin folder name" value={binName} onChange={setBinName} />
+            <Text variant="mono" as="p" className={binExists ? 'field__warning' : undefined}>
+              {binExists
+                ? `${root} already has a folder called "${bin}", and it will become the bin. The photographs inside it are imported as deleted and show up in the Bin; pick another name to have them import as part of the collection.`
                 : 'Deleted photographs are moved into a folder of this name, beside the photographs they came from. It is never scanned.'}
             </Text>
           </div>
@@ -217,7 +217,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
             variant="primary"
             // The bin name is not part of the answer for a read-only library, so
             // it must not be part of the guard either - Add would never enable.
-            disabled={root === '' || name.trim() === '' || (!readOnlyLibrary && (bin === '' || binTaken)) || saving}
+            disabled={root === '' || name.trim() === '' || (!readOnlyLibrary && bin === '') || saving}
             onClick={() => void submit()}
           >
             Add library

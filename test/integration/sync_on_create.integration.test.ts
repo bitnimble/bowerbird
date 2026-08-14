@@ -3,7 +3,7 @@
 // create request waiting for the scan. Needs bun:sqlite:
 //   docker exec bowerbird-dev bun test test/integration
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/db/connection';
@@ -44,19 +44,7 @@ let root: string;
 let db: ReturnType<typeof createDatabase>;
 let libraryId: string | null;
 
-beforeEach(() => {
-  root = mkdtempSync(path.join(tmpdir(), 'bb-oncreate-'));
-  db = createDatabase(':memory:');
-  libraryId = null;
-});
-
-afterEach(() => {
-  db.close();
-  rmSync(root, { recursive: true, force: true });
-  if (libraryId != null) rmSync(dataPathForLibraryId(libraryId), { recursive: true, force: true });
-});
-
-test('creating a library imports its photographs without a second request', async () => {
+function buildServices(): { sync: SyncService; service: LibrariesService } {
   const photos = new PhotosRepository(db);
   const sync = new SyncService(
     photos,
@@ -70,6 +58,23 @@ test('creating a library imports its photographs without a second request', asyn
   );
   const service = new LibrariesService(new LibrariesRepository(db), photos);
   service.addLifecycleListener(sync);
+  return { sync, service };
+}
+
+beforeEach(() => {
+  root = mkdtempSync(path.join(tmpdir(), 'bb-oncreate-'));
+  db = createDatabase(':memory:');
+  libraryId = null;
+});
+
+afterEach(() => {
+  db.close();
+  rmSync(root, { recursive: true, force: true });
+  if (libraryId != null) rmSync(dataPathForLibraryId(libraryId), { recursive: true, force: true });
+});
+
+test('creating a library imports its photographs without a second request', async () => {
+  const { sync, service } = buildServices();
   writeFileSync(path.join(root, 'photo.arw'), 'raw');
 
   const settled = new Promise<void>((resolve) => sync.onSettled(() => resolve()));
@@ -88,4 +93,36 @@ test('creating a library imports its photographs without a second request', asyn
   const photo = db.query('SELECT file_path FROM photos WHERE library_id = ?').get(library.id) as { file_path: string } | null;
   expect(photo?.file_path).toBe('photo.arw');
   expect(new LibrariesRepository(db).getById(library.id)?.last_synced_at).not.toBeNull();
+});
+
+// A root that already keeps a folder of the bin name has it adopted (§12.3), and
+// the import that follows is the whole point of adopting rather than refusing:
+// what was inside arrives in the catalogue, in the Bin rather than the grid.
+test('creating a library over a folder already at the bin name imports its photographs as binned', async () => {
+  const { sync, service } = buildServices();
+  mkdirSync(path.join(root, 'Bin', 'Trip'), { recursive: true });
+  writeFileSync(path.join(root, 'Bin', 'Trip', 'old.arw'), 'raw');
+  writeFileSync(path.join(root, 'live.arw'), 'raw');
+
+  const settled = new Promise<void>((resolve) => sync.onSettled(() => resolve()));
+  const library = await service.create({
+    root_path: root,
+    name: 'lib',
+    bin_name: 'Bin',
+    read_only: false,
+    ordering: 'taken_desc',
+    include_subfolders: true,
+    mirror_shoots: false,
+  });
+  libraryId = library.id;
+  await settled;
+
+  const rows = db
+    .query('SELECT file_path, deleted_from_path, is_deleted FROM photos WHERE library_id = ? ORDER BY file_path')
+    .all(library.id) as { file_path: string; deleted_from_path: string | null; is_deleted: number }[];
+  expect(rows).toEqual([
+    // Where it would restore to, read off the mirrored layout rather than guessed.
+    { file_path: 'Bin/Trip/old.arw', deleted_from_path: 'Trip/old.arw', is_deleted: 1 },
+    { file_path: 'live.arw', deleted_from_path: null, is_deleted: 0 },
+  ]);
 });
