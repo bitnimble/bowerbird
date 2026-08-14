@@ -64,6 +64,9 @@ fn main() {
         rawshim::tone::encode_base(&mut coded, levels, grade.reference_white_nits);
         rawshim::base::measure_defocus(gpu, base, &coded, width, height)
     };
+    // Both printed, though neither is handed to `prepare` any more: it measures its own off the
+    // frame it has just coded. What they are for is the agreement itself, which is what said the
+    // reduction was right before it went into the chain.
     println!("defocus cpu {cpu_defocus:?} gpu {gpu_defocus:?}");
 
     let began = std::time::Instant::now();
@@ -75,7 +78,7 @@ fn main() {
         (width, height),
         levels,
         grade.reference_white_nits,
-        cpu_defocus,
+        strengths.before_the_fit(),
         &lens(width, height),
     )
     .expect("the chain runs");
