@@ -68,9 +68,25 @@ worth more than its own timing.
 - [x] **lens warp** (`fcd4577`). Within 2 counts, mean 0.167. Uploads the ratio table rather than
       evaluating the spline, because the CPU gather reads that table and its 4096 buckets are part
       of the answer a rendition already committed to.
-- [ ] **levels quantile, 158ms.** Parked: the sampling index is `k * pixels / counted`, 52 bits at
-      61MP, and WGSL has no u64. Soluble with a split product, but it would also cost the exact
-      integer parity that made this one attractive, for the smallest stage on the list.
+- [ ] **levels quantile, 158ms.** The last unported stage, and the arithmetic is worked out - it
+      just was not worth starting with other work mid-flight.
+
+      `tone::sample_at` is `(k * pixels / counted) * 3`, which needs 52 bits at 61MP where WGSL has
+      no u64. But `counted` is `min(pixels, QUANTILE_SAMPLES)` and `QUANTILE_SAMPLES` is `1 << 20`,
+      so there are only two cases and both fit `u32`:
+
+      - `counted == pixels`, and the k-th sample is the k-th pixel.
+      - `counted == 2^20`. Take `whole = pixels / counted` and `rest = pixels % counted`, so
+        `pixel = k * whole + (k * rest) / counted`. With `k < 2^20` and `rest < 2^20` the product is
+        40 bits, so split `k` into `a = k >> 10` and `b = k & 1023`, both under `2^10`, and let
+        `A = a * rest` and `B = b * rest`, both under `2^30`. Then
+        `(k * rest) >> 20  ==  (A >> 10) + ((((A & 1023) << 10) + B) >> 20)`, every intermediate
+        inside `u32`.
+
+      Worth doing because parity here can be **exact**: the histogram, the per-pixel max and the
+      scan up the bins are all integer, and only the quantile threshold is float. Keep the walk up
+      the 65536 bins on the host - it is a serial scan over 256KB, which is microseconds and the one
+      shape a GPU has nothing to offer.
 
 **Ported is not wired, and wired is not faster.** `apply_lens` takes the GPU now (`7b39847`, 277
 fixture tests green with the pinned renders unmoved) and it is **588-610ms against the CPU's
