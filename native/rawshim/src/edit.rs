@@ -476,12 +476,33 @@ fn payload(
         colour: matched.map(|m| ColourPayload::from(&m.colour)),
         // Last, on the buffer as it will be sent: the warp resamples and the sharpen amplifies,
         // and a tick denoises what comes out of both rather than what went into them.
-        noise: crate::noise::measure(&prepared.samples, prepared.width, prepared.height),
+        //
+        // **The one stage worth moving before the chain closes.** Every other port pays an upload
+        // and a readback of a 361MB frame to save less than that costs, which is why the warp came
+        // out no faster than the CPU it replaced; this one hands back three numbers, so it pays
+        // the upload only. The CPU's own is four whole-frame passes and 958ms.
+        noise: measured(&prepared),
         noise_fit,
         camera_match,
         samples_len: prepared.samples.len() * 2,
     };
     Prepared { header, samples: prepared.samples }
+}
+
+/// The frame's noise, off the GPU where there is one.
+///
+/// Falls through on a machine with no device, and on a frame the reduction declines - both arrive
+/// as `None`, and the CPU below answers each the same way it always did.
+fn measured(prepared: &HdrPrepared) -> crate::noise::Noise {
+    crate::gpu::device()
+        .and_then(crate::base::device)
+        .and_then(|base| {
+            let gpu = crate::gpu::device()?;
+            crate::base::measure(gpu, base, &prepared.samples, prepared.width, prepared.height)
+        })
+        .unwrap_or_else(|| {
+            crate::noise::measure(&prepared.samples, prepared.width, prepared.height)
+        })
 }
 
 /// The wire form: a little-endian `u32` header length, that many bytes of JSON, then the
