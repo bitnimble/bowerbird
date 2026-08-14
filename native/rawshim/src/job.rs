@@ -398,13 +398,39 @@ impl Base {
         // Read off the levels and coded against them, once, here. Everything below this line
         // - the filters, the resize, the warp, the shader - reads normalised PQ rather than
         // sensor levels, and `tone::encode_base` says what that buys.
-        tone::encode_base(&mut samples, levels, job.grade.reference_white_nits);
+        //
         // Ahead of every warp and every resize, which is where the denoise belongs and the
         // sharpen does not (`hdr::filter_base`). At the decode's size, which is the largest
         // any target asked for: the chroma denoise's radii and the defringe's constants are in
         // pixels of the frame they read, so this is the one size at which they mean what they
         // were tuned to mean.
-        hdr::filter_base(&mut samples, width, height, job.strengths().before_the_fit());
+        //
+        // Both on the GPU in one pass where there is one, over the frame the decode has already
+        // left there (`base::prepare`, and `edit::open` takes the same route with the warp on the
+        // end of it). No lens here: a rendition's warp is per target and happens further down,
+        // so this is the coding and the defringe alone.
+        let strengths = job.strengths().before_the_fit();
+        let chained = crate::gpu::device().and_then(crate::base::device).and_then(|base| {
+            let gpu = crate::gpu::device()?;
+            crate::base::prepare(
+                gpu,
+                base,
+                &samples,
+                (width, height),
+                (width, height),
+                levels,
+                job.grade.reference_white_nits,
+                strengths,
+                &crate::fit::Lens::none(),
+            )
+        });
+        match chained {
+            Some(prepared) => samples = prepared,
+            None => {
+                tone::encode_base(&mut samples, levels, job.grade.reference_white_nits);
+                hdr::filter_base(&mut samples, width, height, strengths);
+            }
+        }
         Ok(Base { samples, width, height, levels, matched, as_shot, fitted_now, asked })
     }
 }
