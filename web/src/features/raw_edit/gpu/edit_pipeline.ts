@@ -961,6 +961,11 @@ export class EditPipeline {
     this.device.queue.submit([encoder.finish()]);
   }
 
+  /** Resolves once the GPU has finished everything submitted so far. */
+  drawn(): Promise<undefined> {
+    return this.device.queue.onSubmittedWorkDone();
+  }
+
   /**
    * A second canvas for the loupe, or `null` to let it go.
    *

@@ -90,6 +90,19 @@ describe('EditDocSchema geometry', () => {
     expect(EditDocSchema.safeParse({ cropAngle: 90 }).success).toBe(false);
   });
 
+  it('holds the framing a fit is taken out of, and nothing until one has been', () => {
+    // Null rather than the whole frame, and the difference matters: a sidecar arrives cropped
+    // with nothing framed, and that crop is the reader's own rather than the output of a fit.
+    expect(neutralEdits()).toMatchObject({
+      framedLeft: null,
+      framedTop: null,
+      framedRight: null,
+      framedBottom: null,
+    });
+    expect(EditDocSchema.safeParse({ framedRight: 0.5 }).success).toBe(true);
+    expect(EditDocSchema.safeParse({ framedRight: 1.5 }).success).toBe(false);
+  });
+
   it('takes a correction of exactly eight numbers, or none', () => {
     const eight = [1, 0, 0, 0, 1, 0, 0, 0.2];
     expect(EditDocSchema.safeParse({ keystone: eight }).success).toBe(true);

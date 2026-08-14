@@ -75,6 +75,23 @@ function conflicted(error: unknown): boolean {
 }
 
 /**
+ * The rectangle a fit is taken out of: what the reader framed, or the crop where nothing has
+ * been fitted yet.
+ *
+ * The fallback is what makes an imported sidecar behave. It arrives cropped and with no framing
+ * stored, and that rectangle is the reader's own rather than the output of any fit - so
+ * levelling its horizon trims the wedges out of it instead of handing back the frame they had
+ * already cropped away.
+ */
+function framedIn(doc: EditDoc): CropRect {
+  const { framedLeft, framedTop, framedRight, framedBottom } = doc;
+  if (framedLeft == null || framedTop == null || framedRight == null || framedBottom == null) {
+    return { left: doc.cropLeft, top: doc.cropTop, right: doc.cropRight, bottom: doc.cropBottom };
+  }
+  return { left: framedLeft, top: framedTop, right: framedRight, bottom: framedBottom };
+}
+
+/**
  * Drives one RAW through the open-once, grade-per-tick loop.
  *
  * The open happens on the server, natively and on real threads (`edit::prepare`); what
@@ -419,7 +436,14 @@ export class RawEditPresenter {
     // Undoing the turn the overlay laid itself out under (`store.cropRect` does the forward
     // half), so the document keeps the fractions in the order Camera Raw defines them.
     const crop = turnedForDocument(rect, doc.rotate);
+    // A hand on the rectangle is the only thing that says what the reader wants kept, so it
+    // replaces what a later straighten trims out of - and the crop tool draws on the frame
+    // uncropped, so what they chose is what they get rather than a fit of it.
     this.preview({
+      framedLeft: crop.left,
+      framedTop: crop.top,
+      framedRight: crop.right,
+      framedBottom: crop.bottom,
       cropLeft: crop.left,
       cropTop: crop.top,
       cropRight: crop.right,
@@ -485,7 +509,8 @@ export class RawEditPresenter {
     }
     this.store.loupeAt = null;
     this.store.loupeTile = null;
-    // A tile owed to a glass nobody is holding any more.
+    // A draw and a tile owed to a glass nobody is holding any more.
+    this.pendingLoupe = null;
     if (this.tileTimer != null) clearTimeout(this.tileTimer);
     this.tileTimer = null;
     this.tiles?.clear();
@@ -571,7 +596,7 @@ export class RawEditPresenter {
     // the rendition pipeline. That takes about a tenth of a second, which is a seam if the
     // glass waits for it and a sharpening if it does not - so this draws what it can now and
     // the tile lands on top when it can.
-    pipeline.renderLoupe(this.store.exposureEv, {
+    this.requestLoupe({
       x: centre.x - span / 2,
       y: centre.y - span / 2,
       width: span,
@@ -643,14 +668,24 @@ export class RawEditPresenter {
     const doc = this.store.doc;
     if (doc == null || !this.store.cropToFit || this.store.cropping) return patch;
     const next = { ...doc, ...patch };
-    const rect = insetCrop({
-      width: this.store.width,
-      height: this.store.height,
-      cropAngle: next.cropAngle,
-      keystone: next.keystone,
-    }) ?? { left: 0, top: 0, right: 1, bottom: 1 };
+    const within = framedIn(next);
+    const rect =
+      insetCrop({
+        width: this.store.width,
+        height: this.store.height,
+        cropAngle: next.cropAngle,
+        keystone: next.keystone,
+        within,
+      }) ?? within;
     return {
       ...patch,
+      // Written on every fit, not only the first. The fit is what makes the pair meaningful -
+      // before it there is one rectangle and after it two - and writing the input beside the
+      // output in the same patch is what keeps them one step in the history rather than two.
+      framedLeft: within.left,
+      framedTop: within.top,
+      framedRight: within.right,
+      framedBottom: within.bottom,
       cropLeft: rect.left,
       cropTop: rect.top,
       cropRight: rect.right,
@@ -1038,16 +1073,70 @@ export class RawEditPresenter {
   private request(ev: number): void {
     if (this.closed || this.pipeline == null) return;
     this.pending = ev;
-    if (this.frame !== 0) return;
+    this.pump();
+  }
+
+  /**
+   * The same, for the glass: the window it should magnify next.
+   *
+   * Through the same loop rather than drawn where the pointer move is handled. A move emits
+   * far more positions than a display can show and each one was a submit, on a swapchain that
+   * blocks exactly like the stage's - so the glass paid the cost the sliders were paying, on
+   * the one gesture that emits fastest.
+   */
+  private requestLoupe(region: Region): void {
+    if (this.closed || this.pipeline == null) return;
+    this.pendingLoupe = region;
+    this.pump();
+  }
+
+  /**
+   * One tick on the GPU at a time, and the next only once that one has landed.
+   *
+   * **`getCurrentTexture` blocks the main thread when the swapchain is full**, and a frame
+   * asked for every 16ms while each takes 200 to draw fills it and keeps it full - so the
+   * thread handling the pointer stalls inside the draw call, and the slider freezes for as
+   * long as the picture takes. Waiting for the GPU here is what keeps that off the main
+   * thread: an image is always free when the next draw asks for one, the controls stay live at
+   * whatever rate they emit, and the picture follows at whatever rate it can.
+   *
+   * Both canvases through one gate, because `onSubmittedWorkDone` answers for the queue and
+   * the two draws share it: gating them separately would have each waiting on the other's work
+   * anyway, and twice.
+   */
+  private pump(): void {
+    if (this.closed || this.frame !== 0 || this.drawing) return;
+    if (this.pending == null && this.pendingLoupe == null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
       const next = this.pending;
+      const loupe = this.pendingLoupe;
       this.pending = null;
-      if (next == null || this.closed || this.pipeline == null) return;
-      this.sizeStage();
-      this.pipeline.render(next, this.store.region ?? this.pipeline.wholeFrame);
+      this.pendingLoupe = null;
+      if (this.closed || this.pipeline == null) return;
+      if (next != null) {
+        this.sizeStage();
+        this.pipeline.render(next, this.store.region ?? this.pipeline.wholeFrame);
+      }
+      // After the tick, which rewrites the uniform this reads: the queue keeps the two writes
+      // and the two submits in the order they were made, so the glass gets its own window.
+      if (loupe != null) this.pipeline.renderLoupe(this.store.exposureEv, loupe);
+      this.drawing = true;
+      const landed = (): void => {
+        this.drawing = false;
+        this.pump();
+      };
+      // Both arms, because a device lost mid-draw rejects - and a rejection swallowed here
+      // would leave the flag set and every later frame waiting on a tick that never lands.
+      void this.pipeline.drawn().then(landed, landed);
     });
   }
+
+  /** Whether a tick is on the GPU and has not come back. */
+  private drawing = false;
+
+  /** The window the glass is asking for while a frame is already in flight. */
+  private pendingLoupe: Region | null = null;
 
   @action.bound
   private describeAdapter(adapter: GPUAdapter): void {

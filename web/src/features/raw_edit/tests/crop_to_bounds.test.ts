@@ -122,6 +122,57 @@ describe('the crop that fits inside a corrected picture', () => {
     expect(area(rect)).toBeGreaterThan(0.5);
   });
 
+  /**
+   * The rectangle the reader framed is what the wedges come out of.
+   *
+   * Off-centre on purpose: a corner of this one is a corner of the frame, so it sits under two
+   * of the wedges and the answer has to move as well as shrink.
+   */
+  test('stays inside the rectangle it was given, and keeps most of it', () => {
+    const within = { left: 0, top: 0, right: 0.5, bottom: 0.5 };
+    const bounds: Bounds = { ...FRAME, cropAngle: 6, keystone: null, within };
+    const rect = insetCrop(bounds)!;
+
+    for (const corner of corners(rect)) {
+      expect(inside(quad(bounds), corner), `${corner.x}, ${corner.y}`).toBe(true);
+    }
+    expect(rect.left).toBeGreaterThanOrEqual(within.left);
+    expect(rect.top).toBeGreaterThanOrEqual(within.top);
+    expect(rect.right).toBeLessThanOrEqual(within.right);
+    expect(rect.bottom).toBeLessThanOrEqual(within.bottom);
+    expect(area(rect) / 0.25).toBeGreaterThan(0.7);
+  });
+
+  // A slider, a degree at a time, is what this is actually used as: an answer that is correct
+  // at every angle and unrelated to the answer a hundredth of a degree away is a crop that
+  // teleports across the picture under the hand dragging it.
+  test('moves smoothly with the angle, at the extremes as well as the middle', () => {
+    const cases: { frame: typeof FRAME; within?: CropRect }[] = [
+      { frame: FRAME },
+      { frame: { width: 3000, height: 4000 } },
+      // Off-centre, so the slide the bisection settles on is not the one symmetry would give.
+      { frame: FRAME, within: { left: 0.05, top: 0.3, right: 0.55, bottom: 0.9 } },
+    ];
+    for (const { frame, within } of cases) {
+      let previous = insetCrop({ ...frame, cropAngle: 0.02, keystone: null, within })!;
+      for (let angle = 0.04; angle <= 45; angle += 0.02) {
+        const rect = insetCrop({ ...frame, cropAngle: angle, keystone: null, within });
+        if (rect == null) continue;
+        const moved = Math.max(
+          Math.abs(rect.left - previous.left),
+          Math.abs(rect.top - previous.top),
+          Math.abs(rect.right - previous.right),
+          Math.abs(rect.bottom - previous.bottom),
+        );
+        // Past about 21 degrees the largest rectangle is a whole family of identical ones
+        // sliding along the diagonal, and picking freely among them moved an edge by a fifth
+        // of the frame for a hundredth of a degree.
+        expect(moved, `${frame.width}x${frame.height} at ${angle.toFixed(2)} degrees`).toBeLessThan(0.005);
+        previous = rect;
+      }
+    }
+  });
+
   test('handles a straighten and a correction at once', () => {
     const keystone = keystoneFromGuides(
       [
