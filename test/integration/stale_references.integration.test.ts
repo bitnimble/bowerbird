@@ -35,10 +35,12 @@ const NAMED = new Set([
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (SKIP.has(entry)) continue;
-    const path = join(dir, entry);
-    if (statSync(path).isDirectory()) walk(path, out);
+  // Dirents rather than a stat each: a tauri android build leaves symlinks into an
+  // NDK that need not be there, and stat follows them and throws.
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP.has(entry.name)) continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) walk(path, out);
     else out.push(path);
   }
   return out;

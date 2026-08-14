@@ -336,14 +336,11 @@ export class ScheduledBackup {
     void this.takeIfDue();
   }
 
-  /**
-   * Applies a changed setting (§15) without a restart.
-   *
-   * Restarts unconditionally, where the orphan sweep skips an unchanged value: that
-   * shortcut leaves a scheduler constructed with its final settings never starting
-   * at all, and re-arming an hourly check costs nothing.
-   */
+  /** Applies a changed setting (§15) without a restart. */
   configure(everyDays: number, keep: number): void {
+    // Also on `timer`, not the values alone: a scheduler constructed with its final
+    // settings has never started, and a value-only guard leaves it never starting.
+    if (everyDays === this.everyDays && keep === this.keep && this.timer != null) return;
     this.stop();
     this.everyDays = everyDays;
     this.keep = keep;

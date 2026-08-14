@@ -31,13 +31,15 @@ export class SettingsRepository {
   }
 
   update(updates: UpdateSettingsRequest): Settings {
+    const before = this.get();
     for (const [key, value] of Object.entries(updates)) {
       if (value === null) this.db.query('DELETE FROM settings WHERE key = ?').run(key);
       else if (value !== undefined) this.write(key, String(value));
     }
     this.cache = null;
     const settings = this.get();
-    for (const listener of this.listeners) listener(settings);
+    const changed = (Object.keys(settings) as Array<keyof Settings>).some((key) => settings[key] !== before[key]);
+    if (changed) for (const listener of this.listeners) listener(settings);
     return settings;
   }
 

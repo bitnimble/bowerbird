@@ -240,6 +240,23 @@ test('a disabled schedule takes nothing', async () => {
   expect(await listBackups(dbPath)).toEqual([]);
 });
 
+// A settings write of any kind re-configures every scheduler, and `start` takes a
+// backup when there is none - so an unchanged value restarting the schedule turns
+// each one into a snapshot.
+test('re-applying the settings a schedule is already running does nothing', async () => {
+  addLibrary(LIB, 'holiday');
+  const scheduled = new ScheduledBackup(backups, 1, 7);
+  scheduled.start();
+  await settled();
+  rmSync(backupsDir(dbPath), { recursive: true, force: true });
+
+  scheduled.configure(1, 7);
+  await Bun.sleep(200);
+  scheduled.stop();
+
+  expect(await listBackups(dbPath)).toEqual([]);
+});
+
 test('configure starts a schedule that was built with the settings it is given', async () => {
   addLibrary(LIB, 'holiday');
   // Skipping the restart when nothing changed leaves this one never started at all,

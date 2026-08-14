@@ -135,7 +135,7 @@ export class ScheduledPrune {
 
   /** Applies a changed setting (§15) without a restart. */
   configure(everyDays: number): void {
-    if (everyDays === this.everyDays) return;
+    if (everyDays === this.everyDays && this.timer != null) return;
     this.stop();
     this.everyDays = everyDays;
     this.start();

@@ -70,3 +70,17 @@ test('a change reaches the parts of the server configured from it', () => {
   expect(seen).toEqual([3]);
   db.close();
 });
+
+// The viewer writes `last_viewer_rendition` as it is used, and re-configuring the
+// watcher and the schedulers off the back of that is work nothing asked for.
+test('a write that changes nothing reaches nobody', () => {
+  const { settings, db } = repo();
+  settings.update({ last_viewer_rendition: 'full' });
+  let notified = 0;
+  settings.onChange(() => notified++);
+  settings.update({ last_viewer_rendition: 'full' });
+  expect(notified).toBe(0);
+  settings.update({ last_viewer_rendition: 'max' });
+  expect(notified).toBe(1);
+  db.close();
+});

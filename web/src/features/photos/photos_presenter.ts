@@ -640,8 +640,12 @@ export class PhotosPresenter {
   async chooseRendition(photoId: string, rendition: ViewerRendition): Promise<void> {
     await this.showRendition(photoId, rendition);
     if (this.store.rendition !== rendition) return; // the build failed; nothing to remember
-    if (this.settings.viewerRenditionMode === 'remember_per_photo') await this.patch(photoId, { viewer_rendition: rendition });
-    else await this.settingsPresenter.rememberRendition(rendition);
+    if (this.settings.viewerRenditionMode !== 'remember_per_photo') {
+      await this.settingsPresenter.rememberRendition(rendition);
+      return;
+    }
+    if (this.store.photoFor(photoId)?.viewer_rendition === rendition) return;
+    await this.patch(photoId, { viewer_rendition: rendition });
   }
 
   // Every rendition is rebuilt from scratch rather than served from the file that

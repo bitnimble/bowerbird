@@ -35,6 +35,7 @@ export class AppSettingsPresenter {
   // photo's own column, written by the presenter that owns it.
   async rememberRendition(rendition: ViewerRendition): Promise<void> {
     if (this.store.viewerRenditionMode !== 'remember') return;
+    if (this.store.lastViewerRendition === rendition) return;
     await this.update({ last_viewer_rendition: rendition });
   }
 

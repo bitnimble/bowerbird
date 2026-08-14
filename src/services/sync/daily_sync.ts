@@ -34,7 +34,7 @@ export class DailySync {
 
   /** Applies a changed setting (§15) without a restart. */
   configure(at: string): void {
-    if (at === this.at) return;
+    if (at === this.at && this.timer != null) return;
     this.stop();
     this.at = at;
     this.start();
