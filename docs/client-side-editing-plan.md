@@ -71,6 +71,14 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
       baseline, 8 is 0.44/0.57, **16 is 0.12/0.20 against 0.06 - still a line at 2-4x**, and from
       **24** up it is at or under the baseline and stays there to 128.
 
+      **Confirmed against a pattern built to be worse than any photograph**
+      (`examples/halo_pattern.rs`): a chroma zone plate on flat luma, random chroma at the
+      pyramid's own scale, a luma zone plate and blown speculars, all under fitted
+      Poisson-Gaussian noise with the structure held near it - a denoise only has to guess where
+      signal and noise are comparable, and a seam is a disagreement about a guess. It reaches 3.8
+      of 255 at halo 0 against the worst photograph's 0.70, and **it is at the baseline from 32 in
+      every configuration, while 16 is still 5-9x above it**.
+
       So 32, being past the knee and a multiple of four for the chroma pyramid. But the saving is
       modest and the earlier figure oversold it: at 1024 tiles the halo is 1.27x the area at 64
       and 1.13x at 32, while *not dividing into the frame evenly* is 1.22x on its own. Total 1.54x
