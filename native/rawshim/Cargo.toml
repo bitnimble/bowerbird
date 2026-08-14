@@ -140,6 +140,13 @@ inherits = "release"
 lto = "thin"
 codegen-units = 16
 
+# Not ours: rawler enables uuid's `v4`, and uuid refuses to compile for wasm32 without a named
+# source of randomness even where nothing generates one - here nothing does, the CR3 reader only
+# compares UUIDs it read out of BMFF boxes. Declared as our dependency so feature unification hands
+# it to rawler's copy, which is the only way to satisfy that gate without patching the fork.
+[target.wasm32-unknown-unknown.dependencies]
+uuid = { version = "1", features = ["js"] }
+
 [build-dependencies]
 bindgen = "0.72"
 

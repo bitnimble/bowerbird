@@ -16,8 +16,11 @@
 //! through every caller, because the alternative is threading a device through
 //! `job::run` -> `hdr::graded` -> `tone` for a resource there is exactly one of.
 
+// Nothing can obtain a `Gpu` in a browser (`device` below), which leaves the private machinery
+// for building one - the shader sources, the bind-group tables - unreachable rather than unwanted.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
+
 use crate::hdr_fit::{self, HdrColour};
-use std::sync::OnceLock;
 use wgpu::util::DeviceExt;
 
 /// The same composition `shaders.ts` performs, from the same files.
@@ -233,7 +236,8 @@ pub struct Gpu {
     nits_of_code: wgpu::Buffer,
 }
 
-static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
+#[cfg(not(target_arch = "wasm32"))]
+static GPU: std::sync::OnceLock<Option<Gpu>> = std::sync::OnceLock::new();
 
 /// The device, or None where no adapter of any kind answered.
 ///
@@ -241,11 +245,24 @@ static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
 /// the second implementation DESIGN 21.1 records the cost of - so `job::run` returns an error
 /// naming the missing driver and the photo goes unrendered rather than rendered differently.
 /// An `Option` rather than a panic so the refusal is the caller's to word.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn device() -> Option<&'static Gpu> {
     GPU.get_or_init(Gpu::new).as_ref()
 }
 
+/// Always None in a browser: this crate does not own a device there.
+///
+/// The page holds the `GPUDevice` already and the editor's shaders run on it, so one built here
+/// would be a second device rather than that one. It could not be built anyway - a `OnceLock`
+/// wants `Sync` and wgpu's WebGPU types are `Rc`-based, and `pollster::block_on` cannot block the
+/// browser's thread. Filling this means taking a device from JS.
+#[cfg(target_arch = "wasm32")]
+pub fn device() -> Option<&'static Gpu> {
+    None
+}
+
 impl Gpu {
+    #[cfg(not(target_arch = "wasm32"))]
     fn new() -> Option<Gpu> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::METAL,
