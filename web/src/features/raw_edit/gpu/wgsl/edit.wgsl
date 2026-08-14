@@ -138,6 +138,22 @@ struct Edit {
   keystone_7: f32,
   /// Whether there is one. Zero is a photograph nobody corrected, which is most of them.
   has_keystone: u32,
+
+  /// The long edge `detail.wgsl`'s working texture would have for the *whole photograph*.
+  ///
+  /// **Because a frame can be a piece of one.** The guided filter's window is a fraction of that
+  /// long edge, and a host reading it off the texture it allocated would filter a loupe tile at a
+  /// fraction of the tile - a twelfth of the scale the export uses, so the same Clarity produces
+  /// local contrast the reader cannot find again in the file they get. Equal to the texture's own
+  /// long edge for every whole frame, which is every rendition and the editor's own.
+  detail_long: u32,
+
+  /// How many of the frame's pixels each of that texture's texels covers.
+  ///
+  /// The partition is a step rather than a division so that it is the same partition wherever a
+  /// window of the photograph starts: a division puts a tile's texel boundaries between the
+  /// frame's and averages a different set of pixels into each one.
+  detail_step: u32,
 };
 
 @group(0) @binding(0) var<uniform> edit: Edit;

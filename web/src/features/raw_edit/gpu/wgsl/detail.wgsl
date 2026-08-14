@@ -123,10 +123,14 @@ fn stops(v: f32) -> f32 {
   return log2(max(v, 1.0 / 65536.0));
 }
 
-/// The box radius in texels, from the fraction above and whatever size the host allocated.
-fn guide_radius(size: vec2i) -> i32 {
-  let long = f32(max(size.x, size.y));
-  return max(i32(round(long * GUIDE_RADIUS)), 1);
+/// The box radius in texels, from the fraction above and the *photograph's* working long edge.
+///
+/// `edit.detail_long` rather than the texture this pass is writing: the two are the same number
+/// for a whole frame and they are not for a piece of one, and it is the photograph that decides
+/// what the window means. A loupe tile taking its own would filter at a twelfth of the scale its
+/// export uses, which is a Clarity that acts on the grain instead of the picture.
+fn guide_radius() -> i32 {
+  return max(i32(round(f32(edit.detail_long) * GUIDE_RADIUS)), 1);
 }
 
 /// The fine reference: a small Gaussian on the guide, for the band the texture slider reads.
@@ -139,7 +143,9 @@ fn guide_radius(size: vec2i) -> i32 {
 /// crosses an edge and the difference against it is large on both sides; two texels of blur
 /// puts the rim inside the edge itself, which is what a sharpen is.
 fn fine_blurred(at: vec2i, size: vec2i) -> f32 {
-  let sigma = max(f32(max(size.x, size.y)) * FINE_SIGMA, 0.5);
+  // The photograph's working long edge, for the reason `guide_radius` gives: `size` is this
+  // texture's, and this texture holds a tile where the loupe is asking.
+  let sigma = max(f32(edit.detail_long) * FINE_SIGMA, 0.5);
   let radius = i32(ceil(3.0 * sigma));
   var sum = 0.0;
   var weight = 0.0;
@@ -172,12 +178,20 @@ fn shrink(@builtin(global_invocation_id) id: vec3u) {
   if (id.x >= size.x || id.y >= size.y) { return; }
 
   // The footprint as a partition of the frame, so every source pixel belongs to exactly one
-  // texel and none is read twice. At least one pixel wide: the host never scales up, but a
-  // frame one pixel narrower than the working texture would otherwise leave a texel empty.
-  let x0 = (id.x * edit.width) / size.x;
-  let x1 = min(max(x0 + 1u, ((id.x + 1u) * edit.width) / size.x), edit.width);
-  let y0 = (id.y * edit.height) / size.y;
-  let y1 = min(max(y0 + 1u, ((id.y + 1u) * edit.height) / size.y), edit.height);
+  // texel and none is read twice.
+  //
+  // **A fixed number of pixels per texel rather than the frame divided by the texture**, which
+  // is what makes the partition translation-invariant: a frame that is a *window* on a
+  // photograph gets the photograph's own texel boundaries, provided its origin is a whole
+  // number of them (`job::grown` snaps it). Dividing instead put the window's texels between
+  // the frame's, so a loupe tile averaged different pixels into every one of them and its
+  // Clarity was fitted from a picture the export never sees.
+  let step = max(edit.detail_step, 1u);
+  let x0 = id.x * step;
+  let x1 = min(x0 + step, edit.width);
+  let y0 = id.y * step;
+  let y1 = min(y0 + step, edit.height);
+  if (x0 >= edit.width || y0 >= edit.height) { return; }
 
   var sum = 0.0;
   var count = 0.0;
@@ -252,7 +266,7 @@ fn window_mean(@builtin(global_invocation_id) id: vec3u) {
   let size = vec2i(textureDimensions(moments_out));
   let at = vec2i(i32(id.x), i32(id.y));
   if (at.x >= size.x || at.y >= size.y) { return; }
-  let radius = guide_radius(size);
+  let radius = guide_radius();
   let here = textureLoad(source, at, 0).r;
 
   var sum = vec4f(0.0);

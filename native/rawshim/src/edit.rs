@@ -427,6 +427,8 @@ fn payload(
         &crate::gpu::Grade {
             width: prepared.width,
             height: prepared.height,
+            // The editor is handed the whole photograph, so the blur's scale is its own.
+            photograph_long: prepared.width.max(prepared.height),
             colour,
             white: prepared.levels.white,
             source_level: prepared.levels.peak,

@@ -171,6 +171,7 @@ fn cases() -> Vec<Case> {
                 &rawshim::gpu::Grade {
                     width: WIDTH,
                     height: HEIGHT,
+                    photograph_long: WIDTH.max(HEIGHT),
                     colour: described,
                     white: levels.white,
                     source_level: levels.peak,
@@ -312,6 +313,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
             &rawshim::gpu::Grade {
                 width: WIDTH,
                 height: HEIGHT,
+                photograph_long: WIDTH.max(HEIGHT),
                 colour: None,
                 white: 1234.0,
                 source_level: 5678.0,
@@ -545,6 +547,7 @@ fn the_encode_pass_reproduces_the_cpu_frame() {
                 &rawshim::gpu::Grade {
                     width: prepared.width,
                     height: prepared.height,
+                    photograph_long: prepared.width.max(prepared.height),
                     colour: colour.as_ref(),
                     white: levels.white,
                     source_level: levels.peak,
@@ -619,6 +622,7 @@ fn the_rolled_arm_reproduces_the_cpu_grade() {
                 &rawshim::gpu::Grade {
                     width: prepared.width,
                     height: prepared.height,
+                    photograph_long: prepared.width.max(prepared.height),
                     colour: colour.as_ref(),
                     white: levels.white,
                     source_level: levels.peak,
@@ -777,6 +781,7 @@ fn graded_frame(
         &rawshim::gpu::Grade {
             width,
             height,
+            photograph_long: width.max(height),
             colour: None,
             white: levels.white,
             source_level: levels.peak,
@@ -1259,6 +1264,7 @@ fn the_encode_pass_reproduces_the_cpu_sdr_frame() {
             &rawshim::gpu::Grade {
                 width: prepared.width,
                 height: prepared.height,
+                photograph_long: prepared.width.max(prepared.height),
                 colour: colour.as_ref(),
                 white: levels.white,
                 source_level: levels.peak,

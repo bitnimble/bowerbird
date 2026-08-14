@@ -290,6 +290,268 @@ mod decode_geometry {
     }
 }
 
+/// What the loupe magnifies has to be the export's pixels for that part of the photograph, and
+/// everything a crop can measure about itself is a different number from the frame's.
+mod loupe_tile {
+    use super::*;
+
+    /// A dark corner of the Sony fixture, which is where the difference is worth measuring: its
+    /// own diffuse white is a third of the frame's, so a tile coded against it is lifted by that
+    /// factor and rolls its highlights into a peak barely above white.
+    const DARK: crate::Tile = crate::Tile { left: 500, top: 4500, width: 512, height: 512 };
+
+    fn tile_job(path: &str, tile: Option<[usize; 4]>, levels: Option<crate::tone::Levels>) -> crate::job::Job {
+        crate::job::Job {
+            raw_file_path: path.to_string(),
+            // A crop cannot fit one, and the point here is the coding rather than the colour.
+            match_embedded_jpeg: false,
+            tile,
+            noise_fit: None,
+            levels,
+            scene_peak: None,
+            camera_match: None,
+            // Off, so what is compared is what the levels did to the frame rather than what two
+            // denoises fitted from two different amounts of it.
+            denoise_luminance: 0.0,
+            denoise_colour: 0.0,
+            sharpen: 0.0,
+            defringe: 0.0,
+            exposure: 0.0,
+            adjust: crate::gpu::Adjust::none(),
+            geometry: crate::image::Geometry::none(),
+            grade: crate::hdr::Grade {
+                peak_nits: 1000.0,
+                reference_white_nits: 203.0,
+                white_quantile: 0.9,
+            },
+            targets: Vec::new(),
+        }
+    }
+
+    /// The rendition, assembled as `job::run` assembles it: cut, sharpened, and graded through a
+    /// peak measured over the whole frame.
+    fn rendition(job: &crate::job::Job) -> (Vec<u16>, usize, usize, f64) {
+        let base = crate::job::Base::build(job, 0).expect("the frame");
+        let source =
+            crate::hdr::Source { samples: &base.samples, width: base.width, height: base.height };
+        let scene = crate::tone::SceneGrade::new(
+            base.matched.as_ref().map(|m| &m.colour),
+            base.levels,
+            job.grade.reference_white_nits,
+            job.exposure,
+            job.adjust,
+            base.as_shot,
+        );
+        let size = crate::hdr_args::Size { width: base.width as u32, height: base.height as u32 };
+        let mut cut = crate::hdr::Cut::from_base(
+            &source,
+            base.matched.as_ref().map(|m| &m.lens),
+            size,
+            job.geometry,
+        );
+        cut.sharpen(job.sharpen);
+        let gpu = crate::gpu::device().expect("an adapter");
+        let grade = scene.gpu_grade(cut.width, cut.height, job.grade.peak_nits, crate::gpu::Output::Pq);
+        let peak = gpu.scene_peak();
+        let frame = gpu.upload(&cut.samples, &grade, &peak).encode(&grade);
+        (frame, cut.width, cut.height, f64::from(gpu.read_peak(&peak)))
+    }
+
+    /// A tile is the export's pixels for that rectangle, and nothing about the crop leaks in.
+    ///
+    /// **Held against the rendition itself** - `rendition` above assembles what `job::run` writes
+    /// - because that is the claim the loupe makes, and because every fault this has had was
+    /// invisible to a comparison of two tiles. Each row below is one of them: a stage that read
+    /// its own crop where it needed the photograph.
+    ///
+    /// Exact, not close. Every whole-frame quantity travels with the request, the gather is the
+    /// frame's own over this window of it, and the region decoded is what that window reads plus
+    /// the reach of everything that runs after it - so there is no border to allow for either.
+    ///
+    /// **Both fixtures, because the two answer different halves.** The Sony's fitted lens is an
+    /// identity, so it holds the grade still while nothing is being warped; the Canon's is not,
+    /// and it is the one that fails if a tile is corrected at its own radius rather than the
+    /// photograph's.
+    #[test]
+    fn a_tile_is_graded_as_the_rendition_is() {
+        for path in [sony(), canon()] {
+            a_tile_is_the_rendition(path.to_str().unwrap());
+        }
+    }
+
+    fn a_tile_is_the_rendition(path: &str) {
+        let mut fitted = tile_job(path, None, None);
+        fitted.match_embedded_jpeg = true;
+        let base = crate::job::Base::build(&fitted, 0).expect("the frame");
+        let levels = *base.levels;
+        let kept = base.fitted_now.clone().expect("a match");
+        // The brightest block there is, for the roll-off: a crop of shadow reaches nowhere near
+        // the photograph's top end, and a crop of highlight reaches most of the way to it.
+        let bright = brightest(&base);
+        drop(base);
+
+        let edits: [(&str, fn(&mut crate::job::Job)); 5] = [
+            // The grade alone, which is the levels and nothing else.
+            ("as metered", |_| {}),
+            // The deconvolution, which the tile skipped entirely and which is the whole reason a
+            // reader magnifies anything.
+            ("sharpened", |job| job.sharpen = 1.0),
+            // The presence three, which read a blur of the picture: the scale that blur is built
+            // at belongs to the photograph, and the window it averages over reaches two hundred
+            // pixels past a tile's own edge.
+            ("clarity and texture", |job| {
+                job.adjust = crate::gpu::Adjust {
+                    clarity: 60.0,
+                    texture: 60.0,
+                    dehaze: 25.0,
+                    ..crate::gpu::Adjust::none()
+                };
+            }),
+            // Both at once, which is the shipping default plus a slider a reader would reach for,
+            // and the only case where the two reaches compose: the blur is built from the
+            // sharpened window, so a kept pixel needs the blur's reach *and* the sharpen's inside
+            // it. Summing them is by construction rather than by measurement - on these fixtures
+            // the difference is under a count, because the deconvolution has little to do at the
+            // window's edge in either region this looks at.
+            ("sharpened, with clarity", |job| {
+                job.sharpen = 1.0;
+                job.adjust = crate::gpu::Adjust {
+                    clarity: 60.0,
+                    texture: 60.0,
+                    ..crate::gpu::Adjust::none()
+                };
+            }),
+            // Diffuse white far above the display peak, so the roll-off is compressing most of
+            // the picture rather than only its speculars - a peak read off the crop cannot hide
+            // there, where at the shipping grade this frame never reaches the knee at all.
+            ("rolled hard", |job| {
+                job.grade.reference_white_nits = 1000.0;
+                job.grade.peak_nits = 50.0;
+            }),
+        ];
+        for (what, edit) in edits {
+            let built = |tile: Option<[usize; 4]>, levels: Option<crate::tone::Levels>| {
+                let mut job = tile_job(path, tile, levels);
+                job.match_embedded_jpeg = true;
+                job.camera_match = Some(kept.clone());
+                edit(&mut job);
+                job
+            };
+            for (place, at) in [("shadow", DARK), ("highlight", bright)] {
+                let (reference, width, _, peak) = rendition(&built(None, None));
+                let mut cut = built(Some([at.left, at.top, at.width, at.height]), Some(levels));
+                // As the loupe sends it: the editor's tick measured this over the whole frame.
+                cut.scene_peak = Some(peak);
+                let (tile, tile_width, tile_height) = crate::job::graded(&cut).expect("the tile");
+
+                let mut worst = 0u32;
+                for row in 0..tile_height {
+                    for col in 0..tile_width {
+                        for channel in 0..3 {
+                            let from = ((at.top + row) * width + at.left + col) * 3 + channel;
+                            let to = (row * tile_width + col) * 3 + channel;
+                            worst = worst.max(u32::from(reference[from].abs_diff(tile[to])));
+                        }
+                    }
+                }
+                assert_eq!(worst, 0, "{path}, {what}, over {place}: the tile is not the rendition");
+            }
+        }
+    }
+
+    /// A crop measuring its own is a different picture, at each of the three.
+    ///
+    /// Not a proof that the substitutions are right - the test above is that - but the guard
+    /// against them being substitutions of one number for the same number, which would leave that
+    /// test passing whether or not any of this worked.
+    #[test]
+    fn what_a_tile_is_handed_is_not_what_it_would_measure() {
+        let path = sony();
+        let path = path.to_str().unwrap();
+        let mut fitted = tile_job(path, None, None);
+        fitted.match_embedded_jpeg = true;
+        let base = crate::job::Base::build(&fitted, 0).expect("the frame");
+        let levels = *base.levels;
+        let kept = base.fitted_now.clone().expect("a match");
+        drop(base);
+
+        let built = |levels: Option<crate::tone::Levels>, peak: Option<f64>| {
+            let mut job = tile_job(path, Some([DARK.left, DARK.top, DARK.width, DARK.height]), levels);
+            job.match_embedded_jpeg = true;
+            job.camera_match = Some(kept.clone());
+            job.scene_peak = peak;
+            // The roll-off has to be compressing something for the peak to be readable in the
+            // picture at all; `a_tile_is_graded_as_the_rendition_is` says why.
+            job.grade.reference_white_nits = 1000.0;
+            job.grade.peak_nits = 50.0;
+            job
+        };
+        let (given, width, height) = crate::job::graded(&built(Some(levels), Some(4000.0)))
+            .expect("the tile");
+        for (what, job) in [
+            ("levels", built(None, Some(4000.0))),
+            ("scene peak", built(Some(levels), None)),
+        ] {
+            let (own, _, _) = crate::job::graded(&job).expect("the tile");
+            let mean: f64 = given
+                .iter()
+                .zip(&own)
+                .map(|(a, b)| f64::from(a.abs_diff(*b)))
+                .sum::<f64>()
+                / (width * height * 3) as f64;
+            assert!(mean > 100.0, "the crop's own {what} graded it {mean:.1} counts away");
+        }
+    }
+
+    /// The brightest tile-sized block of the frame.
+    fn brightest(base: &crate::job::Base) -> crate::Tile {
+        let mean = |left: usize, top: usize| {
+            let mut total = 0f64;
+            for row in (0..DARK.height).step_by(8) {
+                for col in (0..DARK.width).step_by(8) {
+                    total += f64::from(base.samples[((top + row) * base.width + left + col) * 3 + 1]);
+                }
+            }
+            total / ((DARK.height / 8) * (DARK.width / 8)) as f64
+        };
+        let mut best = (crate::Tile { left: 0, top: 0, width: DARK.width, height: DARK.height }, 0.0);
+        for top in (0..base.height - DARK.height).step_by(512) {
+            for left in (0..base.width - DARK.width).step_by(512) {
+                let found = mean(left, top);
+                if found > best.1 {
+                    best = (crate::Tile { left, top, ..DARK }, found);
+                }
+            }
+        }
+        best.0
+    }
+
+    /// Levels that describe no photograph are refused, and the tile measures its own.
+    ///
+    /// They cross the API from a client rather than coming off a decode, and a white of zero is
+    /// divided by. Refusing means falling back, so what is asserted is that such a tile is the
+    /// tile that was handed nothing - not that it declined.
+    #[test]
+    fn a_tile_refuses_levels_that_describe_nothing() {
+        let path = sony();
+        let path = path.to_str().unwrap();
+        let at = [DARK.left, DARK.top, DARK.width, DARK.height];
+        let own = crate::job::Base::build(&tile_job(path, Some(at), None), 0).expect("the tile");
+
+        for levels in [
+            crate::tone::Levels { white: 0.0, peak: 13783.0 },
+            crate::tone::Levels { white: f64::NAN, peak: 13783.0 },
+            crate::tone::Levels { white: 8133.0, peak: f64::INFINITY },
+            // A peak below white would roll the highlights the wrong way.
+            crate::tone::Levels { white: 8133.0, peak: 100.0 },
+        ] {
+            let built = crate::job::Base::build(&tile_job(path, Some(at), Some(levels)), 0)
+                .expect("the tile");
+            assert_eq!(built.samples, own.samples, "{levels:?} was coded against");
+        }
+    }
+}
+
 /// Half-size decoding is a real quality trade - a faint checkerboard on dark edges -
 /// bought for about 40% of the decode. It is only acceptable where the halved frame
 /// still exceeds what is being built, so the gate is the whole feature.

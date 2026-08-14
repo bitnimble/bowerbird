@@ -580,6 +580,8 @@ mod tests {
                 match_embedded_jpeg: true,
                 tile: Some([2000, 1400, side, side]),
                 noise_fit: None,
+                levels: None,
+                scene_peak: None,
                 camera_match: None,
                 denoise_luminance: 20.0,
                 denoise_colour: 30.0,

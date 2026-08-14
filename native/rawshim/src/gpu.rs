@@ -66,12 +66,64 @@ const DETAIL_LONG: u32 = 512;
 /// how large a share of the picture each blur covers follows from it - two hosts rounding it
 /// differently would apply two different clarities and both would look like photographs.
 pub fn detail_size(width: usize, height: usize) -> DetailSize {
-    let long = width.max(height).max(1) as f64;
-    let scale = (f64::from(DETAIL_LONG) / long).min(1.0);
+    detail_within(width, height, width.max(height))
+}
+
+/// The same, for a frame that is a *piece* of a photograph whose long edge is `photograph_long`.
+///
+/// **At the photograph's rate rather than its own.** The blur is a shrink of the frame it is
+/// built from, so a loupe tile scaled to fill the working texture would blur a twelfth of the
+/// distance the export blurs - the same Clarity, acting on something else. Sized here and its
+/// *window* carried in the uniform (`edit.detail_long`), because the two are separate facts: how
+/// much of the photograph this texture holds, and how far across the photograph the filter
+/// reaches.
+pub fn detail_within(width: usize, height: usize, photograph_long: usize) -> DetailSize {
+    let step = detail_step(photograph_long) as usize;
     DetailSize {
-        width: ((width as f64 * scale).round() as u32).max(1),
-        height: ((height as f64 * scale).round() as u32).max(1),
+        width: width.div_ceil(step).max(1) as u32,
+        height: height.div_ceil(step).max(1) as u32,
     }
+}
+
+/// How many of the photograph's pixels one texel of that texture covers.
+///
+/// **A step, so that the partition does not move with the window.** `detail.wgsl` used to divide
+/// the frame it was given by the texture allocated for it, which is the same thing for a whole
+/// photograph and is not the same thing for a piece of one: a tile's texel boundaries landed
+/// between the frame's, so every texel averaged a different set of pixels and the guided filter
+/// was fitted from a picture the export never sees. With a step, a window whose origin is a whole
+/// number of them gets the photograph's own texels.
+pub fn detail_step(photograph_long: usize) -> u32 {
+    (photograph_long.max(1) as u32).div_ceil(DETAIL_LONG).max(1)
+}
+
+/// The working texture's long edge for a whole photograph of `photograph_long`, which is what
+/// `detail.wgsl` takes its window and its sigma as a fraction of.
+pub fn detail_long(photograph_long: usize) -> u32 {
+    (photograph_long.max(1) as u32).div_ceil(detail_step(photograph_long))
+}
+
+/// `GUIDE_RADIUS` in `detail.wgsl`: the guided filter's window, as a fraction of that long edge.
+const GUIDE_RADIUS: f64 = 1.0 / 64.0;
+
+/// `FINE_SIGMA` there: the fine reference's blur, in the same units.
+const FINE_SIGMA: f64 = 1.0 / 1024.0;
+
+/// How far the presence sliders read past a texel, in texels of a working texture this long.
+///
+/// **Two windows and a blur**, which is what the filter is: the moments are gathered over one
+/// window and the models it fits are averaged over another, so an output texel depends on twice
+/// the radius, and the fine reference adds its own taps on top. A caller building the blur for a
+/// *piece* of a photograph needs this to know how much of the surroundings it has to hold
+/// (`job::presence_reach`); a whole frame has them already.
+///
+/// The arithmetic is `detail.wgsl`'s, in Rust, which `the_detail_reach_is_the_shaders_own` pins
+/// against the shader rather than trusting.
+pub fn detail_reach(detail_long: u32) -> usize {
+    let long = f64::from(detail_long);
+    let guide = (long * GUIDE_RADIUS).round().max(1.0);
+    let fine = (3.0 * (long * FINE_SIGMA).max(0.5)).ceil();
+    (2.0 * guide + fine) as usize
 }
 
 /// The blur's working texture, named so it can travel to the editor as one.
@@ -496,13 +548,16 @@ const DETAIL_MOMENTS_BINDINGS: [(u32, Binding); 2] = [(2, Binding::Detail), (16,
 
 const DETAIL_BOX_BINDINGS: [(u32, Binding); 2] = [(15, Binding::Read32), (16, Binding::Wrote32)];
 
-const DETAIL_APPLY_BINDINGS: [(u32, Binding); 3] =
-    [(2, Binding::Detail), (15, Binding::Read32), (3, Binding::Written)];
+/// The uniform as well, for `detail_long`: the fine reference's sigma is a fraction of the
+/// *photograph's* working texture and this pass may be writing a piece of one.
+const DETAIL_APPLY_BINDINGS: [(u32, Binding); 4] =
+    [(0, Binding::Uniform), (2, Binding::Detail), (15, Binding::Read32), (3, Binding::Written)];
 
 /// The mean, which needs the guide as well as what it is averaging: it has to know which taps
-/// describe the same surface as the texel it is writing.
-const DETAIL_MEAN_BINDINGS: [(u32, Binding); 3] =
-    [(2, Binding::Detail), (15, Binding::Read32), (16, Binding::Wrote32)];
+/// describe the same surface as the texel it is writing. And the uniform, for the window's own
+/// width, which is `detail_long`'s to say for the same reason.
+const DETAIL_MEAN_BINDINGS: [(u32, Binding); 4] =
+    [(0, Binding::Uniform), (2, Binding::Detail), (15, Binding::Read32), (16, Binding::Wrote32)];
 
 /// `peakLayout` on the client: the same colour bindings, and the histogram, the peak and the
 /// candidates all writable where the encode reads the peak and writes only the frame.
@@ -609,6 +664,13 @@ impl Binding {
 pub struct Grade<'a> {
     pub width: usize,
     pub height: usize,
+    /// The long edge of the *photograph* this frame is a piece of, which is its own for every
+    /// caller but the loupe's tile.
+    ///
+    /// Only the presence sliders read it, through the working texture `detail.wgsl` blurs on: how
+    /// large a share of the picture that blur covers is a property of the photograph, and a crop
+    /// left to answer it from its own dimensions applies a different Clarity from the export.
+    pub photograph_long: usize,
     pub colour: Option<&'a HdrColour>,
     /// `tone::Levels`, as the uniform's `white` and `source_level`.
     pub white: f64,
@@ -733,11 +795,67 @@ impl Gpu {
             buffer: self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("peak_out"),
                 size: 4 * 4,
-                usage: wgpu::BufferUsages::STORAGE,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
             measured: std::cell::Cell::new(false),
         }
+    }
+
+    /// What a measurement left in one, in nits.
+    ///
+    /// The number itself, for a caller that has to hand it to a frame holding a piece of the same
+    /// photograph. `job::run` never asks - it passes the buffer along and the CPU stays out of it
+    /// - so this exists for the pins, which have to compare a tile's roll-off against the
+    /// rendition's and cannot do that through two pictures alone.
+    #[cfg(test)]
+    pub fn read_peak(&self, peak: &ScenePeak) -> f32 {
+        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("peak readback"),
+            size: 4,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&peak.buffer, 0, &staging, 0, 4);
+        self.queue.submit([encoder.finish()]);
+        let slice = staging.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::PollType::wait_indefinitely()).expect("the copy finished");
+        let nits = {
+            let mapped = slice.get_mapped_range().expect("the readback mapped");
+            f32::from_le_bytes([mapped[0], mapped[1], mapped[2], mapped[3]])
+        };
+        staging.unmap();
+        nits
+    }
+
+    /// The peak a caller already knows, which nothing will then measure.
+    ///
+    /// **For a frame that is a piece of a photograph.** The measurement reduces whatever is
+    /// uploaded, so a loupe tile measures a crop's top end - and the roll-off compresses into
+    /// *that*, which is a magnifier grading its highlights differently from the picture it is
+    /// held over. The editor measures the whole frame every tick and hands the number back with
+    /// the tile request; `peak.wgsl` writes nits into word zero and this seeds the same word,
+    /// so the two are the same quantity rather than two that agree.
+    pub fn given_peak(&self, nits: f32) -> ScenePeak {
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("peak_out"),
+            size: 4 * 4,
+            // `COPY_SRC` as the measured one has it, so `read_peak` answers for either kind
+            // rather than failing validation on whichever a test happens to hold.
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: true,
+        });
+        {
+            let mut view =
+                buffer.slice(..).get_mapped_range_mut().expect("a buffer mapped at creation");
+            view.slice(..4).write_iter(nits.to_le_bytes());
+        }
+        buffer.unmap();
+        // Claimed, so `upload` leaves it alone. The words above zero are the measurement's own
+        // scratch and nothing but `peak.wgsl` reads them.
+        ScenePeak { buffer, measured: std::cell::Cell::new(true) }
     }
 
     /// The frame itself, written straight into the buffer the GPU will read.
@@ -851,7 +969,7 @@ impl Gpu {
         let detail = self.build_detail(
             &samples,
             &uniform(grade, described),
-            detail_size(grade.width, grade.height),
+            detail_within(grade.width, grade.height, grade.photograph_long),
         );
 
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
@@ -1132,6 +1250,7 @@ impl Gpu {
                         label: Some("detail mean"),
                         layout: &self.detail_mean_layout,
                         entries: &[
+                            wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
                             wgpu::BindGroupEntry {
                                 binding: 2,
                                 resource: wgpu::BindingResource::TextureView(&base),
@@ -1155,6 +1274,7 @@ impl Gpu {
                         label: Some("detail apply"),
                         layout: &self.detail_apply_layout,
                         entries: &[
+                            wgpu::BindGroupEntry { binding: 0, resource: edits.as_entire_binding() },
                             wgpu::BindGroupEntry {
                                 binding: 2,
                                 resource: wgpu::BindingResource::TextureView(&base),
@@ -1461,6 +1581,8 @@ const EDIT_FIELDS: &[&str] = &[
     "keystone_6",
     "keystone_7",
     "has_keystone",
+    "detail_long",
+    "detail_step",
 ];
 
 /// `EDIT_UNIFORM_FLOATS` in `shaders.ts`, field for field in `struct Edit`'s order.
@@ -1572,6 +1694,8 @@ pub fn uniform_words(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u32> {
         f(&mut w, 0.0);
     }
     w.push(0); // has_keystone
+    w.push(detail_long(grade.photograph_long));
+    w.push(detail_step(grade.photograph_long));
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. `shaders.ts` does this in `editOffsets`; here it was
@@ -1676,6 +1800,34 @@ mod tests {
         );
     }
 
+    /// The reach `detail_reach` reports against the fractions the shader actually filters with.
+    ///
+    /// **This one decides how much of a photograph a loupe tile has to decode**, and it is the
+    /// shader's arithmetic written out in Rust, which is the arrangement DESIGN 21.1 exists to
+    /// distrust. Wrong small and a tile's Clarity is fitted against an edge that is not in the
+    /// picture; wrong large and every tile pays for surroundings nothing reads.
+    #[test]
+    fn the_detail_reach_is_the_shaders_own() {
+        let fraction = |name: &str| -> f64 {
+            let at = super::DETAIL_WGSL
+                .find(&format!("const {name}: f32 ="))
+                .unwrap_or_else(|| panic!("{name} is declared"));
+            let line = &super::DETAIL_WGSL[at..][..super::DETAIL_WGSL[at..].find(';').expect("terminated")];
+            let (numerator, denominator) = line
+                .rsplit('=')
+                .next()
+                .and_then(|value| value.split_once('/'))
+                .unwrap_or_else(|| panic!("{name} reads `{line}`"));
+            let number = |text: &str| text.trim().parse::<f64>().expect("a number");
+            number(numerator) / number(denominator)
+        };
+        assert_eq!(fraction("GUIDE_RADIUS"), super::GUIDE_RADIUS, "the window has moved");
+        assert_eq!(fraction("FINE_SIGMA"), super::FINE_SIGMA, "the fine reference has moved");
+        // And what those come to at the size every photograph larger than the working texture
+        // gets, which is the number a tile is grown by.
+        assert_eq!(super::detail_reach(super::DETAIL_LONG), 2 * 8 + 2);
+    }
+
     /// `struct Edit` in the shader against the order and the size this host writes.
     ///
     /// Two failures, both silent without this. A field inserted anywhere but the tail
@@ -1710,16 +1862,22 @@ mod tests {
         );
 
         // And the buffer the writer produces is the size the binding wants: every field a
-        // word, `vec2f` two, rounded up to four.
+        // word, `vec2f` two, the alignment word before the first of those, rounded up to four.
+        //
+        // The alignment word counted rather than left to the rounding to absorb, which is what
+        // it was doing: at 63 named words the round to 64 happened to cover it, so the next field
+        // appended made this expect one word fewer than the writer emits.
         let words: usize = super::EDIT_FIELDS
             .iter()
             .map(|name| if name.starts_with("region_") || *name == "canvas_size" { 2 } else { 1 })
-            .sum();
+            .sum::<usize>()
+            + 1;
         let expected = words.div_ceil(4) * 4 * 4;
         let colour = crate::hdr_fit::HdrColour::identity();
         let grade = super::Grade {
             width: 1,
             height: 1,
+            photograph_long: 1,
             colour: None,
             white: 1.0,
             source_level: 1.0,
@@ -1812,6 +1970,7 @@ fn probe_xy() {
                 let grade = super::Grade {
                     width: 1,
                     height: 1,
+                    photograph_long: 1,
                     colour: None,
                     white: 1.0,
                     source_level: 1.0,
@@ -2012,6 +2171,7 @@ fn probe_geometry(@builtin(global_invocation_id) id: vec3u) {
             let grade = super::Grade {
                 width: full.0,
                 height: full.1,
+                photograph_long: full.0.max(full.1),
                 colour: None,
                 white: 1.0,
                 source_level: 1.0,

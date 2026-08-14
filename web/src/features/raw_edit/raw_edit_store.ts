@@ -5,7 +5,7 @@ import { turnedForDisplay, turnedPointForDisplay, type CropRect } from './crop_t
 import { isUpright, type KeystoneGuide } from './keystone';
 import { wholeFrameGeometry, type EditGeometry } from './gpu/shaders';
 import type { AsShot, Region } from './gpu/edit_pipeline';
-import type { NoiseFit } from '../../../../src/services/processing/rawshim_job';
+import type { JobLevels, NoiseFit } from '../../../../src/services/processing/rawshim_job';
 
 export type EditStatus = 'idle' | 'fetching' | 'preparing' | 'live' | 'failed';
 
@@ -100,6 +100,17 @@ export class RawEditStore {
    * photograph's. Null for a frame decoded without an adapter.
    */
   @observable accessor noiseFit: NoiseFit | null = null;
+
+  /**
+   * The frame's diffuse white and scene peak as the open measured them, for the loupe to hand
+   * back with a tile.
+   *
+   * Travels for the same reason the fit above does, and it is the more visible of the two: the
+   * base is coded by dividing by white, so a crop measuring its own is a magnifier that lifts a
+   * dark part of a photograph to reference white. The tick reads neither - the shader's copy of
+   * these arrives in `edits` - so nothing here interprets them.
+   */
+  @observable accessor levels: JobLevels | null = null;
 
   /** The adapter behind the tick, for the readout: this is a GPU pipeline now. */
   @observable accessor adapter = '';

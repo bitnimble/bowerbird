@@ -295,7 +295,16 @@ fn adjusted(colour: vec3f, base_luma: f32, uv: vec2f) -> vec3f {
   // edge by less than a count, because by then the error is already in the texture.
   let base_stops = stops_below_white(base_luma);
   var blur = vec3f(0.0);
-  if (local) { blur = textureSampleLevel(detail, lerp, uv, 0.0).rgb; }
+  if (local) {
+    // Read at the texel the *partition* puts this pixel in, not at `uv` of the texture.
+    // `textureSampleLevel` scales uv by the texture's own size, and that size is the frame
+    // rounded up to a whole texel - so sampling by uv stretches the blur by whatever the last
+    // texel is short by. For a frame and a window of it those are different amounts, which
+    // slides the window's blur against the photograph's by a fraction of a texel everywhere.
+    let step = f32(max(edit.detail_step, 1u));
+    let texel = uv * vec2f(f32(edit.width), f32(edit.height)) / step;
+    blur = textureSampleLevel(detail, lerp, texel / vec2f(textureDimensions(detail)), 0.0).rgb;
+  }
 
   // White balance first, and everything below is then grading the frame the reader says the
   // light actually was. It is also the only stage here that changes what a *neutral* is, so

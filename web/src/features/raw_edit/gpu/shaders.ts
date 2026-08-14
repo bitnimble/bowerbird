@@ -266,6 +266,8 @@ export const EDIT_LAYOUT = [
   ['keystone_6', 'f32'],
   ['keystone_7', 'f32'],
   ['has_keystone', 'u32'],
+  ['detail_long', 'u32'],
+  ['detail_step', 'u32'],
 ] as const;
 
 export type EditField = (typeof EDIT_LAYOUT)[number][0];
