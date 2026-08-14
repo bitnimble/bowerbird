@@ -50,6 +50,7 @@ fn main() {
 
     for path in &files {
         time_the_open(path);
+        time_the_noise(path);
     }
 
     if biggest.0 > 0 {
@@ -113,6 +114,41 @@ fn time_the_open(path: &str) {
         name(path),
         matched.map_or(0, |m| m.len()),
     );
+}
+
+/// The noise measurement both ways, on the frame `payload` would hand it.
+///
+/// The pair is the whole decision: `edit::open` calls whichever is faster, and the GPU one has to
+/// win against a CPU that is already threaded before it is worth the frame's second gigabyte.
+fn time_the_noise(path: &str) {
+    let Ok(bytes) = std::fs::read(path) else { return };
+    let Ok(prepared) = rawshim::edit::prepare_bytes(&bytes, &request(None)) else { return };
+    let (width, height) = (prepared.header.width, prepared.header.height);
+    let samples = &prepared.samples;
+    println!("\n{}: the noise measure at {width}x{height}", name(path));
+
+    repeat("noise::measure (the CPU's)", || {
+        std::hint::black_box(rawshim::noise::measure(samples, width, height));
+    });
+
+    let Some(gpu) = rawshim::gpu::device() else { return };
+    let Some(base) = rawshim::base::device(gpu) else { return };
+    repeat("base::measure (the GPU's)", || {
+        std::hint::black_box(rawshim::base::measure(gpu, base, samples, width, height));
+    });
+
+    let theirs = rawshim::noise::measure(samples, width, height);
+    let mine = rawshim::base::measure(gpu, base, samples, width, height);
+    if let Some(mine) = mine {
+        let off = |mine: f32, theirs: f32| (mine - theirs).abs() / theirs;
+        println!(
+            "  {:<34} sigma {:.3e} against {:.3e} ({:.4}% off)",
+            "and they agree",
+            mine.stabilised,
+            theirs.stabilised,
+            100.0 * off(mine.stabilised, theirs.stabilised),
+        );
+    }
 }
 
 fn request(camera_match: Option<Vec<u8>>) -> rawshim::edit::EditRequest {

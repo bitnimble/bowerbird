@@ -792,10 +792,12 @@ fn warp_lens_into(
     }
 }
 
-/// The shader's stencil, and the size of the lap array it selects a median from.
+/// The shader's stencil, and what fixes the size of the network it takes a median with.
 ///
 /// Tiling the frame by one number and measuring it with another leaves an estimate that is
 /// quietly wrong and a picture nobody would look at twice, so the two are held together here.
+/// `median96` is wired for the 96 Laplacians an 8x8 block has and has no other size, so this is
+/// the assertion that keeps the shader answering the question the CPU asks.
 const BLOCK: usize = 8;
 const _: () = assert!(BLOCK == crate::noise::BLOCK);
 
@@ -1692,5 +1694,126 @@ mod tests {
             mine.sigma_sq,
             theirs.sigma_sq
         );
+    }
+
+    /// `noise.wgsl`'s `median96`, modelled here, against the rank `noise::blocks` asks for.
+    ///
+    /// The GPU test above cannot see this on its own: it compares two quantiles of quantiles under
+    /// a 0.2% bound, and a network that returned the 47th or the 50th smallest would sit well
+    /// inside it on photographic data, where neighbouring Laplacians are a percent apart. What can
+    /// be wrong with a network is only ever its wiring - which half of a half-cleaner the rank
+    /// falls in, which way a reversal runs, whether the sentinels sort where they are assumed to -
+    /// and that is exact, so it is checked exactly, here, against `select_nth_unstable_by`.
+    ///
+    /// Weighted towards ties, runs and zeros because that is the only place the two can differ
+    /// visibly: with 96 distinct values almost any wrong index still lands a plausible number.
+    #[test]
+    fn the_median_network_takes_the_rank_the_cpu_takes() {
+        /// A bitonic sequence made ascending: the shader's `clean8`, `clean16`, `clean32` and
+        /// `clean64`, which are one recursion at four sizes.
+        fn clean(v: &mut [u32]) {
+            if v.len() < 2 {
+                return;
+            }
+            let half = v.len() / 2;
+            for i in 0..half {
+                let (a, b) = (v[i], v[i + half]);
+                v[i] = a.min(b);
+                v[i + half] = a.max(b);
+            }
+            let (lo, hi) = v.split_at_mut(half);
+            clean(lo);
+            clean(hi);
+        }
+
+        /// Two ascending runs made one, by reversing the second - the shader's `merge*`.
+        fn merge(v: &mut [u32]) {
+            let half = v.len() / 2;
+            v[half..].reverse();
+            clean(v);
+        }
+
+        /// The shader's `sort8`, which is `sort4` on each half and a merge - the same recursion
+        /// again, and it bottoms out on the compare-exchange `clean` does at length two.
+        fn sorted(v: &mut [u32]) {
+            if v.len() < 2 {
+                return;
+            }
+            let (lo, hi) = v.split_at_mut(v.len() / 2);
+            sorted(lo);
+            sorted(hi);
+            merge(v);
+        }
+
+        fn network(laps: &[f32; 96]) -> u32 {
+            let mut bits: Vec<u32> = laps.iter().map(|lap| lap.to_bits()).collect();
+            for eight in bits.chunks_mut(8) {
+                sorted(eight);
+            }
+            for sixteen in bits.chunks_mut(16) {
+                merge(sixteen);
+            }
+            for thirty_two in bits.chunks_mut(32) {
+                merge(thirty_two);
+            }
+            merge(&mut bits[..64]);
+
+            let (ab, c) = bits.split_at(64);
+            // The fourth thirty-two is all sentinel, so the first half of the 128-merge is `ab`
+            // unchanged below 32 and a min against a reversed `c` above it.
+            let low: Vec<u32> = (32..64).map(|i| ab[i].min(c[63 - i])).collect();
+            let h2: Vec<u32> = (0..32).map(|i| ab[i].max(low[i])).collect();
+            (0..16).map(|i| h2[i].max(h2[i + 16])).min().expect("sixteen candidates")
+        }
+
+        fn next(seed: &mut u64) -> u64 {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 7;
+            *seed ^= *seed << 17;
+            *seed
+        }
+
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        // Any non-negative pattern, infinities and NaNs included: `total_cmp` and the integer order
+        // agree over the whole of it, so the equivalence being checked is not restricted to the
+        // magnitudes a real block produces - and a shader that got a swizzle wrong would be caught
+        // by whichever value the wrong lane held.
+        let pools = [1usize, 2, 3, 7, 16, 96];
+        for round in 0..60_000usize {
+            let pool: Vec<f32> = (0..pools[round % pools.len()])
+                .map(|_| {
+                    let bits = next(&mut seed) as u32 & 0x7fff_ffff;
+                    // A third of the values pinned to zero, the shared low bit pattern a flat
+                    // block, a clipped highlight and a clamped shadow all produce at once.
+                    if next(&mut seed) % 3 == 0 { 0.0 } else { f32::from_bits(bits) }
+                })
+                .collect();
+
+            let mut laps = [0.0f32; 96];
+            if round % 2 == 0 {
+                for lap in laps.iter_mut() {
+                    *lap = pool[next(&mut seed) as usize % pool.len()];
+                }
+            } else {
+                // In adjacent runs as well as scattered, because the twelve groups the network
+                // sorts are positional: a run that fills one exactly takes a different path
+                // through the merges than the same values spread over all of them.
+                let run = 1 + round % 13;
+                let mut at = 0;
+                while at < laps.len() {
+                    let value = pool[next(&mut seed) as usize % pool.len()];
+                    for _ in 0..run.min(laps.len() - at) {
+                        laps[at] = value;
+                        at += 1;
+                    }
+                }
+            }
+
+            let mut reference = laps;
+            reference.select_nth_unstable_by(96 / 2, f32::total_cmp);
+            let want = reference[96 / 2].to_bits();
+            let got = network(&laps);
+            assert_eq!(got, want, "round {round} over {laps:?}");
+        }
     }
 }
