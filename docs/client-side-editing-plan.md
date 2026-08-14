@@ -103,18 +103,27 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
 - [ ] **`pass12`** is now 82% of GALOSH (4326ms of 5286). The next real optimisation, and unlike
       the table it is genuine per-pixel work.
 
-## Open, and found while measuring the halo
+## Found while measuring the halo
 
-- [ ] **A region denoised on its own differs from the whole frame denoised, in its interior, by
-      about 1.15 of 255 on a real photograph.** Not the halo - it holds at every halo up to 512,
-      and it is as large well away from a seam as at one. Not the decode either: `tile_check` puts
-      a tile against the same region of the frame at `mean 0.0 worst 0` with the denoise off. And
-      not `Fit::Given` against `Fit::Measure`, which `open_bench` measures at `worst 0e0`.
+- [x] **~~A region denoised on its own differs from the whole frame~~ - answered by `db0e726`.**
+      This sat here as "about 1.15 of 255 in the interior, not the halo, not the decode, not
+      `Fit::Given` against `Fit::Measure`, cause unknown". It was five stages reasoning about "the
+      frame" when the frame was a crop, and that commit enumerates them with the mean difference
+      each was worth, in counts of 65535: the levels everything is coded and graded against 9333,
+      the scene peak the roll-off rolls into 1343, the sharpen never run on a tile at all 213, the
+      lens applied at the crop's radius 153, the blur the presence sliders read 27.
 
-      **Largely defused rather than explained**, now the render tiles the same way the loupe does:
-      both sides are regions of the same size at the same halo, so whatever this is applies to
-      both. It still wants finding, because it says something is not local that is assumed to be -
-      and `tile_check` should now be re-run against the tiled render to see what is left of it.
+      Three are numbers the editor already holds and a crop cannot measure, so they travel with
+      the request beside the noise fit; two are the shape of the tile itself.
+      `a_tile_is_graded_as_the_rendition_is` now asserts equality rather than closeness, and it
+      passes with the render assembled from tiles.
+
+- [ ] **Tile the loupe's own decode too.** `decode_rawler::decode_tile` still does its region in
+      one pass, so it does not use the 2048 tiling the whole-frame path got. That was harmless
+      while a loupe window was the glass; `db0e726` grows it by the reach of everything after the
+      gather - 42px for the deconvolution, ~216px for the guided filter - and measured 4x the
+      decode with a presence slider off zero. A window that large wants the same bound on the GPU
+      as a frame does, for the same reason. Additive, not a correctness problem.
 
 ## Falls out of the above
 
