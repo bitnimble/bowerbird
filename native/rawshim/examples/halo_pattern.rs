@@ -76,8 +76,14 @@ fn main() {
 
     let mut reference = mosaic.clone();
     rawshim::galosh::denoise_with(gpu, kernels, &mut reference, side, side, amounts, fit);
-    write(gpu, rcd, &format!("{out}/pattern-reference"), &reference, side, cfa);
-    write(gpu, rcd, &format!("{out}/pattern-noisy"), &mosaic, side, cfa);
+    let shown = render(gpu, rcd, &reference, side, cfa);
+    write(&format!("{out}/pattern-reference"), &shown, side, side);
+    write(&format!("{out}/pattern-noisy"), &render(gpu, rcd, &mosaic, side, cfa), side, side);
+
+    // Narrow enough that five of them fit beside each other without being scaled, which would
+    // stop them being 100% and lose the thing they exist to show.
+    const WIDE: usize = 192;
+    let mut strip = vec![column(&shown, side, WIDE)];
 
     let half = side / 2;
     println!("{:>6}  {:>9} {:>9} {:>9}", "halo", "V excess", "H excess", "baseline");
@@ -115,7 +121,9 @@ fn main() {
             h_join - h_base,
             (v_base + h_base) / 2.0,
         );
-        write(gpu, rcd, &format!("{out}/pattern-halo{halo}"), &assembled, side, cfa);
+        let shown = render(gpu, rcd, &assembled, side, cfa);
+        write(&format!("{out}/pattern-halo{halo}"), &shown, side, side);
+        strip.push(column(&shown, side, WIDE));
         // Amplified hard, because the whole point of the pattern is that the seam is a fraction of
         // a count: at 64x a difference of 0.004 is mid grey, and at that gain the noise floor is
         // visible too, which is what stops the picture reading as worse than it is.
@@ -124,9 +132,12 @@ fn main() {
             .zip(&reference)
             .map(|(a, b)| ((a - b).abs() * 64.0).min(1.0))
             .collect();
-        write(gpu, rcd, &format!("{out}/diff-halo{halo}"), &diff, side, cfa);
+        write(&format!("{out}/diff-halo{halo}"), &render(gpu, rcd, &diff, side, cfa), side, side);
     }
+    let across = strip.len() * (WIDE + 4) - 4;
+    write(&format!("{out}/pattern-side-by-side"), &alongside(&strip, WIDE, side), across, side);
     eprintln!("\nwrote the pattern and {} halos to {out}", halos.len());
+    eprintln!("and pattern-side-by-side, reference then {halos:?}, {WIDE}px columns at 100%");
 }
 
 /// The mosaic, one photosite at a time, in the domain `condition` leaves a real decode in.
@@ -245,15 +256,14 @@ fn seam_line(mine: &[f32], reference: &[f32], side: usize, half: usize, vertical
 ///
 /// No colour matrix and no tone curve: there is no sensor for one to describe, and both would only
 /// compress the artefact this exists to show.
-fn write(
+fn render(
     gpu: &'static rawshim::gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
-    stem: &str,
     mosaic: &[f32],
     side: usize,
     cfa: [u32; 4],
-) {
-    let rgb = rawshim::demosaic::demosaic_with(gpu, rcd, mosaic, side, side, cfa, |bytes| {
+) -> Vec<u8> {
+    rawshim::demosaic::demosaic_with(gpu, rcd, mosaic, side, side, cfa, |bytes| {
         bytes
             .chunks_exact(4)
             .map(|w| {
@@ -262,9 +272,40 @@ fn write(
             })
             .collect::<Vec<u8>>()
     })
-    .expect("the pattern demosaics");
+    .expect("the pattern demosaics")
+}
 
-    let image = rawshim::rgb::RgbRef { width: side, height: side, data: &rgb };
+fn write(stem: &str, rgb: &[u8], width: usize, height: usize) {
+    let image = rawshim::rgb::RgbRef { width, height, data: rgb };
     std::fs::write(format!("{stem}.jpg"), rawshim::jpeg::encode(image, 100).expect("encodes"))
         .expect("the JPEG writes");
+}
+
+/// A `wide` column centred on the vertical seam, the full height of the pattern.
+///
+/// A column rather than the square the photograph harness cuts, because the seam here has four
+/// different subjects to cross and the interesting thing is which of them it survives.
+fn column(rgb: &[u8], side: usize, wide: usize) -> Vec<u8> {
+    let left = (side - wide) / 2;
+    let mut out = vec![0u8; wide * side * 3];
+    for row in 0..side {
+        let from = (row * side + left) * 3;
+        out[row * wide * 3..(row + 1) * wide * 3].copy_from_slice(&rgb[from..from + wide * 3]);
+    }
+    out
+}
+
+/// Panels in a row, separated by a white gutter.
+fn alongside(panels: &[Vec<u8>], wide: usize, tall: usize) -> Vec<u8> {
+    const GUTTER: usize = 4;
+    let across = panels.len() * (wide + GUTTER) - GUTTER;
+    let mut out = vec![255u8; across * tall * 3];
+    for (at, panel) in panels.iter().enumerate() {
+        let left = at * (wide + GUTTER);
+        for row in 0..tall {
+            let to = (row * across + left) * 3;
+            out[to..to + wide * 3].copy_from_slice(&panel[row * wide * 3..(row + 1) * wide * 3]);
+        }
+    }
+    out
 }
