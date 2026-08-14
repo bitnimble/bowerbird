@@ -134,10 +134,20 @@ share one buffer this whole section buys correctness and nothing else.
       `prepare`. On a 61MP frame, against the CPU path: code + defringe + warp **1695ms to 956ms**,
       and the open after its levels **5201ms to 4709ms**. 279 fixture tests green, pinned renders
       unmoved, and `decode_bench`'s checksums identical to before any of this existed.
-- [ ] **The noise measure is ported but deliberately *not* wired** (`e19350f` wired it,
-      `6f02531` took it back out). It is the one stage paying an upload and no readback, and it is
-      still not faster: 987ms against 958ms, because its median is compute bound. It goes in when
-      the median below is fixed.
+- [x] **The noise measure is wired**, once its median stopped being a selection sort. It had gone
+      in once before (`e19350f`) and come back out (`6f02531`) at 987ms against the CPU's 958ms; it
+      is now **221ms against 910ms** on a 61MP frame, and **227ms** in the open's own lap rather
+      than alone, behind the same `gpu::device().and_then(base::device)` fall-through the other
+      stages take. It remains the one stage paying an upload and no readback - which is why the
+      number to watch is the lap, not the standalone: measured immediately after a run that had not
+      yet released a gigabyte of buffers, the same call took six seconds longer.
+- [x] **The block reduction's median is a sorting network.** That was where the whole of the noise
+      measure's time went, and the transfer was never it: at 61MP the frame is 1188 x 792 blocks,
+      each taking the CPU's exact order statistic by partial selection - 48 passes over 96 laps,
+      twice over, so about 8.7 billion comparisons, every one of them indexing a private array
+      dynamically and spilling to scratch. Measured whole, that was **8089ms**; as a bitonic
+      network over the same bit patterns it is **221ms**, and the same order statistic to the
+      element. `noise.wgsl`'s `median96`, pinned by `the_median_network_takes_the_rank_the_cpu_takes`.
 - [ ] **The levels quantile is ported but deliberately *not* wired either**, and unlike the noise
       measure it is not a kernel that needs fixing. It is 296-311ms against the CPU's 156-170ms,
       and essentially all of that is the 361MB upload: the kernel reads a million samples whatever

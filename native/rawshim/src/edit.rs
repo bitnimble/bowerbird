@@ -496,6 +496,22 @@ fn payload(
         colour.unwrap_or(&identity),
     );
 
+    // **On the GPU, with the CPU behind it**, the same fall-through the coding and the warp take.
+    // This was wired once before and taken back out at 987ms against the CPU's 958ms, its median
+    // being a per-block selection sort that spilled every block to scratch; as `noise.wgsl`'s
+    // `median96` it is 221ms against 910ms, and 227ms measured in this lap rather than alone. It is
+    // the one stage that pays an upload and gets no readback, so that margin is the whole of its
+    // case for being here.
+    let noise = crate::gpu::device()
+        .and_then(crate::base::device)
+        .and_then(|base| {
+            let gpu = crate::gpu::device()?;
+            crate::base::measure(gpu, base, &prepared.samples, prepared.width, prepared.height)
+        })
+        .unwrap_or_else(|| {
+            crate::noise::measure(&prepared.samples, prepared.width, prepared.height)
+        });
+
     let header = PreparedHeader {
         ok: true,
         width: prepared.width,
@@ -511,15 +527,7 @@ fn payload(
         colour: matched.map(|m| ColourPayload::from(&m.colour)),
         // Last, on the buffer as it will be sent: the warp resamples and the sharpen amplifies,
         // and a tick denoises what comes out of both rather than what went into them.
-        //
-        // **On the CPU, and `base::measure` is deliberately not called here.** It is ported and
-        // pinned within 0.2% (`base.rs`), and it costs 987ms alone against this 958ms - the median
-        // it takes per block is a 48-pass selection over 96 laps, so the reduction is compute
-        // bound rather than transfer bound and moving it buys nothing yet. Worse, run *after* the
-        // chain above it measured 7962ms, which is the chain's own buffers still resident: a
-        // frame, its warped copy and a readback are a gigabyte on an integrated GPU, and this
-        // wants another. It goes back when the median does.
-        noise: crate::noise::measure(&prepared.samples, prepared.width, prepared.height),
+        noise,
         noise_fit,
         camera_match,
         samples_len: prepared.samples.len() * 2,
