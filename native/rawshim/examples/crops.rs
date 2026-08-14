@@ -147,6 +147,7 @@ fn cut(image: rawshim::rgb::RgbRef<'_>, x: usize, y: usize, w: usize, h: usize) 
     rawshim::rgb::Rgb { width: w, height: h, data }
 }
 
+/// Both forms, because this exists to be looked at and AVIF does not open everywhere.
 fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
     rawshim::avif::encode_rendition(
         std::borrow::Cow::Borrowed(image.data),
@@ -158,5 +159,9 @@ fn write(path: &str, image: rawshim::rgb::RgbRef<'_>) {
         path,
     )
     .expect("the crop encodes");
-    eprintln!("wrote {path}");
+
+    let jpeg = path.strip_suffix(".avif").map_or_else(|| format!("{path}.jpg"), |s| format!("{s}.jpg"));
+    std::fs::write(&jpeg, rawshim::jpeg::encode(image, 95).expect("the crop encodes as JPEG"))
+        .expect("the JPEG writes");
+    eprintln!("wrote {path} and {jpeg}");
 }
