@@ -37,8 +37,11 @@ fn coded(level: u32) -> u32 {
 /// invocations would each read a word, modify a half and write it back - two invocations racing
 /// on every word.
 @compute @workgroup_size(64)
-fn encode_base(@builtin(global_invocation_id) id: vec3u) {
-  let at = id.x;
+fn encode_base(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let at = linear(id, groups);
   if (at >= params.words) { return; }
 
   let word = frame[at];

@@ -133,9 +133,13 @@ fn gathered(pixel: u32) -> vec3f {
 /// whole number of words and two pixels do, so a per-pixel invocation would share its last word
 /// with its neighbour's first and one of the two writes would be lost.
 @compute @workgroup_size(64)
-fn warp_lens(@builtin(global_invocation_id) id: vec3u) {
+fn warp_lens(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let pair = linear(id, groups);
   let pixels = params.size.x * params.size.y;
-  let first = id.x * 2u;
+  let first = pair * 2u;
   if (first >= pixels) { return; }
 
   let a = gathered(first);
@@ -145,7 +149,7 @@ fn warp_lens(@builtin(global_invocation_id) id: vec3u) {
     b = gathered(first + 1u);
   }
 
-  let word = id.x * 3u;
+  let word = pair * 3u;
   out[word] = level_of(a.r) | (level_of(a.g) << 16u);
   if (paired) {
     out[word + 1u] = level_of(a.b) | (level_of(b.r) << 16u);

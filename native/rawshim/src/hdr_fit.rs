@@ -2983,6 +2983,19 @@ fn fit_model(
 /// in against the warped render - and brightens corners, clipping a little more of the
 /// top of the buffer (0.089% to 0.124% of samples on the worst of 32 Canon frames, 10.8.1).
 pub fn apply_lens(samples: &[u16], width: usize, height: usize, m: &HdrMatch) -> Option<Vec<u16>> {
+    // The GPU's, where there is one. Both refusals land here as `None` - an identity lens, which
+    // the CPU below declines too, and a machine with no device - so the fall-through covers each
+    // without having to tell them apart.
+    let gathered = crate::gpu::device()
+        .and_then(crate::base::device)
+        .and_then(|base| {
+            let gpu = crate::gpu::device()?;
+            crate::base::warp_lens(gpu, base, samples, (width, height), (width, height), &m.lens)
+        });
+    if gathered.is_some() {
+        return gathered;
+    }
+
     let warp = crate::image::PlanarWarp::for_lens(
         width,
         height,

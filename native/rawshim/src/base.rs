@@ -21,8 +21,9 @@ use wgpu::util::DeviceExt;
 /// of the same five constants.
 fn source() -> String {
     format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
         include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
+        include_str!("wgsl/lanes.wgsl"),
         include_str!("wgsl/base.wgsl"),
     )
 }
@@ -92,7 +93,14 @@ impl Base {
         });
         let defringe_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("defringe"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("wgsl/defringe.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("wgsl/lanes.wgsl"),
+                    include_str!("wgsl/defringe.wgsl"),
+                )
+                .into(),
+            ),
         });
         let defringe_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("defringe"),
@@ -125,8 +133,9 @@ impl Base {
             label: Some("warp"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}",
+                    "{}\n{}\n{}",
                     include_str!("../../../web/src/features/raw_edit/gpu/wgsl/prelude.wgsl"),
+                    include_str!("wgsl/lanes.wgsl"),
                     include_str!("wgsl/warp.wgsl"),
                 )
                 .into(),
@@ -158,7 +167,14 @@ impl Base {
 
         let noise_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("noise"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("wgsl/noise.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("wgsl/lanes.wgsl"),
+                    include_str!("wgsl/noise.wgsl"),
+                )
+                .into(),
+            ),
         });
         let noise_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("noise"),
@@ -291,13 +307,15 @@ pub fn defringe(
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&base.defringe_luma);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((pixels as u32).div_ceil(64), 1, 1);
+        let (x, y) = groups(pixels);
+        pass.dispatch_workgroups(x, y, 1);
     }
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&base.defringe_apply);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((pixels.div_ceil(2) as u32).div_ceil(64), 1, 1);
+        let (x, y) = groups(pixels.div_ceil(2));
+        pass.dispatch_workgroups(x, y, 1);
     }
     read_back(gpu, encoder, &frame, words, samples)
 }
@@ -306,6 +324,24 @@ pub fn defringe(
 /// otherwise be a second whole frame, and at 61MP that is 361MB beside one that is already the
 /// largest thing in the process.
 const CHUNK: usize = 1 << 18;
+
+/// Invocations per workgroup, and the pair every kernel here is dispatched over.
+const LANES: u32 = 64;
+
+/// Workgroups for `count` invocations, spread over two dimensions.
+///
+/// **A dispatch dimension stops at 65535**, which one dimension of 64-wide groups reaches at 4.19M
+/// invocations - a 61MP frame is fourteen times that, and the driver refuses the whole command
+/// buffer rather than clamping. Every kernel here indexes by a linear id, so the second dimension
+/// is a carry rather than a shape and the shaders undo it with `num_workgroups`.
+///
+/// Found by wiring the warp into a real render: the tests all ran on synthetic frames of a few
+/// hundred pixels a side, where a dispatch is hundreds of groups and this is invisible.
+fn groups(count: usize) -> (u32, u32) {
+    let groups = (count as u32).div_ceil(LANES).max(1);
+    let across = groups.min(32768);
+    (across, groups.div_ceil(across))
+}
 
 /// The frame, packed two samples to a word.
 fn upload(gpu: &crate::gpu::Gpu, samples: &[u16]) -> wgpu::Buffer {
@@ -412,7 +448,8 @@ pub fn encode_base(
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&base.encode);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((words as u32).div_ceil(64), 1, 1);
+        let (x, y) = groups(words);
+        pass.dispatch_workgroups(x, y, 1);
     }
     read_back(gpu, encoder, &frame, words, samples)
 }
@@ -558,7 +595,8 @@ pub fn warp_lens(
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&base.warp);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((pixels.div_ceil(2) as u32).div_ceil(64), 1, 1);
+        let (x, y) = groups(pixels.div_ceil(2));
+        pass.dispatch_workgroups(x, y, 1);
     }
     let mut gathered = vec![0u16; pixels * 3];
     read_back(gpu, encoder, &warped, words, &mut gathered)?;
@@ -698,13 +736,15 @@ pub fn measure(
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&base.noise_luma);
         pass.set_bind_group(0, &coarse_group, &[]);
-        pass.dispatch_workgroups((pixels as u32).div_ceil(64), 1, 1);
+        let (x, y) = groups(pixels);
+        pass.dispatch_workgroups(x, y, 1);
     }
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&base.noise_blocks);
         pass.set_bind_group(0, &coarse_group, &[]);
-        pass.dispatch_workgroups((count as u32).div_ceil(64), 1, 1);
+        let (x, y) = groups(count);
+        pass.dispatch_workgroups(x, y, 1);
     }
     let coarse = read_blocks(gpu, encoder, &stats, count)?;
 
@@ -721,7 +761,8 @@ pub fn measure(
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_pipeline(&base.noise_blocks);
         pass.set_bind_group(0, &measured_group, &[]);
-        pass.dispatch_workgroups((count as u32).div_ceil(64), 1, 1);
+        let (x, y) = groups(count);
+        pass.dispatch_workgroups(x, y, 1);
     }
     let measured = read_blocks(gpu, encoder, &stats, count)?;
 
@@ -777,6 +818,29 @@ mod tests {
         assert!(worst <= 1, "the shader and the table disagree by {worst} counts");
         // And it is a coding rather than a copy, which a bound alone would let through.
         assert_ne!(theirs, levels, "the CPU left the frame as it found it");
+    }
+
+    /// Every dispatch a real sensor asks for is one a driver will accept.
+    ///
+    /// **Nothing else here can see this.** The parity tests run on frames a few hundred pixels a
+    /// side, where a dispatch is hundreds of groups in one dimension and the ceiling is four
+    /// orders of magnitude away; the warp reached a render before anyone noticed, and the driver
+    /// refused the whole command buffer with "must be less or equal to 65535". So the sizes are
+    /// asserted against the limit directly rather than against a frame that happens to be small.
+    #[test]
+    fn a_sensor_sized_dispatch_is_one_a_driver_will_take() {
+        // 61MP, and the pathological end of what `MAX_EDIT_EDGE` admits.
+        for pixels in [24_240_576usize, 60_217_344, 100_000 * 100_000 / 8] {
+            for count in [pixels, pixels * 3, pixels.div_ceil(2)] {
+                let (x, y) = super::groups(count);
+                assert!(x <= 65535 && y <= 65535, "{count} dispatches {x}x{y}");
+                let covered = u64::from(x) * u64::from(y) * u64::from(super::LANES);
+                assert!(covered >= count as u64, "{count} covered by only {covered}");
+            }
+        }
+        // And a frame small enough to fit one dimension still gets one, so the common case is not
+        // paying for a second.
+        assert_eq!(super::groups(64 * 100).1, 1);
     }
 
     /// A frame with as much curvature as the format allows, since that is what the correction is

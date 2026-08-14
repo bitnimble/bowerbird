@@ -44,8 +44,11 @@ fn sample_at(at: u32) -> f32 {
 /// Rec.2020 luma of the prepared frame, normalised - `noise::luma`'s weights, which are not
 /// `image::LUMA`'s.
 @compute @workgroup_size(64)
-fn noise_luma(@builtin(global_invocation_id) id: vec3u) {
-  let at = id.x;
+fn noise_luma(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let at = linear(id, groups);
   if (at >= params.width * params.height) { return; }
   let p = at * 3u;
   plane[at] =
@@ -65,8 +68,11 @@ fn noise_at(at: u32) -> f32 {
 
 /// One 8x8 block: where it sits on the level plane, and how much it deviates on the noise one.
 @compute @workgroup_size(64)
-fn noise_blocks(@builtin(global_invocation_id) id: vec3u) {
-  let block = id.x;
+fn noise_blocks(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let block = linear(id, groups);
   if (block >= params.blocks_x * params.blocks_y) { return; }
   let x0 = (block % params.blocks_x) * BLOCK;
   let y0 = (block / params.blocks_x) * BLOCK;

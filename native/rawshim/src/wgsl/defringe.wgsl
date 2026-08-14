@@ -47,8 +47,11 @@ fn level_of(value: f32) -> u32 {
 /// from a mixture of rounded and unrounded neighbours and the answer would depend on which
 /// invocation ran first. The CPU takes every Laplacian from one unmodified plane; so does this.
 @compute @workgroup_size(64)
-fn defringe_luma(@builtin(global_invocation_id) id: vec3u) {
-  let at = id.x;
+fn defringe_luma(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let at = linear(id, groups);
   if (at >= params.width * params.height) { return; }
   let p = at * 3u;
   let rgb = vec3f(sample_at(p), sample_at(p + 1u), sample_at(p + 2u));
@@ -89,9 +92,13 @@ fn corrected(pixel: u32) -> vec3f {
 /// race on it, and the loser's correction would be dropped. Six samples are exactly three words,
 /// owned by nobody else.
 @compute @workgroup_size(64)
-fn defringe_apply(@builtin(global_invocation_id) id: vec3u) {
+fn defringe_apply(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let pair = linear(id, groups);
   let pixels = params.width * params.height;
-  let first = id.x * 2u;
+  let first = pair * 2u;
   if (first >= pixels) { return; }
 
   let a = corrected(first);
@@ -103,7 +110,7 @@ fn defringe_apply(@builtin(global_invocation_id) id: vec3u) {
     b = corrected(first + 1u);
   }
 
-  let word = id.x * 3u;
+  let word = pair * 3u;
   frame[word] = level_of(a.r) | (level_of(a.g) << 16u);
   if (paired) {
     frame[word + 1u] = level_of(a.b) | (level_of(b.r) << 16u);
