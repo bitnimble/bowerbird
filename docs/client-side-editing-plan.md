@@ -4,6 +4,15 @@ Investigation is not finished; this is the list as it stands, so nothing measure
 forgotten. Numbers are a 61MP ARW (9504x6336) on a Radeon 780M iGPU unless stated, from
 `native/rawshim/examples/open_bench.rs`.
 
+**Two things want settling before any of it is built**, and neither is about the client:
+
+1. The interior discrepancy under "Open" below. A region denoised alone is not the frame denoised
+   whole, by more than a seam is, and the loupe already rests on the assumption that it is. That
+   is a correctness question about what ships today, and tiling anything makes it wider.
+2. Whether the CPU stages move to the GPU *first*. They are 73% of the open, they are needed
+   whether or not the client ever opens a RAW, and going to wasm before they move means
+   single-threading 5.9s of work that should not be on a CPU at all.
+
 ## The move
 
 - [ ] **Send the RAW, not the prepared frame.** 72MB against 361MB (5.0x; 5.8x at 24MP), and
@@ -66,27 +75,9 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
       takes the exact one - and so does the loupe, whose whole purpose is to predict a rendition.
       Nothing in production moves today: the loupe is the only thing that tiles, and it was
       already on 64. What 32 is for is the editor's own tiling, below.
-- [ ] **~~`TILE_HALO` can be 32~~, and is worth less than it looks.** `examples/halo_seams.rs` cuts a
-      region four ways at each halo against the same region cut as one tile, and measures the join
-      as a *line*: each column averaged down the whole region, the two columns straddling the join
-      against columns 24-48 out. A maximum cannot tell one hot pixel from a line and a mean over a
-      band divides a line by the band's width, so both rank regions wrongly - the first table here
-      was built on a maximum and said 16, which is not what the line says.
-
-      The join's excess over its own neighbourhood, of 255: halo 0 is 0.61/0.70 against a 0.13
-      baseline, 8 is 0.44/0.57, **16 is 0.12/0.20 against 0.06 - still a line at 2-4x**, and from
-      **24** up it is at or under the baseline and stays there to 128.
-
-      **Confirmed against a pattern built to be worse than any photograph**
-      (`examples/halo_pattern.rs`): a chroma zone plate on flat luma, random chroma at the
-      pyramid's own scale, a luma zone plate and blown speculars, all under fitted
-      Poisson-Gaussian noise with the structure held near it - a denoise only has to guess where
-      signal and noise are comparable, and a seam is a disagreement about a guess. It reaches 3.8
-      of 255 at halo 0 against the worst photograph's 0.70, and **it is at the baseline from 32 in
-      every configuration, while 16 is still 5-9x above it**.
-
-      So 32, being past the knee and a multiple of four for the chroma pyramid. Measured over a
-      61MP frame, as the area actually put through the denoise and the wall clock beside it:
+- [ ] **Pick the tile size from this, not the halo.** The halo is settled; what is not is how big
+      an editor tile should be. Over a 61MP frame, as the area actually put through the denoise
+      with the wall clock beside it, against 5311ms for the frame whole:
 
       | tile | halo 16 | halo 32 | halo 64 |
       |------|---------|---------|---------|
@@ -94,10 +85,14 @@ not the client does the open, and it has to happen *before* wasm runs any of it 
       | 1024 | 1.06x, 5595ms | 1.12x, 5868ms | 1.26x, 6619ms |
       | 2048 | 1.03x, 5396ms | 1.06x, 5526ms | 1.12x, 5816ms |
 
-      Whole frame is 5311ms, and the wall clock tracks the area to within a percent or two - the
-      per-call floor is gone, so tiling costs area and nothing else. **The tile size decides how
-      much the halo costs**: at 2048 the whole 16-to-64 range is 9%, at 512 it is 37%. So take the
-      halo the seam asks for and buy it back with a larger tile, rather than the other way round.
+      The clock tracks the area to within a percent or two, so tiling costs area and nothing else
+      now the per-call floor is gone. **The tile size decides what the halo costs**: the whole
+      16-to-64 range is 9% at 2048 and 37% at 512. 2048 at halo 32 costs 1.06x, which is cheaper
+      than 512 at *any* halo - so the only reason to go smaller is finer progressive updates, and
+      that is a latency-against-throughput call rather than a quality one.
+
+      The evidence behind the halo itself is in `examples/halo_seams.rs` and
+      `examples/halo_pattern.rs`, and in `29f8200`, `4287c03`, `1697656`, `df9f86a`.
 - [ ] **`pass12`** is now 82% of GALOSH (4326ms of 5286). The next real optimisation, and unlike
       the table it is genuine per-pixel work.
 
