@@ -151,3 +151,42 @@ Regenerate the fixtures deliberately, and only the ones that moved:
 `BOWERBIRD_WRITE_FIXTURES=1 bun run scripts/cargo.ts test --release --manifest-path native/rawshim/Cargo.toml --test gpu_fixture`.
 The `.expected.bin` files are compared with a tolerance, so rewriting them wholesale replaces the
 committed answer with whatever this machine's GPU produced - and the browser then cannot match it.
+
+## The rawler fork (`native/vendor/dnglab`)
+
+A **fork we intend to keep rebasing onto upstream**, not a copy we have taken ownership of. That
+one fact decides everything below: every commit we add is a commit that has to replay cleanly over
+someone else's changes, possibly years of them, and a conflict in a decoder is resolved by someone
+who did not write either side.
+
+**The shape to keep.** Full upstream history, our commits linear on top, on `main`, no merge
+commits. Check it with `git log --oneline --graph origin/main..main` - anything that is not a
+straight line is a rebase someone will have to unpick. If the checkout ever comes back shallow, a
+rebase has nothing to sit on: `git fetch --unshallow origin` before anything else.
+
+**Add; do not rewrite.** A new function, a new file, a new trait method with a default
+implementation costs nothing to replay - upstream's diff and ours touch different lines. Editing an
+upstream function body is what conflicts, so it needs a reason better than tidiness. Where a change
+genuinely has to reach into upstream code, keep it to the fewest lines that work:
+`imgop/sensor/bayer/ppg.rs` is the pattern to copy, where a wasm clock shim touches exactly one
+upstream line - the `use` - and adds a block beside it.
+
+**Extraction is the exception, and it is a real trade.** `decoders/arw.rs` pulls the black and
+white level construction out of `raw_image` into `raw_image_from` so the region decode can share
+it. That deletes 22 upstream lines and will conflict if upstream ever edits them. It stays
+extracted on purpose: the alternative is a second copy of the black-level arithmetic that upstream
+can fix without us noticing, and a silent divergence in what a sensor's black level is beats a
+loud conflict every time. Prefer the conflict you can see.
+
+**Mark local patches so a rebase can find them.** `LOCAL PATCH (bowerbird)` in a comment, with
+what breaks without it - `crx/decoder.rs` and `ppg.rs` both carry one. A patch nobody can identify
+is a patch that gets dropped in the first hard rebase.
+
+**Nothing that is only scaffolding.** Benchmarks and one-off measurement examples belong in
+`native/rawshim/examples/`, which is ours, not in the fork, where they are surface to carry
+forever and to upstream around.
+
+**Committing.** The submodule is its own repo: commit inside it first, then commit the parent's
+pointer as a separate `chore(rawler):` commit naming what moved. `git submodule update --init` on
+a fresh clone fails until the fork's commits are pushed, which is a real trap - the error names a
+missing object, not a missing push.
