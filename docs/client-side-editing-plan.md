@@ -28,10 +28,22 @@ something measured says the 582ms is the problem.
       module therefore requests the device and the page borrows *its* one, which is the same
       single-device requirement read the other way round.
 
-      What is left is that a browser decode still runs the **CPU PPG fall-through**, not RCD and
-      GALOSH, because every GPU stage ends in a blocking `Device::poll` that WebGPU answers
-      without waiting. That is the readback item, and it is the last thing between this plan and
-      the quality it was written to get.
+      **A browser now runs RCD and GALOSH** (`4b72aaa`). The frame stays on the device across the
+      chain and the one readback left is the demosaic's output per tile, so the blocking
+      `Device::poll` that WebGPU answers without waiting is no longer in the way: `gpu::device()`
+      returns the page's device and the tab walks the *same* `decode_source` a server does, with
+      no `#[cfg]` fork.
+
+      **The evidence is the absence of a complaint, which is why each fall-through now makes one.**
+      A CPU decode produces a picture too, so no assertion on the frame's shape can tell RCD from
+      the PPG it replaced. `eprintln!` is dropped on wasm32 - that std has no stderr - so
+      `crate::warn` routes to `console.warn`, and `local_decode.spec.ts` asserts nothing declined.
+      GALOSH had no announcement at all before: a frame carrying no fit and no filtering was
+      indistinguishable from a filtered one.
+
+      Native, 61MP, quiet box: condition + fit 1022-1072ms to 757-778ms, the whole decode
+      2367-2407ms to 1947-2002ms, the open 6947ms to 6225ms. `condition` stopped losing to the CPU
+      because it no longer pays a 241MB return trip.
 
 ## What blocks that
 
