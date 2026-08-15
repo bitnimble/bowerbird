@@ -1,20 +1,22 @@
 /**
- * The rendition-quality tiles the loupe magnifies, fetched and kept.
+ * The rendition-quality tiles the loupe magnifies, built and kept.
  *
  * The editor's own denoise is the sRGB one, which is cruder than the mosaic denoise a rendition
  * gets - deliberately, since it has to run per tick in a browser (DESIGN 10.9.1). A loupe is
- * where that difference matters, so the glass shows the *export's* pixels: the server renders
- * the crop through the rendition pipeline and this holds what came back.
+ * where that difference matters, so the glass shows the *export's* pixels: the rendition pipeline
+ * runs over that crop and this holds what came back. In a tab that pipeline is the wasm module in
+ * this page; under the desktop shell it is the shell's own process, over its own transport.
  *
- * **Tiles are larger than the glass, and that is what hides the latency.** A tile costs about
- * 110ms, so fetching exactly what is under the pointer would mean a fetch on every move. A tile
- * quantised to a grid and grown past the loupe's own span is one fetch per grid square, and the
- * moves in between are answered from what is already here.
+ * **Tiles are larger than the glass, and that is what hides the latency.** A tile costs tens of
+ * milliseconds decoded here and about 110ms fetched, so asking for exactly what is under the
+ * pointer would mean a request on every move. A tile grown past the loupe's own span is one
+ * request per sweep of that margin, and the moves in between are answered from what is here.
  *
  * Nothing here decides *when* to show a tile. The presenter draws its own render underneath and
- * the tile over it once it lands, so a move that outruns the network is a picture that sharpens
+ * the tile over it once it lands, so a move that outruns the decode is a picture that sharpens
  * rather than a hole.
  */
+import type { LocalTile } from './local_open';
 
 /**
  * How much larger than the loupe's own span a tile is, on each axis.
@@ -28,9 +30,9 @@ const TILE_MARGIN = 1.5;
 /**
  * How many tiles to keep.
  *
- * A tile is a few hundred kilobytes of decoded bitmap, and the ones worth keeping are the ones
- * around wherever the reader has been looking - so this is "a sweep across a photograph and
- * back" rather than a memory budget.
+ * The ones worth keeping are the ones around wherever the reader has been looking, so this is "a
+ * sweep across a photograph and back" rather than a memory budget: at the widest the glass goes, a
+ * window is about 2MB of samples, against the hundreds the frame itself occupies.
  */
 const KEPT = 24;
 
@@ -42,16 +44,21 @@ export interface TileRect {
 }
 
 /**
- * A tile that has arrived, and the part of the frame it holds.
+ * What a tile arrived as, which is not the same thing on both hosts.
  *
- * An object URL for an `<img>` rather than an `ImageBitmap` for a canvas, because the tile is an
- * HDR AVIF: a 2D canvas composites in SDR, so drawing it there would clip exactly the highlights
- * a loupe is held over the stage to inspect. An `<img>` is the same path the grid shows its
- * renditions through, and the browser tone maps it the way it tone maps those.
+ * **Pixels where the tab decoded it, a picture where something else did.** A tile the page built
+ * itself is the window the grade reads, and handing it to the pipeline is one upload; the desktop
+ * shell renders through its own process and answers with an HDR AVIF, and that has to stay an
+ * `<img>` - a 2D canvas composites in SDR, so drawing it there would clip exactly the highlights a
+ * loupe is held over the stage to inspect, where an `<img>` goes through the same compositing path
+ * the grid's renditions do.
  */
+export type TileArt = { url: string; tile?: undefined } | { tile: LocalTile; url?: undefined };
+
+/** A tile that has arrived, and the part of the frame it holds. */
 export interface LoupeTile {
   rect: TileRect;
-  url: string;
+  art: TileArt;
 }
 
 /**
@@ -137,11 +144,12 @@ export class LoupeTiles {
 
   constructor(
     private readonly photoId: string,
+    /** A `Blob` from a host that encoded one, or the window this tab decoded for itself. */
     private readonly fetchTile: (
       photoId: string,
       rect: TileRect,
       signal: AbortSignal,
-    ) => Promise<Blob>,
+    ) => Promise<Blob | LocalTile>,
     private readonly onArrived: () => void,
     /** Whether anything is in flight, so the reader can be told the glass is still sharpening. */
     private readonly onBusy: (busy: boolean) => void = () => {},
@@ -201,22 +209,26 @@ export class LoupeTiles {
     // and what comes back then describes a photograph nobody is looking at any more.
     const against = this.revision;
     void this.fetchTile(this.photoId, rect, stop.signal)
-      .then(async (blob) => decoded(URL.createObjectURL(blob)))
-      .then((url) => {
+      .then(async (answer): Promise<TileArt> =>
+        answer instanceof Blob
+          ? { url: await decoded(URL.createObjectURL(answer)) }
+          : { tile: answer },
+      )
+      .then((art) => {
         // Superseded while it was decoding, which the abort cannot reach: whatever is in flight
         // now is the answer, and this one is a picture of the wrong place.
         if (this.asking?.at !== at || against !== this.revision) {
-          URL.revokeObjectURL(url);
+          release(art);
           return;
         }
         this.asking = null;
         this.settle();
-        this.held.set(at, { rect, url });
+        this.held.set(at, { rect, art });
         while (this.held.size > KEPT) {
           const oldest = this.held.keys().next().value;
           if (oldest == null) break;
           const going = this.held.get(oldest);
-          if (going != null) URL.revokeObjectURL(going.url);
+          if (going != null) release(going.art);
           this.held.delete(oldest);
         }
         this.onArrived();
@@ -244,7 +256,7 @@ export class LoupeTiles {
   }
 
   clear(): void {
-    for (const tile of this.held.values()) URL.revokeObjectURL(tile.url);
+    for (const tile of this.held.values()) release(tile.art);
     this.held.clear();
     this.asking?.stop.abort();
     this.asking = null;
@@ -254,6 +266,11 @@ export class LoupeTiles {
 
 function key(rect: TileRect): string {
   return `${rect.left},${rect.top},${rect.width},${rect.height}`;
+}
+
+/** Pixels are garbage; a picture behind an object URL is not, and is leaked until it is revoked. */
+function release(art: TileArt): void {
+  if (art.url != null) URL.revokeObjectURL(art.url);
 }
 
 /**

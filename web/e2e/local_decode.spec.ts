@@ -124,6 +124,57 @@ test('opens a RAW in the tab, without asking the server to prepare one', async (
   await expect(panel).toHaveAttribute('data-matched', 'true');
 });
 
+/**
+ * The loupe sharpening without a round trip, which is the last thing the editor asked a server for.
+ *
+ * Two assertions and neither is redundant. **The route was never asked** is what says the tile was
+ * built here rather than fetched; **the glass says it is holding one** is what says a tile was
+ * built at all, since a magnifier showing the tick's own render for ever would ask for nothing
+ * either. The fall-throughs are watched for the reason the decode above watches them: a tile
+ * denoised by nothing still produces a picture.
+ *
+ * What the tile *is* - the window, the rectangle kept inside it, the reach each stage adds - is
+ * arithmetic, and `tile.rs` pins it where it costs microseconds rather than an editor open.
+ */
+test('sharpens the loupe from a tile decoded in the tab', async ({ page }) => {
+  const askedTheServer: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/tile')) askedTheServer.push(request.url());
+  });
+  const declined: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().startsWith('rawshim: no ')) declined.push(message.text());
+  });
+
+  await page.goto(`/photos/${photoId}?edit=1`);
+  const panel = page.getByTestId('raw-edit-panel');
+  await expect
+    .poll(
+      async () => {
+        const status = await panel.getAttribute('data-status');
+        if (status === 'failed') {
+          throw new Error(await panel.getByTestId('raw-edit-status').innerText());
+        }
+        return status;
+      },
+      { timeout: 170_000 },
+    )
+    .toBe('live');
+
+  await page.getByTestId('raw-edit-loupe-tool').click();
+  const loupe = page.getByTestId('raw-edit-loupe');
+  const stage = page.locator('.raw-edit-stage .stage__viewport');
+  const box = await stage.boundingBox();
+  // Held still: nothing is asked for while the pointer moves, and a tile is what a reader who
+  // has stopped somewhere gets.
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await expect(loupe).toBeVisible();
+  await expect(loupe).toHaveAttribute('data-tile', 'held', { timeout: 60_000 });
+
+  expect(askedTheServer).toEqual([]);
+  expect(declined).toEqual([]);
+});
+
 test('reports whether it opened a device, rather than throwing when it cannot', async ({ page }) => {
   await page.goto(`/photos/${photoId}`);
 

@@ -37,6 +37,9 @@ export const LoupeOverlay = observer(function LoupeOverlay({
     <div
       className="loupe"
       data-testid="raw-edit-loupe"
+      // Whether the glass is showing the export's own pixels yet, which is the difference the
+      // loupe exists for and the only part of it visible from outside the canvas.
+      data-tile={store.loupeSharp ? 'held' : 'none'}
       // Hidden rather than absent: the box only appears once the pointer is over the picture,
       // and a mount per pointer move would rebuild the canvas and its swapchain with it.
       style={at == null ? { visibility: 'hidden' } : { left: `${at.x}px`, top: `${at.y}px` }}
@@ -70,7 +73,11 @@ export const LoupeOverlay = observer(function LoupeOverlay({
 });
 
 /**
- * The tile, drawn over the tick's own render of the same place.
+ * A tile that arrived as a picture, drawn over the tick's own render of the same place.
+ *
+ * **Only the shell's tiles come through here.** A tile this tab decoded is pixels, and the
+ * presenter puts those on the glass's own canvas through the same shaders the frame under it is
+ * graded with - so there is nothing to overlay and `store.loupeTile` stays null.
  *
  * **The two agree about geometry or the reader sees the picture jump.** The glass is showing a
  * `span`-wide window of the frame centred on the pointer; the tile holds some larger rectangle
@@ -78,19 +85,17 @@ export const LoupeOverlay = observer(function LoupeOverlay({
  * which is the same arithmetic the tick's own draw does with its region, arrived at from the
  * other side.
  *
- * Absent until a tile has arrived, so the first look at any part of a photograph is the tick's
- * render and the sharpening comes a tenth of a second later.
- *
- * **An `<img>` rather than a canvas, and that is what keeps it HDR.** The tile is a PQ AVIF; a
- * 2D canvas composites in SDR, so drawing it there clipped the highlights the loupe exists to
- * show and made the glass disagree with the stage underneath it. An `<img>` goes through the
- * same compositing path the grid's renditions do, so the two tone map alike.
+ * **An `<img>` rather than a canvas, and that is what keeps it HDR.** The shell's tile is a PQ
+ * AVIF; a 2D canvas composites in SDR, so drawing it there clipped the highlights the loupe
+ * exists to show and made the glass disagree with the stage underneath it. An `<img>` goes
+ * through the same compositing path the grid's renditions do, so the two tone map alike.
  */
 const TileGlass = observer(function TileGlass({ store }: { store: RawEditStore }): JSX.Element | null {
   const showing = store.loupeTile;
-  if (showing == null) return null;
+  if (showing?.tile.art.url == null) return null;
 
   const { tile, centre, span } = showing;
+  const src = tile.art.url;
   const scale = LOUPE_SIZE / span;
   return (
     <div
@@ -99,7 +104,7 @@ const TileGlass = observer(function TileGlass({ store }: { store: RawEditStore }
       style={{ width: `${LOUPE_SIZE}px`, height: `${LOUPE_SIZE}px`, overflow: 'hidden' }}
     >
       <img
-        src={tile.url}
+        src={src}
         alt=""
         style={{
           position: 'absolute',

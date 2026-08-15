@@ -166,10 +166,19 @@ export class RawEditStore {
   @observable accessor loupeMagnification = LOUPE_DEFAULT_MAGNIFICATION;
 
   /**
-   * The rendition-quality tile under the glass, once one has arrived, and what it is showing.
+   * Whether what the glass is showing is the export's pixels rather than the tick's own render.
    *
-   * Null while the editor's own render is all there is - which is every first look at a part of
-   * the photograph, since a tile is about a tenth of a second away.
+   * True for either kind of tile - the pixels this tab decoded and the picture the shell sent -
+   * because what it answers is "has the glass sharpened yet", which is the same question either
+   * way and the only one a reader or a test can ask from outside.
+   */
+  @observable accessor loupeSharp = false;
+
+  /**
+   * The tile under the glass where it arrived as a *picture*, and what it is showing.
+   *
+   * Null while the editor's own render is all there is, and null for a tile this tab decoded:
+   * those are pixels and go onto the glass's own canvas rather than over it.
    */
   @observable.ref accessor loupeTile: {
     tile: LoupeTile;

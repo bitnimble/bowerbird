@@ -358,8 +358,29 @@ share one buffer this whole section buys correctness and nothing else.
 
 ## Falls out of the above
 
-- [ ] **Loupe tiles become local**, so no server round trip per pointer move. They are already 12x
+- [x] **Loupe tiles become local**, so no server round trip per pointer move. They are already 12x
       faster from the kept table: 425ms to 35ms per tile.
+
+      **A local tile is pixels, and the grade stays the page's.** What crossed the wire was an HDR
+      AVIF because bytes had to survive a wire; nothing does here, so `renderTile` hands back the
+      window the grade reads - coded, denoised on the mosaic, warped and sharpened - plus its
+      `gpu::uniform_words`, and the tick's own shaders draw it onto the glass. Encoding a picture in
+      the tab to decode it again in the same tab would be the round trip in miniature, and grading
+      it in the module would be a third copy of a rule two hosts already share.
+
+      **One tile path, two hosts.** `tile.rs` is everything from the rectangle to the window -
+      `grown`, the decode, the coding, the lens gather, the sharpen - and both `job::graded` and the
+      wasm export call it, so `a_tile_is_graded_as_the_rendition_is` covers the tab as well.
+      `Base::build` is a rendition's again: its tile arm, its `asked` field and the levels branch
+      that only a tile took are gone.
+
+      **The desktop shell keeps its own path**, as the open's item records: `isTauri()` picks it,
+      the tile arrives as an AVIF over the shell's transport and stays an `<img>` over the glass.
+
+      Proven in a browser by `local_decode.spec.ts`: the tile route is never requested, nothing
+      announces a fall-through, and the glass reports that it is holding the export's own pixels.
+      Both halves were confirmed red before being trusted - forcing the server arm fails on the
+      request, refusing the local one fails on the glass.
 - [x] **The colour Detail slider is interactive** (`f453757`). A colour-only tick runs `yuv_loess`
       and `yuv_join` and none of the eight passes beneath them: `luma` is the only amount entering
       the chain before the regression - `ridge` and `blend` are the regression's own - and nothing
