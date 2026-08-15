@@ -146,6 +146,13 @@ codegen-units = 16
 # it to rawler's copy, which is the only way to satisfy that gate without patching the fork.
 [target.wasm32-unknown-unknown.dependencies]
 uuid = { version = "1", features = ["js"] }
+# The page's entry points (`src/wasm.rs`). The range is wgpu's own, so cargo unifies to one copy:
+# `Device::as_webgpu` returns a handle built by *wgpu's* wasm-bindgen, and a second copy in the
+# same link makes that a different crate's `JsValue` than the one this crate can return.
+wasm-bindgen = "0.2.108"
+# What an exported `async fn` expands into: the adapter request cannot block a browser's thread,
+# so `openGpuDevice` is a promise.
+wasm-bindgen-futures = "0.4.58"
 
 [build-dependencies]
 bindgen = "0.72"

@@ -89,6 +89,9 @@ pub mod rgb;
 pub mod stacks;
 pub mod tca;
 pub mod tone;
+/// The browser's entry points, which no other host has.
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 pub mod white_balance;
 
 /// lensfun and libavif, which only a `renditions` build binds. An editor build links no C at all
