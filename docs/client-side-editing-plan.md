@@ -358,8 +358,12 @@ share one buffer this whole section buys correctness and nothing else.
       from `loess` on writes a plane the earlier passes read, so those planes still hold this
       frame's luma. Pinned by a recording device rather than an adapter, since which passes run is
       decided before any of it reaches a driver.
-- [ ] **Delete what only exists to cross a wire**: the framing in `edit.rs`, `PreparedHeader`,
-      `bb_prepare_edit_*`, `rawshim_edit.ts`, `src-tauri/src/edit.rs`, the `/prepared` route.
+- [x] **Delete what only exists to cross a wire**: `bb_prepare_edit_*`, `rawshim_edit.ts`, the
+      `/prepared` route, `edit::prepare` and its `raw_file_path`, and the refusal frame the FFI
+      raised. Three of the six named here stay, and the same call chain is why: the desktop shell
+      opens in its own process (`preparedHere` returns null under Tauri), so `src-tauri/src/edit.rs`
+      is its only decoder, and it answers through `edit::encode`'s framing and `PreparedHeader`.
+      What crossed a *network* is gone; what the shell hands its own webview is not a wire.
 
 ## Stale, noticed on the way
 

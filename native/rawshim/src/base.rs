@@ -1280,7 +1280,8 @@ mod tests {
     /// asserted against the limit directly rather than against a frame that happens to be small.
     #[test]
     fn a_sensor_sized_dispatch_is_one_a_driver_will_take() {
-        // 61MP, and the pathological end of what `MAX_EDIT_EDGE` admits.
+        // 61MP, and a frame far past any sensor, which nothing bounds now that the open takes
+        // whatever the tab hands it.
         for pixels in [24_240_576usize, 60_217_344, 100_000 * 100_000 / 8] {
             for count in [pixels, pixels * 3, pixels.div_ceil(2)] {
                 let (x, y) = super::groups(count);

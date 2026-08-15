@@ -205,7 +205,7 @@ impl Editor {
 
 /// The prepared frame, denoised in place, exactly as a tick would leave it.
 ///
-/// `samples` is interleaved RGB `u16` in normalised PQ - `edit::prepare`'s own output, which is
+/// `samples` is interleaved RGB `u16` in normalised PQ - `edit::prepare_bytes`' own output, which is
 /// what the client uploads. `noise` is what [`crate::noise::measure`] read off it, because the
 /// tick is handed that rather than measuring for itself.
 pub fn denoise(

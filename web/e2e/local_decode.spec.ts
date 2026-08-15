@@ -80,25 +80,20 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
 /**
  * The editor opening a photograph without a prepared frame ever crossing the network.
  *
- * **What makes this assertable is that the fall-back is a picture too.** `/prepared` answers with
- * the same frame the tab would have built, so a local open that never ran, or that threw and was
- * caught, leaves an editor that reaches `live` and looks right - which is why the request the
- * server did *not* get is the assertion, and why the console warning that would accompany a
- * fall-back is one as well.
+ * There is nothing on the server to ask any more, so an editor that reaches `live` opened here.
+ * The request the server did not get is kept as the assertion regardless: it is what would catch
+ * a transport creeping back in, and it costs nothing.
  */
 test('opens a RAW in the tab, without asking the server to prepare one', async ({ page }) => {
   const askedTheServer: string[] = [];
   page.on('request', (request) => {
     if (new URL(request.url()).pathname.endsWith('/prepared')) askedTheServer.push(request.url());
   });
-  // Both halves of "nothing declined": the decode's own fall-throughs, and the client falling back
-  // to the server for a module or a browser that could not do this.
+  // The decode's own fall-throughs: a picture that came out of the CPU's PPG rather than RCD looks
+  // like this working.
   const declined: string[] = [];
   page.on('console', (message) => {
-    const text = message.text();
-    if (text.startsWith('rawshim: no ') || text.startsWith('bowerbird: this tab could not open')) {
-      declined.push(text);
-    }
+    if (message.text().startsWith('rawshim: no ')) declined.push(message.text());
   });
 
   await page.goto(`/photos/${photoId}?edit=1`);
@@ -117,8 +112,6 @@ test('opens a RAW in the tab, without asking the server to prepare one', async (
     )
     .toBe('live');
 
-  // The reason first, then the request that proves it: a fall-back names itself on the console,
-  // and reading that beats inferring it from a URL the server was asked for.
   expect(declined).toEqual([]);
   expect(askedTheServer).toEqual([]);
 

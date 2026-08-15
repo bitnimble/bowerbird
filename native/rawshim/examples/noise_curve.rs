@@ -3,7 +3,7 @@
 //! `crate::noise` bins the estimate by level and then collapses it, and this prints the bins so
 //! the collapse can be judged. A dash is a level the frame has no pixels at.
 //!
-//! **The samples have to be coded first.** What `edit::prepare` measures is `tone::encode_base`'s
+//! **The samples have to be coded first.** What `edit::prepare_bytes` measures is `tone::encode_base`'s
 //! normalised PQ, not the linear decode, and the two are not close: an earlier version of this
 //! skipped the coding and reported a curve that was nearly flat, which is what a linear frame's
 //! is. In PQ it falls by orders of magnitude from the low midtones to white, and that difference

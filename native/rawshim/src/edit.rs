@@ -19,9 +19,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditRequest {
-    /// Empty from a browser, which asks with the bytes rather than with a path it cannot read.
-    #[serde(default)]
-    pub raw_file_path: String,
     /// Longest edge the decode is fitted to, which is the size every tick then grades.
     pub long_edge: u32,
     pub grade: hdr::Grade,
@@ -82,9 +79,6 @@ pub struct ChromaPayload {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreparedHeader {
-    /// Always true here; a failed open sends the same framing with false and no samples,
-    /// so the caller has one parse rather than two shapes to tell apart.
-    pub ok: bool,
     pub width: usize,
     pub height: usize,
     /// `tone::Levels`: the frame's own diffuse white and peak, in input levels.
@@ -184,21 +178,10 @@ impl ChromaPayload {
 /// the prepared frame so the warp the match was fitted through is materialised into the
 /// buffer the client uploads. Grading an unwarped frame through a curve fitted from warped
 /// pairs is the bug that arrangement exists to prevent.
-pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
-    // Admitted before the file is read, not after: a queued open should be waiting on its
-    // turn holding nothing, and a RAW is tens of megabytes. The shell's own lock sits above
-    // its download for the same reason.
-    let _open = admit();
-    let bytes = std::fs::read(&request.raw_file_path)
-        .map_err(|e| format!("could not read {}: {e}", request.raw_file_path))?;
-    pollster::block_on(open(&bytes, request))
-}
-
-/// The same open, for a caller that already holds the file.
 ///
-/// The desktop shell does: it fetches the RAW from the library and prepares it in its own
-/// process, which is the point - the RAW is tens of megabytes and the prepared frame is
-/// hundreds, so the smaller of the two is the one worth putting on a network.
+/// The desktop shell fetches the RAW from the library and prepares it in its own process,
+/// which is the point - the RAW is tens of megabytes and the prepared frame is hundreds, so
+/// the smaller of the two is the one worth putting on a network.
 pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     let _open = admit();
     pollster::block_on(open(bytes, request))
@@ -207,8 +190,8 @@ pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, St
 /// The same open, awaited, which is the only spelling a browser can take.
 ///
 /// The decode's readback cannot be blocked for in a tab ([`crate::decode_rawler::decode_bytes_async`]),
-/// and native drives this to completion without ever suspending - which is what lets the two
-/// blocking entry points above stay exactly as blocking as they were.
+/// and native drives this to completion without ever suspending - which is what lets the
+/// blocking entry point above stay exactly as blocking as it was.
 ///
 /// **No turn taken.** [`admit`]'s `Mutex` is held for the length of the open, which here means
 /// across the decode's suspensions - and std's single-threaded mutex aborts rather than queues on
@@ -223,19 +206,17 @@ pub async fn prepare_bytes_async(bytes: &[u8], request: &EditRequest) -> Result<
 /// An open cannot be cancelled: a reader who opens the editor and changes their mind leaves
 /// the decode running, because neither the browser abandoning a request nor Tauri dropping an
 /// invoke reaches the thread already inside the decode. So what bounds this is how many can be
-/// *underway*, and until now nothing did - the server's dedup collapses repeats of one
-/// photograph and says nothing about the next one, and the shell had not even that. Stepping
-/// through a few photographs and opening each was that many full-sensor decodes at once, and
-/// at 61MP one of those is the decode plus an f32 buffer of the same shape, well over a
-/// gigabyte.
+/// *underway*, and until now nothing did. Stepping through a few photographs and opening each
+/// was that many full-sensor decodes at once, and at 61MP one of those is the decode plus an
+/// f32 buffer of the same shape, well over a gigabyte.
 ///
 /// Serialised rather than metered, because concurrency buys nothing here to trade away: the
 /// work inside is already spread across every core by rayon, so a second open running beside
 /// the first makes neither finish sooner and doubles what is held. Waiting is what a reader
 /// would want even if memory were free.
 ///
-/// Taken by the two entry points and nowhere below them, which is what keeps a `Mutex` that
-/// does not re-enter safe to hold across the whole open.
+/// Taken by the entry point and nowhere below it, which is what keeps a `Mutex` that does not
+/// re-enter safe to hold across the whole open.
 ///
 /// ponytail: a whole-process lock, so two libraries on one server queue behind each other
 /// too. A permit count would let that through; nothing today has two.
@@ -529,7 +510,6 @@ fn payload(
         });
 
     let header = PreparedHeader {
-        ok: true,
         width: prepared.width,
         height: prepared.height,
         white: prepared.levels.white,
@@ -556,47 +536,31 @@ fn payload(
 /// The wire form: a little-endian `u32` header length, that many bytes of JSON, then the
 /// samples as little-endian `u16`.
 ///
-/// One buffer rather than two calls, because the FFI hands back one buffer and the HTTP
-/// route hands back one body, and splitting the header into a second request would let the
-/// two disagree about which frame they describe.
+/// One buffer rather than two calls, because splitting the header into a second reply would
+/// let the two disagree about which frame they describe. Both hosts that hand a frame to the
+/// page - the shell over IPC, the module in the tab - come out of here, so the page has one
+/// reader.
 ///
 /// **The header is padded to four with spaces**, which JSON ignores and the reader depends
 /// on: it leaves the samples on an offset a `Uint16Array` can be mapped over rather than
 /// copied to. Padded here rather than by whoever serves it, because the alternative is what
 /// the server used to do - take this apart and put it back together with the padding in,
 /// which at 61MP is two 366MB copies and three of them alive at once for a reply that is one
-/// buffer already. `src-tauri/src/edit.rs` pads the same way for the same reader.
+/// buffer already.
 ///
 /// Spaces, not NULs: the reader hands the whole padded span to `JSON.parse` rather than
 /// trimming it, and a NUL is "Unrecognized token" where a space is JSON's own whitespace.
 pub fn encode(prepared: &Prepared) -> Result<Vec<u8>, String> {
-    let header = serde_json::to_vec(&prepared.header).map_err(|e| e.to_string())?;
-    Ok(framed(header, &prepared.samples))
-}
-
-/// A refused open, in the same wire form as a successful one.
-///
-/// The page has one reader, so a failure has to arrive as a frame like any other - `ok` and
-/// a reason where a header would be, and nothing after it. Here rather than at the FFI
-/// boundary that raises it, because the framing is written once: this was the third hand
-/// that wrote a length prefix and the only one that forgot the padding, and the last time
-/// two of them disagreed about a byte it was a NUL where the reader wanted a space.
-pub fn refusal(error: &str) -> Vec<u8> {
-    let header = serde_json::json!({ "ok": false, "error": error }).to_string();
-    framed(header.into_bytes(), &[])
-}
-
-/// The framing itself, and the only place that writes it.
-fn framed(mut header: Vec<u8>, samples: &[u16]) -> Vec<u8> {
+    let mut header = serde_json::to_vec(&prepared.header).map_err(|e| e.to_string())?;
     header.resize(header.len().next_multiple_of(4), b' ');
 
-    let mut out = Vec::with_capacity(4 + header.len() + samples.len() * 2);
+    let mut out = Vec::with_capacity(4 + header.len() + prepared.samples.len() * 2);
     out.extend_from_slice(&(header.len() as u32).to_le_bytes());
     out.extend_from_slice(&header);
-    for sample in samples {
+    for sample in &prepared.samples {
         out.extend_from_slice(&sample.to_le_bytes());
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -607,7 +571,6 @@ mod tests {
     fn encoded(pixels: usize, matched: bool) -> Vec<u8> {
         let samples = vec![7u16; pixels * 3];
         let header = PreparedHeader {
-            ok: true,
             width: pixels,
             height: 1,
             white: 1000.0,
@@ -655,7 +618,7 @@ mod tests {
             let text = std::str::from_utf8(&bytes[4..4 + length]).expect("the header is utf8");
             let parsed: serde_json::Value =
                 serde_json::from_str(text).expect("the padded span parses as JSON");
-            assert_eq!(parsed["ok"], serde_json::json!(true));
+            assert_eq!(parsed["width"], serde_json::json!(pixels));
             assert!(text.ends_with(|c: char| c == '}' || c == ' '), "padded with {text:?}");
 
             let json = serde_json::to_vec(&serde_json::from_str::<serde_json::Value>(text).unwrap())
@@ -664,29 +627,5 @@ mod tests {
         }
         // The sweep really did cover every case rather than landing on one repeatedly.
         assert!(remainders.len() > 1, "every width padded the same way: {remainders:?}");
-    }
-
-    /// A failed open is the same framing with `ok: false`, so the caller has one parse.
-    ///
-    /// Through `refusal`, which is what actually writes one - a version of this that built a
-    /// successful frame with no pixels and called that the failure case was checking the
-    /// writer that was already right. The reason is swept for length so the padding is
-    /// exercised at every remainder here too.
-    #[test]
-    fn frames_a_failed_open_the_same_way() {
-        for length in 0..8 {
-            let reason = "x".repeat(length);
-            let bytes = refusal(&reason);
-            let described = described(&bytes);
-
-            assert_eq!(described % 4, 0, "a refusal's header is not padded: {described}");
-            assert_eq!(bytes.len(), 4 + described, "a refusal carries samples");
-
-            let text = std::str::from_utf8(&bytes[4..]).expect("the header is utf8");
-            let parsed: serde_json::Value =
-                serde_json::from_str(text).expect("the padded refusal parses as JSON");
-            assert_eq!(parsed["ok"], serde_json::json!(false));
-            assert_eq!(parsed["error"], serde_json::json!(reason));
-        }
     }
 }

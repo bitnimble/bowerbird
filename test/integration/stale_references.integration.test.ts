@@ -77,7 +77,7 @@ function named(token: string): boolean {
 function exists(token: string): boolean {
   const path = token.replace(/^\.\//, '');
   if (everyPath.has(path)) return true;
-  // A comment usually says `rawshim_edit.ts`, or a partial path from wherever the reader is
+  // A comment usually says `rawshim_job.ts`, or a partial path from wherever the reader is
   // assumed to be standing. Either resolves by name; the point is that the file is still
   // there under that name, not that the comment spelled its whole path.
   return everyFile.has(path.slice(path.lastIndexOf('/') + 1));

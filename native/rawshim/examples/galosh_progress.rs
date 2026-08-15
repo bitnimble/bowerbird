@@ -152,7 +152,6 @@ fn main() {
 
 fn request() -> rawshim::edit::EditRequest {
     rawshim::edit::EditRequest {
-        raw_file_path: String::new(),
         long_edge: 0,
         grade: rawshim::hdr::Grade {
             peak_nits: 1000.0,

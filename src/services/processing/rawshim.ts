@@ -45,12 +45,6 @@ const SYMBOLS = {
   bb_render_tile: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // Questions about pixels, for tests and pins. Same shape as bb_run_job.
   bb_for_testing_debug: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
-  // The editor's open: start it, be told when it is done, copy it out. Three calls rather
-  // than one because the open is seconds of decoding and this process answers every other
-  // request from the same thread, so it runs on one the library owns (`rawshim_edit.ts`).
-  bb_prepare_edit_start: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
-  bb_prepare_edit_poll: { args: [FFIType.u64], returns: FFIType.i64 },
-  bb_prepare_edit_take: { args: [FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
   // A response body on its way to a socket, copied into a buffer the caller owns
   // rather than handed over as an address (§10.4).
   bb_transcode_jpeg: {

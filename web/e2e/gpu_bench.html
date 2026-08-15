@@ -125,7 +125,7 @@ async function main() {
     peak: 52000,
     grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
     // Recorded by the open, and no longer read per tick: 'image::finish' runs once in
-    // 'edit::prepare' now, so what arrives here is already denoised and sharpened.
+    // 'edit::prepare_bytes' now, so what arrives here is already denoised and sharpened.
     strengths: { luma: 1, chroma: 1, sharpen: 1, defringe: 1 },
     // The peak pass only runs on the matched arm, so it is off unless asked for: without
     // this the tick being timed is the grade with no whole-frame reduction in front of it.
