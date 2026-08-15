@@ -311,8 +311,10 @@ share one buffer this whole section buys correctness and nothing else.
 
 - [x] `raw_edit_presenter.ts` said a matched header is 11KB; it measures 32KB.
 - [x] DESIGN.md's stack table and §10.4 named LibRaw as the decoder.
-- [ ] **DESIGN.md still has stale decoder claims further down**, which the first sweep took the
-      named lines of and missed: §"What is left is the decode, and it is LibRaw's rather than ours"
-      with its `decode_with_libraw` peak figures, and the Canon section's account of LibRaw
-      decoding CR3. Not every mention is wrong - the orientation field really is LibRaw's flip
-      code, and §10.4 is marked historical - so this wants reading, not a replace.
+- [x] **DESIGN.md's remaining stale decoder claims** (`32f91da`). 77 mentions read, 24 corrected,
+      53 left as genuine history under existing status markers. Two surprises: `orientation` is the
+      **EXIF tag 1-8**, not LibRaw's `flip` encoding as this plan asserted - only the catalogue's
+      older rows hold 0/3/5/6 - and §7 carried a "CR2 is not in the set" line flatly contradicting
+      the two paragraphs above it. The `decode_with_libraw` peak figures are deleted rather than
+      restated: no current whole-decode memory figure exists, and inventing one would be worse than
+      naming the absence.
