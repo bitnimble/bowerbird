@@ -12,11 +12,19 @@ something measured says the 582ms is the problem.
 
 ## The move
 
-- [ ] **Send the RAW, not the prepared frame.** 72MB against 361MB (5.0x; 5.8x at 24MP), and
-      the RAW is immutable per photograph where `/prepared` is `no-store` and rebuilt on every
-      open.
-- [ ] **The client does the open.** rawler decode and `condition` in wasm; everything after it
-      on the page's own WebGPU device, where the shaders already are.
+- [x] **The RAW is what crosses, and the prepared frame is gone** (`b8646f2`, `a549964`). 72MB
+      against 361MB, and the RAW is immutable per photograph where `/prepared` was `no-store` and
+      rebuilt on every open. The route, `servePrepared`, `rawshim_edit.ts` and the
+      `bb_prepare_edit_*` C ABI are deleted; `web/e2e/local_decode.spec.ts` asserts the editor
+      never asks for `/prepared`, and that assertion was confirmed red before being trusted.
+- [x] **The client does the open** (`b8646f2`). `prepareRaw(bytes, request)` returns `edit::encode`'s
+      own framing, byte for byte what `/prepared` served, so the client's parse never changed.
+
+      **The desktop shell keeps its path**, which the deletion item's wording did not anticipate:
+      `preparedHere` returns null under Tauri, so the shell goes `api.rs` -> `src-tauri/src/edit.rs`
+      -> `edit::prepare_bytes` -> `edit::encode` -> `PreparedHeader`. Those are its only decoder, so
+      they stay. A browser that cannot run the module now has no editor, which is the consequence
+      agreed when this was scoped.
 
       **The decode itself is done and proven in a browser** (`3542685`): `web/e2e/local_decode.spec.ts`
       fetches a real ARW in the tab, decodes it through the wasm module, and asserts the frame -
