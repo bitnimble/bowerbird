@@ -90,6 +90,7 @@ pub mod rgb;
 #[cfg(feature = "renditions")]
 pub mod stacks;
 pub mod tca;
+pub mod tile;
 pub mod tone;
 /// The browser's entry points, which no other host has.
 #[cfg(target_arch = "wasm32")]

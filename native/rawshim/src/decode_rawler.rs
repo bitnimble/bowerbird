@@ -126,10 +126,12 @@ pub fn decode_tile(
     fit: crate::galosh::Fit,
     halo: usize,
 ) -> Option<Frame> {
-    blocking(decode_tile_source(path, tile, amounts, fit, halo))
+    blocking(decode_tile_path_async(path, tile, amounts, fit, halo))
 }
 
-async fn decode_tile_source(
+/// The same, awaited, which is the only spelling a browser can take
+/// ([`decode_bytes_async`] says why).
+pub async fn decode_tile_path_async(
     path: &str,
     tile: crate::Tile,
     amounts: crate::galosh::Amounts,
@@ -137,7 +139,29 @@ async fn decode_tile_source(
     halo: usize,
 ) -> Option<Frame> {
     let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
-    let decoder = rawler::get_decoder(&source).ok()?;
+    decode_tile_source(&source, tile, amounts, fit, halo).await
+}
+
+/// One tile of a RAW the caller already holds, which is how a tab magnifies without a server.
+pub async fn decode_tile_bytes_async(
+    bytes: &[u8],
+    tile: crate::Tile,
+    amounts: crate::galosh::Amounts,
+    fit: crate::galosh::Fit,
+    halo: usize,
+) -> Option<Frame> {
+    let source = rawler::rawsource::RawSource::new_from_slice(bytes);
+    decode_tile_source(&source, tile, amounts, fit, halo).await
+}
+
+async fn decode_tile_source(
+    source: &rawler::rawsource::RawSource,
+    tile: crate::Tile,
+    amounts: crate::galosh::Amounts,
+    fit: crate::galosh::Fit,
+    halo: usize,
+) -> Option<Frame> {
+    let decoder = rawler::get_decoder(source).ok()?;
     let params = rawler::decoders::RawDecodeParams::default();
     let upright = upright_of(decoder.as_ref(), &source, &params);
 

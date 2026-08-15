@@ -19,7 +19,8 @@ import {
   type CropRect,
 } from './crop_turn';
 import { insetCrop } from './crop_to_bounds';
-import { LoupeTiles, tileFor, type TileRect } from './loupe_tiles';
+import { LoupeTiles, tileFor, type LoupeTile, type TileRect } from './loupe_tiles';
+import type { LocalDecoder, LocalOpen, LocalTile } from './local_open';
 import { keystoneFromGuides, type KeystoneGuide } from './keystone';
 import {
   EditPipeline,
@@ -307,8 +308,9 @@ export class RawEditPresenter {
       };
 
       this.preparing();
-      const { header, samples } = await fetchPrepared(photoId, longEdge);
+      const { header, samples, local } = await fetchPrepared(photoId, longEdge);
       if (this.closed) return;
+      this.local = local;
 
       const canvas = this.canvas;
       if (canvas == null) {
@@ -505,17 +507,7 @@ export class RawEditPresenter {
       if (photoId != null && this.tiles == null) {
         this.tiles = new LoupeTiles(
           photoId,
-          async (id, rect, signal) =>
-            fetchTile(
-              id,
-              rect,
-              signal,
-              this.store.noiseFit,
-              this.store.levels,
-              // Read now rather than kept on the store: it is the tick's own measurement and it
-              // moves with every slider, so the current one is the one this tile is graded with.
-              (await this.pipeline?.scenePeak()) ?? null,
-            ),
+          async (id, rect, signal) => this.renderTile(id, rect, signal),
           // A tile landing is not a state change anything renders from directly - the glass is
           // a canvas - so this asks for the draw that will put it there.
           () => this.drawLoupe(this.store.loupeBox),
@@ -528,11 +520,13 @@ export class RawEditPresenter {
     }
     this.store.loupeAt = null;
     this.store.loupeTile = null;
+    this.store.loupeSharp = false;
     // A draw and a tile owed to a glass nobody is holding any more.
     this.pendingLoupe = null;
     if (this.tileTimer != null) clearTimeout(this.tileTimer);
     this.tileTimer = null;
     this.tiles?.clear();
+    this.holdTile(null);
   }
 
   /**
@@ -611,27 +605,34 @@ export class RawEditPresenter {
 
     // **The editor's own render, always, and the rendition's tile over it when one has
     // arrived.** The tick's denoise is the sRGB one, which is cruder than what an export gets;
-    // a loupe is where that difference is worth seeing, so the server renders the crop through
-    // the rendition pipeline. That takes about a tenth of a second, which is a seam if the
-    // glass waits for it and a sharpening if it does not - so this draws what it can now and
-    // the tile lands on top when it can.
-    this.requestLoupe({
+    // a loupe is where that difference is worth seeing, so the crop goes through the rendition
+    // pipeline. That takes tens of milliseconds at best, which is a seam if the glass waits for
+    // it and a sharpening if it does not - so this draws what it can now and the tile takes over
+    // when it can.
+    const glass = {
       x: centre.x - span / 2,
       y: centre.y - span / 2,
       width: span,
       height: span,
-    });
+    };
 
     const frame = { width: this.store.width, height: this.store.height };
-    const tiles = this.tiles;
-    if (tiles == null || frame.width === 0) return;
-    tiles.invalidate(this.tileRevision());
-    const held = tiles.covering(centre, span, frame);
-    if (held != null) {
-      this.store.loupeTile = { tile: held, centre, span };
-      return;
-    }
-    this.store.loupeTile = null;
+    const tiles = frame.width === 0 ? null : this.tiles;
+    tiles?.invalidate(this.tileRevision());
+    const held = tiles?.covering(centre, span, frame) ?? null;
+    // Its pixels rather than its picture: a tile this tab decoded is the window the grade reads,
+    // so it is drawn *through* the glass's own canvas by the same shaders the frame under it is.
+    // The shell's arrives encoded and stays an `<img>` over the top (`loupe_overlay`).
+    const origin = this.holdTile(held);
+    this.store.loupeSharp = held != null;
+    this.store.loupeTile = held == null || origin != null ? null : { tile: held, centre, span };
+    this.requestLoupe(
+      origin == null
+        ? glass
+        : { ...glass, x: glass.x - origin.left, y: glass.y - origin.top },
+      origin != null,
+    );
+    if (held != null || tiles == null) return;
 
     // **Nothing is asked for while the pointer is moving.** Aborting the request in flight
     // bounds what the server is working on to one, and does nothing about how many are *asked
@@ -650,14 +651,115 @@ export class RawEditPresenter {
   private tileTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * What the held tiles were rendered against.
+   * Puts a locally decoded tile on the device, and says where its window sits in the frame.
+   *
+   * Null for a tile that is a picture rather than pixels, which is the shell's, and for no tile at
+   * all - both of which are a glass drawing the editor's own frame.
+   *
+   * Uploaded once per tile rather than per move: a pointer sweep inside one tile is dozens of
+   * draws from the same buffer.
+   */
+  private holdTile(held: LoupeTile | null): { left: number; top: number } | null {
+    const tile = held?.art.tile;
+    if (tile == null) {
+      if (this.tileOnGpu != null) this.pipeline?.holdTile(null);
+      this.tileOnGpu = null;
+      return null;
+    }
+    if (this.tileOnGpu !== held) {
+      this.pipeline?.holdTile(tile);
+      this.tileOnGpu = held;
+    }
+    // The window's own origin, which is the rectangle asked for less the margin grown around it.
+    const [left, top] = tile.keep;
+    return { left: held.rect.left - left, top: held.rect.top - top };
+  }
+
+  /** Which tile the pipeline is holding, by identity, so a move re-uploads nothing. */
+  private tileOnGpu: LoupeTile | null = null;
+
+  /**
+   * One tile of the photograph at rendition quality: decoded here, or rendered by the shell.
+   *
+   * **The tab's arm is pixels and the shell's is a picture**, and that difference is the whole of
+   * why this forks. A tile that never crosses a wire has nothing to encode for: what the glass
+   * needs is the window the grade reads, and the page has the module, the RAW and the device to
+   * produce it - 35ms against 425ms and no request at all. The shell opens in its own process and
+   * answers over its own transport, where an AVIF is what survives the trip.
+   *
+   * The frame's own numbers travel with the request for the reason `job::Base::build` gives: a
+   * crop's own noise fit and diffuse white describe where the reader is pointing rather than the
+   * photograph. The scene peak is not among them here - the tile is drawn through the same peak
+   * buffer the tick measured, which is that same argument answered by construction.
+   */
+  private async renderTile(
+    photoId: string,
+    rect: TileRect,
+    signal: AbortSignal,
+  ): Promise<Blob | LocalTile> {
+    const local = this.local;
+    const doc = this.store.doc;
+    if (local == null) {
+      return fetchTile(
+        photoId,
+        rect,
+        signal,
+        this.store.noiseFit,
+        this.store.levels,
+        // Read now rather than kept on the store: it is the tick's own measurement and it
+        // moves with every slider, so the current one is the one this tile is graded with.
+        (await this.pipeline?.scenePeak()) ?? null,
+      );
+    }
+    // Nothing to grade a tile with, which is an editor whose document could not be read: it is
+    // usable at neutral and the glass keeps showing the tick's own render.
+    if (doc == null) throw new Error('there is no document to build a tile against');
+    return local.decoder.tile(local.raw, {
+      tile: [rect.left, rect.top, rect.width, rect.height],
+      frame: [this.store.width, this.store.height],
+      grade: local.open.grade,
+      strengths: local.open.strengths,
+      denoiseLuminance: doc.luminanceNoise,
+      denoiseColour: doc.colourNoise,
+      adjust: {
+        contrast: doc.contrast,
+        highlights: doc.highlights,
+        shadows: doc.shadows,
+        whites: doc.whites,
+        blacks: doc.blacks,
+        vibrance: doc.vibrance,
+        saturation: doc.saturation,
+        texture: doc.texture,
+        clarity: doc.clarity,
+        dehaze: doc.dehaze,
+        temperature: doc.temperature,
+        tint: doc.tint,
+      },
+      levels: this.store.levels,
+      noiseFit: this.store.noiseFit,
+      cameraMatch: local.open.cameraMatch,
+    });
+  }
+
+  /** What this tab opens and magnifies from, or null where the shell did the open. */
+  private local: LocalSource | null = null;
+
+  /**
+   * What the held tiles were built against.
    *
    * A tile is the export's pixels for the reader's *current* settings, so anything that would
-   * change an export changes every tile at once. The document's revision is exactly that - the
-   * server stamps it on every write - so one string answers for all of it.
+   * change one changes every tile at once. The document's revision covers what the server would
+   * render - it stamps one on every write - and the fields beside it are what shapes the *window*
+   * rather than its grade: the mosaic denoise runs inside the decode, and the presence three
+   * decide how far past the rectangle the guided filter has to have read.
    */
   private tileRevision(): string {
-    return `${this.photoId}:${this.store.rev}`;
+    const doc = this.store.doc;
+    const shape =
+      doc == null
+        ? ''
+        : `${doc.luminanceNoise},${doc.colourNoise},${doc.clarity},${doc.texture},${doc.dehaze}`;
+    return `${this.photoId}:${this.store.rev}:${shape}`;
   }
 
   /** The tiles for the photo on screen, built with the first loupe that wants one. */
@@ -1077,6 +1179,9 @@ export class RawEditPresenter {
     this.pipeline = null;
     this.device?.destroy();
     this.device = null;
+    // The RAW the tiles were decoded from, which is tens of megabytes held for as long as this is.
+    this.local = null;
+    this.tileOnGpu = null;
   }
 
   /**
@@ -1103,9 +1208,9 @@ export class RawEditPresenter {
    * blocks exactly like the stage's - so the glass paid the cost the sliders were paying, on
    * the one gesture that emits fastest.
    */
-  private requestLoupe(region: Region): void {
+  private requestLoupe(region: Region, fromTile = false): void {
     if (this.closed || this.pipeline == null) return;
-    this.pendingLoupe = region;
+    this.pendingLoupe = { region, fromTile };
     this.pump();
   }
 
@@ -1139,7 +1244,9 @@ export class RawEditPresenter {
       }
       // After the tick, which rewrites the uniform this reads: the queue keeps the two writes
       // and the two submits in the order they were made, so the glass gets its own window.
-      if (loupe != null) this.pipeline.renderLoupe(this.store.exposureEv, loupe);
+      if (loupe != null) {
+        this.pipeline.renderLoupe(this.store.exposureEv, loupe.region, loupe.fromTile);
+      }
       this.drawing = true;
       const landed = (): void => {
         this.drawing = false;
@@ -1154,8 +1261,11 @@ export class RawEditPresenter {
   /** Whether a tick is on the GPU and has not come back. */
   private drawing = false;
 
-  /** The window the glass is asking for while a frame is already in flight. */
-  private pendingLoupe: Region | null = null;
+  /**
+   * The window the glass is asking for while a frame is already in flight, and what it is a
+   * window on: the frame, or the tile the pipeline is holding.
+   */
+  private pendingLoupe: { region: Region; fromTile: boolean } | null = null;
 
   @action.bound
   private describeAdapter(adapter: GPUAdapter): void {
@@ -1258,23 +1368,39 @@ async function fetchTile(
 async function fetchPrepared(
   photoId: string,
   longEdge: number,
-): Promise<{ header: PreparedHeader; samples: Uint16Array<ArrayBuffer> }> {
+): Promise<{
+  header: PreparedHeader;
+  samples: Uint16Array<ArrayBuffer>;
+  /** What the loupe's tiles are built from, where this tab opened the RAW itself. */
+  local: LocalSource | null;
+}> {
   // The shell already opens in its own process, on real threads and off a file it has: downloading
   // the RAW into the webview to open it single-threaded would be slower for the same picture.
-  const bytes = isTauri()
-    ? await preparedByTheShell(photoId, longEdge)
-    : await preparedHere(photoId, longEdge);
-  return framed(bytes);
+  if (isTauri()) {
+    return { ...framed(await preparedByTheShell(photoId, longEdge)), local: null };
+  }
+  const local = await preparedHere(photoId, longEdge);
+  const { header, samples } = framed(local.prepared);
+  // The one this open had to fit, where nothing had kept one: a tile cannot fit its own, and an
+  // unmatched tile is a magnifier showing a different picture from the stage it sits over.
+  local.open.cameraMatch ??= header.cameraMatch;
+  return { header, samples, local };
 }
 
-async function preparedHere(photoId: string, longEdge: number): Promise<Uint8Array> {
+/** The module, the RAW it decodes and the settings the open used, kept for the loupe's tiles. */
+type LocalSource = { decoder: LocalDecoder; raw: Uint8Array; open: LocalOpen };
+
+async function preparedHere(
+  photoId: string,
+  longEdge: number,
+): Promise<LocalSource & { prepared: Uint8Array }> {
   const { LocalDecoder } = await import('./local_open');
   const [settings, raw, cameraMatch] = await Promise.all([
     api.getSettings(),
     downloadedRaw(photoId),
     storedCameraMatch(photoId),
   ]);
-  return new LocalDecoder().prepare(raw, {
+  const open: LocalOpen = {
     longEdge: Math.round(longEdge),
     cameraMatch,
     grade: {
@@ -1285,7 +1411,11 @@ async function preparedHere(photoId: string, longEdge: number): Promise<Uint8Arr
     // No denoise, as the shell's open sends none: the frame carries its noise and the tick takes
     // it out, so the Detail sliders move without re-opening.
     strengths: { sharpen: settings.raw_sharpen, defringe: settings.raw_defringe },
-  });
+  };
+  // Kept rather than dropped once the frame is out: a tile is decoded from the same bytes, and
+  // re-fetching 72MB per loupe position is the round trip this whole path exists to remove.
+  const decoder = new LocalDecoder();
+  return { decoder, raw, open, prepared: await decoder.prepare(raw, open) };
 }
 
 async function preparedByTheShell(photoId: string, longEdge: number): Promise<Uint8Array> {

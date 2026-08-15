@@ -27,6 +27,7 @@ import {
 import { buildDenoiseChain, type DenoiseChain, type NoiseCurve } from './denoise_chain';
 import type { DetailPass, DetailSize, EditAdjust, EditGeometry } from './shaders';
 import type { NoiseFit } from '../../../../../src/services/processing/rawshim_job';
+import type { LocalTile } from '../local_open';
 
 /**
  * Where each `Edit` field lives, by name. Computed once from the layout the shader declares.
@@ -99,6 +100,14 @@ export interface PreparedHeader {
    * where the decoding machine had no adapter.
    */
   noiseFit?: NoiseFit;
+  /**
+   * The camera match this open had to fit, where nothing had kept one.
+   *
+   * Held for the loupe's tiles, which cannot fit their own: `fit_all` resamples the whole
+   * embedded JPEG to the frame it is given, so a 400px crop would be matched against a squashed
+   * picture of the entire scene and every tile position would grade differently.
+   */
+  cameraMatch?: number[];
 }
 
 /** The part of the frame on screen, in source pixels. Zoom and pan move this and nothing else. */
@@ -282,6 +291,24 @@ export function editCanvasConfiguration(device: GPUDevice): GPUCanvasConfigurati
   } as GPUCanvasConfiguration;
 }
 
+/** A frame and the four textures the presence sliders' blur is built through for it. */
+type DetailTarget = {
+  frame: GPUBuffer;
+  base: GPUTexture;
+  detail: GPUTexture;
+  moments: GPUTexture;
+  momentsScratch: GPUTexture;
+  size: { width: number; height: number };
+};
+
+/** A loupe tile, resident and graded by the same passes as the frame it magnifies. */
+type ResidentTile = DetailTarget & {
+  words: readonly number[];
+  width: number;
+  height: number;
+  drawGroup: GPUBindGroup;
+};
+
 export class EditPipeline {
   /**
    * One buffer, written once per submit and read by every pass in it.
@@ -418,15 +445,7 @@ export class EditPipeline {
       size: frameBytes(this.width, this.height),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    // In whole 4-byte words, then the odd `u16` on its own. `writeBuffer` rejects a size
-    // that is not a multiple of four, and three `u16` a pixel is exactly that whenever both
-    // dimensions are odd - a validation error, so the frame would stay zeroed and the
-    // picture black, on nothing more exotic than a fit that landed on 3841x2561.
-    const words = samples.length & ~1;
-    device.queue.writeBuffer(this.frame, 0, samples, 0, words);
-    if (words !== samples.length) {
-      device.queue.writeBuffer(this.frame, words * 2, new Uint16Array([samples[words]!, 0]));
-    }
+    this.writeSamples(this.frame, samples);
 
     // Half resolution and down, so the frame is not stored twice: a third of half a frame
     // rather than a third of a whole one, and the level it leaves out is the one the draw
@@ -661,19 +680,7 @@ export class EditPipeline {
     this.drawFromFrame = drawing(true);
     this.drawFromPyramid = drawing(false);
 
-    this.colourEntries = [
-      { binding: 0, resource: { buffer: this.uniform } },
-      { binding: 1, resource: { buffer: this.denoised } },
-      { binding: 2, resource: this.curves.createView() },
-      { binding: 3, resource: this.chroma.createView() },
-      { binding: 4, resource: { buffer: this.matrix } },
-      { binding: 7, resource: this.lerp },
-      { binding: 10, resource: this.chromaLuma.createView() },
-      { binding: 11, resource: this.chromaTint.createView() },
-      { binding: 12, resource: { buffer: this.nitsOfCode } },
-      { binding: 13, resource: this.detail.createView() },
-      { binding: 14, resource: { buffer: this.balance } },
-    ];
+    this.colourEntries = this.colourEntriesFor(this.denoised, this.detail);
     this.displayEntries = [
       ...this.colourEntries,
       { binding: 5, resource: { buffer: this.peak } },
@@ -756,7 +763,7 @@ export class EditPipeline {
    * guided filter's - moments, box mean, fit, box mean, evaluate - and the ping-pong is the
    * separable box mean's, which cannot read and write one texture in a pass.
    */
-  private buildDetail(): void {
+  private buildDetail(over: DetailTarget = this.frameDetail): void {
     const COMPUTE = GPUShaderStage.COMPUTE;
     const written = {
       binding: 3,
@@ -816,7 +823,7 @@ export class EditPipeline {
       apply_guided: pipelineFor('apply_guided', applyLayout),
     };
 
-    const working = this.header.detail;
+    const working = over.size;
     const [x, y] = this.groups(working.width, working.height);
     const encoder = this.device.createCommandEncoder();
     const run = (
@@ -834,26 +841,26 @@ export class EditPipeline {
     // The pair the 32-bit passes ping-pong through, swapped after each one. Derived rather
     // than written out per pass: every pass reads what the one before it wrote, so stating
     // that once is what keeps the sequence and the plumbing from drifting apart.
-    let held = this.moments;
-    let spare = this.momentsScratch;
+    let held = over.moments;
+    let spare = over.momentsScratch;
     for (const name of DETAIL_PASSES) {
       const pipeline = pipelines[name];
       if (name === 'shrink') {
         run(pipeline, shrinkLayout, [
           { binding: 0, resource: { buffer: this.uniform } },
-          { binding: 1, resource: { buffer: this.denoised } },
-          { binding: 3, resource: this.base.createView() },
+          { binding: 1, resource: { buffer: over.frame } },
+          { binding: 3, resource: over.base.createView() },
           { binding: 12, resource: { buffer: this.nitsOfCode } },
         ]);
       } else if (name === 'moments_of') {
         run(pipeline, momentsLayout, [
-          { binding: 2, resource: this.base.createView() },
+          { binding: 2, resource: over.base.createView() },
           { binding: 16, resource: held.createView() },
         ]);
       } else if (name === 'window_mean') {
         run(pipeline, meanLayout, [
           { binding: 0, resource: { buffer: this.uniform } },
-          { binding: 2, resource: this.base.createView() },
+          { binding: 2, resource: over.base.createView() },
           { binding: 15, resource: held.createView() },
           { binding: 16, resource: spare.createView() },
         ]);
@@ -861,9 +868,9 @@ export class EditPipeline {
       } else if (name === 'apply_guided') {
         run(pipeline, applyLayout, [
           { binding: 0, resource: { buffer: this.uniform } },
-          { binding: 2, resource: this.base.createView() },
+          { binding: 2, resource: over.base.createView() },
           { binding: 15, resource: held.createView() },
-          { binding: 3, resource: this.detail.createView() },
+          { binding: 3, resource: over.detail.createView() },
         ]);
       } else {
         run(pipeline, boxLayout, [
@@ -1005,19 +1012,127 @@ export class EditPipeline {
    * roll-off as the reader swept the pointer - the loupe would grade differently from the
    * picture it is held over, which is the one thing it exists not to do.
    */
-  renderLoupe(ev: number, region: Region): void {
+  renderLoupe(ev: number, region: Region, fromTile = false): void {
     const loupe = this.loupe;
     if (loupe == null) return;
+    const tile = fromTile ? this.tile : null;
+    if (fromTile && tile == null) return;
     const encoder = this.device.createCommandEncoder();
-    this.writeUniform({ exposure: ev, region, into: loupe });
+    this.writeUniform({ exposure: ev, region, into: loupe, tile });
     this.writeBalance(encoder);
-    this.draw(encoder, region, loupe, false);
+    this.draw(encoder, region, loupe, false, tile);
     this.device.queue.submit([encoder.finish()]);
     // Nothing restores the tick's uniform, and nothing has to: `render` writes it before every
     // draw, and the peak - the only other reader - runs inside that same call.
   }
 
   private loupe: GPUCanvasContext | null = null;
+
+  /**
+   * The rendition-quality tile the glass is showing, or `null` to let it go.
+   *
+   * **A second frame, not a picture.** What arrives is what the rendition pipeline uploads - the
+   * window coded to normalised PQ, denoised on the mosaic, warped and sharpened - so grading it is
+   * this pipeline's own draw over a different buffer, with the tile's own words in the frame half
+   * of the uniform. Nothing about the grade is a second implementation, which is what lets a
+   * magnifier be trusted to predict the export.
+   *
+   * The neighbourhood the presence sliders read is rebuilt for it, at the *photograph's* scale:
+   * the window arrives grown by that filter's reach for exactly this reason.
+   *
+   * Resized rather than kept: a tile is one rectangle at a time, and the reader's magnification
+   * decides how large it is.
+   */
+  holdTile(tile: LocalTile | null): void {
+    if (tile == null) {
+      this.releaseTile();
+      return;
+    }
+    const fits =
+      this.tile != null && this.tile.width === tile.width && this.tile.height === tile.height;
+    if (!fits) {
+      this.releaseTile();
+      this.tile = this.residentTile(tile);
+    }
+    const resident = this.tile;
+    if (resident == null) return;
+    resident.words = tile.edits;
+    this.writeSamples(resident.frame, tile.samples);
+    // Before the blur, which reads `edit.width` and the tile's own detail scale out of it.
+    this.writeUniform({
+      region: { x: 0, y: 0, width: tile.width, height: tile.height },
+      into: this.loupe ?? undefined,
+      tile: resident,
+    });
+    this.buildDetail(resident);
+  }
+
+  /** Whether a tile is resident, which is what a test can ask without a picture. */
+  get hasTile(): boolean {
+    return this.tile != null;
+  }
+
+  private tile: ResidentTile | null = null;
+
+  private residentTile(tile: LocalTile): ResidentTile {
+    const texture = (label: string, format: GPUTextureFormat): GPUTexture =>
+      this.device.createTexture({
+        label,
+        size: [tile.detail.width, tile.detail.height],
+        format,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+      });
+    const frame = this.device.createBuffer({
+      label: 'loupe tile',
+      size: frameBytes(tile.width, tile.height),
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    const detail = texture('tile detail', 'rgba16float');
+    const resident: ResidentTile = {
+      words: tile.edits,
+      width: tile.width,
+      height: tile.height,
+      frame,
+      base: texture('tile detail base', 'rgba16float'),
+      detail,
+      moments: texture('tile detail moments', 'rgba32float'),
+      momentsScratch: texture('tile detail moments scratch', 'rgba32float'),
+      size: tile.detail,
+      drawGroup: this.device.createBindGroup({
+        layout: this.drawLayout,
+        entries: [
+          ...this.colourEntriesFor(frame, detail),
+          { binding: 5, resource: { buffer: this.peak } },
+          // The photograph's pyramid, which the tile's draw is compiled never to read: a
+          // magnifier is always inside the ratio `covered` takes off the frame itself.
+          { binding: 9, resource: this.pyramid.createView() },
+        ],
+      }),
+    };
+    return resident;
+  }
+
+  private releaseTile(): void {
+    const going = this.tile;
+    if (going == null) return;
+    this.tile = null;
+    going.frame.destroy();
+    for (const texture of [going.base, going.detail, going.moments, going.momentsScratch]) {
+      texture.destroy();
+    }
+  }
+
+  /** The frame's own neighbourhood, which is what `buildDetail` rebuilds unless a tile asks. */
+  private get frameDetail(): DetailTarget {
+    return {
+      frame: this.denoised,
+      base: this.base,
+      detail: this.detail,
+      moments: this.moments,
+      momentsScratch: this.momentsScratch,
+      size: this.header.detail,
+    };
+  }
 
   /**
    * The reader's temperature and tint, solved into the matrix the grade reads.
@@ -1158,6 +1273,7 @@ export class EditPipeline {
 
   destroy(): void {
     this.timer?.destroy();
+    this.releaseTile();
     for (const texture of [
       this.pyramid,
       this.curves,
@@ -1187,6 +1303,29 @@ export class EditPipeline {
     }
   }
 
+  /**
+   * Everything the colour transform reads, over a frame and the neighbourhood built from it.
+   *
+   * A parameter rather than the fields, because the loupe's tile is a second frame with a second
+   * neighbourhood and the same eleven bindings otherwise - the camera match, the tables and the
+   * balance are the photograph's, whichever buffer is being graded.
+   */
+  private colourEntriesFor(frame: GPUBuffer, detail: GPUTexture): GPUBindGroupEntry[] {
+    return [
+      { binding: 0, resource: { buffer: this.uniform } },
+      { binding: 1, resource: { buffer: frame } },
+      { binding: 2, resource: this.curves.createView() },
+      { binding: 3, resource: this.chroma.createView() },
+      { binding: 4, resource: { buffer: this.matrix } },
+      { binding: 7, resource: this.lerp },
+      { binding: 10, resource: this.chromaLuma.createView() },
+      { binding: 11, resource: this.chromaTint.createView() },
+      { binding: 12, resource: { buffer: this.nitsOfCode } },
+      { binding: 13, resource: detail.createView() },
+      { binding: 14, resource: { buffer: this.balance } },
+    ];
+  }
+
   /** A lookup table the sampler can read: `f32` throughout, so the values are the CPU's. */
   private lookup(
     size: [number, number] | [number, number, number],
@@ -1208,6 +1347,22 @@ export class EditPipeline {
       size,
     );
     return texture;
+  }
+
+  /**
+   * Interleaved RGB `u16` into a buffer sized by `frameBytes`.
+   *
+   * In whole 4-byte words, then the odd `u16` on its own. `writeBuffer` rejects a size that is
+   * not a multiple of four, and three `u16` a pixel is exactly that whenever both dimensions are
+   * odd - a validation error, so the frame would stay zeroed and the picture black, on nothing
+   * more exotic than a fit that landed on 3841x2561.
+   */
+  private writeSamples(into: GPUBuffer, samples: Uint16Array<ArrayBuffer>): void {
+    const words = samples.length & ~1;
+    this.device.queue.writeBuffer(into, 0, samples, 0, words);
+    if (words !== samples.length) {
+      this.device.queue.writeBuffer(into, words * 2, new Uint16Array([samples[words]!, 0]));
+    }
   }
 
   private upload(data: Float32Array<ArrayBuffer>): GPUBuffer {
@@ -1237,21 +1392,32 @@ export class EditPipeline {
    * GPU - `output` among the rest, which stays as it arrived and is PQ.
    */
   private writeUniform(
-    over: { exposure?: number; region?: Region; into?: GPUCanvasContext } = {},
+    over: {
+      exposure?: number;
+      region?: Region;
+      into?: GPUCanvasContext;
+      /**
+       * The loupe's tile rather than the frame, whose words are its own and whose geometry is
+       * none: a tile is named in coordinates that already carry the reader's crop and turn.
+       */
+      tile?: ResidentTile | null;
+    } = {},
   ): void {
     if (over.exposure != null) this.exposure = over.exposure;
     const canvas = (over.into ?? this.context).canvas;
+    const tile = over.tile;
     const words = edits(
-      this.header.edits,
+      tile?.words ?? this.header.edits,
       this.adjust,
       this.exposure,
       {
         region: over.region ?? this.wholeFrame,
         canvas: { width: canvas.width, height: canvas.height },
-        // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels.
-        maxLod: this.levels,
+        // `lod` 0 is the frame itself, so the pyramid's levels are 1..levels. A tile has no
+        // pyramid and never averages: it is magnifying.
+        maxLod: tile == null ? this.levels : 0,
       },
-      this.geometry,
+      tile == null ? this.geometry : wholeFrameGeometry(tile.width, tile.height),
     );
     this.device.queue.writeBuffer(this.uniform, 0, words);
   }
@@ -1555,6 +1721,7 @@ export class EditPipeline {
     region: Region,
     into = this.context,
     timed = true,
+    tile: ResidentTile | null = null,
   ): void {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
@@ -1574,8 +1741,9 @@ export class EditPipeline {
       region.width / Math.max(canvas.width, 1),
       region.height / Math.max(canvas.height, 1),
     );
-    pass.setPipeline(ratio < 2 ? this.drawFromFrame : this.drawFromPyramid);
-    pass.setBindGroup(0, this.drawGroup);
+    // A tile has no pyramid of its own, and needs none: it is only ever drawn magnified.
+    pass.setPipeline(ratio < 2 || tile != null ? this.drawFromFrame : this.drawFromPyramid);
+    pass.setBindGroup(0, tile?.drawGroup ?? this.drawGroup);
     pass.draw(3);
     pass.end();
   }

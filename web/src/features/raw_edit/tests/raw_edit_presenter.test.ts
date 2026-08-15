@@ -98,9 +98,18 @@ class Pipeline {
   loupeRegion: Region | null = null;
   loupeDraws = 0;
 
-  renderLoupe(_exposure: number, region: Region): void {
+  renderLoupe(_exposure: number, region: Region, fromTile = false): void {
     this.loupeRegion = region;
+    this.loupeFromTile = fromTile;
     this.loupeDraws += 1;
+  }
+
+  /** Every tile handed to the device, and whether the last glass drew from one. */
+  readonly tiles: unknown[] = [];
+  loupeFromTile = false;
+
+  holdTile(tile: unknown): void {
+    if (tile != null) this.tiles.push(tile);
   }
 
   /** A GPU that answers the instant it is asked, which is what a fake one is. */
@@ -885,5 +894,134 @@ describe('the loupe', () => {
 
     await Bun.sleep(TILE_QUIET_MS + 50);
     expect(pipeline.scenePeakCalls).toBe(1);
+  });
+
+  /**
+   * A tile decoded in the tab is handed the *photograph's* numbers, not left to measure a crop's.
+   *
+   * The fit is the one this exists to pin. `galosh::Fit::Given` is what the request carries it as,
+   * and a tile that fits its own is denoised between 0.49 and 1.51 times the frame's strength -
+   * which is a magnifier that disagrees with the export it predicts and moves as the reader pans.
+   * The levels are the same argument about the grade, and the frame's size is what makes the
+   * rectangle mean anything at all: everything the window is grown by is measured against it.
+   *
+   * No server: this is the arm that has one and does not use it, so the tile route being untouched
+   * is half the claim (`e2e/local_decode.spec.ts` makes the other half in a browser).
+   */
+  test('builds a local tile against the frame, not against the crop', async () => {
+    fitted();
+    const noiseFit = {
+      alpha: 0.0001,
+      sigmaSq: 0.000001,
+      unifiedSigma: 1.19,
+      darkRef: [0, 0, 0, 0] as [number, number, number, number],
+    };
+    store.noiseFit = noiseFit;
+    store.levels = { white: 8133, peak: 13783 };
+    store.doc = { ...neutralEdits(), luminanceNoise: 55, colourNoise: 65, clarity: 40 };
+
+    const asked: unknown[] = [];
+    const decoder = {
+      tile: (_raw: Uint8Array, request: unknown) => {
+        asked.push(request);
+        return Promise.resolve({
+          width: 600,
+          height: 600,
+          keep: [44, 44, 512, 512],
+          edits: [],
+          detail: { width: 64, height: 64 },
+          samples: new Uint16Array(600 * 600 * 3),
+        });
+      },
+    };
+    Object.assign(presenter, {
+      photoId: 'a-photo-id',
+      local: {
+        decoder,
+        raw: new Uint8Array(4),
+        open: {
+          longEdge: 0,
+          grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
+          strengths: { sharpen: 0.8, defringe: 0.5 },
+          cameraMatch: [7, 7, 7],
+        },
+      },
+    });
+    presenter.setLoupe(true);
+    presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+
+    await Bun.sleep(TILE_QUIET_MS + 50);
+    // The peak is the tick's own buffer here rather than a number in a request: a local tile is
+    // drawn through it, so there is nothing to read back and nothing to hand over.
+    expect(pipeline.scenePeakCalls).toBe(0);
+    expect(asked).toHaveLength(1);
+    const request = asked[0] as Record<string, unknown>;
+    expect(request.noiseFit).toEqual(noiseFit);
+    expect(request.levels).toEqual({ white: 8133, peak: 13783 });
+    expect(request.frame).toEqual([4000, 3000]);
+    expect(request.denoiseLuminance).toBe(55);
+    expect(request.denoiseColour).toBe(65);
+    expect(request.strengths).toEqual({ sharpen: 0.8, defringe: 0.5 });
+    expect(request.cameraMatch).toEqual([7, 7, 7]);
+    // The presence sliders, which decide how far past the rectangle the window has to reach.
+    expect((request.adjust as { clarity: number }).clarity).toBe(40);
+    const rect = request.tile as number[];
+    expect(rect[2]).toBeGreaterThan(0);
+    expect(rect[0]! + rect[2]!).toBeLessThanOrEqual(4000);
+  });
+
+  /**
+   * A tile that arrived as pixels goes on the device once and is drawn from there.
+   *
+   * Both halves matter. **Once**, because a pointer sweep inside one tile is dozens of draws and
+   * re-uploading a window per move would put the tile's cost on every one of them; and **the
+   * glass draws from it**, in the window's own coordinates rather than the frame's, which is
+   * where a tile drawn at the frame's origin would magnify the wrong place entirely.
+   */
+  test('uploads a local tile once and magnifies the window it holds', async () => {
+    fitted();
+    const held = {
+      width: 600,
+      height: 600,
+      keep: [44, 44, 512, 512],
+      edits: [],
+      detail: { width: 64, height: 64 },
+      samples: new Uint16Array(600 * 600 * 3),
+    };
+    Object.assign(presenter, {
+      photoId: 'a-photo-id',
+      local: {
+        decoder: { tile: () => Promise.resolve(held) },
+        raw: new Uint8Array(4),
+        open: {
+          longEdge: 0,
+          grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
+          strengths: { sharpen: 0.8, defringe: 0.5 },
+        },
+      },
+    });
+    presenter.setLoupe(true);
+    presenter.moveLoupe({ x: 500, y: 375 }, BOX);
+    await Bun.sleep(TILE_QUIET_MS + 50);
+
+    await drawn();
+
+    expect(store.loupeSharp).toBe(true);
+    // Pixels rather than a picture, so nothing is drawn over the glass.
+    expect(store.loupeTile).toBeNull();
+    expect(pipeline.tiles).toHaveLength(1);
+    expect(pipeline.tiles[0]).toBe(held);
+    expect(pipeline.loupeFromTile).toBe(true);
+
+    // The window's own coordinates: the rectangle asked for begins `keep` inside it, so what the
+    // glass reads is the pointer's window less the window's origin in the frame.
+    const magnified = pipeline.loupeRegion;
+    expect(magnified?.x).toBeGreaterThanOrEqual(0);
+    expect((magnified?.x ?? 0) + (magnified?.width ?? 0)).toBeLessThanOrEqual(held.width);
+
+    const uploads = pipeline.tiles.length;
+    presenter.moveLoupe({ x: 502, y: 377 }, BOX);
+    await drawn();
+    expect(pipeline.tiles).toHaveLength(uploads);
   });
 });

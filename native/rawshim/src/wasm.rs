@@ -91,6 +91,97 @@ pub async fn prepare_raw(bytes: &[u8], request: &str) -> Result<Vec<u8>, JsValue
     crate::edit::encode(&prepared).map_err(|e| JsValue::from_str(&e))
 }
 
+/// One rectangle of a photograph at rendition quality, for the loupe to magnify.
+///
+/// **Pixels, not a picture.** The server encodes its tile as an HDR AVIF because the bytes have to
+/// survive a wire; nothing crosses here but a pointer, so what comes back is the window the grade
+/// reads - normalised PQ Rec.2020, coded, denoised on the mosaic, warped and sharpened - and the
+/// page grades it with the shaders it grades every tick with. Encoding one here to decode it again
+/// in the same process would be a picture built twice for no reader.
+///
+/// `request` is [`crate::tile::TileRequest`] as JSON. Rejects rather than falling through to a
+/// worse tile: the editor's own render is already under the glass, so a tile that cannot be built
+/// is a magnifier that stays soft rather than one that lies.
+#[wasm_bindgen(js_name = renderTile)]
+pub async fn render_tile(bytes: &[u8], request: &str) -> Result<Tile, JsValue> {
+    // Opened here as the decode and the open open it, and for the same reason: the decode asks
+    // for the device rather than opening one, so without this a tile is quietly the CPU's.
+    if crate::gpu::page_device().await.is_none() {
+        crate::warn("rawshim: this browser offered no WebGPU adapter, so the tile is on the CPU");
+    }
+    let request: crate::tile::TileRequest = serde_json::from_str(request)
+        .map_err(|e| JsValue::from_str(&format!("rawshim: this tile request is malformed: {e}")))?;
+    let window = crate::tile::prepared_async(crate::tile::Source::Bytes(bytes), &request)
+        .await
+        .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
+    // At rest on everything a tick moves, exactly as `edit::payload` leaves the frame's own words:
+    // the page copies these and overwrites the exposure, the sliders, the region and the canvas.
+    let identity = crate::hdr_fit::HdrColour::identity();
+    let scene = window.scene(0.0, crate::gpu::Adjust::none());
+    let grade = window.grade(&scene, request.grade.peak_nits, crate::gpu::Output::Pq);
+    let edits = crate::gpu::uniform_words(&grade, grade.colour.unwrap_or(&identity));
+    Ok(Tile { window, edits })
+}
+
+/// A tile's window, left in wasm memory for JS to upload from.
+#[wasm_bindgen]
+pub struct Tile {
+    window: crate::tile::Prepared,
+    edits: Vec<u32>,
+}
+
+#[wasm_bindgen]
+impl Tile {
+    /// The window, which is the rectangle asked for plus the margin every stage after the gather
+    /// reads. The grade runs over all of it and `keep` is what is drawn.
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 {
+        self.window.width as u32
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 {
+        self.window.height as u32
+    }
+
+    /// `[left, top, width, height]` of the rectangle asked for, inside that window.
+    #[wasm_bindgen(getter)]
+    pub fn keep(&self) -> Vec<u32> {
+        self.window.keep.iter().map(|value| *value as u32).collect()
+    }
+
+    /// `struct Edit`'s frame half for this window ([`crate::edit::PreparedHeader::edits`]).
+    #[wasm_bindgen(getter)]
+    pub fn edits(&self) -> Vec<u32> {
+        self.edits.clone()
+    }
+
+    /// The working texture `detail.wgsl` blurs on for a window this size, which is not the size a
+    /// whole frame of these dimensions would take: the step is the photograph's.
+    #[wasm_bindgen(getter)]
+    pub fn detail(&self) -> Vec<u32> {
+        let size = crate::gpu::detail_within(
+            self.window.width,
+            self.window.height,
+            self.window.photograph.0.max(self.window.photograph.1),
+        );
+        vec![size.width, size.height]
+    }
+
+    /// Where the samples begin, for `new Uint16Array(memory.buffer, ptr, length)`. [`Decoded::ptr`]
+    /// says how long that view lives.
+    #[wasm_bindgen(getter)]
+    pub fn ptr(&self) -> u32 {
+        self.window.samples.as_ptr() as usize as u32
+    }
+
+    /// Samples, not bytes and not pixels: three to a pixel.
+    #[wasm_bindgen(getter)]
+    pub fn length(&self) -> u32 {
+        self.window.samples.len() as u32
+    }
+}
+
 /// A decoded frame, left where it was decoded for JS to read without a copy.
 #[wasm_bindgen]
 pub struct Decoded {
