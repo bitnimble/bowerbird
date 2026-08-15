@@ -232,15 +232,34 @@ pub fn levels(samples: &[u16], quantile: f64) -> Levels {
         return Levels { white: 0.0, peak: 0.0 };
     }
     let counted = pixels.min(QUANTILE_SAMPLES);
-    let mut histogram = vec![0u32; MAX + 1];
-    for k in 0..counted {
-        // Spread by fraction rather than by step: sample k lands at the same place in
-        // the frame whatever the frame's resolution, which is what makes two decodes of
-        // one photo agree.
-        let i = sample_at(k, pixels, counted);
-        let brightest = samples[i].max(samples[i + 1]).max(samples[i + 2]);
-        histogram[brightest as usize] += 1;
-    }
+    // A block per thread, each with its own bins. The counts are integers, so the merge is exact
+    // whatever order it runs in - unlike `image.rs`'s float reductions, this cannot drift with the
+    // core count, and the answer is the serial one to the bit.
+    let block = counted.div_ceil(thread_count().max(1)).max(1);
+    let histogram = (0..counted)
+        .into_par_iter()
+        .step_by(block)
+        .map(|first| {
+            let mut histogram = vec![0u32; MAX + 1];
+            for k in first..(first + block).min(counted) {
+                // Spread by fraction rather than by step: sample k lands at the same place in
+                // the frame whatever the frame's resolution, which is what makes two decodes of
+                // one photo agree.
+                let i = sample_at(k, pixels, counted);
+                let brightest = samples[i].max(samples[i + 1]).max(samples[i + 2]);
+                histogram[brightest as usize] += 1;
+            }
+            histogram
+        })
+        .reduce_parallel(
+            || vec![0u32; MAX + 1],
+            |mut into, from| {
+                for (slot, count) in into.iter_mut().zip(&from) {
+                    *slot += count;
+                }
+                into
+            },
+        );
     scan(&histogram, counted, quantile)
 }
 
@@ -442,6 +461,32 @@ mod tests {
         let out = levels(&samples, 0.9);
         assert!(out.peak > out.white, "the peak must sit above diffuse white");
         assert!(out.white > 0.0);
+    }
+
+    /// Every sample counted exactly once, however the blocks fall.
+    ///
+    /// `counted` is odd, so `div_ceil` leaves a final block shorter than the rest on any machine
+    /// with more than one thread - which is the boundary a blocked split drops or double-counts a
+    /// sample at, and a frame whose count divided evenly would never show it.
+    #[test]
+    fn levels_count_every_sample_once_however_it_is_blocked() {
+        let pixels = 40_961usize;
+        let samples: Vec<u16> = (0..pixels)
+            .flat_map(|i| {
+                let level = (i.wrapping_mul(2_654_435_761) % 60_000) as u16;
+                [level, level / 2, level / 3]
+            })
+            .collect();
+
+        let counted = pixels.min(QUANTILE_SAMPLES);
+        let mut serial = vec![0u32; MAX + 1];
+        for k in 0..counted {
+            let i = sample_at(k, pixels, counted);
+            serial[samples[i].max(samples[i + 1]).max(samples[i + 2]) as usize] += 1;
+        }
+        assert_eq!(serial.iter().sum::<u32>(), counted as u32, "the reference counted every sample");
+
+        assert_eq!(levels(&samples, 0.995), scan(&serial, counted, 0.995));
     }
 
     #[test]
