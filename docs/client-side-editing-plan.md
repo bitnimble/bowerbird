@@ -126,10 +126,10 @@ something measured says the 582ms is the problem.
       `read_params` calling `file.as_vec()`, copying the whole 78MB mmap to decrypt a few kilobytes
       of it: **83 of its 89ms**. Now a borrow, and the tile is 104MB/6ms.
 
-- [ ] **Stop mapping the file with `MAP_POPULATE`.** `RawSource::new` prefaults, so opening a 72MB
-      RAW is 78MB resident before a sample is decoded - a floor under every figure above. Removing
-      it trades cold-cache sequential read for demand paging, which is a real fork rather than an
-      oversight, and in a tab there is no mmap at all.
+- [x] **`MAP_POPULATE` stays** - decided, not done. `RawSource::new` prefaults, so opening a 72MB
+      RAW is 78MB resident before a sample is decoded, a floor under every figure above. The floor
+      only matters in a tab, and in a tab there is no mmap at all, so removing it would trade
+      cold-cache sequential read for demand paging and buy nothing where the cost lands.
 - [x] **`condition` as a kernel** (`f81b69b`). The samples go up packed two to a `u32` - 120MB at
       61MP rather than the 241MB `f32` plane.
 
@@ -264,7 +264,7 @@ share one buffer this whole section buys correctness and nothing else.
       by partial selection - 48 passes over 96 laps, twice over, about 8.7 billion comparisons,
       every one indexing a private array dynamically and spilling to scratch. A bitonic network
       holds the same order statistic without the dynamic indexing.
-- [ ] ~~**sharpen, 2926ms**~~ - **skip it entirely.** A GPU sharpener is replacing it, so its
+- [x] ~~**sharpen, 2926ms**~~ - **exempted, not done.** A GPU sharpener is replacing it, so its
       parity, its performance and the round trip through system memory it currently forces are all
       about to stop existing. Do not design the residency around it: reading back before it and
       uploading after is fine in the meantime, because both go when it does.
