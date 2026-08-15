@@ -204,9 +204,19 @@ export function buildDenoiseChain(
   const tiles: [number, number] = [over(width, PASS12_TILE), over(height, PASS12_TILE)];
   const full: [number, number] = [over(width, 16), over(height, 16)];
 
+  // The luma the planes below `loess` currently hold, or null where nothing has run yet.
+  let shrunkAt: number | null = null;
+
   return {
     planes,
     record(encoder, amounts) {
+      // **A colour-only tick resumes at the regression.** `luma` is the only amount that enters
+      // before it - `ridge` and `blend` are the regression's own - and nothing from `loess` on
+      // writes a plane the passes before it read, so their output is still this frame's. Skipping
+      // them is what makes the colour slider interactive rather than a five-second wait.
+      const from = shrunkAt === amounts.luma ? 'loess' : 'split';
+      shrunkAt = amounts.luma;
+
       // One write per run, which is sound because `writeBuffer` lands before the command
       // buffer recorded alongside it: no two passes here want different values in a slot.
       const scalars = new ArrayBuffer(SLOTS * SLOT);
@@ -239,14 +249,16 @@ export function buildDenoiseChain(
         pass.dispatchWorkgroups(x, yGroups);
       };
 
-      run(pipelines.split, groups.split, 0, flat);
-      run(pipelines.gat, groups.gat, 1, flat);
-      run(pipelines.norm, groups.norm, 2, flat);
-      run(pipelines.lut, groups.lut, null, [16, 1]);
-      run(pipelines.lutFin, groups.lutFin, null, [1, 1]);
-      run(pipelines.shrink, groups.shrink, 3, tiles);
-      run(pipelines.denorm, groups.denorm, 4, flat);
-      run(pipelines.invert, groups.invert, 5, flat);
+      if (from === 'split') {
+        run(pipelines.split, groups.split, 0, flat);
+        run(pipelines.gat, groups.gat, 1, flat);
+        run(pipelines.norm, groups.norm, 2, flat);
+        run(pipelines.lut, groups.lut, null, [16, 1]);
+        run(pipelines.lutFin, groups.lutFin, null, [1, 1]);
+        run(pipelines.shrink, groups.shrink, 3, tiles);
+        run(pipelines.denorm, groups.denorm, 4, flat);
+        run(pipelines.invert, groups.invert, 5, flat);
+      }
       run(pipelines.loess, groups.loess, 6, full);
       // Two pixels an invocation, which is what makes the pack race-free.
       run(pipelines.join, groups.join, 7, pairs);
