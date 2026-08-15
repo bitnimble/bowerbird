@@ -482,7 +482,7 @@ const LANES: u32 = 64;
 ///
 /// Found by wiring the warp into a real render: the tests all ran on synthetic frames of a few
 /// hundred pixels a side, where a dispatch is hundreds of groups and this is invisible.
-fn groups(count: usize) -> (u32, u32) {
+pub(crate) fn groups(count: usize) -> (u32, u32) {
     let groups = (count as u32).div_ceil(LANES).max(1);
     let across = groups.min(32768);
     (across, groups.div_ceil(across))

@@ -57,6 +57,8 @@ pub mod base;
 pub mod camera_match;
 /// The monotonic clock the timed paths read, which `wasm32` has none of.
 pub mod clock;
+/// The sensor's samples into the mosaic, with the samples crossing to the GPU rather than it.
+pub mod condition;
 #[cfg(feature = "renditions")]
 pub mod debug;
 pub mod decode_rawler;
