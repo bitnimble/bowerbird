@@ -185,7 +185,8 @@ pub fn decode_tile(
     }
 
     let cfa = cfa_of(&image);
-    let mut mosaic = condition(&window, region_w, region_h, &image, cfa);
+    let gpu = crate::gpu::device();
+    let mut mosaic = condition(gpu, &window, region_w, region_h, &image, cfa);
 
     // **Tiled inside the region, once the region is worth tiling.** A loupe window is no longer the
     // size of the glass - it is grown by the reach of everything after the gather - so the region
@@ -195,7 +196,7 @@ pub fn decode_tile(
     // one tile and copy it twice, so that stays the single pass it has always been.
     let tiled = region_w > RENDER_TILE || region_h > RENDER_TILE;
 
-    let gpu = crate::gpu::device()?;
+    let gpu = gpu?;
     let noise = crate::galosh::device(gpu).and_then(|kernels| {
         if !amounts.does_anything() {
             return None;
@@ -381,10 +382,10 @@ fn decode_source(
         return None;
     }
 
-    let mut mosaic = condition(&samples[..width * height], width, height, &image, cfa);
+    let gpu = crate::gpu::device();
+    let mut mosaic = condition(gpu, &samples[..width * height], width, height, &image, cfa);
 
     lap("condition");
-    let gpu = crate::gpu::device();
     // **Tiled, and at the halo a loupe takes.** A render assembled from the same regions as the
     // magnifier that predicts it is the same arithmetic rather than two routes that ought to
     // agree, which is the argument `job::Base::build` already makes about handing a tile the
@@ -738,13 +739,41 @@ fn cfa_of(image: &rawler::RawImage) -> [u32; 4] {
 ///
 /// `samples` may be a region lifted out of the frame rather than the frame, in which case its origin
 /// has to sit on a whole CFA site or every colour in it is relabelled.
-fn condition(samples: &[u16], width: usize, height: usize, image: &rawler::RawImage, cfa: [u32; 4]) -> Vec<f32> {
+///
+/// On the GPU where there is one, which is where the halving is: the samples go up packed `u16`
+/// where the mosaic they become is `f32`, 120MB against 241MB at 61MP. Both routes read
+/// [`conditioned`] - the kernel through the table [`curve`] builds from it - so which one ran is a
+/// matter of speed and not of picture, and `the_kernel_conditions_exactly_as_the_cpu_does` is what
+/// says so. `condition.rs` says what it costs on a server, which is more than the CPU and nothing
+/// the open can measure.
+fn condition(
+    gpu: Option<&'static crate::gpu::Gpu>,
+    samples: &[u16],
+    width: usize,
+    height: usize,
+    image: &rawler::RawImage,
+    cfa: [u32; 4],
+) -> Vec<f32> {
     let levels = Levels {
         black: per_channel_black(image),
         white: saturation_of(image),
         gains: white_balance_gains(image),
     };
-    normalise(samples, width, height, cfa, &levels)
+    let (floor, range, gain) = coefficients(cfa, &levels);
+    let kernel = gpu.and_then(|gpu| {
+        let kernels = crate::condition::device(gpu)?;
+        let curve = curve(floor, range, gain);
+        crate::condition::normalise(gpu, kernels, samples, width, height, &curve)
+    });
+    match kernel {
+        Some(mosaic) => mosaic,
+        None => {
+            // Announced for the reason `demosaic::cpu` announces itself: a fall-through nothing
+            // says out loud is how a regression passes a whole fixture suite.
+            eprintln!("rawshim: no GPU for the conditioning, so this mosaic is built on the CPU");
+            normalise(samples, width, height, floor, range, gain)
+        }
+    }
 }
 
 /// What the file says about where the signal sits, read once for the frame.
@@ -756,36 +785,83 @@ struct Levels {
     gains: [f32; 4],
 }
 
-/// The arithmetic of `condition`, over levels already read.
+/// The three tables the arithmetic actually runs over, all of them by position in the 2x2.
+///
+/// **Black by position and the gain by colour, which is not an inconsistency:** black is a property
+/// of the photosite and the two greens have their own, while the white balance is a property of the
+/// colour and they share it. Resolving the gain onto a position here is what lets both spellings
+/// take the same three tables and lets the shader work without a CFA of its own.
+fn coefficients(cfa: [u32; 4], levels: &Levels) -> ([f32; 4], [f32; 4], [f32; 4]) {
+    let mut floor = [0f32; 4];
+    let mut range = [1f32; 4];
+    let mut gain = [1f32; 4];
+    for position in 0..4 {
+        floor[position] = levels.black[position];
+        range[position] = (levels.white - floor[position]).max(1.0);
+        gain[position] = levels.gains[cfa[position].min(3) as usize];
+    }
+    (floor, range, gain)
+}
+
+/// One sample conditioned, and the only place the arithmetic is written.
+///
+/// Clamped at zero because §2.2 of the specification requires it: a negative sample in the shadows
+/// can drive the low-pass sum the green stage divides by through zero, and the epsilon there does
+/// not save it.
+///
+/// And clamped at one, which §2.2 does not ask for because it does not white balance. Here it is
+/// what keeps a blown highlight neutral: the gains put a saturated red or blue above one while
+/// green lands on it exactly, so without this the three leave for the colour matrix unequal and the
+/// highlight comes out with a hue. It has to happen before the matrix - clamping afterwards, which
+/// is all `to_rec2020` can do, mixes the channels first and then clips one of them, which is a
+/// colour cast rather than white.
+#[inline]
+fn conditioned(
+    sample: u16,
+    position: usize,
+    floor: [f32; 4],
+    range: [f32; 4],
+    gain: [f32; 4],
+) -> f32 {
+    ((f32::from(sample) - floor[position]).max(0.0) / range[position] * gain[position]).min(1.0)
+}
+
+/// What [`conditioned`] answers for every level the sensor can report, at each of the four
+/// positions, which is the whole domain of the conditioning.
+///
+/// **The kernel reads this rather than evaluating the expression, and that is not an
+/// optimisation.** Vulkan requires only 2.5 ULP of `OpFDiv` and RADV takes it, lowering the divide
+/// to a reciprocal and a multiply - measured, the shader's own arithmetic disagreed with this in
+/// the last bit. Tabulating the domain leaves one spelling rather than two to hold together, and
+/// 262144 entries is a millisecond and a megabyte.
+fn curve(floor: [f32; 4], range: [f32; 4], gain: [f32; 4]) -> Vec<f32> {
+    // The kernel sizes its binding by its own constant and declines a curve that is not that
+    // length, which would be a silent return to the CPU rather than a failure.
+    const _: () = assert!(crate::condition::CURVE == 4 * (u16::MAX as usize + 1));
+    (0..4)
+        .flat_map(|position| {
+            (0..=u16::MAX).map(move |sample| conditioned(sample, position, floor, range, gain))
+        })
+        .collect()
+}
+
+/// The arithmetic of `condition` on the CPU, over coefficients already resolved.
 ///
 /// Split from the read so that a test can state four black levels and see what becomes of each,
 /// which is not something a `RawImage` can be talked into saying.
-fn normalise(samples: &[u16], width: usize, height: usize, cfa: [u32; 4], levels: &Levels) -> Vec<f32> {
-    let Levels { black, white, gains } = levels;
-    let (white, black, gains) = (*white, *black, *gains);
-
+fn normalise(
+    samples: &[u16],
+    width: usize,
+    height: usize,
+    floor: [f32; 4],
+    range: [f32; 4],
+    gain: [f32; 4],
+) -> Vec<f32> {
     let mut mosaic = vec![0f32; width * height];
     mosaic.par_chunks_mut(width).enumerate().for_each(|(row, out)| {
         let from = &samples[row * width..(row + 1) * width];
         for (col, (sample, slot)) in from.iter().zip(out).enumerate() {
-            // Black by position and the gain by colour, which is not an inconsistency: black is a
-            // property of the photosite and the two greens have their own, while the white balance
-            // is a property of the colour and they share it.
-            let position = (row & 1) * 2 + (col & 1);
-            let colour = cfa[position].min(3) as usize;
-            let floor = black[position];
-            let range = (white - floor).max(1.0);
-            // Clamped at zero because §2.2 of the specification requires it: a negative sample in
-            // the shadows can drive the low-pass sum the green stage divides by through zero, and
-            // the epsilon there does not save it.
-            //
-            // And clamped at one, which §2.2 does not ask for because it does not white balance.
-            // Here it is what keeps a blown highlight neutral: the gains put a saturated red or
-            // blue above one while green lands on it exactly, so without this the three leave for
-            // the colour matrix unequal and the highlight comes out with a hue. It has to happen
-            // before the matrix - clamping afterwards, which is all `to_rec2020` can do, mixes the
-            // channels first and then clips one of them, which is a colour cast rather than white.
-            *slot = ((f32::from(*sample) - floor).max(0.0) / range * gains[colour]).min(1.0);
+            *slot = conditioned(*sample, (row & 1) * 2 + (col & 1), floor, range, gain);
         }
     });
     mosaic
@@ -1057,13 +1133,77 @@ mod tests {
             .flat_map(|row: usize| (0..4).map(move |col: usize| levels.black[(row & 1) * 2 + (col & 1)] as u16))
             .collect();
 
-        let out = super::normalise(&samples, 4, 4, cfa, &levels);
+        let (floor, range, gain) = super::coefficients(cfa, &levels);
+        let out = super::normalise(&samples, 4, 4, floor, range, gain);
         for (at, value) in out.iter().enumerate() {
             let (row, col) = (at / 4, at % 4);
             assert!(
                 *value < 1e-6,
                 "the sample at {row},{col} kept {value} of the black level at position {}",
                 (row & 1) * 2 + (col & 1),
+            );
+        }
+    }
+
+    /// The kernel and the CPU produce the same mosaic, sample for sample, exactly.
+    ///
+    /// **Equality and not a bound**, since this frame is what every later stage and every rendition
+    /// is built from: a drift here moves every picture rather than showing up as one failing
+    /// assertion. `curve` is what makes equality reachable at all - the shader's own arithmetic was
+    /// off by a ULP, because Vulkan requires only 2.5 of them from `OpFDiv`.
+    ///
+    /// So what is left to get wrong is the packing, and the sizes are the shapes that break it
+    /// rather than a sample of ordinary ones. WGSL has no `u16`, so the samples travel two to a
+    /// word; **an odd width then leaves every second row starting in the high half of a word**,
+    /// which a kernel assuming a per-row stride shears subtly and a fixture suite of even-width
+    /// sensors never notices. The last size is over four million samples, which is 70k workgroups
+    /// against the 65535 a dispatch dimension allows - the one thing a small frame cannot say
+    /// anything about.
+    #[test]
+    fn the_kernel_conditions_exactly_as_the_cpu_does() {
+        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(kernels) = crate::condition::device(gpu) else { return };
+
+        // RGGB, so the two greens are one colour on two positions with two black levels, which is
+        // the distinction the tables exist to hold.
+        let cfa = [0u32, 1, 1, 2];
+        let levels = super::Levels {
+            black: [500.0, 528.0, 512.0, 516.0],
+            white: 16383.0,
+            gains: [2.394, 1.0, 1.597, 1.0],
+        };
+        let (floor, range, gain) = super::coefficients(cfa, &levels);
+        let curve = super::curve(floor, range, gain);
+
+        // Under every black level, on each of them, across the range and past the white level, so
+        // both clamps are exercised at every position; every fifth index, so they land on odd
+        // columns as well as even ones. The rest is a spread wide enough that a mispacked sample
+        // could not read its neighbour's level and agree by coincidence.
+        let corners = [0u16, 499, 500, 512, 516, 528, 529, 8191, 16382, 16383, 16384, 32767, 65535];
+        let sample = |at: usize| -> u16 {
+            match at % 5 {
+                0 => corners[at % corners.len()],
+                _ => ((at * 7919) % 20011) as u16,
+            }
+        };
+
+        for (width, height) in [(64usize, 48usize), (63, 47), (1, 1), (3, 2), (2049, 2201)] {
+            let samples: Vec<u16> = (0..width * height).map(sample).collect();
+            let theirs = super::normalise(&samples, width, height, floor, range, gain);
+            let mine =
+                crate::condition::normalise(gpu, kernels, &samples, width, height, &curve)
+                    .expect("the kernel runs");
+
+            let differs = mine
+                .iter()
+                .zip(&theirs)
+                .position(|(mine, theirs)| mine != theirs)
+                .map(|at| (at, mine[at], theirs[at]));
+            assert_eq!(
+                differs, None,
+                "at {width}x{height}, sample {:?} at position {:?}",
+                differs.map(|(at, _, _)| samples[at]),
+                differs.map(|(at, _, _)| ((at / width) & 1) * 2 + ((at % width) & 1)),
             );
         }
     }
