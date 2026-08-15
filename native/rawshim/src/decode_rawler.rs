@@ -115,9 +115,10 @@ fn upright_preview_of(source: &rawler::rawsource::RawSource) -> Option<Vec<u8>> 
 /// orientation is applied. That is what `cropbox` means on the LibRaw side, and a loupe asking both
 /// decoders for the same rectangle has to get the same picture.
 ///
-/// The saving is the point of the fork. `raw_image_region` decodes the tiles or subbands the region
-/// touches and leaves the rest of the frame alone, and everything after it here - conditioning, the
-/// denoise, the demosaic, the colour transform - runs over the region rather than the frame.
+/// The saving is the point of the fork. `raw_image_region_tight` decodes only the tiles or subbands
+/// the region touches and allocates only the rectangle it covered, and everything after it here -
+/// conditioning, the denoise, the demosaic, the colour transform - runs over the region rather than
+/// the frame.
 pub fn decode_tile(
     path: &str,
     tile: crate::Tile,
@@ -165,19 +166,21 @@ pub fn decode_tile(
         rawler::imgop::Dim2::new(right - left, bottom - top),
     );
 
-    let image = decoder.raw_image_region(&source, &params, region, false).ok()?;
+    let (image, decoded) = decoder
+        .raw_image_region_tight(&source, &params, region, false)
+        .ok()?;
     let rawler::RawImageData::Integer(samples) = &image.data else {
         return None;
     };
-    if samples.len() < frame_w * frame_h {
+    if samples.len() < image.width * image.height {
         return None;
     }
 
-    // The region's own mosaic, lifted out of the frame-sized buffer the region decode hands back.
+    // The region's own mosaic, lifted out of the tile-aligned rectangle the decode actually covered.
     let (region_w, region_h) = (right - left, bottom - top);
     let mut window = vec![0u16; region_w * region_h];
     for row in 0..region_h {
-        let from = (top + row) * frame_w + left;
+        let from = (top - decoded.p.y + row) * image.width + (left - decoded.p.x);
         window[row * region_w..(row + 1) * region_w].copy_from_slice(&samples[from..from + region_w]);
     }
 
@@ -356,16 +359,7 @@ fn decode_source(
     at_least_long_edge: u32,
     fit: crate::galosh::Fit,
 ) -> Option<Frame> {
-    // Stage timings, for the benchmark that compares this against LibRaw. Off unless asked, and
-    // the clock reads are per decode rather than per pixel, so leaving it in costs nothing.
-    let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
-    let mut mark = std::time::Instant::now();
-    let mut lap = |name: &str| {
-        if profile {
-            eprintln!("  decode {name}: {}ms", mark.elapsed().as_millis());
-        }
-        mark = std::time::Instant::now();
-    };
+    let mut lap = crate::clock::laps("  decode ");
 
     let source = &source;
     let decoder = rawler::get_decoder(source).ok()?;
@@ -390,7 +384,7 @@ fn decode_source(
     let mut mosaic = condition(&samples[..width * height], width, height, &image, cfa);
 
     lap("condition");
-    let gpu = crate::gpu::device()?;
+    let gpu = crate::gpu::device();
     // **Tiled, and at the halo a loupe takes.** A render assembled from the same regions as the
     // magnifier that predicts it is the same arithmetic rather than two routes that ought to
     // agree, which is the argument `job::Base::build` already makes about handing a tile the
@@ -400,7 +394,9 @@ fn decode_source(
     // same denoise - `open_bench` puts a measured fit against a given one at `worst 0e0`. The fit
     // has to be whole-frame either way, since Phase 0 reduces over everything it is shown and a
     // tile's own statistics are not the photograph's.
-    let noise = crate::galosh::device(gpu).and_then(|kernels| match fit {
+    let noise = gpu.and_then(crate::galosh::device).and_then(|kernels| {
+        let gpu = gpu?;
+        match fit {
         crate::galosh::Fit::Only => {
             Some(crate::galosh::fit(gpu, kernels, &mosaic, width, height))
         }
@@ -420,7 +416,7 @@ fn decode_source(
             );
             Some(fit)
         }
-    });
+    }});
 
     lap("denoise");
     let matrix = camera_to_rec2020(&image)?;
@@ -449,9 +445,16 @@ fn decode_source(
             (to_rec2020_from(&small, width / 2, crop, matrix), crop)
         }
         false => {
-            let rcd = crate::demosaic::device(gpu)?;
-            let pixels =
-                demosaic_in_tiles(gpu, rcd, &mosaic, width, height, cfa, crop, matrix)?;
+            let on_gpu = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)));
+            let pixels = match on_gpu {
+                Some((gpu, rcd)) => {
+                    demosaic_in_tiles(gpu, rcd, &mosaic, width, height, cfa, crop, matrix)?
+                }
+                None => {
+                    let rgb = crate::demosaic::cpu(&mosaic, width, height, cfa)?;
+                    to_rec2020_from(&rgb, width, crop, matrix)
+                }
+            };
             (pixels, crop)
         }
     };

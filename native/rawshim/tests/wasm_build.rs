@@ -49,10 +49,8 @@ fn the_laps_run_either_way() {
 /// closing one fails this test rather than being forgotten.
 #[test]
 fn the_wasm_modules_read_the_clock_through_the_shim() {
-    // `decode_rawler.rs`: the profiling laps in `decode_source`, which is the one production site
-    //   left. Swapping them for `clock::laps("  decode ")` is what closes this.
     // `image.rs`, `lib.rs`: `#[ignore]`d benchmarks in test modules, which no browser builds.
-    let known = ["decode_rawler.rs", "image.rs", "lib.rs"];
+    let known = ["image.rs", "lib.rs"];
 
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found: Vec<String> = Vec::new();
