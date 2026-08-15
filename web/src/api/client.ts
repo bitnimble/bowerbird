@@ -350,6 +350,16 @@ export function downloadUrl(photoId: string, form: 'original' | ViewerRendition)
 }
 
 /**
+ * The camera match this photograph was fitted with, for a client about to open the RAW itself.
+ *
+ * Bytes nothing on this side reads: they are handed to the open, which skips half a second of
+ * fitting for having them. 404 until something has fitted this photograph.
+ */
+export function cameraMatchUrl(photoId: string): string {
+  return assetUrl(`/image/${photoId}/camera-match`);
+}
+
+/**
  * The editor's open: the decoded, fitted and warped frame every tick then grades.
  *
  * Seconds of work and hundreds of megabytes back, asked for once per photo rather than per

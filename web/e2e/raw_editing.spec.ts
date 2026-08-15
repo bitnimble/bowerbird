@@ -279,11 +279,13 @@ test('stepping away from the editor and back does not reopen it', async ({ page 
  * pixels, because nothing about this is visible: the frame it costs is one nobody sees.
  */
 test('opening straight into the editor asks for no viewer frames', async ({ page }) => {
+  // The editor's own open, which is served from the same prefix as the frames this is about: the
+  // prepared frame where the server builds it, and the RAW and its match where the tab does.
+  const opening = ['/prepared', '/download/original', '/camera-match'];
   const asked: string[] = [];
   page.on('request', (request) => {
-    // Every frame but the editor's own, which is served from the same prefix.
     const path = new URL(request.url()).pathname;
-    if (path.startsWith('/image/') && !path.endsWith('/prepared')) asked.push(path);
+    if (path.startsWith('/image/') && !opening.some((part) => path.endsWith(part))) asked.push(path);
   });
 
   await open(page);

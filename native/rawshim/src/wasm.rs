@@ -1,6 +1,7 @@
-//! What a page calls: a WebGPU device it can share, and a decode of bytes it already holds.
+//! What a page calls: a WebGPU device it can share, a decode of bytes it already holds, and the
+//! whole open the editor needs in front of its first tick.
 //!
-//! Two exports, and they are independent - a browser with no WebGPU still decodes, on the CPU
+//! The exports are independent - a browser with no WebGPU still decodes, on the CPU
 //! demosaic `decode_rawler` falls through to (`gpu::device` says why the device is not offered
 //! to the decode).
 //!
@@ -64,6 +65,30 @@ pub async fn decode_raw(bytes: &[u8], at_least_long_edge: u32) -> Result<Decoded
     .await
     .map(|frame| Decoded { frame })
     .ok_or_else(|| JsValue::from_str("rawshim: no decoder read these bytes"))
+}
+
+/// Opens a RAW the page is holding for editing: the frame every tick then grades, and the numbers
+/// the grade needs and cannot re-derive from pixels.
+///
+/// `request` is [`crate::edit::EditRequest`] as JSON, without the file path - the bytes are here.
+/// What comes back is byte for byte what `/image/:id/prepared` serves ([`crate::edit::encode`]): a
+/// little-endian `u32` header length, that many bytes of JSON, then the samples as `u16`. One wire
+/// shape, so the page has one reader whichever host prepared the frame.
+///
+/// Rejects rather than framing a refusal, since a page that cannot open here has the server to ask.
+#[wasm_bindgen(js_name = prepareRaw)]
+pub async fn prepare_raw(bytes: &[u8], request: &str) -> Result<Vec<u8>, JsValue> {
+    // Opened here as `decode_raw` opens it, and for the same reason: the decode asks for the
+    // device rather than opening one, so without this the tab quietly takes the CPU's PPG.
+    if crate::gpu::page_device().await.is_none() {
+        crate::warn("rawshim: this browser offered no WebGPU adapter, so the open is on the CPU");
+    }
+    let request: crate::edit::EditRequest = serde_json::from_str(request)
+        .map_err(|e| JsValue::from_str(&format!("rawshim: this open request is malformed: {e}")))?;
+    let prepared = crate::edit::prepare_bytes_async(bytes, &request)
+        .await
+        .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
+    crate::edit::encode(&prepared).map_err(|e| JsValue::from_str(&e))
 }
 
 /// A decoded frame, left where it was decoded for JS to read without a copy.

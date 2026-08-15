@@ -1,6 +1,15 @@
 import { action } from 'mobx';
-import { ApiError, api, preparedPath, tilePath, type EditDoc, type EditState } from '../../api/client';
-import { send } from '../../api/transport';
+import {
+  ApiError,
+  api,
+  cameraMatchUrl,
+  downloadUrl,
+  preparedPath,
+  tilePath,
+  type EditDoc,
+  type EditState,
+} from '../../api/client';
+import { isTauri, send } from '../../api/transport';
 import { describe } from '../../errors';
 import {
   draggedCrop,
@@ -94,8 +103,8 @@ function framedIn(doc: EditDoc): CropRect {
 /**
  * Drives one RAW through the open-once, grade-per-tick loop.
  *
- * The open happens on the server, natively and on real threads (`edit::prepare`); what
- * crosses is the prepared frame, once. Every slider move after that is a uniform write and
+ * The open happens in this tab where it can (`fetchPrepared`) and on the server where it
+ * cannot; either way it happens once. Every slider move after that is a uniform write and
  * a dispatch chain over a buffer that never leaves the GPU, so there is no worker, no
  * `SharedArrayBuffer`, no rayon pool, no encode and no blob (`docs/raw-edit-gpu.md` §6).
  *
@@ -1247,28 +1256,96 @@ async function fetchTile(
   return new Blob([reply.bytes as BlobPart], { type: 'image/avif' });
 }
 
+/**
+ * The frame every tick grades: opened in this tab where it can be, and asked for where it cannot.
+ *
+ * Both arms answer with the same bytes - `edit::encode`'s framing - so what follows cannot tell
+ * which of them ran, and neither can the picture.
+ */
 async function fetchPrepared(
   photoId: string,
   longEdge: number,
 ): Promise<{ header: PreparedHeader; samples: Uint16Array<ArrayBuffer> }> {
-  const path = preparedPath(photoId, longEdge);
-  const reply = await send('get:prepared', 'GET', path);
+  return framed((await preparedHere(photoId, longEdge)) ?? (await preparedByTheServer(photoId, longEdge)));
+}
+
+/**
+ * The open this tab ran itself, or null where it could not and the server has to.
+ *
+ * Null is never quiet. A tab that falls back still shows a picture, and a picture is exactly what
+ * every check downstream of here is looking at - so a browser that stopped decoding for its own
+ * reason, or a wasm module that stopped loading, would look like this working.
+ */
+async function preparedHere(photoId: string, longEdge: number): Promise<Uint8Array | null> {
+  // The shell already opens in its own process, on real threads and off a file it has: downloading
+  // the RAW into the webview to open it single-threaded would be slower for the same picture.
+  if (isTauri()) return null;
+  try {
+    const { LocalDecoder } = await import('./local_open');
+    const [settings, raw, cameraMatch] = await Promise.all([
+      api.getSettings(),
+      downloadedRaw(photoId),
+      storedCameraMatch(photoId),
+    ]);
+    return await new LocalDecoder().prepare(raw, {
+      longEdge: Math.round(longEdge),
+      cameraMatch,
+      grade: {
+        peakNits: settings.hdr_peak_nits,
+        referenceWhiteNits: settings.hdr_reference_white_nits,
+        whiteQuantile: settings.hdr_white_quantile,
+      },
+      // No denoise, as the server's open sends none: the frame carries its noise and the tick
+      // takes it out, so the Detail sliders move without re-opening.
+      strengths: { sharpen: settings.raw_sharpen, defringe: settings.raw_defringe },
+    });
+  } catch (error) {
+    console.warn(`bowerbird: this tab could not open the RAW itself, so the server did: ${describe(error)}`);
+    return null;
+  }
+}
+
+async function preparedByTheServer(photoId: string, longEdge: number): Promise<Uint8Array> {
+  const reply = await send('get:prepared', 'GET', preparedPath(photoId, longEdge));
   if (reply.status < 200 || reply.status >= 300) {
     const detail = new TextDecoder().decode(reply.bytes).slice(0, 200);
     throw new Error(`could not open this RAW: ${reply.status} ${detail}`);
   }
+  return reply.bytes;
+}
 
-  const { buffer, byteOffset, byteLength } = reply.bytes;
+/**
+ * The match some earlier open or render fitted, where one has been kept.
+ *
+ * Half a second of the open that depends on nothing but the file. A 404 is the ordinary answer for
+ * a photograph nothing has fitted yet, and then the open fits its own.
+ */
+async function storedCameraMatch(photoId: string): Promise<number[] | undefined> {
+  const reply = await fetch(cameraMatchUrl(photoId));
+  if (!reply.ok) return undefined;
+  return Array.from(new Uint8Array(await reply.arrayBuffer()));
+}
+
+async function downloadedRaw(photoId: string): Promise<Uint8Array> {
+  const reply = await fetch(downloadUrl(photoId, 'original'));
+  if (!reply.ok) throw new Error(`the RAW could not be downloaded: ${reply.status}`);
+  return new Uint8Array(await reply.arrayBuffer());
+}
+
+/** `edit::encode`'s framing: a `u32` header length, that much JSON, then the samples as `u16`. */
+function framed(bytes: Uint8Array): {
+  header: PreparedHeader;
+  samples: Uint16Array<ArrayBuffer>;
+} {
+  const { buffer, byteOffset, byteLength } = bytes;
   if (byteLength < 4) throw new Error('the prepared frame arrived with no header');
   const described = new DataView(buffer, byteOffset, byteLength).getUint32(0, true);
   if (described + 4 > byteLength) throw new Error('the prepared frame arrived truncated');
 
   return {
-    header: JSON.parse(
-      new TextDecoder().decode(reply.bytes.subarray(4, 4 + described)),
-    ) as PreparedHeader,
+    header: JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + described))) as PreparedHeader,
     samples: new Uint16Array(
-      buffer,
+      buffer as ArrayBuffer,
       byteOffset + 4 + described,
       (byteLength - 4 - described) >> 1,
     ),

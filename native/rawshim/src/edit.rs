@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditRequest {
+    /// Empty from a browser, which asks with the bytes rather than with a path it cannot read.
+    #[serde(default)]
     pub raw_file_path: String,
     /// Longest edge the decode is fitted to, which is the size every tick then grades.
     pub long_edge: u32,
@@ -189,7 +191,7 @@ pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
     let _open = admit();
     let bytes = std::fs::read(&request.raw_file_path)
         .map_err(|e| format!("could not read {}: {e}", request.raw_file_path))?;
-    open(&bytes, request)
+    pollster::block_on(open(&bytes, request))
 }
 
 /// The same open, for a caller that already holds the file.
@@ -199,7 +201,21 @@ pub fn prepare(request: &EditRequest) -> Result<Prepared, String> {
 /// hundreds, so the smaller of the two is the one worth putting on a network.
 pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     let _open = admit();
-    open(bytes, request)
+    pollster::block_on(open(bytes, request))
+}
+
+/// The same open, awaited, which is the only spelling a browser can take.
+///
+/// The decode's readback cannot be blocked for in a tab ([`crate::decode_rawler::decode_bytes_async`]),
+/// and native drives this to completion without ever suspending - which is what lets the two
+/// blocking entry points above stay exactly as blocking as they were.
+///
+/// **No turn taken.** [`admit`]'s `Mutex` is held for the length of the open, which here means
+/// across the decode's suspensions - and std's single-threaded mutex aborts rather than queues on
+/// a second lock, so a page that opened a second photograph would take the module down with it.
+/// A tab opens one photograph at a time and has no other opens to be bounded against.
+pub async fn prepare_bytes_async(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
+    open(bytes, request).await
 }
 
 /// A turn to open something. One at a time, across every caller.
@@ -279,15 +295,22 @@ pub fn served() -> Vec<(u64, u64)> {
 }
 
 /// The open itself, with the turn already taken.
-fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
+async fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     {
         // The same switch and the same shape as `decode_rawler::decode_source`, so an open reads
         // as one run of laps rather than as a decode that reports and a half that does not.
         let mut lap = crate::clock::laps("  open ");
 
-        let frame =
-            crate::decode_frame_bytes(bytes, 16, true, request.long_edge, crate::galosh::Fit::Only)
-                .ok_or("the decoder could not read this file")?;
+        // `decode_frame_bytes` with 16-bit scene-linear Rec.2020 asked for, which is that
+        // function's identity arm - reached directly because only this spelling can be awaited.
+        let frame = crate::decode_rawler::decode_bytes_async(
+            bytes,
+            crate::galosh::Amounts::default(),
+            request.long_edge,
+            crate::galosh::Fit::Only,
+        )
+        .await
+        .ok_or("the decoder could not read this file")?;
         lap("decode");
         let noise_fit = frame.noise;
         let samples = frame.samples16().ok_or("the decode was not 16-bit")?;

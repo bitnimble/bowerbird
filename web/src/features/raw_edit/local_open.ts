@@ -3,7 +3,9 @@ import init, {
   type InitOutput,
   decodeRaw,
   openGpuDevice,
+  prepareRaw,
 } from '../../../../native/rawshim/pkg/rawshim';
+import type { EditRequest } from '../../../../src/services/processing/rawshim_edit';
 
 export type LocalFrame = {
   width: number;
@@ -11,6 +13,9 @@ export type LocalFrame = {
   halved: boolean;
   samples: Uint16Array;
 };
+
+/** An open of bytes the page is already holding, so the path the server opens by is not one. */
+export type LocalOpen = Omit<EditRequest, 'rawFilePath'>;
 
 /**
  * The decoder module, and the device it opened.
@@ -53,5 +58,15 @@ export class LocalDecoder {
     } finally {
       decoded?.free();
     }
+  }
+
+  /**
+   * The editor's open, framed exactly as `/image/:id/prepared` frames it.
+   *
+   * Handed back rather than parsed here, so one reader takes it apart whichever host prepared it.
+   */
+  async prepare(raw: Uint8Array, request: LocalOpen): Promise<Uint8Array> {
+    await this.ready();
+    return prepareRaw(raw, JSON.stringify(request));
   }
 }

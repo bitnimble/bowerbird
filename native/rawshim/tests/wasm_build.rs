@@ -125,7 +125,7 @@ fn the_page_imports_the_entry_points_this_declares() {
         .filter_map(|line| line.trim().strip_prefix("#[wasm_bindgen(js_name = "))
         .filter_map(|rest| rest.strip_suffix(")]"))
         .collect();
-    assert_eq!(exported, ["openGpuDevice", "decodeRaw"]);
+    assert_eq!(exported, ["openGpuDevice", "decodeRaw", "prepareRaw"]);
 }
 
 /// The CPU demosaic reconstructs the picture, which is what makes it a fall-through rather than
