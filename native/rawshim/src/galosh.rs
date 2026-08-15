@@ -614,6 +614,103 @@ pub fn denoise_with(
     run(gpu, galosh, mosaic, width, height, Work::Denoise { amounts, fit: Some(fit) })
 }
 
+/// The tile a progressive denoise is cut into, and what a caller with no reason to choose should
+/// pass as `denoise_in_tiles`' `tile`.
+///
+/// **A latency size that measurement put back where the throughput size already was.** Over the
+/// 61MP fixture at halo 64, best of three, with the median gap between two updates beside it:
+///
+/// | tile | tiles | total  | update | vs 1x |
+/// |------|-------|--------|--------|-------|
+/// | -    | 1     | 3920ms | -      | 1.00x |
+/// | 4096 | 6     | 4308ms | 717ms  | 1.10x |
+/// | 2048 | 20    | 4781ms | 236ms  | 1.22x |
+/// | 1024 | 70    | 6777ms | 97ms   | 1.73x |
+/// | 512  | 247   | 6833ms | 97ms   | 1.74x |
+///
+/// 4096 is six updates over four seconds, which reads as a frozen window rather than as progress.
+/// 1024 is where the halo's redundancy overtakes what it buys - 73% of the wall clock for an
+/// interval already below what a reader resolves - and 512 spends more again for nothing, its
+/// regions being small enough that the per-call floor shows. 2048 is the one useful row.
+///
+/// The premise the plan wrote this item from - that a frame is one long silence - stopped holding
+/// when the decode was tiled for memory at this same size. What was missing was the report.
+pub const PROGRESS_TILE: usize = 2048;
+
+/// The frame denoised tile by tile, reporting the fraction finished as each one lands.
+///
+/// **Sized for progress, not throughput.** Every tile is grown by `halo` on all four sides, so a
+/// smaller `tile` puts more area through the filter and takes longer overall; what it buys is
+/// somewhere to report from, because a frame denoised whole is seconds during which a caller can
+/// draw nothing. See `PROGRESS_TILE` for the trade, measured.
+///
+/// `done` is passed a fraction in (0, 1], once per tile, between two submits - nothing here is
+/// locked across it, so a consumer that takes its time delays the tile after it and nothing else.
+///
+/// Bit-identical to the same frame denoised whole, at every `tile` and every `halo`, which is what
+/// the origin alignment below buys.
+pub fn denoise_in_tiles(
+    gpu: &crate::gpu::Gpu,
+    galosh: &Galosh,
+    mosaic: &mut [f32],
+    width: usize,
+    height: usize,
+    amounts: Amounts,
+    fit: NoiseFit,
+    halo: usize,
+    tile: usize,
+    mut done: impl FnMut(f32),
+) {
+    // Split evenly rather than into whole tiles, so no strip is left a few pixels wide.
+    let spans = move |total: usize| {
+        let count = total.div_ceil(tile).max(1);
+        let step = total.div_ceil(count);
+        (0..count).map(move |at| (at * step, ((at + 1) * step).min(total)))
+    };
+    let tiles = spans(width).count() * spans(height).count();
+    // Read from a copy, written to the original: a tile's halo reaches into its neighbours, so
+    // filtering in place would denoise a halo-wide band twice everywhere but the first tile.
+    let source = mosaic.to_vec();
+    let mut finished = 0usize;
+    for (y0, y1) in spans(height) {
+        for (x0, x1) in spans(width) {
+            // **Aligned to `pass12`'s workgroup, not merely to a CFA site.** `pass12` shrinks
+            // within a shared tile measured from the region's origin, so an origin off that grid
+            // shrinks every pixel against a different neighbourhood: unaligned, 94% of a 61MP
+            // frame comes out different from the same frame denoised whole, by up to 1.6e-3,
+            // spread everywhere rather than banded at the seams and identical at halo 64 and at
+            // halo 512 - which is what says it is not reach. Costs the 55 pixels it can add to two
+            // sides of a region, about 5% more area at a 2048 tile.
+            //
+            // Doubled because the alignment must also be even: an odd origin relabels every colour
+            // in the region, and every phase pairs samples into 2x2 CFA sites.
+            let lattice = 2 * PASS12_TILE as usize;
+            let left = x0.saturating_sub(halo) / lattice * lattice;
+            let top = y0.saturating_sub(halo) / lattice * lattice;
+            let right = (x1 + halo).min(width);
+            let bottom = (y1 + halo).min(height);
+            let (right, bottom) = (right - ((right - left) & 1), bottom - ((bottom - top) & 1));
+            if right > left && bottom > top {
+                let (rw, rh) = (right - left, bottom - top);
+                let mut window = vec![0f32; rw * rh];
+                for row in 0..rh {
+                    let from = (top + row) * width + left;
+                    window[row * rw..(row + 1) * rw].copy_from_slice(&source[from..from + rw]);
+                }
+                denoise_with(gpu, galosh, &mut window, rw, rh, amounts, fit);
+                let (x1, y1) = (x1.min(right), y1.min(bottom));
+                for row in y0..y1 {
+                    let to = row * width + x0;
+                    let from = (row - top) * rw + (x0 - left);
+                    mosaic[to..to + (x1 - x0)].copy_from_slice(&window[from..from + (x1 - x0)]);
+                }
+            }
+            finished += 1;
+            done(finished as f32 / tiles as f32);
+        }
+    }
+}
+
 /// What the frame's statistics are, without filtering anything with them.
 ///
 /// The editor's open wants this and no denoise: its frame crosses to a client that denoises on its
@@ -1235,6 +1332,11 @@ mod tests {
         assert_eq!(Amounts::from_sliders(0.0, 0.0).does_anything(), false);
     }
 
+    /// `TABLES` and `TABLES_BUILT` outlive a call and the suite shares a process, so two tests
+    /// that denoise at once sum each other's tables - which is only visible as the count below
+    /// being one too many, on whichever of them the harness happened to run second.
+    static ONE_DENOISE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// A kept table is reused for its own (α, σ²), and summed again for any other.
     ///
     /// **Both ways of getting this wrong are silent.** One table serving two fits is a frame
@@ -1249,6 +1351,7 @@ mod tests {
     /// to differ.
     #[test]
     fn a_kept_table_belongs_to_the_fit_it_was_built_for() {
+        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
         let Some(gpu) = crate::gpu::device() else { return };
         let Some(kernels) = device(gpu) else { return };
 
@@ -1288,6 +1391,54 @@ mod tests {
 
         assert_eq!(first, again, "the kept table changed what the same fit produced");
         assert_ne!(first, between, "two different fits denoised to the same frame");
+    }
+
+    /// Tiling is a schedule and not a filter, and the progress it reports is a fraction.
+    ///
+    /// **The failure this exists for is silent and looks like a denoise.** A halo dropped, an
+    /// origin off `pass12`'s grid or at odd parity, a crop-back off by a row: nothing errors, no
+    /// dimension is wrong, and the picture is simply not the one an export would produce. Three
+    /// tile sizes, none a multiple of the 56 the origins round to, because a geometry bug commonly
+    /// survives the size it was written against.
+    ///
+    /// **1792 and not 512, though 512 would run in a third of the time.** Unaligned tiling leaves a
+    /// 512px frame bit-identical anyway, so a frame that size cannot tell the rounding from its
+    /// absence and this test would pass against the bug it exists for.
+    #[test]
+    fn tiling_the_denoise_does_not_move_a_sample() {
+        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let Some(gpu) = crate::gpu::device() else { return };
+        let Some(kernels) = device(gpu) else { return };
+
+        let (w, h) = (1792usize, 1792usize);
+        let mosaic = frame(w, h);
+        let amounts = Amounts::from_sliders(50.0, 50.0);
+        // The frame's own, handed to every tile: measured per tile it would be each tile's
+        // statistics, which is a different denoise before any halo is considered.
+        let fit = super::fit(gpu, kernels, &mosaic, w, h);
+        let mut whole = mosaic.clone();
+        super::denoise_with(gpu, kernels, &mut whole, w, h, amounts, fit);
+
+        for tile in [128usize, 192, 256] {
+            let mut tiled = mosaic.clone();
+            let mut ticks = Vec::new();
+            super::denoise_in_tiles(
+                gpu,
+                kernels,
+                &mut tiled,
+                w,
+                h,
+                amounts,
+                fit,
+                crate::RENDITION_TILE_HALO,
+                tile,
+                |done| ticks.push(done),
+            );
+            assert_eq!(tiled, whole, "a {tile}px tiling moved a sample");
+            assert!(ticks.len() > 1, "a {tile}px tiling reported {} tiles", ticks.len());
+            assert!(ticks.windows(2).all(|pair| pair[1] > pair[0]), "{ticks:?} went backwards");
+            assert_eq!(ticks.last(), Some(&1.0), "{tile}px did not report finished");
+        }
     }
 
     #[test]
