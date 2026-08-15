@@ -585,15 +585,13 @@ fn k16_binds<'a>(
 /// ponytail: the frame is denoised whole, which at 61MP is a little over a gigabyte of
 /// device buffers. Band it with an overlap if that ever fails to allocate - every phase but
 /// the noise fit and the IRLS is local with a bounded halo, so the bands are independent.
-pub fn denoise(
+pub async fn denoise(
     gpu: &crate::gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &mut [f32],
-    width: usize,
-    height: usize,
+    mosaic: &crate::condition::Mosaic,
     amounts: Amounts,
 ) -> NoiseFit {
-    run(gpu, galosh, mosaic, width, height, Work::Denoise { amounts, fit: None })
+    run(gpu, galosh, mosaic, Work::Denoise { amounts, fit: None }).await
 }
 
 /// The same, over a frame whose whole-frame statistics were measured somewhere else.
@@ -602,16 +600,14 @@ pub fn denoise(
 /// would use rather than at whatever its few hundred thousand photosites happen to imply. Skips
 /// the sixteen reduction dispatches that would have measured it, which is most of what a tile
 /// spends before it filters anything.
-pub fn denoise_with(
+pub async fn denoise_with(
     gpu: &crate::gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &mut [f32],
-    width: usize,
-    height: usize,
+    mosaic: &crate::condition::Mosaic,
     amounts: Amounts,
     fit: NoiseFit,
 ) -> NoiseFit {
-    run(gpu, galosh, mosaic, width, height, Work::Denoise { amounts, fit: Some(fit) })
+    run(gpu, galosh, mosaic, Work::Denoise { amounts, fit: Some(fit) }).await
 }
 
 /// The tile a progressive denoise is cut into, and what a caller with no reason to choose should
@@ -649,18 +645,17 @@ pub const PROGRESS_TILE: usize = 2048;
 ///
 /// Bit-identical to the same frame denoised whole, at every `tile` and every `halo`, which is what
 /// the origin alignment below buys.
-pub fn denoise_in_tiles(
-    gpu: &crate::gpu::Gpu,
+pub async fn denoise_in_tiles(
+    gpu: &'static crate::gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &mut [f32],
-    width: usize,
-    height: usize,
+    mosaic: &mut crate::condition::Mosaic,
     amounts: Amounts,
     fit: NoiseFit,
     halo: usize,
     tile: usize,
     mut done: impl FnMut(f32),
 ) {
+    let (width, height) = (mosaic.width, mosaic.height);
     // Split evenly rather than into whole tiles, so no strip is left a few pixels wide.
     let spans = move |total: usize| {
         let count = total.div_ceil(tile).max(1);
@@ -668,9 +663,17 @@ pub fn denoise_in_tiles(
         (0..count).map(move |at| (at * step, ((at + 1) * step).min(total)))
     };
     let tiles = spans(width).count() * spans(height).count();
-    // Read from a copy, written to the original: a tile's halo reaches into its neighbours, so
-    // filtering in place would denoise a halo-wide band twice everywhere but the first tile.
-    let source = mosaic.to_vec();
+    // Written to a second plane, read from the caller's: a tile's halo reaches into its neighbours,
+    // so filtering in place would denoise a halo-wide band twice everywhere but the first tile.
+    // Seeded from the caller's, so a region too small to filter is left as it arrived rather than
+    // left as zeroes.
+    let filtered = crate::condition::Mosaic::plane(gpu, width, height);
+    {
+        let bytes = (width * height * 4) as u64;
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&mosaic.buffer, 0, &filtered.buffer, 0, bytes);
+        gpu.queue.submit([encoder.finish()]);
+    }
     let mut finished = 0usize;
     for (y0, y1) in spans(height) {
         for (x0, x1) in spans(width) {
@@ -692,23 +695,17 @@ pub fn denoise_in_tiles(
             let (right, bottom) = (right - ((right - left) & 1), bottom - ((bottom - top) & 1));
             if right > left && bottom > top {
                 let (rw, rh) = (right - left, bottom - top);
-                let mut window = vec![0f32; rw * rh];
-                for row in 0..rh {
-                    let from = (top + row) * width + left;
-                    window[row * rw..(row + 1) * rw].copy_from_slice(&source[from..from + rw]);
-                }
-                denoise_with(gpu, galosh, &mut window, rw, rh, amounts, fit);
+                let window = mosaic.window(gpu, left, top, rw, rh);
+                denoise_with(gpu, galosh, &window, amounts, fit).await;
                 let (x1, y1) = (x1.min(right), y1.min(bottom));
-                for row in y0..y1 {
-                    let to = row * width + x0;
-                    let from = (row - top) * rw + (x0 - left);
-                    mosaic[to..to + (x1 - x0)].copy_from_slice(&window[from..from + (x1 - x0)]);
-                }
+                window.copy_rect(gpu, (x0 - left, y0 - top), &filtered, (x0, y0), (x1 - x0, y1 - y0));
+                window.buffer.destroy();
             }
             finished += 1;
             done(finished as f32 / tiles as f32);
         }
     }
+    *mosaic = filtered;
 }
 
 /// What the frame's statistics are, without filtering anything with them.
@@ -717,15 +714,14 @@ pub fn denoise_in_tiles(
 /// own (§10.9), but the loupe tiles it fetches afterwards are the server's and do want it. Running
 /// the fit alone costs the two whole-frame transforms the reductions read through, and none of the
 /// shrinkage, the chroma pyramid or the inverse.
-pub fn fit(
+pub async fn fit(
     gpu: &crate::gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &[f32],
-    width: usize,
-    height: usize,
+    mosaic: &crate::condition::Mosaic,
 ) -> NoiseFit {
-    let mut scratch = mosaic.to_vec();
-    run(gpu, galosh, &mut scratch, width, height, Work::FitOnly)
+    // Straight off the caller's frame: a fit stops before `k16_inverse_fused`, which is the only
+    // dispatch that writes what it was given, so there is nothing here to protect it from.
+    run(gpu, galosh, mosaic, Work::FitOnly).await
 }
 
 /// What a decode does about the noise: whose statistics it filters with, or whether it only
@@ -750,14 +746,13 @@ enum Work {
     Denoise { amounts: Amounts, fit: Option<NoiseFit> },
 }
 
-fn run(
+async fn run(
     gpu: &crate::gpu::Gpu,
     galosh: &Galosh,
-    mosaic: &mut [f32],
-    width: usize,
-    height: usize,
+    mosaic: &crate::condition::Mosaic,
     work: Work,
 ) -> NoiseFit {
+    let (width, height) = (mosaic.width, mosaic.height);
     let amounts = match work {
         Work::FitOnly => Amounts { luma: 0.0, colour: 0.0 },
         Work::Denoise { amounts, .. } => amounts,
@@ -768,7 +763,6 @@ fn run(
     };
     let fit_only = matches!(work, Work::FitOnly);
     assert!(width % 2 == 0 && height % 2 == 0, "the mosaic's dimensions pair into 2x2 sites");
-    assert_eq!(mosaic.len(), width * height, "one sample per photosite");
 
     // The same switch the decode and the open report through, because what this splits out is
     // the part of a call that does not scale with the region: a run over tiles pays it per tile,
@@ -794,25 +788,9 @@ fn run(
         })
     };
 
-    let raw = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("galosh raw"),
-        size: (npix * 4) as u64,
-        usage: storage | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    // A megabyte at a time, rather than one `Vec<u8>` of the whole frame: the intermediate
-    // would be 240MB at 61MP, held beside a decode that is already the largest thing in the
-    // process.
-    const CHUNK: usize = 1 << 18;
-    let mut bytes: Vec<u8> = Vec::with_capacity(CHUNK * 4);
-    for (at, block) in mosaic.chunks(CHUNK).enumerate() {
-        bytes.clear();
-        for sample in block {
-            bytes.extend_from_slice(&sample.to_ne_bytes());
-        }
-        gpu.queue.write_buffer(&raw, (at * CHUNK * 4) as u64, &bytes);
-    }
-    lap("upload");
+    // The caller's own frame, filtered where it lies. `k16_inverse_fused` is the only dispatch that
+    // writes it and a fit stops before that one.
+    let raw = mosaic.buffer.clone();
 
     // Two full-resolution scratch planes carry four roles between them, because a plane at
     // 61MP is 240MB. `full_a` is the GAT frame until the chroma has been taken out of it,
@@ -909,12 +887,6 @@ fn run(
     let scratch_half =
         trio("galosh K16 scratch", if padded_half { 0 } else { tail(kq_w * kq_h) });
 
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("galosh readback"),
-        size: (tail(npix).max(1) * 4) as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
     let fitted = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("galosh fitted model"),
         size: 32 * 4,
@@ -1180,10 +1152,14 @@ fn run(
         );
         run(&galosh.k16_inverse_fused, &g, k16_final, fx, fy);
     }
-    if !fit_only {
-        encoder.copy_buffer_to_buffer(&raw, 0, &readback, 0, (npix * 4) as u64);
+    // Only where nothing was supplied. Phase 0 and Phase 2 are the dispatches that write these
+    // slots, both are skipped when the caller brought a fit, and `irls_seed` - the one thing that
+    // does write `params` either way - writes only the IRLS bounds. So the block would come back
+    // holding the seed, which is a map and a wait per tile for a number already in hand.
+    let measure = supplied.is_none();
+    if measure {
+        encoder.copy_buffer_to_buffer(&params, 0, &fitted, 0, 32 * 4);
     }
-    encoder.copy_buffer_to_buffer(&params, 0, &fitted, 0, 32 * 4);
     // Taken on the way past, so keeping the table costs this run one 32KB copy onto a map it was
     // already going to wait for, rather than a submit of its own.
     let table_out = (build_the_table && !fit_only && supplied.is_some()).then(|| {
@@ -1205,52 +1181,40 @@ fn run(
     });
     lap("record");
     gpu.queue.submit([encoder.finish()]);
-
-    let model_slice = fitted.slice(..);
-    model_slice.map_async(wgpu::MapMode::Read, |_| {});
-    if !fit_only {
-        readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    }
-    if let Some((d, x, params)) = &table_out {
-        for buffer in [d, x, params] {
-            buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        }
-    }
-    device.poll(wgpu::PollType::wait_indefinitely()).expect("the denoise finished");
+    // Before anything below, so the lap that says "dispatch" is the dispatch. It is also what
+    // bounds a tiled run: nothing here is read back per tile any more, and without a wait the
+    // planes of every tile stay resident at once.
+    crate::gpu::finished(gpu).await.expect("the denoise finished");
     lap("dispatch");
+
     if let (Some((d, x, table_params)), Some(fit)) = (&table_out, supplied) {
-        let taken = |buffer: &wgpu::Buffer| {
-            let mapped = buffer.slice(..).get_mapped_range().expect("the table mapped");
-            let out = mapped.to_vec();
-            drop(mapped);
-            buffer.unmap();
-            out
-        };
         let (alpha, sigma_sq) = table_key(&fit);
+        let mut taken = Vec::new();
+        for buffer in [d, x, table_params] {
+            taken.push(
+                crate::gpu::read_back(device, buffer, <[u8]>::to_vec)
+                    .await
+                    .expect("the table mapped"),
+            );
+        }
+        let mut taken = taken.into_iter();
+        let table = Table {
+            alpha,
+            sigma_sq,
+            d: taken.next().expect("the d table"),
+            x: taken.next().expect("the x table"),
+            params: taken.next().expect("the table's params"),
+        };
         let mut tables = TABLES.lock().unwrap_or_else(|held| held.into_inner());
-        tables.insert(
-            0,
-            Table { alpha, sigma_sq, d: taken(d), x: taken(x), params: taken(table_params) },
-        );
+        tables.insert(0, table);
         tables.truncate(TABLES_KEPT);
         TABLES_BUILT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-    if !fit_only {
-        let slice = readback.slice(..);
-        let mapped = slice.get_mapped_range().expect("the readback mapped");
-        for (sample, word) in mosaic.iter_mut().zip(mapped.chunks_exact(4)) {
-            *sample = f32::from_ne_bytes([word[0], word[1], word[2], word[3]]);
-        }
-    }
-    lap("read back");
-    let measured = {
-        let mapped = model_slice.get_mapped_range().expect("the model mapped");
-        fit_of(&mapped)
+    let measured = match supplied {
+        Some(fit) => fit,
+        None => crate::gpu::read_back(device, &fitted, fit_of).await.expect("the model mapped"),
     };
-    if !fit_only {
-        readback.unmap();
-    }
-    fitted.unmap();
+    lap("read back");
     measured
 }
 
@@ -1361,9 +1325,9 @@ mod tests {
             .collect();
         let amounts = Amounts::from_sliders(50.0, 50.0);
         let denoised = |fit: super::NoiseFit| {
-            let mut out = mosaic.clone();
-            super::denoise_with(gpu, kernels, &mut out, w, h, amounts, fit);
-            out
+            let out = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+            pollster::block_on(super::denoise_with(gpu, kernels, &out, amounts, fit));
+            read(gpu, &out)
         };
         let built = || super::TABLES_BUILT.load(std::sync::atomic::Ordering::Relaxed);
 
@@ -1415,26 +1379,26 @@ mod tests {
         let amounts = Amounts::from_sliders(50.0, 50.0);
         // The frame's own, handed to every tile: measured per tile it would be each tile's
         // statistics, which is a different denoise before any halo is considered.
-        let fit = super::fit(gpu, kernels, &mosaic, w, h);
-        let mut whole = mosaic.clone();
-        super::denoise_with(gpu, kernels, &mut whole, w, h, amounts, fit);
+        let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+        let fit = pollster::block_on(super::fit(gpu, kernels, &uploaded));
+        let whole = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+        pollster::block_on(super::denoise_with(gpu, kernels, &whole, amounts, fit));
+        let whole = read(gpu, &whole);
 
         for tile in [128usize, 192, 256] {
-            let mut tiled = mosaic.clone();
+            let mut tiled = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
             let mut ticks = Vec::new();
-            super::denoise_in_tiles(
+            pollster::block_on(super::denoise_in_tiles(
                 gpu,
                 kernels,
                 &mut tiled,
-                w,
-                h,
                 amounts,
                 fit,
                 crate::RENDITION_TILE_HALO,
                 tile,
                 |done| ticks.push(done),
-            );
-            assert_eq!(tiled, whole, "a {tile}px tiling moved a sample");
+            ));
+            assert_eq!(read(gpu, &tiled), whole, "a {tile}px tiling moved a sample");
             assert!(ticks.len() > 1, "a {tile}px tiling reported {} tiles", ticks.len());
             assert!(ticks.windows(2).all(|pair| pair[1] > pair[0]), "{ticks:?} went backwards");
             assert_eq!(ticks.last(), Some(&1.0), "{tile}px did not report finished");
@@ -1452,6 +1416,11 @@ mod tests {
         // Ramped rather than stepped, so two frames either side of it are not two different
         // photographs.
         assert!(at(0.0045 * 0.0045) < at(0.006 * 0.006));
+    }
+
+    /// The mosaic back on the host, which is where these tests compare frames.
+    fn read(gpu: &crate::gpu::Gpu, mosaic: &crate::condition::Mosaic) -> Vec<f32> {
+        pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back")
     }
 
     /// A synthetic frame: four flat CFA levels with Gaussian noise on top, and one hard
@@ -1503,15 +1472,9 @@ mod tests {
 
         let (width, height) = (256, 192);
         let noisy = frame(width, height);
-        let mut denoised = noisy.clone();
-        denoise(
-            gpu,
-            galosh,
-            &mut denoised,
-            width,
-            height,
-            Amounts { luma: 1.0, colour: 1.0 },
-        );
+        let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        pollster::block_on(denoise(gpu, galosh, &uploaded, Amounts { luma: 1.0, colour: 1.0 }));
+        let denoised = read(gpu, &uploaded);
 
         assert!(
             denoised.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)),

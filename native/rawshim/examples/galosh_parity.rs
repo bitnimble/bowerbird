@@ -85,9 +85,10 @@ fn main() {
         let gpu = rawshim::gpu::device().expect("an adapter");
         let galosh = rawshim::galosh::device(gpu).expect("the kernels built");
         for (width, height) in [(1024, 768), (2048, 1536), (4096, 3072), (6000, 4000)] {
-            let mut samples = frame(width, height);
+            let samples = frame(width, height);
+            let samples = rawshim::condition::Mosaic::upload(gpu, &samples, width, height);
             let started = std::time::Instant::now();
-            denoise(gpu, galosh, &mut samples, width, height, Amounts { luma: 0.5, colour: 1.0 });
+            pollster::block_on(denoise(gpu, galosh, &samples, Amounts { luma: 0.5, colour: 1.0 }));
             println!(
                 "{width}x{height} ({:.1}MP): {:?}",
                 (width * height) as f64 / 1e6,
@@ -128,10 +129,11 @@ fn main() {
 
         let gpu = rawshim::gpu::device().expect("an adapter");
         let galosh = rawshim::galosh::device(gpu).expect("the kernels built");
-        let mut ours = noisy.clone();
+        let uploaded = rawshim::condition::Mosaic::upload(gpu, &noisy, width, height);
         let started = std::time::Instant::now();
-        denoise(gpu, galosh, &mut ours, width, height, amounts);
+        pollster::block_on(denoise(gpu, galosh, &uploaded, amounts));
         let took = started.elapsed();
+        let ours = pollster::block_on(uploaded.read(gpu)).expect("the mosaic reads back");
 
         println!(
             "luma {:.2} colour {:.2}: {:.1} dB against the reference, {:?} on the GPU \

@@ -12,7 +12,7 @@ fn main() {
     for side in [256usize, 512, 768, 1024, 1536, 2048, 3072] {
         // A mosaic of plausible level with a little noise on it, which is all the timing needs.
         let mut state = 12345u64;
-        let mut mosaic: Vec<f32> = (0..side * side)
+        let mosaic: Vec<f32> = (0..side * side)
             .map(|_| {
                 state ^= state << 13;
                 state ^= state >> 7;
@@ -20,9 +20,10 @@ fn main() {
                 0.25 + ((state >> 40) as f32 / 16777216.0 - 0.5) * 0.02
             })
             .collect();
+        let mosaic = rawshim::condition::Mosaic::upload(gpu, &mosaic, side, side);
 
         let started = std::time::Instant::now();
-        rawshim::galosh::denoise(gpu, galosh, &mut mosaic, side, side, amounts);
+        pollster::block_on(rawshim::galosh::denoise(gpu, galosh, &mosaic, amounts));
         let first = started.elapsed();
 
         // Again, with the pipelines and the allocator warm - which is the state a loupe would
@@ -30,7 +31,7 @@ fn main() {
         let mut best = std::time::Duration::from_secs(9999);
         for _ in 0..3 {
             let round = std::time::Instant::now();
-            rawshim::galosh::denoise(gpu, galosh, &mut mosaic, side, side, amounts);
+            pollster::block_on(rawshim::galosh::denoise(gpu, galosh, &mosaic, amounts));
             best = best.min(round.elapsed());
         }
 

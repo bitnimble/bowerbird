@@ -204,19 +204,21 @@ fn mosaic_stages(width: usize, height: usize) {
     let mosaic = synthesise(width, height);
     let cfa = [0u32, 1, 1, 2];
 
+    // Uploaded once and reused, which is what the chain does now: the stages hand each other a
+    // device buffer, so a timing that included the upload would be timing something no decode does.
+    let uploaded = upload(gpu, &mosaic, width, height);
+
     if let Some(kernels) = rawshim::galosh::device(gpu) {
         let amounts = Amounts::from_sliders(50.0, 50.0);
-        let fit = rawshim::galosh::fit(gpu, kernels, &mosaic, width, height);
+        let fit = block(rawshim::galosh::fit(gpu, kernels, &uploaded));
         repeat("galosh fit only (the open's)", || {
-            rawshim::galosh::fit(gpu, kernels, &mosaic, width, height);
+            block(rawshim::galosh::fit(gpu, kernels, &uploaded));
         });
-        let mut whole = mosaic.clone();
+        let whole = upload(gpu, &mosaic, width, height);
         repeat("galosh denoise, 50/50, given a fit", || {
-            whole.copy_from_slice(&mosaic);
-            rawshim::galosh::denoise_with(
-                gpu, kernels, &mut whole, width, height, amounts, fit,
-            );
+            block(rawshim::galosh::denoise_with(gpu, kernels, &whole, amounts, fit));
         });
+        let whole = read(gpu, &whole);
 
         // The halo is the denoise's own rather than the demosaic's: the chroma pyramid goes to a
         // quarter of what it is handed and the joint upsample reads a neighbourhood coming back.
@@ -228,17 +230,15 @@ fn mosaic_stages(width: usize, height: usize) {
         // slider re-runs tiles or one rectangle.
         for side in [64usize, 128, 256, 512, 1024, 2048, 4096] {
             let region = centred(width, height, side, side, halo);
-            let mut window = cut(&mosaic, width, region);
+            let window = uploaded.window(gpu, region.left, region.top, region.w, region.h);
             repeat(&format!("galosh over one {}x{} region", region.w, region.h), || {
-                rawshim::galosh::denoise_with(
-                    gpu, kernels, &mut window, region.w, region.h, amounts, fit,
-                );
+                block(rawshim::galosh::denoise_with(gpu, kernels, &window, amounts, fit));
             });
             // The fit skips the inverse-GAT table and the whole tail behind it, so the gap
             // between the two at one region size is what a call pays for the part of itself that
             // does not depend on how large the region is.
             repeat(&format!("  fit alone over {}x{}", region.w, region.h), || {
-                rawshim::galosh::fit(gpu, kernels, &window, region.w, region.h);
+                block(rawshim::galosh::fit(gpu, kernels, &window));
             });
         }
 
@@ -246,30 +246,27 @@ fn mosaic_stages(width: usize, height: usize) {
         // slider would actually take: one region the size of a stage, at the middle of the frame.
         let (vw, vh) = (2560.min(width), 1707.min(height));
         let region = centred(width, height, vw, vh, halo);
-        let mut window = cut(&mosaic, width, region);
+        let window = uploaded.window(gpu, region.left, region.top, region.w, region.h);
         repeat(&format!("galosh over one {vw}x{vh} stage"), || {
-            rawshim::galosh::denoise_with(
-                gpu, kernels, &mut window, region.w, region.h, amounts, fit,
-            );
+            block(rawshim::galosh::denoise_with(gpu, kernels, &window, amounts, fit));
         });
 
         // **Is being handed a fit the same as measuring one?** The loupe assumes it: a tile is
         // given the frame's fit so that it predicts the export, which measures its own. If the two
         // are not the same denoise then every tile disagrees with the render it exists to
         // preview, everywhere and not only at a seam.
-        let mut measured = mosaic.clone();
-        rawshim::galosh::denoise(gpu, kernels, &mut measured, width, height, amounts);
-        let mut given = mosaic.clone();
-        rawshim::galosh::denoise_with(gpu, kernels, &mut given, width, height, amounts, fit);
-        let worst = measured
+        let measured = upload(gpu, &mosaic, width, height);
+        block(rawshim::galosh::denoise(gpu, kernels, &measured, amounts));
+        let given = upload(gpu, &mosaic, width, height);
+        block(rawshim::galosh::denoise_with(gpu, kernels, &given, amounts, fit));
+        let worst = read(gpu, &measured)
             .iter()
-            .zip(&given)
+            .zip(&read(gpu, &given))
             .map(|(a, b)| (a - b).abs())
             .fold(0f32, f32::max);
         println!("  {:<34} worst {worst:e}", "a measured fit vs a given one");
-        drop((measured, given));
 
-        kernel_by_kernel(gpu, kernels, &mosaic, width, height, amounts, fit);
+        kernel_by_kernel(gpu, kernels, &uploaded, amounts, fit);
 
         // What tiling costs, against the halo and against the tile size, which are two separate
         // taxes and not one: the halo grows every region, and a tile size that does not divide the
@@ -290,10 +287,10 @@ fn mosaic_stages(width: usize, height: usize) {
                 let done = area as f64 / 1e6;
                 let taken = time(|| {
                     for_each_tile(width, height, side, halo, |region| {
-                        let mut window = cut(&mosaic, width, region);
-                        rawshim::galosh::denoise_with(
-                            gpu, kernels, &mut window, region.w, region.h, amounts, fit,
-                        );
+                        let window =
+                            uploaded.window(gpu, region.left, region.top, region.w, region.h);
+                        block(rawshim::galosh::denoise_with(gpu, kernels, &window, amounts, fit));
+                        window.buffer.destroy();
                     });
                 });
                 println!(
@@ -309,10 +306,10 @@ fn mosaic_stages(width: usize, height: usize) {
         // The exact one, since what this asserts is that a tiled denoise can be bit-identical to
         // the frame denoised whole - which is the reason a rendition takes 64.
         for_each_tile(width, height, 1024, rawshim::RENDITION_TILE_HALO, |region| {
-            let mut window = cut(&mosaic, width, region);
-            rawshim::galosh::denoise_with(
-                gpu, kernels, &mut window, region.w, region.h, amounts, fit,
-            );
+            let cut = uploaded.window(gpu, region.left, region.top, region.w, region.h);
+            block(rawshim::galosh::denoise_with(gpu, kernels, &cut, amounts, fit));
+            let window = read(gpu, &cut);
+            cut.buffer.destroy();
             for row in region.y0..region.y1 {
                 for col in region.x0..region.x1 {
                     let mine = window[(row - region.top) * region.w + (col - region.left)];
@@ -327,13 +324,30 @@ fn mosaic_stages(width: usize, height: usize) {
     let Some(rcd) = rawshim::demosaic::device(gpu) else { return };
     let mut whole: Vec<f32> = Vec::new();
     repeat("rcd whole frame", || {
-        whole = rawshim::demosaic::demosaic_with(gpu, rcd, &mosaic, width, height, cfa, floats)
+        whole = block(rawshim::demosaic::demosaic_with(gpu, rcd, &uploaded, cfa, floats))
             .expect("the whole frame demosaics");
     });
 
     for side in [512usize, 1024, 2048] {
-        tiled(gpu, rcd, &mosaic, width, height, cfa, side, &whole);
+        tiled(gpu, rcd, &uploaded, width, height, cfa, side, &whole);
     }
+}
+
+fn block<T>(work: impl std::future::Future<Output = T>) -> T {
+    pollster::block_on(work)
+}
+
+fn upload(
+    gpu: &'static rawshim::gpu::Gpu,
+    values: &[f32],
+    width: usize,
+    height: usize,
+) -> rawshim::condition::Mosaic {
+    rawshim::condition::Mosaic::upload(gpu, values, width, height)
+}
+
+fn read(gpu: &rawshim::gpu::Gpu, mosaic: &rawshim::condition::Mosaic) -> Vec<f32> {
+    block(mosaic.read(gpu)).expect("the mosaic reads back")
 }
 
 /// What each dispatch in the chain costs, by running the chain truncated at every length.
@@ -345,19 +359,16 @@ fn mosaic_stages(width: usize, height: usize) {
 fn kernel_by_kernel(
     gpu: &'static rawshim::gpu::Gpu,
     kernels: &'static rawshim::galosh::Galosh,
-    mosaic: &[f32],
-    width: usize,
-    height: usize,
+    mosaic: &rawshim::condition::Mosaic,
     amounts: Amounts,
     fit: rawshim::galosh::NoiseFit,
 ) {
     println!("  each dispatch, over the whole frame:");
-    let mut window = mosaic.to_vec();
     let mut previous = 0u128;
     for count in 0..=24 {
         rawshim::galosh::stop_after(count);
         let began = std::time::Instant::now();
-        rawshim::galosh::denoise_with(gpu, kernels, &mut window, width, height, amounts, fit);
+        block(rawshim::galosh::denoise_with(gpu, kernels, mosaic, amounts, fit));
         let taken = began.elapsed().as_millis();
         if count > 0 {
             println!("    dispatch {count:>2}   +{:>5}ms   (running {taken}ms)", taken.saturating_sub(previous));
@@ -383,7 +394,7 @@ fn floats(bytes: &[u8]) -> Vec<f32> {
 fn tiled(
     gpu: &'static rawshim::gpu::Gpu,
     rcd: &'static rawshim::demosaic::Rcd,
-    mosaic: &[f32],
+    mosaic: &rawshim::condition::Mosaic,
     width: usize,
     height: usize,
     cfa: [u32; 4],
@@ -392,12 +403,14 @@ fn tiled(
 ) {
     let across = width.div_ceil(side);
     let down = height.div_ceil(side);
+    let cut = |region: Region| mosaic.window(gpu, region.left, region.top, region.w, region.h);
 
     repeat(&format!("rcd in {across}x{down} tiles of {side}"), || {
         for_each_tile(width, height, side, rawshim::demosaic::MARGIN as usize, |region| {
-            let window = cut(mosaic, width, region);
-            rawshim::demosaic::demosaic_with(gpu, rcd, &window, region.w, region.h, cfa, |_| ())
+            let window = cut(region);
+            block(rawshim::demosaic::demosaic_with(gpu, rcd, &window, cfa, |_| ()))
                 .expect("the tile demosaics");
+            window.buffer.destroy();
         });
     });
 
@@ -405,10 +418,10 @@ fn tiled(
     let mut worst = 0f32;
     let mut compared = 0usize;
     for_each_tile(width, height, side, rawshim::demosaic::MARGIN as usize, |region| {
-        let window = cut(mosaic, width, region);
-        let out =
-            rawshim::demosaic::demosaic_with(gpu, rcd, &window, region.w, region.h, cfa, floats)
-                .expect("the tile demosaics");
+        let window = cut(region);
+        let out = block(rawshim::demosaic::demosaic_with(gpu, rcd, &window, cfa, floats))
+            .expect("the tile demosaics");
+        window.buffer.destroy();
         for row in region.y0..region.y1 {
             for col in region.x0..region.x1 {
                 for channel in 0..3 {
@@ -482,16 +495,6 @@ fn centred(width: usize, height: usize, want_w: usize, want_h: usize, halo: usiz
     let left = ((width - w) / 2) & !1;
     let top = ((height - h) / 2) & !1;
     Region { left, top, w, h, x0: left, y0: top, x1: left + w, y1: top + h }
-}
-
-fn cut(mosaic: &[f32], width: usize, region: Region) -> Vec<f32> {
-    let mut window = vec![0f32; region.w * region.h];
-    for row in 0..region.h {
-        let from = (region.top + row) * width + region.left;
-        window[row * region.w..(row + 1) * region.w]
-            .copy_from_slice(&mosaic[from..from + region.w]);
-    }
-    window
 }
 
 /// A mosaic with the statistics of a photograph and none of its content.

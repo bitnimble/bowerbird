@@ -85,10 +85,19 @@ fn main() {
             }
         }
 
+        let uploaded = rawshim::condition::Mosaic::upload(gpu, &mosaic, w, h);
         let started = std::time::Instant::now();
-        let Some(out) = rawshim::demosaic::demosaic_with(gpu, rcd, &mosaic, w, h, cfa, |rgb| {
-            rgb.chunks_exact(4).map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]])).collect::<Vec<f32>>()
-        }) else {
+        let Some(out) = pollster::block_on(rawshim::demosaic::demosaic_with(
+            gpu,
+            rcd,
+            &uploaded,
+            cfa,
+            |rgb| {
+                rgb.chunks_exact(4)
+                    .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect::<Vec<f32>>()
+            },
+        )) else {
             eprintln!("{path}: demosaic declined");
             continue;
         };

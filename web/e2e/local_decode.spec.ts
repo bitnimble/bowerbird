@@ -31,6 +31,17 @@ test.beforeAll(async ({ browser }) => {
 test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) => {
   await page.goto(`/photos/${photoId}`);
 
+  // **A decode that fell through to the CPU produces a picture too**, so the shape assertions below
+  // cannot tell RCD from the PPG it replaced. Each fall-through announces itself on the console
+  // (`rawshim::warn`), and their absence is the only evidence from here that the tab ran the
+  // kernels rather than the reconstruction they exist to beat.
+  const declined: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().startsWith('rawshim: no ')) {
+      declined.push(message.text());
+    }
+  });
+
   const decoded = await page.evaluate(async (id) => {
     const { LocalDecoder } = await import('/src/features/raw_edit/local_open.ts');
     const raw = new Uint8Array(
@@ -59,6 +70,7 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
   // buffer looks like.
   expect(decoded.mean).toBeGreaterThan(200);
   expect(decoded.mean).toBeLessThan(60000);
+  expect(declined).toEqual([]);
 });
 
 test('reports whether it opened a device, rather than throwing when it cannot', async ({ page }) => {

@@ -43,11 +43,27 @@ extern "C" {
 ///
 /// `at_least_long_edge` is a floor rather than a size ([`crate::decode_frame_bytes`]): a frame
 /// with at least twice it to spare is halved, and 0 asks for the sensor's own.
+///
+/// **A promise because the frame stays on the GPU.** The conditioning, GALOSH and RCD all run here
+/// on the device [`open_gpu_device`] opened, and the one readback at the end of that chain cannot
+/// be blocked for in a tab ([`crate::gpu::read_back`]). Opened here as well as there, so a page
+/// that only decodes still gets RCD rather than the CPU's PPG.
 #[wasm_bindgen(js_name = decodeRaw)]
-pub fn decode_raw(bytes: &[u8], at_least_long_edge: u32) -> Result<Decoded, JsValue> {
-    crate::decode_frame_bytes(bytes, 16, true, at_least_long_edge, crate::galosh::Fit::Only)
-        .map(|frame| Decoded { frame })
-        .ok_or_else(|| JsValue::from_str("rawshim: no decoder read these bytes"))
+pub async fn decode_raw(bytes: &[u8], at_least_long_edge: u32) -> Result<Decoded, JsValue> {
+    if crate::gpu::page_device().await.is_none() {
+        // Not fatal: the decode falls through to the CPU conditioning and PPG, which is a worse
+        // reconstruction and announces itself rather than being quietly taken.
+        crate::warn("rawshim: this browser offered no WebGPU adapter, so the decode is on the CPU");
+    }
+    crate::decode_rawler::decode_bytes_async(
+        bytes,
+        crate::galosh::Amounts::default(),
+        at_least_long_edge,
+        crate::galosh::Fit::Only,
+    )
+    .await
+    .map(|frame| Decoded { frame })
+    .ok_or_else(|| JsValue::from_str("rawshim: no decoder read these bytes"))
 }
 
 /// A decoded frame, left where it was decoded for JS to read without a copy.

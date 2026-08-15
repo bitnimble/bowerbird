@@ -250,17 +250,15 @@ pub fn device() -> Option<&'static Gpu> {
     GPU.get_or_init(Gpu::new).as_ref()
 }
 
-/// Always None in a browser, which is what keeps the decode there on the CPU.
+/// The device [`page_device`] opened, or None before anything has opened one.
 ///
-/// There is a device on that target - [`page_device`] opens one - and it is deliberately not
-/// returned here. Every GPU stage a decode reaches ends by mapping a readback buffer behind a
-/// blocking `Device::poll`, and wgpu's WebGPU backend answers a poll with `QueueEmpty` without
-/// waiting for anything: `get_mapped_range` then asks a buffer whose `mapAsync` has not resolved,
-/// and the browser throws where a native run would have blocked. Handing the device over would
-/// take a tab's first frame down instead of leaving it on the CPU fall-through that works.
+/// The decode's entry point opens it and then asks, so a browser reaches the same RCD and GALOSH a
+/// server does. What made that impossible was the readback, not the device: every stage used to end
+/// on a blocking `Device::poll`, which this backend answers with `QueueEmpty` without waiting for
+/// anything. They go through [`read_back`] now.
 #[cfg(target_arch = "wasm32")]
 pub fn device() -> Option<&'static Gpu> {
-    None
+    PAGE.with(std::cell::Cell::get)
 }
 
 /// The device this crate opens for the page, on the first call and once.
@@ -308,6 +306,100 @@ pub async fn page_device() -> Option<&'static Gpu> {
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     static PAGE: std::cell::Cell<Option<&'static Gpu>> = const { std::cell::Cell::new(None) };
+}
+
+/// One buffer's contents, on the host, and the buffer unmapped again.
+///
+/// **The one seam that has to be awaited, because a browser cannot block for a map.** wgpu's WebGPU
+/// backend answers `Device::poll` with `QueueEmpty` without waiting for anything, so the blocking
+/// spelling hands `get_mapped_range` a buffer whose `mapAsync` has not resolved and the tab throws.
+/// Native still blocks inside the poll and this future never suspends there, which is what lets the
+/// native entry points stay `pollster::block_on` around the same work they always did.
+pub async fn read_back<T>(
+    device: &wgpu::Device,
+    buffer: &wgpu::Buffer,
+    take: impl FnOnce(&[u8]) -> T,
+) -> Option<T> {
+    mapped(device, buffer).await?;
+    let out = take(&buffer.slice(..).get_mapped_range().ok()?);
+    buffer.unmap();
+    Some(out)
+}
+
+/// Everything submitted so far, finished, and what it held reclaimed.
+///
+/// **A stage that reads nothing back still has to end somewhere.** wgpu frees a destroyed buffer on
+/// a poll rather than on a drop, so a tiled run that only submits leaves every tile's working planes
+/// resident until something waits - a gigabyte a tile at the sizes GALOSH allocates. This is that
+/// wait, spelt as what it is rather than as a readback of a value already in hand.
+pub async fn finished(gpu: &Gpu) -> Option<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        Some(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let (state, signal) = Signal::pair();
+        gpu.queue.on_submitted_work_done(move || signal(true));
+        let _ = gpu.device.poll(wgpu::PollType::Poll);
+        state.await.then_some(())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn mapped(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Option<()> {
+    buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+    Some(())
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn mapped(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Option<()> {
+    let (state, signal) = Signal::pair();
+    buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| signal(result.is_ok()));
+    // The queue still has to be told to make progress; here that returns at once and the browser
+    // resolves the callback from its own event loop, which is what the await below yields to.
+    let _ = device.poll(wgpu::PollType::Poll);
+    state.await.then_some(())
+}
+
+/// A wgpu callback turned into something a future can wait on.
+///
+/// `Arc<Mutex<_>>` rather than the `Rc<RefCell<_>>` a single-threaded target would want, because
+/// `Queue::on_submitted_work_done` asks for `Send` and there is one page's worth of contention on
+/// it either way.
+#[cfg(target_arch = "wasm32")]
+struct Signal {
+    answer: Option<bool>,
+    waker: Option<std::task::Waker>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Signal {
+    fn pair() -> (impl std::future::Future<Output = bool>, impl FnOnce(bool) + Send + 'static) {
+        let state =
+            std::sync::Arc::new(std::sync::Mutex::new(Signal { answer: None, waker: None }));
+        let wrote = state.clone();
+        let signal = move |answer: bool| {
+            let mut wrote = wrote.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            wrote.answer = Some(answer);
+            if let Some(waker) = wrote.waker.take() {
+                waker.wake();
+            }
+        };
+        let waited = std::future::poll_fn(move |context| {
+            let mut state = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match state.answer {
+                Some(answer) => std::task::Poll::Ready(answer),
+                None => {
+                    state.waker = Some(context.waker().clone());
+                    std::task::Poll::Pending
+                }
+            }
+        });
+        (waited, signal)
+    }
 }
 
 impl Gpu {

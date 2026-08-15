@@ -187,12 +187,19 @@ fn the_cpu_demosaic_reconstructs_what_rcd_does() {
         eprintln!("no RCD pipelines: the CPU demosaic was not held against RCD");
         return;
     };
-    let gpu_rgb = rawshim::demosaic::demosaic_with(gpu, rcd, &mosaic, w, h, cfa, |bytes| {
-        bytes
-            .chunks_exact(4)
-            .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
-            .collect::<Vec<f32>>()
-    })
+    let uploaded = rawshim::condition::Mosaic::upload(gpu, &mosaic, w, h);
+    let gpu_rgb = pollster::block_on(rawshim::demosaic::demosaic_with(
+        gpu,
+        rcd,
+        &uploaded,
+        cfa,
+        |bytes| {
+            bytes
+                .chunks_exact(4)
+                .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
+                .collect::<Vec<f32>>()
+        },
+    ))
     .expect("the demosaic runs");
 
     let mut apart = 0f32;
