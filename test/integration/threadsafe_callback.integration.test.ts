@@ -4,8 +4,8 @@
 // always on the main thread and mid-run, and always reported against whichever test happened
 // to be executing rather than the one that armed it.
 //
-// Nothing here reads as wrong, which is why it stood for as long as it did. The native side
-// parks its result under a job id and the caller polls - see `rawshim_edit.ts`.
+// Nothing here reads as wrong, which is why it stood for as long as it did. The boundary that
+// armed one is gone - the editor's open is the tab's own now - and nothing may arm another.
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
@@ -39,6 +39,6 @@ describe('a callback into this runtime', () => {
       }
     }
 
-    expect(armed, 'park the result and poll for it, as `rawshim_edit.ts` does').toEqual([]);
+    expect(armed, 'park the result and poll for it rather than calling back').toEqual([]);
   });
 });

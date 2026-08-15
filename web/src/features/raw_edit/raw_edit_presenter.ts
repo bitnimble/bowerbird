@@ -1224,17 +1224,6 @@ export class RawEditPresenter {
 }
 
 /**
- * The prepared frame, header and all, over whichever transport is running.
- *
- * A `u32` length, that much JSON, then the samples - one framing for both transports, and
- * in the body rather than in an `X-Prepared` response header because a matched frame's
- * description is 32KB and a reverse proxy answers 502 rather than forward a header that
- * size.
- *
- * A view over those bytes rather than a copy of them. Both transports pad the JSON to four
- * for exactly this reason, so at 61MP the open holds one 361MB array rather than three.
- */
-/**
  * One loupe tile, as a blob the browser can decode.
  *
  * Over the same transport everything else uses, so the desktop shell's IPC answers it too - the
@@ -1257,55 +1246,49 @@ async function fetchTile(
 }
 
 /**
- * The frame every tick grades: opened in this tab where it can be, and asked for where it cannot.
+ * The frame every tick grades: opened in this tab, or by the shell where the tab is one.
  *
  * Both arms answer with the same bytes - `edit::encode`'s framing - so what follows cannot tell
  * which of them ran, and neither can the picture.
+ *
+ * There is no third arm. A browser that cannot run the module has no editor, deliberately: the
+ * server's `/prepared` is gone, and a fall-back that produced a picture anyway is exactly how a
+ * tab that had quietly stopped decoding went unnoticed.
  */
 async function fetchPrepared(
   photoId: string,
   longEdge: number,
 ): Promise<{ header: PreparedHeader; samples: Uint16Array<ArrayBuffer> }> {
-  return framed((await preparedHere(photoId, longEdge)) ?? (await preparedByTheServer(photoId, longEdge)));
-}
-
-/**
- * The open this tab ran itself, or null where it could not and the server has to.
- *
- * Null is never quiet. A tab that falls back still shows a picture, and a picture is exactly what
- * every check downstream of here is looking at - so a browser that stopped decoding for its own
- * reason, or a wasm module that stopped loading, would look like this working.
- */
-async function preparedHere(photoId: string, longEdge: number): Promise<Uint8Array | null> {
   // The shell already opens in its own process, on real threads and off a file it has: downloading
   // the RAW into the webview to open it single-threaded would be slower for the same picture.
-  if (isTauri()) return null;
-  try {
-    const { LocalDecoder } = await import('./local_open');
-    const [settings, raw, cameraMatch] = await Promise.all([
-      api.getSettings(),
-      downloadedRaw(photoId),
-      storedCameraMatch(photoId),
-    ]);
-    return await new LocalDecoder().prepare(raw, {
-      longEdge: Math.round(longEdge),
-      cameraMatch,
-      grade: {
-        peakNits: settings.hdr_peak_nits,
-        referenceWhiteNits: settings.hdr_reference_white_nits,
-        whiteQuantile: settings.hdr_white_quantile,
-      },
-      // No denoise, as the server's open sends none: the frame carries its noise and the tick
-      // takes it out, so the Detail sliders move without re-opening.
-      strengths: { sharpen: settings.raw_sharpen, defringe: settings.raw_defringe },
-    });
-  } catch (error) {
-    console.warn(`bowerbird: this tab could not open the RAW itself, so the server did: ${describe(error)}`);
-    return null;
-  }
+  const bytes = isTauri()
+    ? await preparedByTheShell(photoId, longEdge)
+    : await preparedHere(photoId, longEdge);
+  return framed(bytes);
 }
 
-async function preparedByTheServer(photoId: string, longEdge: number): Promise<Uint8Array> {
+async function preparedHere(photoId: string, longEdge: number): Promise<Uint8Array> {
+  const { LocalDecoder } = await import('./local_open');
+  const [settings, raw, cameraMatch] = await Promise.all([
+    api.getSettings(),
+    downloadedRaw(photoId),
+    storedCameraMatch(photoId),
+  ]);
+  return new LocalDecoder().prepare(raw, {
+    longEdge: Math.round(longEdge),
+    cameraMatch,
+    grade: {
+      peakNits: settings.hdr_peak_nits,
+      referenceWhiteNits: settings.hdr_reference_white_nits,
+      whiteQuantile: settings.hdr_white_quantile,
+    },
+    // No denoise, as the shell's open sends none: the frame carries its noise and the tick takes
+    // it out, so the Detail sliders move without re-opening.
+    strengths: { sharpen: settings.raw_sharpen, defringe: settings.raw_defringe },
+  });
+}
+
+async function preparedByTheShell(photoId: string, longEdge: number): Promise<Uint8Array> {
   const reply = await send('get:prepared', 'GET', preparedPath(photoId, longEdge));
   if (reply.status < 200 || reply.status >= 300) {
     const detail = new TextDecoder().decode(reply.bytes).slice(0, 200);
@@ -1328,7 +1311,13 @@ async function storedCameraMatch(photoId: string): Promise<number[] | undefined>
 
 async function downloadedRaw(photoId: string): Promise<Uint8Array> {
   const reply = await fetch(downloadUrl(photoId, 'original'));
-  if (!reply.ok) throw new Error(`the RAW could not be downloaded: ${reply.status}`);
+  if (!reply.ok) {
+    // Named and quoted, as the shell's arm reports its own: this is the first request an open
+    // makes, so it is where a photograph that is not there is found out, and "404" alone leaves
+    // a reader with nothing to act on.
+    const detail = (await reply.text()).slice(0, 200);
+    throw new Error(`could not open ${photoId}: ${reply.status} ${detail}`);
+  }
   return new Uint8Array(await reply.arrayBuffer());
 }
 

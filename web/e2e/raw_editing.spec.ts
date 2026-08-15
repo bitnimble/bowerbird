@@ -280,8 +280,8 @@ test('stepping away from the editor and back does not reopen it', async ({ page 
  */
 test('opening straight into the editor asks for no viewer frames', async ({ page }) => {
   // The editor's own open, which is served from the same prefix as the frames this is about: the
-  // prepared frame where the server builds it, and the RAW and its match where the tab does.
-  const opening = ['/prepared', '/download/original', '/camera-match'];
+  // RAW the tab decodes and the match it opens with.
+  const opening = ['/download/original', '/camera-match'];
   const asked: string[] = [];
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname;

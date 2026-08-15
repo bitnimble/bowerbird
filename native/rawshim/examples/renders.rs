@@ -58,7 +58,7 @@ fn rendition(path: &str, detail: f64, _sigma_scale: f32) -> (Vec<u8>, usize, usi
 
 /// The editor path: prepared undenoised, denoised on the prepared frame, then graded.
 ///
-/// The measurement is `crate::noise`'s, exactly as `edit::prepare` attaches it, because the tick
+/// The measurement is `crate::noise`'s, exactly as `edit::prepare_bytes` attaches it, because the tick
 /// is handed a sigma rather than measuring one.
 fn editor(path: &str, detail: f64, sigma_scale: f32) -> (Vec<u8>, usize, usize) {
     let frame = rawshim::decode_frame(path, 16, true, 0).expect("decode");
@@ -92,7 +92,7 @@ fn editor(path: &str, detail: f64, sigma_scale: f32) -> (Vec<u8>, usize, usize) 
     }
     filter(&mut prepared, Strengths { sharpen: strengths().sharpen, ..Default::default() });
 
-    // Handed a sigma rather than measuring one, which is what `edit::prepare` attaches.
+    // Handed a sigma rather than measuring one, which is what `edit::prepare_bytes` attaches.
     //
     // `--sigma-scale` multiplies it, which is how the two paths were calibrated against each
     // other: the slider is a fraction *of this*, so what a position means depends entirely on

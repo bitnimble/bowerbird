@@ -15,7 +15,7 @@ default = ["renditions"]
 # The server's half: building renditions, which is what wants lensfun and libavif.
 #
 # Off, the crate is Rust alone and links no C, which is everything the editor's open needs -
-# `edit::prepare` reads the lens spline the camera recorded in the RAW itself
+# `edit::prepare_bytes` reads the lens spline the camera recorded in the RAW itself
 # (`lens::read_distortion`) rather than lensfun's database, and the display transform is
 # the client's GPU rather than an AVIF encoder. That is what lets the desktop and mobile
 # shells ship without a native library to resolve at all, and lensfun in particular is the

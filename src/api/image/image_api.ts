@@ -6,8 +6,7 @@ import type { Library } from '../../schemas/libraries';
 import { getDataPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
-import { headerOf, prepareEditAsync } from '../../services/processing/rawshim_edit';
-import { readCameraMatch, writeCameraMatch } from '../../services/processing/camera_match_store';
+import { readCameraMatch } from '../../services/processing/camera_match_store';
 import { transcodeJpeg, type JobLevels, type NoiseFit } from '../../services/processing/rawshim_job';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
@@ -42,26 +41,6 @@ type TileRenderer = (
 const JPEG_QUALITY = 92;
 
 const log = new Logger('image');
-
-// What the editor asks for when the client names nothing: the sensor, whatever it is.
-//
-// It used to be 3840 with a 6144 ceiling, because a tick cost what the frame cost and a
-// 61MP grade at sixty frames a second was not on offer. It no longer does - the draw runs
-// once per canvas pixel, so opening the whole sensor buys 1:1 detail and costs nothing per
-// tick (`docs/raw-edit-gpu.md` §6) - and holding the cap would just mean a reader who
-// zooms in sees a frame the decode threw away.
-//
-// A number the client names is still honoured, since it knows what its stage can hold; the
-// decode never enlarges, so asking for more than the sensor has is the sensor.
-const DEFAULT_EDIT_EDGE = 0;
-
-// A ceiling on what a client may ask for. Well past any sensor - a 61MP body's long edge is
-// 9504 - because the decode never enlarges, so every value between here and there already
-// meant "the sensor" and still does. What this changes is only the absurd end: `long_edge`
-// crosses as a `u32`, and serde refuses one that will not fit rather than truncating it, so
-// `longEdge=5000000000` used to spawn a thread, fail to parse the request inside it, and come
-// back a 500. The same answer, arrived at before any of that, and as the 400 it always was.
-const MAX_EDIT_EDGE = 100_000;
 
 // What a loupe tile's sides may be. The floor is the mosaic denoise's own: below 64 the chroma
 // pyramid has no quarter-resolution level to build. The ceiling is what keeps a tile a tile -
@@ -179,11 +158,6 @@ export class ImageApi {
     // camera's JPEG, and either rendered rendition. One route because the menu
     // offering them is one list and only the bytes differ.
     app.get('/:photoId/download/:form', (c) => this.serveDownload(c));
-    // The editor's open. Everything before the first slider tick happens here, on real
-    // threads, and what goes over is the frame every tick then grades on the GPU
-    // (`docs/raw-edit-gpu.md` §6, §10.2b). The desktop shell runs the same call in
-    // process; this is the browser's transport for it.
-    app.get('/:photoId/prepared', (c) => this.servePrepared(c));
     // One tile of the photograph at rendition quality, which is what the loupe magnifies.
     app.get('/:photoId/tile', (c) => this.serveTile(c));
     // The camera match this photograph was fitted with, for a client that is going to open the
@@ -217,8 +191,9 @@ export class ImageApi {
       throw new AppError('VALIDATION_ERROR', 'a tile is left, top, width and height in pixels');
     }
     const [left, top, width, height] = asked.map(Math.round) as [number, number, number, number];
-    // Bounded here rather than several layers down, for the reason `servePrepared` gives: a
-    // size the native side will refuse still crosses the FFI and unpacks a RAW first.
+    // Bounded here rather than several layers down: a size the native side will refuse still
+    // crosses the FFI and unpacks a RAW first, and comes back a 500 for what the caller
+    // plainly got wrong.
     if (width < MIN_TILE || height < MIN_TILE || width > MAX_TILE || height > MAX_TILE) {
       throw new AppError(
         'VALIDATION_ERROR',
@@ -260,77 +235,6 @@ export class ImageApi {
         'Content-Type': 'image/avif',
         // The client caches these itself, keyed on the same values this is a function of, so
         // there is nothing for a shared cache to get wrong or to hold.
-        'Cache-Control': 'no-store',
-        ...TIMING_ALLOW_ORIGIN,
-      },
-    });
-  }
-
-  // Seconds of work and hundreds of megabytes back, so it is a GET a client makes once per
-  // photo rather than per tick. `longEdge` is the client's, not the library's: the stage
-  // decides how many pixels are worth grading (§4.1), and the rendition default is a size
-  // chosen for a file kept forever.
-  private async servePrepared(c: Context): Promise<Response> {
-    const photoId = c.req.param('photoId');
-    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
-    const { photo, library } = this.photos.locate(photoId);
-
-    const requested = Number(c.req.query('longEdge') ?? DEFAULT_EDIT_EDGE);
-    // Bounded at both ends, and answered here rather than several layers down: a number the
-    // native side will refuse still crosses the FFI and starts a thread first, and comes back
-    // as a 500 for what the reader plainly got wrong.
-    if (!Number.isFinite(requested) || requested < 0 || requested > MAX_EDIT_EDGE) {
-      throw new AppError(
-        'VALIDATION_ERROR',
-        `longEdge must be between 0 and ${MAX_EDIT_EDGE}: ${requested}`,
-      );
-    }
-    const longEdge = Math.round(requested);
-
-    // Before the open rather than after it. `locate` answers from the catalogue, which knows
-    // nothing about the disk, so a file that has been moved or unplugged reaches the decoder as a
-    // path that is not there - and comes back as a 500 quoting the server's own absolute
-    // path, where every sibling route here answers 404. The reader's own library is not a
-    // server error, and where it lives is not theirs to be told.
-    const original = getOriginalPath(library, photo.file_path);
-    if (!(await Bun.file(original).exists())) {
-      throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
-    }
-
-    const settings = this.settings.get();
-    // Awaited, not called: the open is seconds of decoding, and every other request this
-    // server answers comes off the same thread. It runs on one the native side owns and
-    // reports back through a callback (`rawshim_edit.ts`), so a reader opening the editor no
-    // longer stops the grid loading for anybody, themselves included.
-    const dataPath = getDataPath(library);
-    const prepared = await prepareEditAsync({
-      rawFilePath: original,
-      // Half a second of the open, kept from whatever fitted it first (`camera_match_store`).
-      cameraMatch: readCameraMatch(dataPath, photoId),
-      longEdge,
-      grade: {
-        peakNits: settings.hdr_peak_nits,
-        referenceWhiteNits: settings.hdr_reference_white_nits,
-        whiteQuantile: settings.hdr_white_quantile,
-      },
-      // No denoise: the frame the editor is handed carries its noise, and the client
-      // removes it in its own tick so the Detail sliders can move without a re-open.
-      strengths: {
-        sharpen: settings.raw_sharpen,
-        defringe: settings.raw_defringe,
-      },
-    });
-
-    // Kept if this open had to fit it, which is half a second off every later open, render and
-    // loupe tile of this photograph. Reading the header back costs one JSON parse of a few
-    // kilobytes in front of a frame that is hundreds of megabytes.
-    const fitted = headerOf(prepared).cameraMatch;
-    if (fitted != null) writeCameraMatch(dataPath, photoId, Uint8Array.from(fitted));
-
-    return new Response(prepared, {
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'Content-Disposition': 'inline',
         'Cache-Control': 'no-store',
         ...TIMING_ALLOW_ORIGIN,
       },

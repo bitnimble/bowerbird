@@ -1856,9 +1856,8 @@ mod hdr_grade {
 mod one_open_at_a_time {
     use super::*;
 
-    fn request(path: &PathBuf) -> crate::edit::EditRequest {
+    fn request() -> crate::edit::EditRequest {
         crate::edit::EditRequest {
-            raw_file_path: path.to_str().unwrap().to_string(),
             // Small, so this costs a second rather than ten. What is being measured is
             // whether two of them overlap, which does not depend on how big each one is.
             long_edge: 1200,
@@ -1873,7 +1872,8 @@ mod one_open_at_a_time {
     }
 
     fn open(path: &PathBuf) {
-        crate::edit::prepare(&request(path)).expect("the fixture opens");
+        let bytes = std::fs::read(path).expect("the fixture reads");
+        crate::edit::prepare_bytes(&bytes, &request()).expect("the fixture opens");
     }
 
     /// **Asked as overlap, not as duration.** This compared how long the two opens took and
@@ -1925,7 +1925,8 @@ mod one_open_at_a_time {
     /// would leave every loupe tile quietly fitting its own with nothing to say so.
     #[test]
     fn an_open_hands_over_the_frame_it_measured() {
-        let prepared = crate::edit::prepare(&request(&sony())).expect("the fixture opens");
+        let bytes = std::fs::read(sony()).expect("the fixture reads");
+        let prepared = crate::edit::prepare_bytes(&bytes, &request()).expect("the fixture opens");
         let fit = prepared.header.noise_fit.expect("the open measured the mosaic");
         assert!(fit.usable(), "the open sent a fit a tile would refuse: {fit:?}");
     }

@@ -5,7 +5,7 @@ import init, {
   openGpuDevice,
   prepareRaw,
 } from '../../../../native/rawshim/pkg/rawshim';
-import type { EditRequest } from '../../../../src/services/processing/rawshim_edit';
+import type { JobGrade } from '../../../../src/services/processing/rawshim_job';
 
 export type LocalFrame = {
   width: number;
@@ -14,8 +14,24 @@ export type LocalFrame = {
   samples: Uint16Array;
 };
 
-/** An open of bytes the page is already holding, so the path the server opens by is not one. */
-export type LocalOpen = Omit<EditRequest, 'rawFilePath'>;
+/** `crate::edit::EditRequest`, which the module takes as JSON. */
+export type LocalOpen = {
+  /** Longest edge the decode is fitted to, which is the size every tick then grades. */
+  longEdge: number;
+  /**
+   * This photograph's camera match, where one has been kept.
+   *
+   * Half a second of the open, and it depends on nothing but the file - so an open that has been
+   * through this before skips the fit entirely.
+   *
+   * Bytes as numbers because this whole struct crosses as JSON: a `Uint8Array` here stringifies to
+   * an object of numeric keys, which the far side rejects as a malformed request.
+   */
+  cameraMatch?: number[];
+  grade: JobGrade;
+  /** No denoise: it runs in the tick, so a frame prepared here carries its noise deliberately. */
+  strengths: { sharpen: number; defringe: number };
+};
 
 /**
  * The decoder module, and the device it opened.

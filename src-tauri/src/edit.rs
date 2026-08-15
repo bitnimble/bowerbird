@@ -5,9 +5,12 @@
 //! compressed, where the frame it decodes to is 361. Sending the smaller of the two and
 //! doing the work locally is the whole point of there being a desktop build.
 //!
-//! It answers as `GET /image/:id/prepared` would have - a status, and a body of the frame's
-//! own JSON followed by its samples - because that is the contract the page already reads,
-//! and the browser still gets its copy the other way.
+//! It answers a status and a body of the frame's own JSON followed by its samples, which is the
+//! framing the page reads either way: in a browser the tab opens the RAW itself through the wasm
+//! module, and `rawshim::edit::encode` writes both.
+//!
+//! **This is the shell's only decoder.** The library's HTTP `/prepared` route went when the tab
+//! stopped needing it; nothing on the server prepares a frame any more.
 
 use std::collections::HashMap;
 
@@ -36,13 +39,14 @@ pub async fn prepared(path: &str) -> Result<Vec<u8>, String> {
     let settings = crate::api::get("/api/settings").await?;
     let settings: serde_json::Value =
         serde_json::from_slice(&settings).map_err(|e| format!("bad settings: {e}"))?;
+    // A 404 is the ordinary answer for a photograph nothing has fitted yet, and then the open
+    // fits its own - half a second that depends on nothing but the file.
+    let camera_match = crate::api::get(&format!("/image/{photo_id}/camera-match")).await.ok();
     let raw = crate::api::get(&format!("/image/{photo_id}/download/original")).await?;
 
     let request = rawshim::edit::EditRequest {
-        // Not read: `prepare_bytes` has the file already. Named for the error messages the
-        // path-taking form produces, which nothing here can produce.
-        raw_file_path: String::new(),
         long_edge,
+        camera_match,
         grade: rawshim::hdr::Grade {
             peak_nits: number(&settings, "hdr_peak_nits")?,
             reference_white_nits: number(&settings, "hdr_reference_white_nits")?,
@@ -62,9 +66,9 @@ pub async fn prepared(path: &str) -> Result<Vec<u8>, String> {
     .await
     .map_err(|e| format!("the open panicked: {e}"))??;
 
-    // The same `encode` the HTTP route's frame comes out of, rather than a second copy of
-    // the framing here: the page has one reader for both transports, and two writers of a
-    // padded length prefix is how they drift apart.
+    // The same `encode` the tab's own open comes out of, rather than a second copy of the
+    // framing here: the page has one reader for both hosts, and two writers of a padded length
+    // prefix is how they drift apart.
     let bytes = rawshim::edit::encode(&prepared)?;
     Ok(crate::api::reply(200, HashMap::new(), &bytes))
 }

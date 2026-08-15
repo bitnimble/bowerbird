@@ -135,7 +135,6 @@ describe('Bowerbird desktop shell', () => {
     }, photoId);
 
     expect(opened.head.status).toBe(200);
-    expect(opened.header.ok).toBe(true);
     expect(opened.header.width).toBeGreaterThan(500);
     // The description rides in the body, not in a response header: matched, it is 11KB, and
     // a reverse proxy answers 502 rather than forward one that size.
