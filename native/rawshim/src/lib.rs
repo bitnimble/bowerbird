@@ -55,6 +55,8 @@ pub mod avif;
 /// The stages between the demosaic and the grade, moving onto the GPU one at a time.
 pub mod base;
 pub mod camera_match;
+/// The monotonic clock the timed paths read, which `wasm32` has none of.
+pub mod clock;
 #[cfg(feature = "renditions")]
 pub mod debug;
 pub mod decode_rawler;
