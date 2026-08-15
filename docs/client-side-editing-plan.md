@@ -18,6 +18,21 @@ something measured says the 582ms is the problem.
 - [ ] **The client does the open.** rawler decode and `condition` in wasm; everything after it
       on the page's own WebGPU device, where the shaders already are.
 
+      **The decode itself is done and proven in a browser** (`3542685`): `web/e2e/local_decode.spec.ts`
+      fetches a real ARW in the tab, decodes it through the wasm module, and asserts the frame -
+      both assertions confirmed red before being trusted. `openGpuDevice()` really does return a
+      `GPUDevice` in Chromium.
+
+      **wgpu cannot adopt a device from JS.** There is no `from_webgpu` and wgpu-hal has no WebGPU
+      backend, so there is no seam to inject one through - only `Device::as_webgpu()` outward. The
+      module therefore requests the device and the page borrows *its* one, which is the same
+      single-device requirement read the other way round.
+
+      What is left is that a browser decode still runs the **CPU PPG fall-through**, not RCD and
+      GALOSH, because every GPU stage ends in a blocking `Device::poll` that WebGPU answers
+      without waiting. That is the readback item, and it is the last thing between this plan and
+      the quality it was written to get.
+
 ## What blocks that
 
 - [x] **The wasm build**, which was two things and not more: `uuid` needed its `js` feature, and
@@ -95,8 +110,21 @@ something measured says the 582ms is the problem.
       RAW is 78MB resident before a sample is decoded - a floor under every figure above. Removing
       it trades cold-cache sequential read for demand paging, which is a real fork rather than an
       oversight, and in a tab there is no mmap at all.
-- [ ] **`condition` as a kernel.** Per-sample over four black levels and four gains, so the upload
-      becomes packed `u16` and the mosaic plane halves: 120MB rather than 241MB.
+- [x] **`condition` as a kernel** (`f81b69b`). The samples go up packed two to a `u32` - 120MB at
+      61MP rather than the 241MB `f32` plane.
+
+      **The kernel does no arithmetic, deliberately.** Vulkan requires only 2.5 ULP of `OpFDiv` and
+      RADV lowers the divide to a reciprocal and a multiply, so `(raw - floor) / range * gain` in
+      WGSL cannot be bit-identical to the host's however it is spelled. A conditioned sample is a
+      function of sixteen bits and a 2x2 position, so the host evaluates its own expression over
+      all 262144 of them and the shader is a lookup - one spelling of the arithmetic, and equality
+      rather than a tolerance, because this frame is what every rendition is built from.
+
+      **It is 3x slower here and the open does not move**: 26-30ms threaded on the CPU against
+      86ms, on an integrated adapter whose memory is the CPU's. The halved upload is a memcpy
+      either way while the mosaic still has to come back for `galosh::fit` and the tiled demosaic
+      to read on the host. It pays in a tab, where the mosaic never comes back, and it pays
+      natively only once the readback goes.
 
 ## Move the open onto the GPU
 
@@ -238,10 +266,21 @@ share one buffer this whole section buys correctness and nothing else.
       there is real mosaic outside it and the whole-frame demosaic read it. Clamping to the crop
       border-fills the frame's own edge - it moved the first six samples of a pinned render and
       nothing else in the row.
-- [ ] **Tile GALOSH finer for progress, not for throughput.** A stage-sized region is 423ms
-      against 5286ms for the frame, so a whole-image slider can show the picture arriving in
-      pieces. That is a latency-against-throughput call and separate from the decode's own tiling
-      above, which is sized for memory and parity.
+- [x] **GALOSH reports its progress** (`galosh::denoise_in_tiles` takes a `done` callback,
+      `PROGRESS_TILE = 2048`): 20 updates at ~236ms for +22%. Finer is worse and was measured -
+      1024 costs 73% of the frame for an interval already below what a reader resolves.
+
+      **The premise was stale: the frame already arrived in 20 pieces.** The decode was tiled at
+      this same 2048 for memory after this item was written, so what was missing was the report,
+      not the tiling.
+
+      **And tiled GALOSH never reproduced the frame denoised whole.** `pass12` shrinks inside a
+      tile indexed from the region origin, so a region off that grid shrinks every pixel against a
+      neighbourhood the whole-frame answer never uses: 94% of a 61MP frame's samples differ by up
+      to 1.6e-3, spread across the frame rather than banded at the seams, and identical at halo 64
+      and halo 512. Rounding each origin down to `2 * PASS12_TILE` fixes it exactly for ~5% extra
+      area. `decode_rawler` had the same geometry without the rounding and now delegates
+      (`8ba748f`), so every rendition carried this until tonight.
 - [x] **The halo is two constants, 32 and 64** (`RENDITION_TILE_HALO`, `EDITOR_TILE_HALO`), chosen
       at the call site. 64 is where a tiled denoise is bit-identical to the frame denoised whole;
       32 is where the seam stops being measurable. A rendition is kept and looked at later, so it
@@ -301,9 +340,12 @@ share one buffer this whole section buys correctness and nothing else.
 
 - [ ] **Loupe tiles become local**, so no server round trip per pointer move. They are already 12x
       faster from the kept table: 425ms to 35ms per tile.
-- [ ] **The colour Detail slider becomes interactive.** The two sliders enter the chain at one
-      dispatch each; everything after `smoothstep_blend_3p` is ~140ms of the 5.7s, so keeping the
-      run before it makes a colour-only tick full-resolution.
+- [x] **The colour Detail slider is interactive** (`f453757`). A colour-only tick runs `yuv_loess`
+      and `yuv_join` and none of the eight passes beneath them: `luma` is the only amount entering
+      the chain before the regression - `ridge` and `blend` are the regression's own - and nothing
+      from `loess` on writes a plane the earlier passes read, so those planes still hold this
+      frame's luma. Pinned by a recording device rather than an adapter, since which passes run is
+      decided before any of it reaches a driver.
 - [ ] **Delete what only exists to cross a wire**: the framing in `edit.rs`, `PreparedHeader`,
       `bb_prepare_edit_*`, `rawshim_edit.ts`, `src-tauri/src/edit.rs`, the `/prepared` route.
 
