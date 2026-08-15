@@ -15,6 +15,10 @@ import {
 // whether the decode completes inside a tab's memory, and whether a browser's own adapter answers.
 // Those need a browser, so they live here and nowhere else.
 
+// An open is a real decode of a real ARW in a tab, on one core for the stages that are not the
+// GPU's, so these carry their own timeout as the editor's own spec does.
+test.describe.configure({ timeout: 180_000 });
+
 let photoId = '';
 
 test.beforeAll(async ({ browser }) => {
@@ -71,6 +75,60 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
   expect(decoded.mean).toBeGreaterThan(200);
   expect(decoded.mean).toBeLessThan(60000);
   expect(declined).toEqual([]);
+});
+
+/**
+ * The editor opening a photograph without a prepared frame ever crossing the network.
+ *
+ * **What makes this assertable is that the fall-back is a picture too.** `/prepared` answers with
+ * the same frame the tab would have built, so a local open that never ran, or that threw and was
+ * caught, leaves an editor that reaches `live` and looks right - which is why the request the
+ * server did *not* get is the assertion, and why the console warning that would accompany a
+ * fall-back is one as well.
+ */
+test('opens a RAW in the tab, without asking the server to prepare one', async ({ page }) => {
+  const askedTheServer: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/prepared')) askedTheServer.push(request.url());
+  });
+  // Both halves of "nothing declined": the decode's own fall-throughs, and the client falling back
+  // to the server for a module or a browser that could not do this.
+  const declined: string[] = [];
+  page.on('console', (message) => {
+    const text = message.text();
+    if (text.startsWith('rawshim: no ') || text.startsWith('bowerbird: this tab could not open')) {
+      declined.push(text);
+    }
+  });
+
+  await page.goto(`/photos/${photoId}?edit=1`);
+
+  const panel = page.getByTestId('raw-edit-panel');
+  await expect
+    .poll(
+      async () => {
+        const status = await panel.getAttribute('data-status');
+        if (status === 'failed') {
+          throw new Error(await panel.getByTestId('raw-edit-status').innerText());
+        }
+        return status;
+      },
+      { timeout: 170_000 },
+    )
+    .toBe('live');
+
+  // The reason first, then the request that proves it: a fall-back names itself on the console,
+  // and reading that beats inferring it from a URL the server was asked for.
+  expect(declined).toEqual([]);
+  expect(askedTheServer).toEqual([]);
+
+  // The frame reached the editor whole, rather than the editor going live on a header it built
+  // for itself: the size is the decode's, and the match is the one the open fitted or was handed.
+  const size = await page.getByTestId('raw-edit-size').textContent();
+  const [width, height] = (size ?? '0x0').split('x').map(Number);
+  expect(width).toBeGreaterThan(1000);
+  expect(height).toBeGreaterThan(1000);
+  await expect(panel).toHaveAttribute('data-matched', 'true');
 });
 
 test('reports whether it opened a device, rather than throwing when it cannot', async ({ page }) => {

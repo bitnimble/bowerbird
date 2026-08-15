@@ -48,6 +48,13 @@ pub struct Base {
 }
 
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
+    // Every stage here ends on a blocking map, which a browser answers with `QueueEmpty` without
+    // having waited for anything (`gpu::read_back` is the awaited seam these have not been given).
+    // The CPU path each caller already falls through to is what a tab runs instead. `cfg!` rather
+    // than `#[cfg]` so the pipelines below are still compiled and checked for that target.
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
     static BUILT: std::sync::OnceLock<Option<Base>> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| Base::new(gpu)).as_ref()
 }

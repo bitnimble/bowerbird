@@ -166,9 +166,9 @@ web/playwright-report/
 native/rawshim/target/
 # Materialised by ensure-patched-rayon.sh from patches/; not committed.
 native/rawshim/patched/
-# Where `bun run build:wasm` puts wasm-pack's output. Under web/src because the
-# editor imports it as a module, so nothing else here would have caught it.
-web/src/wasm/
+# Where `bun run build:wasm` puts wasm-pack's output, which the editor imports as a
+# module (`local_open.ts`) and Vite's `fs.allow` reaches outside its root for.
+native/rawshim/pkg/
 
 # Throwaway analysis scripts. `.oxlintrc.json` already ignores the .ts ones;
 # this keeps them out of commits, which a squash otherwise sweeps them into.

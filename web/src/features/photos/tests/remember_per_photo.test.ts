@@ -3,7 +3,7 @@
 // already on the row wrote it back anyway, once per pick.
 import { beforeEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
-import { api, type PhotoListParams, type PhotoListResponse, type PhotoSummary, type ViewerRendition } from '../../../api/client';
+import { api, type PhotoDetail, type PhotoListParams, type PhotoListResponse, type PhotoSummary, type ViewerRendition } from '../../../api/client';
 import { PhotosPresenter } from '../photos_presenter';
 import { PhotosStore } from '../photos_store';
 
@@ -43,10 +43,11 @@ api.listLibraryPhotos = (_libraryId: string, params: PhotoListParams): Promise<P
     ordering: 'taken_asc',
   } as PhotoListResponse);
 
-api.updatePhoto = (_photoId: string, fields: Parameters<typeof api.updatePhoto>[1]): Promise<PhotoSummary> => {
+api.updatePhoto = (_photoId: string, fields: Parameters<typeof api.updatePhoto>[1]) => {
   written.push(fields.viewer_rendition as ViewerRendition);
   remembered = fields.viewer_rendition as ViewerRendition;
-  return Promise.resolve(row());
+  // The row is what this test reads back; the fields a detail carries beyond it are nobody's here.
+  return Promise.resolve(row() as unknown as PhotoDetail);
 };
 
 const absent = new Proxy({}, { get: () => () => undefined }) as never;
