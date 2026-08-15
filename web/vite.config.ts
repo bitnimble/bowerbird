@@ -35,6 +35,9 @@ export default defineConfig({
     ],
   },
   server: {
+    // The decoder's wasm package is built into `native/rawshim/pkg`, a sibling of this root, and
+    // Vite serves nothing above its root without being told to.
+    fs: { allow: ['..'] },
     // Random rather than fixed, so several checkouts can run a dev server at
     // once; Vite prints the one it settled on. `-p N` / `--port N` pins it.
     // Not port 0: Vite reads that as "unset" and falls back to its own default,

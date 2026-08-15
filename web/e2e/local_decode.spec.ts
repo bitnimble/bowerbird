@@ -1,0 +1,78 @@
+import { expect, test } from '@playwright/test';
+import { EDIT_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
+import {
+  addLibrary,
+  openLibrary,
+  openPhoto,
+  openPhotoId,
+  syncLibrary,
+  waitForSyncSettled,
+} from './helpers';
+
+// **The one claim a cargo build cannot make.** The crate has linked for wasm32 for a while and
+// `tests/wasm_build.rs` pins what a host can ask of it, but neither can say whether the module
+// survives a real RAW in a real tab: whether wasm-bindgen's bindings match what the page calls,
+// whether the decode completes inside a tab's memory, and whether a browser's own adapter answers.
+// Those need a browser, so they live here and nowhere else.
+
+let photoId = '';
+
+test.beforeAll(async ({ browser }) => {
+  const page = await browser.newPage();
+  await addLibrary(page, EDIT_PHOTOS_DIR);
+  await syncLibrary(page, EDIT_PHOTOS_DIR);
+  await waitForSyncSettled(page, EDIT_PHOTOS_DIR, PHOTO_NAMES.length);
+  await openLibrary(page, EDIT_PHOTOS_DIR);
+  await openPhoto(page);
+  photoId = openPhotoId(page);
+  await page.close();
+});
+
+test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) => {
+  await page.goto(`/photos/${photoId}`);
+
+  const decoded = await page.evaluate(async (id) => {
+    const { LocalDecoder } = await import('/src/features/raw_edit/local_open.ts');
+    const raw = new Uint8Array(
+      await (await fetch(`/image/${id}/download/original`)).arrayBuffer(),
+    );
+    const decoder = new LocalDecoder();
+    const frame = await decoder.open(raw, 0);
+    return {
+      bytes: raw.byteLength,
+      width: frame.width,
+      height: frame.height,
+      halved: frame.halved,
+      samples: frame.samples.length,
+      // Not a checksum: a mean over the frame catches a decode that produced the right shape
+      // and the wrong picture, which a length check cannot.
+      mean: frame.samples.reduce((sum, value) => sum + value, 0) / frame.samples.length,
+    };
+  }, photoId);
+
+  expect(decoded.bytes).toBeGreaterThan(1_000_000);
+  expect(decoded.width).toBeGreaterThan(2000);
+  expect(decoded.height).toBeGreaterThan(2000);
+  expect(decoded.halved).toBe(false);
+  expect(decoded.samples).toBe(decoded.width * decoded.height * 3);
+  // A frame of zeroes, or of saturated samples, is what a decode that "worked" and read the wrong
+  // buffer looks like.
+  expect(decoded.mean).toBeGreaterThan(200);
+  expect(decoded.mean).toBeLessThan(60000);
+});
+
+test('reports whether it opened a device, rather than throwing when it cannot', async ({ page }) => {
+  await page.goto(`/photos/${photoId}`);
+
+  const device = await page.evaluate(async () => {
+    const { LocalDecoder } = await import('/src/features/raw_edit/local_open.ts');
+    const opened = await new LocalDecoder().gpu();
+    return { opened: opened != null, hasWebGpu: 'gpu' in navigator };
+  });
+
+  // The harness runs Chromium with `--enable-unsafe-webgpu`, so a null here is the module failing
+  // to request an adapter rather than the browser lacking one - which is the case that silently
+  // drops the decode to PPG.
+  expect(device.hasWebGpu).toBe(true);
+  expect(device.opened).toBe(true);
+});
