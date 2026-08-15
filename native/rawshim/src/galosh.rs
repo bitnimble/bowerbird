@@ -676,14 +676,7 @@ fn run(
     // The same switch the decode and the open report through, because what this splits out is
     // the part of a call that does not scale with the region: a run over tiles pays it per tile,
     // and at a few hundred tiles that decides whether tiling is worth anything at all.
-    let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
-    let mut mark = std::time::Instant::now();
-    let mut lap = |name: &str| {
-        if profile {
-            eprintln!("    galosh {name}: {}ms", mark.elapsed().as_millis());
-        }
-        mark = std::time::Instant::now();
-    };
+    let mut lap = crate::clock::laps("    galosh ");
 
     let device = &gpu.device;
     let (w, h) = (width as i32, height as i32);

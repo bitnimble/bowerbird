@@ -225,7 +225,7 @@ pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, St
 /// too. A permit count would let that through; nothing today has two.
 fn admit() -> Turn {
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let asked = std::time::Instant::now();
+    let asked = crate::clock::Mark::now();
     // A poisoned lock means a previous open panicked. That was reported to its own caller and
     // left nothing shared behind - the guard owns no data - so refusing every open after it
     // would turn one failure into a permanent one.
@@ -246,8 +246,8 @@ fn admit() -> Turn {
 /// `Instant` cannot be shared as a number, and a wall clock can step backwards. This only has
 /// to order events inside one process.
 fn elapsed_micros() -> u64 {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START.get_or_init(std::time::Instant::now).elapsed().as_micros() as u64
+    static START: std::sync::OnceLock<crate::clock::Mark> = std::sync::OnceLock::new();
+    START.get_or_init(crate::clock::Mark::now).elapsed().as_micros() as u64
 }
 
 /// A turn at opening, held for as long as the open runs.
@@ -283,14 +283,7 @@ fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     {
         // The same switch and the same shape as `decode_rawler::decode_source`, so an open reads
         // as one run of laps rather than as a decode that reports and a half that does not.
-        let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
-        let mut mark = std::time::Instant::now();
-        let mut lap = |name: &str| {
-            if profile {
-                eprintln!("  open {name}: {}ms", mark.elapsed().as_millis());
-            }
-            mark = std::time::Instant::now();
-        };
+        let mut lap = crate::clock::laps("  open ");
 
         let frame =
             crate::decode_frame_bytes(bytes, 16, true, request.long_edge, crate::galosh::Fit::Only)

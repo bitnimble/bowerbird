@@ -37,6 +37,72 @@ pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Rcd> {
     BUILT.get_or_init(|| Rcd::new(gpu)).as_ref()
 }
 
+/// Two greens on one diagonal of the 2x2, one red and one blue on the other.
+///
+/// That covers RGGB, BGGR, GRBG and GBRG and excludes everything else - X-Trans, Foveon, and the
+/// quad patterns - for the reason every stage here pairs rows and columns into 2x2 sites. Asked by
+/// both demosaics, so a sensor the GPU turns away does not come back through the CPU instead.
+fn is_bayer(cfa: [u32; 4]) -> bool {
+    let (a, b) = if cfa[1] == 1 && cfa[2] == 1 {
+        (cfa[0], cfa[3])
+    } else if cfa[0] == 1 && cfa[3] == 1 {
+        (cfa[1], cfa[2])
+    } else {
+        return false;
+    };
+    (a == 0 && b == 2) || (a == 2 && b == 0)
+}
+
+/// The same frame demosaiced on the CPU, for a host that has no device to run RCD on.
+///
+/// **This is a different picture, not a slower one.** PPG is the algorithm RCD replaced, and
+/// `examples/demosaic_psnr.rs` is where the gap between them is measured; a frame reconstructed
+/// here is a worse reconstruction of the same photograph. Taking it therefore says so on stderr,
+/// because a fall-through nothing announces is how a regression passes a whole fixture suite.
+///
+/// rawler's own, rather than one written here: it is already a dependency, already the only thing
+/// that reads a sensor, and already Bayer-aware down to the pattern shift.
+///
+/// Interleaved RGB in the mosaic's own coordinates - the same shape `to_rec2020_from` reads, and
+/// not the `u8` mapping [`demosaic_with`] hands back, since nothing here crosses a GPU buffer.
+/// `cfa` is the 2x2 read row-major with 0 red, 1 green, 2 blue, as everywhere else in this module.
+///
+/// ponytail: the whole frame at once, where the GPU path tiles at `RENDER_TILE`. Three floats a
+/// photosite is 732MB at 61MP, which fits wasm32's address space beside the mosaic and would not
+/// fit much more. PPG takes a `Rect`, so tiling it is `demosaic_in_tiles` with a different inner
+/// call if a real sensor ever runs out of room.
+pub fn cpu(mosaic: &[f32], width: usize, height: usize, cfa: [u32; 4]) -> Option<Vec<f32>> {
+    use rawler::imgop::sensor::Demosaic;
+
+    // PPG panics rather than declining on a pattern it cannot read, so both checks happen here.
+    if mosaic.len() < width * height || width == 0 || height == 0 || !is_bayer(cfa) {
+        return None;
+    }
+    let name: String = cfa
+        .iter()
+        .map(|colour| match colour {
+            0 => 'R',
+            1 => 'G',
+            _ => 'B',
+        })
+        .collect();
+    let pattern = rawler::cfa::CFA::new(&name);
+
+    eprintln!("rawshim: no GPU for the demosaic, so this frame is PPG on the CPU rather than RCD");
+    let plane = rawler::pixarray::PixF32::new_with(mosaic[..width * height].to_vec(), width, height);
+    let whole = rawler::imgop::Rect::new(
+        rawler::imgop::Point::new(0, 0),
+        rawler::imgop::Dim2::new(width, height),
+    );
+    let rgb = rawler::imgop::sensor::bayer::ppg::PPGDemosaic::new().demosaic(
+        &plane,
+        &pattern,
+        &rawler::cfa::PlaneColor::default(),
+        whole,
+    );
+    Some(rgb.into_inner().into_flattened())
+}
+
 /// The uniform block, laid out by hand because the alternative is a serialisation crate for ten
 /// words. Order and padding must match `Params` in the shader.
 fn params_bytes(width: u32, height: u32, cfa: [u32; 4], margin: u32) -> Vec<u8> {
@@ -138,28 +204,11 @@ pub fn demosaic_with<T>(
     if mosaic.len() < width * height {
         return None;
     }
-    // Two greens on one diagonal of the 2x2, one red and one blue on the other. That covers RGGB,
-    // BGGR, GRBG and GBRG and excludes everything else - X-Trans, Foveon, and the quad patterns -
-    // for the reason every stage here pairs rows and columns into 2x2 sites.
-    let (a, b) = if cfa[1] == 1 && cfa[2] == 1 {
-        (cfa[0], cfa[3])
-    } else if cfa[0] == 1 && cfa[3] == 1 {
-        (cfa[1], cfa[2])
-    } else {
-        return None;
-    };
-    if (a != 0 || b != 2) && (a != 2 || b != 0) {
+    if !is_bayer(cfa) {
         return None;
     }
 
-    let profile = std::env::var_os("BOWERBIRD_DECODE_PROFILE").is_some();
-    let mut mark = std::time::Instant::now();
-    let mut lap = |name: &str| {
-        if profile {
-            eprintln!("    rcd {name}: {}ms", mark.elapsed().as_millis());
-        }
-        mark = std::time::Instant::now();
-    };
+    let mut lap = crate::clock::laps("    rcd ");
 
     let device = &gpu.device;
     let pixels = width * height;
