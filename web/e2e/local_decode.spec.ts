@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { EDIT_PHOTOS_DIR, PHOTO_NAMES } from './fixture_library';
+import { DECODE_PHOTOS_DIR, DECODE_PHOTO_NAMES } from './fixture_library';
 import {
   addLibrary,
   openLibrary,
@@ -19,10 +19,10 @@ let photoId = '';
 
 test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage();
-  await addLibrary(page, EDIT_PHOTOS_DIR);
-  await syncLibrary(page, EDIT_PHOTOS_DIR);
-  await waitForSyncSettled(page, EDIT_PHOTOS_DIR, PHOTO_NAMES.length);
-  await openLibrary(page, EDIT_PHOTOS_DIR);
+  await addLibrary(page, DECODE_PHOTOS_DIR);
+  await syncLibrary(page, DECODE_PHOTOS_DIR);
+  await waitForSyncSettled(page, DECODE_PHOTOS_DIR, DECODE_PHOTO_NAMES.length);
+  await openLibrary(page, DECODE_PHOTOS_DIR);
   await openPhoto(page);
   photoId = openPhotoId(page);
   await page.close();

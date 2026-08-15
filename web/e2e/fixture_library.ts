@@ -29,6 +29,10 @@ export const EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'edit-photos');
 // does that over is untouched afterwards - which another spec's frames moving
 // around in it would make unassertable.
 export const ARCHIVE_PHOTOS_DIR = path.join(E2E_ROOT, 'archive-photos');
+// The wasm decode only reads, but a root can only be added once against the shared
+// DB - so sharing the editor's would make whichever spec ran second fail to add it.
+export const DECODE_PHOTOS_DIR = path.join(E2E_ROOT, 'decode-photos');
+export const DECODE_PHOTO_NAMES = ['alpha.arw'];
 export const DB_PATH = path.join(E2E_ROOT, 'e2e.db');
 // Every generated file, outside every library root (§3). Under the fixture rather
 // than left to default: `./data` is relative to the API's cwd, which is the
@@ -93,7 +97,15 @@ export function prepareFixture(): void {
   // apart, which is the correct answer and the reason the other libraries turn
   // it off (`addLibrary`).
   const namesFor = (dir: string): string[] =>
-    dir === TRIAGE_PHOTOS_DIR ? TRIAGE_PHOTO_NAMES : dir === STACK_PHOTOS_DIR ? STACK_PHOTO_NAMES : PHOTO_NAMES;
+    dir === TRIAGE_PHOTOS_DIR
+      ? TRIAGE_PHOTO_NAMES
+      : dir === STACK_PHOTOS_DIR
+        ? STACK_PHOTO_NAMES
+        : // One frame, because a sync is a real decode and this library is only ever asked for
+          // the bytes of a single photo.
+          dir === DECODE_PHOTOS_DIR
+          ? DECODE_PHOTO_NAMES
+          : PHOTO_NAMES;
   for (const dir of [
     PHOTOS_DIR,
     CULL_PHOTOS_DIR,
@@ -102,6 +114,7 @@ export function prepareFixture(): void {
     TRIAGE_PHOTOS_DIR,
     EDIT_PHOTOS_DIR,
     ARCHIVE_PHOTOS_DIR,
+    DECODE_PHOTOS_DIR,
   ]) {
     mkdirSync(dir, { recursive: true });
     for (const name of namesFor(dir)) copyFileSync(FIXTURE, path.join(dir, name));
