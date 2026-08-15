@@ -78,6 +78,22 @@ the grade uploads it again. At 61MP that is 361MB each way to run pointwise arit
 So a stage is worth moving even where the stage itself is cheap, and the last one to move is
 worth more than its own timing.
 
+> **Read every number in this section against the machine that produced it: the GPU is
+> integrated.** `open_bench` names it - `AMD Ryzen 7 7800X3D (RADV RAPHAEL_MENDOCINO)
+> (IntegratedGpu)`. There is no discrete card and no PCIe bus, so the "361MB upload" is a memcpy
+> into the same DRAM the CPU is already reading, and a kernel gets no memory bandwidth the CPU did
+> not already have. That cuts both ways and neither is the naive one: a transfer is far cheaper
+> here than the "361MB each way" framing suggests, so the *prize above is smaller than it sounds*;
+> but a bandwidth-bound kernel has nothing to win with either, so a stage that is a plain sweep
+> over the frame will keep losing to a threaded CPU no matter how the transfers are arranged. What
+> does win here is arithmetic density - RCD, GALOSH's pass12, the sorting network - where the work
+> per byte is high enough that shader lanes beat cores. The levels quantile is the counter-example
+> and the reason this box is worth writing down: a million atomics over one byte each, which is
+> exactly the shape that cannot win on an iGPU.
+>
+> A discrete card would change these conclusions, not just these constants. Re-measure before
+> porting anything on the strength of a number here.
+
 - [x] **the coding** (`2743056`). Within a count of the CPU over every level a sample can hold.
 - [x] **defringe** (`7f02072`). Composing it with `recombine` leaves one add per channel; the
       1170ms was the planar split, the strips and the interleave, none of which a shader needs.
@@ -86,21 +102,13 @@ worth more than its own timing.
 - [x] **lens warp** (`fcd4577`). Within 2 counts, mean 0.167. Uploads the ratio table rather than
       evaluating the spline, because the CPU gather reads that table and its 4096 buckets are part
       of the answer a rendition already committed to.
-- [x] **levels quantile.** The last unported stage, and the one that came back **exact** - the
-      histogram, the per-pixel max and the walk are all integer, so `the_levels_match_the_cpu`
-      asserts equality rather than a bound.
-
-      `tone::sample_at` is `(k * pixels / counted) * 3`, 52 bits at 61MP where WGSL has no u64.
-      `counted` is `min(pixels, QUANTILE_SAMPLES)` and `QUANTILE_SAMPLES` is `1 << 20`, so with
-      `whole = pixels / counted` and `rest = pixels % counted` taken on the host it is
+- [x] **~~levels quantile~~ - ported, exact, and then deleted unwired.** It came back exact and
+      still lost, for reasons that were never about the kernel; see the entry below. Kept here
+      because the index arithmetic was the hard part and is the thing to re-derive if anyone ports
+      it again: `tone::sample_at` is `(k * pixels / counted) * 3`, 52 bits at 61MP where WGSL has
+      no u64, so with `whole` and `rest` taken on the host it splits as
       `k * whole + (k * rest) / counted`, and splitting `k` at bit 10 keeps every intermediate
-      inside `u32`. The two cases are one expression rather than a branch: where `counted` is the
-      whole frame, `whole` is 1 and `rest` is 0, so the shifted term is 0 with it - which is also
-      the only reason the shift may stand in for the divide.
-
-      The walk up the 65536 bins stays on the host, and is `tone::scan` itself: the CPU builds its
-      histogram and calls it, this reads one back and calls it, so the marks and the fallback
-      cannot come to disagree.
+      inside `u32`.
 
 **Ported is not wired, and wired is not faster.** `apply_lens` takes the GPU now (`7b39847`, 277
 fixture tests green with the pinned renders unmoved) and it is **588-610ms against the CPU's
@@ -148,13 +156,31 @@ share one buffer this whole section buys correctness and nothing else.
       dynamically and spilling to scratch. Measured whole, that was **8089ms**; as a bitonic
       network over the same bit patterns it is **221ms**, and the same order statistic to the
       element. `noise.wgsl`'s `median96`, pinned by `the_median_network_takes_the_rank_the_cpu_takes`.
-- [ ] **The levels quantile is ported but deliberately *not* wired either**, and unlike the noise
-      measure it is not a kernel that needs fixing. It is 296-311ms against the CPU's 156-170ms,
-      and essentially all of that is the 361MB upload: the kernel reads a million samples whatever
-      the sensor, so it would be nearly free riding an upload already paid for. The only one going
-      past is `prepare`'s, and that is the wrong one - it codes a frame a rendition may have
-      resized, where the levels are deliberately the *unresized* photograph's so that every size
-      of it anchors alike. It goes in when something uploads the decode before the resize.
+- [x] **~~The levels quantile is ported but deliberately not wired~~ - deleted, and the CPU threaded
+      instead.** The blocker recorded here was wrong twice over, and both are worth keeping straight.
+
+      **`prepare`'s upload was never the wrong one.** This said it "codes a frame a rendition may
+      have resized". It does not: both callers hand it `(width, height) -> (width, height)` -
+      `edit::open` never resizes at all, and `job::Base::build` codes at the decode's size and
+      fits per target further down. So the seam existed, and `prepare` even has the pattern for it,
+      swapping its encoder mid-chain to fence for `measure_defocus_into`.
+
+      **The seam stopped being worth taking once the CPU was threaded.** `tone::levels` was a
+      serial gather on one core of twelve; per-thread blocks make it **156-170ms to 12ms**, against
+      **222ms (175-247)** for the ported kernel paying its own upload. So folding the histogram onto
+      `prepare`'s upload can save at most 12ms - and cannot save all of it, since it adds a
+      submit-and-fence. Against that: `prepare`'s signature changes for both callers and
+      `chain_probe`, `edit::open`'s too-dark refusal has to move after the chain, and a CPU path has
+      to stay anyway for every frame `prepare` declines. Matching is not earning, so `base::levels`,
+      `wgsl/levels.wgsl` and `the_levels_match_the_cpu` are gone.
+
+      **And it could never have served a browser anyway**, which is the part that holds whatever
+      the hardware does: `gpu::device()` returns `None` on wasm32, so the CPU quantile is not the
+      fallback there but the only path there is. Threading it is the only way that number moves.
+
+      Timings taken on a loaded box (four agents, load average ~24). Contention makes threading
+      look worse, not better, so 12ms is pessimistic and the ratio is not what the argument rests
+      on - the ceiling is.
 - [ ] **Give the block reduction a median that is not a selection sort.** That is where the noise
       measure's time goes, and the transfer is not: at 61MP the frame is 1188 x 792 blocks, each
       taking the CPU's exact order statistic by partial selection - 48 passes over 96 laps, twice
