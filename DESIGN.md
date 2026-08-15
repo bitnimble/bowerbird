@@ -26,8 +26,8 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | Validation | Zod v4 |
 | Database | SQLite via `bun:sqlite` |
 | Image processing | `native/rawshim`, a Rust library over our rawler fork + libavif, called via `bun:ffi` (§10.4) |
-| RAW decoding | `rawler`, our vendored fork, in `native/rawshim`; the demosaic and the mosaic denoise are WGSL on the GPU |
-| Metadata extraction | rawler header parse (no pixel decode), per-format dispatch |
+| RAW decoding | `rawler`, our vendored fork, in `native/rawshim`; the demosaic and the mosaic denoise are WGSL on the GPU, with a CPU fall-through for the demosaic |
+| Metadata extraction | rawler header parse (no pixel decode), one reader for every format |
 | Testing | Bun's built-in test runner (`bun test`, run via `bun run test`) |
 | Logging | `src/logger.ts`, levelled and scoped; `console` is banned everywhere else by lint (§14.3) |
 | Package manager | `bun install` (no npm/pnpm/yarn) |
@@ -221,7 +221,7 @@ CREATE TABLE photos (
   file_size         INTEGER,        -- bytes at last scan; with date_updated, the sync stat quick-check (§9.1)
   width             INTEGER NOT NULL,  -- display (upright) pixel width, post-orientation
   height            INTEGER NOT NULL,  -- display (upright) pixel height, post-orientation
-  orientation       INTEGER NOT NULL DEFAULT 0,  -- EXIF flip orientation code; informational + hash input only, NOT to be applied to renditions (§11)
+  orientation       INTEGER NOT NULL DEFAULT 0,  -- EXIF orientation, 1 to 8; informational + hash input only, NOT to be applied to renditions (§11)
   is_missing        INTEGER NOT NULL DEFAULT 0,
   is_deleted        INTEGER NOT NULL DEFAULT 0,
   date_taken        TEXT,
@@ -610,7 +610,7 @@ export const PhotoSummarySchema = z.object({
 export const PhotoDetailSchema = PhotoSummarySchema.extend({
   file_path: z.string(),
   file_hash: z.string().nullable(),
-  orientation: z.number().int(),  // LibRaw flip orientation code; informational only, renditions are already upright (§11), do NOT rotate them by this
+  orientation: z.number().int(),  // EXIF orientation, 1 to 8; informational only, renditions are already upright (§11), do NOT rotate them by this
   date_taken: z.string().nullable(),
   date_added: z.string(),
   date_updated: z.string().nullable(),
@@ -796,15 +796,13 @@ function isSupportedFile(filename: string): boolean {
 }
 ```
 
-**Canon needed no second reader, and that is the point of the split.** LibRaw decodes CR3 and parses its header like any other format, so the decode, the embedded preview, the exposure and the body and lens names all arrived working. Three things did not, and each is a place the ARW-only assumption had hardened into code rather than a Canon feature:
+**Canon needed no second reader, and that is the point of the split.** The decoder reads CR3 and parses its header like any other format - LibRaw's did then and rawler's does now - so the decode, the embedded preview, the exposure and the body and lens names all arrived working. Three things did not, and each is a place the ARW-only assumption had hardened into code rather than a Canon feature:
 
 - **The capture zone.** `exif_zone.ts` read the offset tags straight out of the TIFF header a RAW "already is". A CR3 is an ISO base-media file; its EXIF sits in a `CMT2` box under `moov`, as a complete little TIFF of its own. Walking the box tree that far and handing the block to the same IFD reader is the whole of it (§11.1).
-- **The masked-border crop.** Measured against the raw frame rather than against the window LibRaw already emits, so on every body that declares an inset crop - which is every Canon - it was applied twice. See §10.4.
+- **The masked-border crop.** Measured against the raw frame rather than against the window LibRaw already emitted, so on every body that declares an inset crop - which is every Canon - it was applied twice. That arithmetic is gone with the decoder: rawler states the manufacturer's own crop and it is applied once (§11.1).
 - **GPS.** Canon reports a parsed fix on every frame and zeroes it when there was none, which read as 0,0: a real place, in the Gulf of Guinea. An all-zero triple is now "not recorded".
 
 **CR2 came for free on top of that**, and is the case the split was meant to make cheap: it is a plain TIFF, so the capture-zone reader takes its first branch rather than the box walk, and the crop and GPS fixes above are per-body rather than per-format. Verified on EOS 600D frames - 18MP at the dimensions the header states, portrait orientation, lens and exposure, and an embedded JPEG for the grid tile. A 2011 body predates EXIF 2.31, so it records no capture zone at all and reports `null`, which is the absence the tag is nullable for rather than anything unread.
-
-**CR2 is not in the set.** It is TIFF-based and LibRaw reads it, so it is likely a one-line addition, but nothing here has been run against one.
 
 ---
 
@@ -921,7 +919,7 @@ For each library:
    They split in two, and the split is not cosmetic. Four of them read the path alone and answer the same whether what sits there is a file or a folder, since each is about a *segment*: that is `isPathAllowed`. Only `include_subfolders` needs to know which it is looking at, because a root-only library keeps the files in its root and discards the folders beside them - the same string answers differently depending on what it names. The scan always knows what it is looking at, so `isDirInScope` is the two halves together. A watcher event names a path and not what kind of thing is at it, so the watcher asks `isPathAllowed` and settles the remaining question for files alone; a stray folder path costs nothing downstream, because the scoped sync tests it with `isDirInScope` before reading it.
 3. Filter to supported extensions only (`.arw`, `.cr3`). This yields the set of **present** file paths.
 4. Query the database for all non-deleted photo records in this library (each carries its stored `date_updated` = last-seen mtime and `file_size`).
-5. **Stat quick-check (avoid opening unchanged files).** For each present file, `stat` it (cheap; no open). If a DB record exists at that path **and** its stored `date_updated` and `file_size` both match the current mtime and size, the file is **unchanged**: reuse its stored hash and do **not** open it. Only files that are new, or whose mtime/size differ, are opened to extract metadata (§11) and compute the **file hash** (§9.2). Call this opened subset **changed**. A no-op sync therefore performs zero LibRaw opens. (Like rsync's default quick-check, this misses a content change that preserves *both* mtime and size, which is rare in practice; a forced full re-hash is the escape hatch if ever needed.)
+5. **Stat quick-check (avoid opening unchanged files).** For each present file, `stat` it (cheap; no open). If a DB record exists at that path **and** its stored `date_updated` and `file_size` both match the current mtime and size, the file is **unchanged**: reuse its stored hash and do **not** open it. Only files that are new, or whose mtime/size differ, are opened to extract metadata (§11) and compute the **file hash** (§9.2). Call this opened subset **changed**. A no-op sync therefore opens no RAW at all. (Like rsync's default quick-check, this misses a content change that preserves *both* mtime and size, which is rare in practice; a forced full re-hash is the escape hatch if ever needed.)
 6. Build the diff from the present set and the changed set:
 
 ```
@@ -984,7 +982,7 @@ The file hash is a SHA-1 digest of the following metadata properties, concatenat
 4. Date modified (filesystem mtime, ISO string)
 5. Color space (string identifier; the constant sRGB output space, see §11.1)
 6. File size in bytes
-7. Orientation/rotation (LibRaw `flip` orientation code, or `0` if not present)
+7. Orientation/rotation (EXIF orientation 1 to 8, or `0` if not present; rows written before the decoder changed hold LibRaw's `flip` code instead, §11.1)
 
 **mtime is included** so an in-place pixel edit that preserves dimensions/size/orientation is still detected as MODIFIED and re-processed (without it, such an edit is invisible). Note the tradeoff: an import/restore that resets mtime without changing content will spuriously mark untouched photos MODIFIED and re-process them. A pure backup *read* (this server as rsync source) does not change mtime, so ordinary cloud backups do not trigger this.
 
@@ -1264,7 +1262,7 @@ Two encoder settings were measured rather than inherited, and both defaults were
 
 **`rendition_source` governs the photo viewer, not the grid**: `embedded` serves the camera's JPEG in the viewer as itself and builds no rendition at all, `render` builds the full-size view by demosaicing. Alongside `rendition_hdr` it lives on the `libraries` row, not the server: one catalogue may be scanned JPEGs where the camera's rendering is the point and another RAWs worth demosaicing. `render`, in HDR, is the default. Changing any of them is deliberately **not retroactive**; it decides what gets built next, and rebuilding a catalogue is an explicit action.
 
-**Only `full` and `max` are ever HDR, and only they take the chroma setting.** The grid stays SDR whatever the library says: a wall of HDR tiles is punishing to look at, and it would put a LibRaw linear decode and two encoder passes on every photo in an import rather than one AVIF encode. It is always 4:2:0 for a reason of its own - it is 800px among other tiles, and its usual source is the camera's already-subsampled preview, so `sdr_full_chroma` would buy it 0.0003 SSIM for a third again the encode. Neither is offered as a knob, and the two are refused differently because they arrive differently. **HDR is a caller's argument, so an HDR grid tile is a bad request and `processing_service.target` throws `VALIDATION_ERROR` rather than quietly building an SDR one** - a coercion would leave the mistake somewhere nobody reads, and the mistake is not benign: `renditionDir` gives no HDR grid path, so a request honoured would encode HDR and file it as SDR, which decodes wrong rather than merely costing more. Chroma is a setting the service reads rather than something a caller asks for, so there is no request to reject there - only a policy that the setting covers `full` and `max` and not the grid.
+**Only `full` and `max` are ever HDR, and only they take the chroma setting.** The grid stays SDR whatever the library says: a wall of HDR tiles is punishing to look at, and it would put a linear decode and two encoder passes on every photo in an import rather than one AVIF encode. It is always 4:2:0 for a reason of its own - it is 800px among other tiles, and its usual source is the camera's already-subsampled preview, so `sdr_full_chroma` would buy it 0.0003 SSIM for a third again the encode. Neither is offered as a knob, and the two are refused differently because they arrive differently. **HDR is a caller's argument, so an HDR grid tile is a bad request and `processing_service.target` throws `VALIDATION_ERROR` rather than quietly building an SDR one** - a coercion would leave the mistake somewhere nobody reads, and the mistake is not benign: `renditionDir` gives no HDR grid path, so a request honoured would encode HDR and file it as SDR, which decodes wrong rather than merely costing more. Chroma is a setting the service reads rather than something a caller asks for, so there is no request to reject there - only a policy that the setting covers `full` and `max` and not the grid.
 
 `renderOne` is `async` for that throw: the grid-tile repair calls it fire-and-forget and clears its in-flight set in a `.finally()`, so a synchronous throw would skip both, leave the photo unrepairable for the life of the process, and turn a detail read into a 500.
 
@@ -1359,11 +1357,9 @@ What is left is that this pipeline denoises ahead of the warp and sharpens after
 
 So the cut is handed back as soon as it is on the GPU, which is where nothing reads it again (`job::run`). That took the same case to 1381MB, level with the two-pipeline version's 1375.
 
-**What is left is the decode, and it is LibRaw's rather than ours.** Sampled through `decode_with_libraw` on the 61MP body: 36MB before `unpack`, 160 after it, **654 after `dcraw_process`**, 1000 once the interleaved copy is built, and 382 once `recycle` runs. So the decode's own peak is 964MB of live buffers - `imgdata.image` at 494MB, the unpacked raw at 124MB, and the 346MB being copied into.
+**What is left is the decode.** The figures that stood here were LibRaw's - 36MB before `unpack`, 654 after `dcraw_process`, a 964MB peak of live buffers on the 61MP body, most of it `imgdata.image`'s four `ushort` per pixel - and they described a working set that no longer exists. They are not restated with rawler's numbers because rawler's have not been measured. What is known about the current shape is that the denoise and the demosaic run in 2048px tiles rather than over the frame, because whole-frame RCD is 3.1GB of planes at 61MP (`decode_rawler.rs`).
 
-`imgdata.image` is four `ushort` per pixel because it is the Bayer working buffer - R, G, B and the second G, not an alpha - so it is a third larger than the three channels that come out of it. The unpacked raw beside it is *not* freed by `dcraw_process`, and the C API offers no way to hand it back on its own: `libraw_free_image` frees `image` only, and there is no `LIBRAW_RAWOPTIONS` for the raw. `recycle` frees both and already runs as early as the copy allows.
-
-So this number does not come down by releasing things sooner; it comes down by never holding the whole frame, which is banding the decode - a real change with a real blocker, since `tone::levels` wants a whole-frame quantile before anything is coded and the lens warp gathers across rows.
+The shape of the problem outlived the decoder, though: it does not come down by releasing things sooner; it comes down by never holding the whole frame, which is banding the decode - a real change with a real blocker, since `tone::levels` wants a whole-frame quantile before anything is coded and the lens warp gathers across rows.
 
 The output is packed to two `u16` components a word regardless, and it is worth having for a reason RSS cannot show: every value `encode` writes is already a `round` into 0..65535 or 0..255, so a word per component spent half of the job's largest *device* allocation on leading zeroes, and device memory is the scarcer of the two on an iGPU sharing it with the system. Three `u16` a pixel do not divide a word, so an invocation covers two pixels and writes three whole words rather than read-modify-writing a half its neighbour owns.
 
@@ -1412,7 +1408,7 @@ A failure sweeps *every* derivative of that photo, not just the stage that faile
 | Source | What it does | Trade-off |
 |---|---|---|
 | `render` | Demosaics the RAW (steps 2-3 above) | Full sensor resolution, slow |
-| `embedded` | Lifts the camera's own JPEG out of the file (`libraw_unpack_thumb` + `libraw_dcraw_make_mem_thumb`) | Much faster, the maker's colour treatment, but only as large as the body embedded, which ranges from 640×480 to the full sensor |
+| `embedded` | Lifts the camera's own JPEG out of the file (`decoder.preview_jpeg`, handed on still compressed) | Much faster, the maker's colour treatment, but only as large as the body embedded, which ranges from 640×480 to the full sensor |
 
 The embedded JPEG carries its own EXIF orientation, so the decode reads tag 0x0112 out of IFD0 and turns the frame; a render is already baked upright by the decoder (§11.1) and must not be rotated again. A file with no JPEG preview (some bodies embed a bitmap, or nothing) is a property of the file rather than an error, so an `embedded` request falls back to a render. The result reports what was **actually** used and `photos.rendition_source` records it, so the client can state which pixels are on screen instead of leaving the user to guess.
 
@@ -1420,9 +1416,12 @@ The embedded JPEG carries its own EXIF orientation, so the decode reads tag 0x01
 
 > **Status: the decoder described below is LibRaw's, and it is gone.** RAW decoding is our vendored
 > `rawler` fork (`native/vendor/dnglab`), the demosaic is RCD in WGSL (`native/rawshim/src/wgsl/rcd.wgsl`,
-> specified in `docs/rcd-algorithm-spec.md`), and the mosaic denoise is GALOSH on the GPU beside it.
-> So `imgdata.image`, `user_qual`, `half_size`, the PPG-against-AHD table and the C accessors are all
-> history. What is still true, and why this stays: the *shape* of the boundary is unchanged - a command
+> specified in `docs/rcd-algorithm-spec.md`), and the mosaic denoise is GALOSH on the GPU beside it -
+> with a fall-through to rawler's PPG on the CPU where there is no device, which says so on stderr,
+> because it is a different picture rather than a slower one. So `imgdata.image`, `user_qual`, the
+> PPG-against-AHD table and the C accessors are all history. The half-size decision is *not*: the
+> gate below still reads, only the collapsing of each Bayer quad is now ours (`decode_rawler.rs`)
+> rather than a LibRaw flag. What is still true, and why this stays: the *shape* of the boundary is unchanged - a command
 > and a result over `bun:ffi`, no pointers held across calls - and the measurements here are what the
 > numbers since are compared against. Read the mechanism as history and the reasoning as current.
 
@@ -1559,7 +1558,7 @@ By stage on the 24MP frame, which is the clearest because nothing is halved: dec
 
 The grade is where the boundary shows: it was a JS loop over 72MB with a sharp resize round-trip on either side, and is now one pass in Rust. The encoders are roughly 2x, which is not our work but the system libvips 8.15.1 build against sharp's bundled one. **The fit is not where it shows** - it was already in Rust before the handles, at 451ms, so removing its copy is inside the noise. Worth stating plainly, because "we removed three 45MB copies" invites the assumption that the copies were the cost; on the fit they were not.
 
-The embedded-preview and header paths (§11.1) still use LibRaw's C API through `bun:ffi` directly: they touch no struct that lacks an accessor, so they have nothing to gain from crossing into Rust.
+The embedded-preview and header paths (§11.1) stayed on the C API through `bun:ffi` for a while after this, on the grounds that they touched no struct lacking an accessor and so had nothing to gain from crossing into Rust. They crossed anyway when the decoder changed: rawler hands back named fields, which is what the six tables of hardcoded offsets in TypeScript were the alternative to (`bb_extract_embedded`, `bb_read_header`).
 
 `bun run build:native` builds it, at cargo's stock release profile; the Docker build does so in its own stage and copies only the `.so` forward, keeping rustc, cargo and libclang out of the shipped image.
 
@@ -1597,7 +1596,7 @@ A shoot import is three different jobs with three different costs, measured over
 
 **B is ten times the throughput of C**, which is what makes staging worth doing rather than interleaving: on a 2000-frame shoot, doing every tile first fills the whole grid in about a minute, where a combined job would take the full eleven that C needs before the last rendition appeared.
 
-**Opening the RAW is not a time sink, so B and C need not share one.** The suspicion was that a fused pass would be needed to avoid opening each file twice, but extracting the embedded preview - `libraw_open_file` plus `unpack_thumb` - is **5ms of B's 124ms**. LibRaw reads headers lazily and the embedded preview is a few MB, so B never touches the sensor data C needs. They can be scheduled independently, which is the whole point.
+**Opening the RAW is not a time sink, so B and C need not share one.** The suspicion was that a fused pass would be needed to avoid opening each file twice, but extracting the embedded preview - the open plus the thumbnail - was **5ms of B's 124ms** when that was LibRaw's. A RAW reader parses headers lazily and the embedded preview is a few MB, which is as true of rawler's `preview_jpeg`, so B never touches the sensor data C needs. They can be scheduled independently, which is the whole point.
 
 **A 61MP body embeds a full-resolution preview**, 9504x6336 and 5-14MB of JPEG, not the small preview the name suggests - only the 24MP body in the corpus embeds something small (1080x1616). Decoding that whole to make an 800px tile was most of stage B: 458ms per file, of which 230-540ms was the JPEG decode and, on portrait frames, half of *that* was the EXIF rotation shuffling 60MP. Shrinking during the decode instead (`Decoder::scale`, then a reduce for the rest, and the rotation last where it moves a 1280px frame) takes B to 105ms.
 
@@ -1630,7 +1629,7 @@ Asked twice, because the first answer was framed too narrowly. The work looks li
 
 Batching across images is the right counter-argument and still loses, for a reason that is about the hardware rather than the algorithm. N images give N independent coders, but GPU lanes execute a warp in lockstep, and entropy coding is maximally branch-divergent, so lanes serialise against each other and most of the width is lost. The per-image RDO working set also bounds how many can be resident. The architecture that does work is a hybrid - GPU for transforms, prediction and RDO scoring, CPU for entropy coding - which is what the research does, and which no open-source AV1 encoder implements.
 
-**Demosaic on GPU is real but buys the wrong thing.** NPP's `nppiCFAToRGB` is bilinear with chroma correlation, which is LibRaw's `linear` - measured above as both slower than PPG *and* further from AHD, so the vendor-supported kernel is the algorithm this deliberately does not use. Good GPU implementations exist (darktable's OpenCL kernels, GPL3; Fastvideo's commercial CUDA) but neither is a drop-in. And the stage is smaller than it looks: any rendition under 4864px decodes a 61MP frame at half size, which skips demosaic altogether.
+**Demosaic on GPU is real but buys the wrong thing.** NPP's `nppiCFAToRGB` is bilinear with chroma correlation, which is the `linear` quality in the table above - both slower than PPG *and* further from AHD, so the vendor-supported kernel is the algorithm this deliberately does not use. Good GPU implementations exist (darktable's OpenCL kernels, GPL3; Fastvideo's commercial CUDA) but neither is a drop-in. And the stage is smaller than it looks: any rendition under 4864px decodes a 61MP frame at half size, which skips demosaic altogether. **This one was overturned outright.** The premise it rests on is that a GPU demosaic would be somebody else's CUDA; RCD is written here, in WGSL, on wgpu, so neither the vendor lock nor the drop-in question arose.
 
 **The RAW unpack is the part that cannot move at all.** ARW and CR2 carry Bayer data in lossless JPEG, whose Huffman decoding is bit-serial - the same objection as the AV1 coder. nvJPEG does not apply, being a baseline DCT decoder. Only Fastvideo claims GPU lossless-JPEG for these formats, proprietary. From the half-size measurements, unpack is roughly half the decode.
 
@@ -1718,8 +1717,6 @@ On the wasm path HDR signalling rides on a PNG **cICP** chunk (9/16/0/1 = BT.202
 
 That machine reports `(dynamic-range: high)` **false** and `(video-dynamic-range: high)` **true**, which is the whole situation in two media queries: Gecko composites HDR for video and only video (bug 1889288), so the sole thing that reaches the panel is a video file its own pipeline decoded - which is why the viewer rewraps the stored AVIF as one rather than encoding anything (§10.7). A PQ-tagged AV1 shows the same flat-grey value as a BT.709-tagged one, so the tag buys nothing beyond that.
 
-`libraw_set_output_color` currently pins sRGB, so nothing produced today is HDR: the delivery path is ready for it, the decode is not.
-
 The default for newly indexed photos is the library's `rendition_source` (§10.1). Changing it is deliberately not retroactive: rebuilding an existing catalogue is a job the user asks for explicitly, not something a preference does to thousands of files in the background. `POST /api/photos/:id/renditions/:r?force=true` is that explicit request, one photo at a time, from the viewer that is showing it - there is no bulk re-render, because a selection's worth of RAW renders is minutes of work for pixels nobody has asked to look at.
 
 ### 10.6 Orphaned files
@@ -1755,7 +1752,7 @@ So an HDR rendition is **one** file, a PQ AVIF, and Firefox is handed that same 
 
 There were six for a while, and a page at `/hdr-check` to look at them on: the same photo also as a 4:2:0 AVIF baseline control, and each of the three with an SDR reference to compare against. It answered the question it was built for - HDR output cannot be observed from script, since anything read back through a canvas has already been tone-mapped, so the only way to know whether a file lights up a panel was to put it next to one that should not and look. Once that was settled the page was a diagnostic nothing in the product reached, and it kept a whole second encode path alive behind it: an SDR variant with its own transfer and gamut conversion, a 4:2:0 medium, six renditions per photo, and a directory tree of its own under the data path. It is gone, and this section describes what ships. HLG was dropped: everything that renders HDR renders PQ, and PQ is absolute where HLG is relative to the display's own range. Encoding client-side was ruled out, though not for the reason first recorded here: Firefox 153 does expose `VideoEncoder` on Windows, measured. What it will not do is hand that encoder HDR pixels - `VideoFrame` rejects every 10-bit format (`I420P10 is unsupported`) and 4:4:4 with it, leaving 8-bit `I420` and `NV12` as the only planar input an encode could start from.
 
-**Decode.** This is the path that makes anything HDR, and until it existed nothing the server produced was. `decodeRaw(..., 'rec2020-linear')` asks LibRaw for Rec.2020 primaries (`output_color=8`), an identity gamma curve, and `no_auto_bright`. The last one matters most: auto-brightening normalises exposure, which spends exactly the headroom above diffuse white that carries the HDR. The result is scene-referred, so a normally exposed frame's mean sits far below the sRGB render's; which is what the integration test asserts, since a decode that quietly stopped applying these would still produce a plausible-looking file.
+**Decode.** This is the path that makes anything HDR, and until it existed nothing the server produced was. It used to be three settings asked of LibRaw - Rec.2020 primaries, an identity gamma curve and `no_auto_bright` - and it is now what the decode does by construction: `decode_rawler` subtracts black, applies the as-shot white balance, takes the camera matrix through to Rec.2020 primaries, and brightens nothing anywhere. The last part matters most: auto-brightening normalises exposure, which spends exactly the headroom above diffuse white that carries the HDR. The result is scene-referred, so a normally exposed frame's mean sits far below the sRGB render's; which is what the integration test asserts, since a decode that quietly stopped applying these would still produce a plausible-looking file.
 
 **All of this is in `native/rawshim`** - the grade, the colour fit, the argv and the reference path's child processes (`tone.rs`, `hdr_fit.rs`, `hdr_args.rs`, `hdr.rs`). It was TypeScript, and the graded frame was written to ffmpeg's stdin from there: ~115MB at 24MP and ~366MB at 61MP crossing the FFI boundary to reach a consumer that was never on this side of it. One call now takes a path and a job and produces the file, without the samples ever leaving.
 
@@ -1825,7 +1822,7 @@ Three things follow the setting and all three have to agree, which is why the ar
 
 **Firefox is the reason to leave it off**, beyond the memory. It plays 4:4:4 AV1 in software but will not composite it in HDR, so a full-chroma still is the one file the rewrap (§10.7.2) cannot help with - it plays, washed out. Turning the setting on is therefore a choice to serve Firefox an SDR-looking picture, which the settings copy says.
 
-Note where the peak lands once it is on: at 4:2:0 the encode falls to 420MB, which is exactly the decode's transient, so the binding constraint moves off libaom and onto LibRaw (§10.4) and further encoder tuning stops paying.
+Note where the peak lands once it is on: at 4:2:0 the encode falls to 420MB, which is exactly the decode's transient, so the binding constraint moves off libaom and onto the decode (§10.4) and further encoder tuning stops paying.
 
 Removing three transfers of a frame across a process boundary and keeping the rest in the server is the shape of the deal.
 
@@ -1868,7 +1865,7 @@ Firefox plays Profile 1 and 2 in software - `canPlayType` reports `"no"` for the
 
 ### 10.7.1 Grading scene-linear to display-referred
 
-The decode is scene-referred, and scene-referred data carries no exposure: LibRaw scales sensor saturation to full range whatever was metered. Tying linear 1.0 straight to the display peak therefore made brightness a function of the exposure rather than of the subject - measured over eight bodies, a 9.3x spread in mean brightness, with every clipped frame flat against the peak. `native/rawshim/src/tone.rs` grades the samples before they reach the encoder, and the same eight frames come out within 2.5x with nothing clipping.
+The decode is scene-referred, and scene-referred data carries no exposure: the decode normalises by the sensor's saturation whatever was metered. Tying linear 1.0 straight to the display peak therefore made brightness a function of the exposure rather than of the subject - measured over eight bodies, a 9.3x spread in mean brightness, with every clipped frame flat against the peak. `native/rawshim/src/tone.rs` grades the samples before they reach the encoder, and the same eight frames come out within 2.5x with nothing clipping.
 
 Two ITU standards do the work, so no look had to be invented:
 
@@ -1944,7 +1941,7 @@ A render carries none of what the camera would have done to the same frame: not 
 
 **The body also says whether it used the correction, and that is worth asking before searching for one.** The SubIFD is written as flag/params pairs - `0x7031`/`0x7032` vignetting, `0x7034`/`0x7035` chromatic aberration, `0x7036`/`0x7037` distortion - and `0x7036` is 0 when the camera corrected nothing. The "on" value is not a single constant (1 and 17 both appear), so anything non-zero reads as on rather than matching a list that goes stale on the next body. It predicts perfectly in the direction that matters: across 120 sampled Sony frames every one of the 17 fits that searched and then fell back to no geometry had `0x7036 = 0`, and it never happened on 1 or 17. Taking the camera at its word skips the curve axis, which is most of what a search costs.
 
-**It does not skip the scale, and it used to.** "The body corrected nothing" is a statement about undistortion, not about framing, and the two are separate: an ILCE-6300 with the flag off still lands on `crop≈0.996`, an EOS R8 on `0.995`. A ~0.4-0.5% rescale that survives across bodies with unrelated optics reads as a difference between LibRaw's visible area and the camera's own framing rather than as a lens (same family as §10.4), and dropping it cost a median ΔE76 of +0.21 on the frames the gate fired on. The scale is now fitted there too - one crop axis, no curve - which put the DSC02981 fixture from ΔE 0.6500 to 0.5634.
+**It does not skip the scale, and it used to.** "The body corrected nothing" is a statement about undistortion, not about framing, and the two are separate: an ILCE-6300 with the flag off still lands on `crop≈0.996`, an EOS R8 on `0.995`. A ~0.4-0.5% rescale that survives across bodies with unrelated optics reads as a difference between the decoder's visible area and the camera's own framing rather than as a lens - measured when that area was LibRaw's, which trimmed to its own margins rather than to the manufacturer's crop (§11.1) - and dropping it cost a median ΔE76 of +0.21 on the frames the gate fired on. The scale is now fitted there too - one crop axis, no curve - which put the DSC02981 fixture from ΔE 0.6500 to 0.5634.
 
 **Where the body recorded nothing, the lensfun database is asked before the geometry is fitted** (`native/rawshim/src/lensfun.rs`). It is a system package: ~4MB of XML with ~1300 lenses, LGPL-3 library and CC BY-SA 3.0 data, so it ships in the image rather than being fetched. It answers for 27 of the 32 Canon frames sampled and for every fixed-lens compact, and it is cheaper than fitting from nothing because a known curve needs only a gain scanned against it where an unknown one needs the whole `k1` grid. What it buys is shape: lensfun's curves are mustache, dipping barrel mid-field before turning pincushion at the corner, which a single `k1` cannot express at any coefficient.
 
@@ -2002,7 +1999,7 @@ What the tag actually says about the lens the residual is largest on is the inte
 
 Meanwhile the frames carry a real displacement that is **flat with radius**, and a lens aberration cannot be - it has to vanish on axis. Pooled over 33 frames of that lens the profile is +0.31, +0.40, +0.40, +0.30px across the field: a flat term of **+0.36px** and a radial slope of **-0.02**, which is to say no radial component at all. The same three Canon frames shot in daylight give the opposite decomposition - a flat term of -0.09 and a slope of **+1.54px per radius**, which is textbook lateral CA, zero on axis and growing outward. So the tier's model is right and works; these particular frames just carry something else on top of it.
 
-**What that something is remains open, but three explanations have been tested and refuted.** It is not the demosaic: that would be identical on every frame LibRaw touches, and the daylight frames show none of it. It is not a bias in the measurement: the same nulling run over synthetic registered stars reads 0.000px at every brightness and noise level tried, so the metric has no floor to speak of. And it is not per-frame noise, which is what a single frame's profile looked like - two frames of the same lens minutes apart gave slopes of +0.43 and +0.04, which is why the number above is pooled over 33. What it does track is **astro frames specifically**, on both bodies: the one Canon astro frame carries a flat +0.33 alongside its radial +1.34, where the Canon daylight frames carry none.
+**What that something is remains open, but three explanations have been tested and refuted.** It is not the demosaic: that would be identical on every frame it touches, and the daylight frames show none of it. It is not a bias in the measurement: the same nulling run over synthetic registered stars reads 0.000px at every brightness and noise level tried, so the metric has no floor to speak of. And it is not per-frame noise, which is what a single frame's profile looked like - two frames of the same lens minutes apart gave slopes of +0.43 and +0.04, which is why the number above is pooled over 33. What it does track is **astro frames specifically**, on both bodies: the one Canon astro frame carries a flat +0.33 alongside its radial +1.34, where the Canon daylight frames carry none.
 
 The practical consequence is that the 44% is measured on the shoot least able to show the correction off. Most of what these frames carry at the corner is not lateral CA and no radial model can remove it, which caps the score whatever the curve says. The daylight frames are where the model's own domain is, and there the aberration it targets is the whole of what is there.
 
@@ -2137,9 +2134,9 @@ What corroborates it is where it declines to fire. 30 of the 32 fit a corner gai
 
 **Sony is not excluded, it simply has nothing to correct**, and that is the same finding the `0x7032` paragraph above reaches from the other direction: the body writes a vignetting tag claiming a +50% corner and does not apply it to the preview, so a stage that measures the ratio rather than reading the tag measures it flat. Over 30 frames across two bodies and three lenses - one native FE prime and two Tamron zooms - 25 fit no gain at all and the other five land within ±7% of the identity, against 1.03-2.33 on the Canon set.
 
-**The residual floor is content, not model.** After geometry and falloff, ΔE lands around 1 where content is smooth and 2.5-3 in fine detail, and per-tile fits show why: on one frame the smooth tiles score 0.81-1.07 while dense-detail tiles score 2.79-3.07. It is the camera's noise reduction and sharpening against LibRaw's demosaic, which no colour transform should try to reproduce - and note that blurring both images does not remove it, because NR is edge-preserving and nonlinear, so the two are not a linear filter apart. Adding model capacity for it is wasted: a 33³ LUT scores *worse* than curves plus a matrix at every blur level.
+**The residual floor is content, not model.** After geometry and falloff, ΔE lands around 1 where content is smooth and 2.5-3 in fine detail, and per-tile fits show why: on one frame the smooth tiles score 0.81-1.07 while dense-detail tiles score 2.79-3.07. It is the camera's noise reduction and sharpening against our own demosaic, which no colour transform should try to reproduce - and note that blurring both images does not remove it, because NR is edge-preserving and nonlinear, so the two are not a linear filter apart. Adding model capacity for it is wasted: a 33³ LUT scores *worse* than curves plus a matrix at every blur level.
 
-> ⚠️ Same caveat as above: "scores worse" is a mean ΔE76 verdict, on a measure that cannot see a cast. The *reasoning* about the floor being content. NR and sharpening against LibRaw's demosaic, edge-preserving and nonlinear so a blur does not remove it; is independent of the metric and stands. The capacity verdict is not.
+> ⚠️ Same caveat as above: "scores worse" is a mean ΔE76 verdict, on a measure that cannot see a cast. The *reasoning* about the floor being content. NR and sharpening against our own demosaic, edge-preserving and nonlinear so a blur does not remove it; is independent of the metric and stands. The capacity verdict is not.
 
 **One fit per photo, and nothing is stored.** The fit is on the job rather than the target, so the grid tile and the full view cannot disagree about colour. Across jobs - the max-resolution export is built on demand, long after the import - the fit is deterministic, so refitting lands on the same transform rather than a second opinion, which is why no profile is persisted. A test pins that determinism, because it is the only thing standing between "no storage needed" and two differently-graded copies of one photo.
 
@@ -2147,7 +2144,7 @@ What corroborates it is where it declines to fire. 30 of the 32 fit a corner gai
 
 **One decode serves the fit and every rendition.** This was the single biggest cost and it was pure waste: `writeSdr` decoded per target, so a `render` import demosaiced the same 60MP frame twice for the grid tile and the full view, and the fit decoded a third time for an identical result. Sharing one decode across the job took the fit on a 60MP frame from 3.8s to 1.9s and the unmatched baseline from 4.8s to 2.9s, so it is a win whether or not matching is on. A job whose every target comes from the embedded JPEG takes no decode and no fit at all: the targets that want a render are collected first, and where there are none the job is done - an embedded grid already carries the camera's look.
 
-**An HDR job fits off the scene-linear decode, and takes no 8-bit one.** All it wants from this section is the geometry - the colour is refitted in the grade's own domain (§10.8.1) - and the search resizes whatever it is handed down to a 640px grid before it looks at anything. So where nothing in the job renders SDR, the render is derived from the 16-bit decode already in hand: normalised by the frame's own peak, Rec.2020 to sRGB primaries, sRGB transfer, 8-bit. That is the same shape as LibRaw's sRGB path, with `levels.peak` standing in for auto-brightening, which clips its top 0.01% where this clips none. It removes a whole LibRaw decode from every HDR photo, ~8% of one end to end.
+**An HDR job fits off the scene-linear decode, and takes no 8-bit one.** All it wants from this section is the geometry - the colour is refitted in the grade's own domain (§10.8.1) - and the search resizes whatever it is handed down to a 640px grid before it looks at anything. So where nothing in the job renders SDR, the render is derived from the 16-bit decode already in hand: normalised by the frame's own peak, Rec.2020 to sRGB primaries, sRGB transfer, 8-bit. That is the same shape as the 8-bit render `decode_rawler::to_srgb8` produces, with `levels.peak` standing in for the auto-brightening LibRaw applied there, which clipped its top 0.01% where this clips none. It removes a whole second decode from every HDR photo, ~8% of one end to end.
 
 It is checked rather than assumed, because the two renders genuinely differ in tone and the geometry search scores candidates by the residual they leave. Measured on both fixtures the tier and the knots come out **identical** and the crop within **0.06%**, which is ~1.4px at the corner of a 3840px frame - under the bilinear resample that follows it, and well under the median ΔE76 +0.21 the uncorrected-flag gate above already accepts. A test pins it on a lensfun-tier body and an uncorrected one.
 
@@ -2277,7 +2274,7 @@ A third that was pure bookkeeping: the fit **normalised the whole decode to diff
 
 That reordering used to cost one thing: the levels could not be measured where they were used, because averaging pulls a specular peak in and a downscaled copy then reported a different diffuse white and a different scene peak. That is what reading both ends as quantiles over a fixed sample count fixed (10.7.1) - the anchor no longer moves with the frame's resolution, so it can be measured wherever the frame happens to be, and the decode is free to arrive already fitted.
 
-**The lens and the colour travel as one object**, and that is a fix rather than a preference. They shipped separately at first: the geometry was used to build the fit and then never applied to the output, so an HDR rendition carried the camera's colour on LibRaw's uncorrected shape - a transform applied half, and wrong on its own terms rather than merely different from the SDR copy. `HdrMatch` carries a `Lens` and a colour, so applying one without the other is not expressible.
+**The lens and the colour travel as one object**, and that is a fix rather than a preference. They shipped separately at first: the geometry was used to build the fit and then never applied to the output, so an HDR rendition carried the camera's colour on the decode's uncorrected shape - a transform applied half, and wrong on its own terms rather than merely different from the SDR copy. `HdrMatch` carries a `Lens` and a colour, so applying one without the other is not expressible.
 
 The falloff repeated the lesson at one remove, which is why the `Lens` exists rather than three parameters. Threaded as `distortion`, `crop` and `falloff` down two call chains, the two routes that build a match each had to remember all three - and the one that fits both halves at once promptly did not, dropping the falloff with every test still green. *Applying* half was unexpressible; *fitting* half was not. One struct closes both.
 
@@ -2433,7 +2430,7 @@ That test is a seam check and **not** the halo's guard, which is worth stating b
 
 **Sensor noise is per-photosite, and a demosaic is the last moment that is true.** Interpolation averages neighbouring sites to invent the two colours each one did not record, which correlates the noise across pixels and turns a chroma error into a coloured smudge with real spatial extent. Everything §10.9 used to do about noise was downstream of that, reasoning about colour it had already had smeared - which is why the guided filters needed an amplitude cap to stop a red wall reaching a grey roof, and why a green fringe survived the cap on ordinary frames.
 
-GALOSH runs between LibRaw's `unpack` and its `dcraw_process`, on `rawdata.raw_image`, which is the only window in which the mosaic exists (`galosh::denoise`). Thirty-one WGSL compute kernels, transcribed from the reference's Vulkan port, driven by a host that follows the reference's own dispatch table.
+GALOSH runs on the mosaic rawler hands back - after `condition` has taken out the black level, applied the as-shot balance and normalised to the unit interval, and before the demosaic - which is the only window in which the mosaic exists (`galosh::denoise`). Thirty-one WGSL compute kernels, transcribed from the reference's Vulkan port, driven by a host that follows the reference's own dispatch table.
 
 **Blind, so there is no profile to ship.** Phase 0 fits the sensor's Poisson-Gaussian model off the frame itself: the shot-noise slope from how per-block variance rises with per-block level, and the read-noise intercept from the Laplacians of the pixels the frame's own tenth percentile calls dark. darktable's equivalent is a per-camera database, which is GPL and could not be used here anyway; fitting per frame also answers the harder question, since two exposures from one body do not have the same noise.
 
@@ -2534,20 +2531,22 @@ Used during sync to populate photo records and compute file hashes.
 
 ### 11.1 Implementation
 
-Metadata is read via the same per-format dispatch as decoding (§10): sniff the header, route to the format's reader. It comes from LibRaw rather than from a general image library, and the reason is worth keeping: libvips, while it was here, had no RAW loader at all, and coaxed into opening an ARW as a generic TIFF it reported the embedded preview's dimensions rather than the full-res sensor values.
+Metadata is read by the same reader as the decode (§10), which is rawler for every format. That it comes from a RAW decoder at all rather than from a general image library is worth keeping the reason for: libvips, while it was here, had no RAW loader at all, and coaxed into opening an ARW as a generic TIFF it reported the embedded preview's dimensions rather than the full-res sensor values.
 
-For every supported format, metadata comes from **LibRaw's header parse**: `libraw_init` then `libraw_open_file` populates `imgdata.sizes` (dimensions and `flip` orientation), `imgdata.other` (capture `timestamp`, parsed GPS), and `imgdata.color` (color space), followed by `libraw_adjust_sizes_info_only` to flip-adjust `sizes.iwidth`/`iheight` (see below), all **without** calling `libraw_unpack`/`libraw_dcraw_process`, so no pixel data is decoded. This is the fast path used per file during scan. `colorSpace` is the constant `sRGB` output space: LibRaw exposes no stable accessor for the camera's source color-space EXIF tag, and the decode pipeline always outputs sRGB, so this field is fixed (informational + a stable, non-varying hash input) rather than read per file. (`imgdata.color` holds calibration/profile data, not a simple source-space identifier.) The EXIF capture time is naive (the tag carries no zone). LibRaw exposes it only as a pre-computed `time_t` in `imgdata.other.timestamp` (derived by interpreting the naive `DateTimeOriginal` as the process's local timezone), with no accessor for the EXIF `OffsetTimeOriginal` tag. It therefore reads that `time_t` back through the same local zone `mktime` used and re-encodes those components as a `Z` UTC ISO string (§4), which stores the camera's wall clock verbatim whatever the server's zone is; taking the `time_t` as an instant instead would slide every capture date by the server's offset. The stored value is a wall clock rather than an instant, so the client formats it in UTC (`captureDateTime`) rather than in the viewer's zone, which would slide it a second time. The zone itself comes from a second, direct read of the file: `exif_zone.ts` walks IFD0 into the Exif IFD and returns `OffsetTimeOriginal` (0x9011), falling back to `OffsetTime` (0x9010), into the `date_taken_offset` column. An ARW *is* a TIFF, so that walk starts at byte zero. A CR3 is an ISO base-media file, so the box tree is walked first - `moov` into the `uuid` box, to `CMT2`, which holds the Exif IFD as a complete little TIFF of its own - and the same IFD reader takes it from there. Bounded to the first 256KB, so it costs a page or two rather than a read of a 25MB file, and null when a pointer leads past that window. The tags arrived in EXIF 2.31 (2016), so older bodies record nothing and the column stays NULL: a Sony ILCE-7CR and a Canon EOS R8 both write `+11:00`, an ILCE-6300 writes no offset at all. Blank and malformed values ("      ", `+1100`) are read as absent rather than as UTC. It is deliberately not a hash input (§9.2), for the same reason `dateTaken` is not: the hash is a change detector for a file the scan has already decided to open, which only happens once mtime or size differs (§9.1), and mtime is itself hashed. Descriptive metadata therefore adds no detection the hash does not already have. Rewriting the zone tag in place while preserving mtime and size defeats the quick-check before a hash is ever computed, so hashing it would not catch that case either. `date_taken` stays the wall clock either way, so ordering and the date filters are unaffected by whether a body recorded a zone; the offset is what the viewer shows beside the time and what a true instant would be derived from. The reader also `stat`s the file to fill `mtime`/`fileSize`, so the scan-time result carries them all the way to Phase 3 apply (§9.4) without a second `stat` inside the transaction.
+For every supported format, metadata comes from **a header parse in `native/rawshim/src/header.rs`**: `get_decoder` then `raw_metadata` for the EXIF block (orientation, capture time, GPS, exposure, body and lens), plus one *dummy* `raw_image` for the shape, which reads the frame's dimensions and `crop_area` without decompressing anything. No pixel data is decoded, and this is the fast path used per file during scan. The dimensions come from that dummy decode rather than from EXIF deliberately: EXIF describes the picture the camera would have made, and the recommended crop and the orientation both move it, where the catalogue's row has to agree with the rendition it will show. `colorSpace` is the constant `sRGB`: nothing reads a per-file source space, and the field exists as informational metadata and a stable, non-varying hash input rather than as something measured. The EXIF capture time is naive (the tag carries no zone), and `header.rs` parses `DateTimeOriginal` itself and treats it as UTC, so the seconds it hands back re-encode as a `Z` UTC ISO string (§4) that stores the camera's wall clock verbatim whatever the server's zone is. That used to be a round trip through the process's own zone, because LibRaw exposed the time only as a `time_t` it had derived with `mktime`, and reading it back as an instant would have slid every capture date by the server's offset. The stored value is a wall clock rather than an instant, so the client formats it in UTC (`captureDateTime`) rather than in the viewer's zone, which would slide it a second time. The zone itself comes from a second, direct read of the file: `exif_zone.ts` walks IFD0 into the Exif IFD and returns `OffsetTimeOriginal` (0x9011), falling back to `OffsetTime` (0x9010), into the `date_taken_offset` column. An ARW *is* a TIFF, so that walk starts at byte zero. A CR3 is an ISO base-media file, so the box tree is walked first - `moov` into the `uuid` box, to `CMT2`, which holds the Exif IFD as a complete little TIFF of its own - and the same IFD reader takes it from there. Bounded to the first 256KB, so it costs a page or two rather than a read of a 25MB file, and null when a pointer leads past that window. The tags arrived in EXIF 2.31 (2016), so older bodies record nothing and the column stays NULL: a Sony ILCE-7CR and a Canon EOS R8 both write `+11:00`, an ILCE-6300 writes no offset at all. Blank and malformed values ("      ", `+1100`) are read as absent rather than as UTC. It is deliberately not a hash input (§9.2), for the same reason `dateTaken` is not: the hash is a change detector for a file the scan has already decided to open, which only happens once mtime or size differs (§9.1), and mtime is itself hashed. Descriptive metadata therefore adds no detection the hash does not already have. Rewriting the zone tag in place while preserving mtime and size defeats the quick-check before a hash is ever computed, so hashing it would not catch that case either. `date_taken` stays the wall clock either way, so ordering and the date filters are unaffected by whether a body recorded a zone; the offset is what the viewer shows beside the time and what a true instant would be derived from. The reader also `stat`s the file to fill `mtime`/`fileSize`, so the scan-time result carries them all the way to Phase 3 apply (§9.4) without a second `stat` inside the transaction.
 
 **A parsed GPS block is not the same as a fix.** Canon sets `gpsparsed` on every frame and leaves the degree triples at zero when the body had no fix, so trusting the flag alone put a whole catalogue at 0,0 - which is not a null, it is a point in the Gulf of Guinea, and it maps. An all-zero latitude *and* longitude therefore reads as "not recorded".
 
-`width`/`height` are the **display (upright) dimensions**, i.e. after the orientation flip is applied. At `open_file` time LibRaw's `sizes.iwidth`/`iheight` are still in **sensor orientation** (the 90°/270° swap is applied only by `dcraw_process` or by an explicit `libraw_adjust_sizes_info_only()` call), so the reader must call `libraw_adjust_sizes_info_only()` after `open_file` and then read the now flip-adjusted `iwidth`/`iheight`. This is deliberate: the generated renditions are baked upright (§10.4), so storing upright dimensions means `width`/`height` always match the served rendition's aspect. `orientation` is retained separately (as the LibRaw flip orientation code) only as informational metadata and as a file-hash input (§9.2); **clients must not apply it to the served renditions, which are already upright** (doing so would double-rotate).
+`width`/`height` are the **display (upright) dimensions**, i.e. after the orientation is applied. What the dummy decode reports is still in **sensor orientation**, so the reader swaps the two axes itself for EXIF orientations 5 to 8. This is deliberate: the generated renditions are baked upright (§10.4), so storing upright dimensions means `width`/`height` always match the served rendition's aspect. `orientation` is retained separately only as informational metadata and as a file-hash input (§9.2); **clients must not apply it to the served renditions, which are already upright** (doing so would double-rotate).
+
+**`orientation` is the EXIF tag, 1 to 8, and it did not always mean that.** LibRaw handed over dcraw's `flip` encoding - 0/3/5/6 - and rows written before the decoder changed still hold it; nothing rewrites them, because the column is informational and a re-scan of a changed file overwrites it anyway. The name has stayed put through both, so read it as "whatever the reader of the day recorded" rather than as one encoding.
 
 ```typescript
 interface FileMetadata {
-  width: number;   // display/upright width (post-flip)
-  height: number;  // display/upright height (post-flip)
+  width: number;   // display/upright width (post-orientation)
+  height: number;  // display/upright height (post-orientation)
   colorSpace: string;
-  orientation: number;   // LibRaw flip orientation code; informational only (see note above)
+  orientation: number;   // EXIF orientation, 1 to 8; informational only (see note above)
   dateTaken: string | null;  // ISO datetime
   latitude: number | null;
   longitude: number | null;
@@ -2562,21 +2561,18 @@ interface FileMetadata {
   fileSize: number;  // bytes; hash input (§9.2)
 }
 
-// Stage 1: one ARW reader. A second format adds a header sniff here.
 async function extractMetadata(filePath: string): Promise<FileMetadata> {
-  // stat() + LibRaw header parse, no unpack
+  // stat() + the rawshim header parse, no unpack
 }
 ```
 
-Body and lens come from `libraw_get_iparams()` (`normalized_make`/`normalized_model`, falling back to the raw `make`/`model`) and `libraw_get_lensinfo()` (`Lens`). LibRaw leaves the lens blank or `---` on fixed-lens bodies, and both spellings are stored as NULL: "unknown" rather than a lens named `---`.
+Body and lens come from the metadata block: `make`/`model`, and `lens.lens_name` falling back to the EXIF `LensModel`. A fixed-lens body leaves the lens blank or writes `---`, and both spellings are stored as NULL (`rawshim_ops.ts`): "unknown" rather than a lens named `---`.
 
-**Sensor crop.** Some bodies (the ILCE-7CR among them) report masked border columns as part of LibRaw's "visible" area, `sizes.width`/`height` equal `raw_width`/`raw_height` with zero margins, while the file separately states the real picture in `sizes.raw_inset_crops[0]`. Decoding the visible area verbatim then bakes black bars down two edges of every rendition. Both the header read and the decode therefore crop to that inset when the file states a usable one (an origin of `65535` means "not stated", and a crop that does not fit the raw frame means the struct layout drifted; either way, no crop). `dcraw_process` emits an upright image, so the sensor-space margins are rotated by the same flip before being applied. The two paths must agree: the stored `width`/`height` describe the picture the rendition shows.
+**Sensor crop.** The readable sensor is larger than the picture: there are masked columns carrying the black level and rows the manufacturer does not consider valid. Decoding that area verbatim bakes black bars down two edges of every rendition, so both the header read and the decode crop to `crop_area` - the manufacturer's own recommended crop, which is also what the camera's embedded JPEG shows - and fall back to the whole frame where the file states none. The two paths must agree: the stored `width`/`height` describe the picture the rendition shows, and `decodes_the_frame_the_camera_says_it_took` and `the_recorded_dimensions_are_the_dimensions_that_get_decoded` pin them together.
 
-**The inset is measured against what LibRaw already trims, not against the sensor.** The emitted frame starts at `left_margin`/`top_margin` and is `width`x`height`; only the part of the camera's crop falling outside *that* window is still ours to remove. Subtracting the crop from the raw frame instead double-applies it on every body where `left_margin` is already the crop origin - which is every Canon. An EOS R8 lost a further 168 columns and 108 rows, and because the excess came off two sides rather than four the result was not a smaller picture but a differently framed one: 5811x3879 where the camera's own JPEG is 6000x4000, shifted up and left. It also cost the JPEG match (§10.5), which models an overall rescale but has no term for a translation: acceptance across 27 EOS R8 frames was 15/27 before and 27/27 after, median deltaE 4.11 to 1.89, against 27/27 and 1.35 for a Sony set of the same size. Three Sony geometries were over-cropped by 8-32 columns on the right edge by the same arithmetic, which is why this is not a Canon special case.
+**The arithmetic this replaced is worth recording, because the failure it caused looked plausible.** LibRaw emitted a frame already trimmed to its own margins and stated the camera's crop separately, so only the part of that crop falling outside the emitted window was ours to remove - and subtracting it from the raw frame instead double-applied it on every body where the margin was already the crop origin, which is every Canon. An EOS R8 lost a further 168 columns and 108 rows, and because the excess came off two sides rather than four the result was not a smaller picture but a differently framed one: 5811x3879 where the camera's own JPEG is 6000x4000, shifted up and left. It also cost the JPEG match (§10.5), which models an overall rescale but has no term for a translation: acceptance across 27 EOS R8 frames was 15/27 before and 27/27 after, median deltaE 4.11 to 1.89, against 27/27 and 1.35 for a Sony set of the same size. Three Sony geometries were over-cropped by 8-32 columns on the right edge by the same arithmetic, which is why it was not a Canon special case. With one stated crop and nothing already applied to it there is no second window to measure against, and the whole class is gone; the frame moved by a couple of dozen pixels of border in the process, LibRaw having emitted 4024x6024 and 3999x5999 where the manufacturer says 4000x6000 on both.
 
-The processor is opened header-only and closed (`libraw_close`/`libraw_recycle`) immediately after reading the fields; the memory-leak audit note in §10.4 applies here too.
-
-These struct reads are at hand-computed byte offsets validated against real ARWs from four bodies, so a LibRaw upgrade that reorders a field would degrade to plausible garbage rather than an error. `raw_header.integration.test.ts` pins the known-correct values for the checked-in fixture.
+The header struct crossing the FFI is `#[repr(C)]` and ours rather than an upstream C layout, and its size is checked at the first call, so a field that moves is a mismatch rather than plausible garbage - which is what six tables of hardcoded offsets into five C structs used to risk. `raw_header.integration.test.ts` pins the known-correct values for the checked-in fixture.
 
 ### 11.2 Hash Computation (`hash.ts`)
 
@@ -2960,7 +2956,7 @@ quiet.
 
 ## 16. Testing Strategy
 
-Two tiers, both run by `bun test`, split by whether a module needs the container's native dependencies (`bun:ffi`/LibRaw, an on-disk photo tree) or can run anywhere against mocks.
+Two tiers, both run by `bun test`, split by whether a module needs the container's native dependencies (`bun:ffi` into `librawshim.so`, an on-disk photo tree) or can run anywhere against mocks.
 
 ### 16.1 Unit Tests
 
@@ -2970,7 +2966,7 @@ Services and API handlers whose dependencies can be mocked are unit-tested with 
 
 **Service mocks:** API handler tests mock the service layer to test request validation, response formatting, and HTTP status codes.
 
-**Exceptions covered by integration tests instead (§16.3):** `SyncService`, the image-streaming API, and repository DB behaviour are *not* unit-tested; `SyncService` and the repositories exercise real SQL (mocking a repository well enough to test the sync algorithm would test the mock, not the SQL), and image streaming depends on `Bun.file`. These run against a real in-memory `bun:sqlite` DB and the LibRaw FFI in the container integration suite, which is the authoritative coverage for scan/diff/apply, the move/rename/delete races, the sync generation token, inode dedup, and image responses.
+**Exceptions covered by integration tests instead (§16.3):** `SyncService`, the image-streaming API, and repository DB behaviour are *not* unit-tested; `SyncService` and the repositories exercise real SQL (mocking a repository well enough to test the sync algorithm would test the mock, not the SQL), and image streaming depends on `Bun.file`. These run against a real in-memory `bun:sqlite` DB and the `rawshim` FFI in the container integration suite, which is the authoritative coverage for scan/diff/apply, the move/rename/delete races, the sync generation token, inode dedup, and image responses.
 
 ### 16.2 Key Test Cases
 
@@ -3065,7 +3061,7 @@ bun run test
 
 That runs `bun test src`, covering `src/**/tests/*.test.ts`. Test helpers (`describe`, `expect`, `jest.fn`, …) are imported from `bun:test`.
 
-Integration tests (need real `bun:sqlite` + LibRaw, so they run in the container):
+Integration tests (need real `bun:sqlite` + `librawshim.so`, so they run in the container):
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d
@@ -3095,8 +3091,8 @@ The following order respects dependency chains — each step depends on the step
 4. **Utils**: `hash.ts`, `files.ts`, `paths.ts`.
 5. **Repositories**: All repository classes (pure SQLite data access).
 6. **Libraries service + API**: CRUD operations for libraries.
-7. **RAW decoder / FFI**: `raw_decoder.ts` LibRaw FFI bindings and the per-format dispatch (header sniff). Needed before metadata since ARW metadata is read via LibRaw's header parse.
-8. **Metadata extraction**: `metadata.ts` (per-format header parse; LibRaw for ARW and CR3).
+7. **RAW decoder / FFI**: `raw_decoder.ts` over the `rawshim` bindings. Needed before metadata, since metadata is read by the same reader's header parse.
+8. **Metadata extraction**: `metadata.ts` (the header parse, no pixel decode).
 9. **Photos service + API**: CRUD, listing, filtering.
 10. **Processing service**: Worker-based rendition generation (reuses the RAW decoder).
 11. **Sync service**: Full sync algorithm with move detection, reappearance handling, shoot-membership reconciliation, and the per-library sync lease (§9.7). Depends on the processing service (§8.4), which it calls to trigger rendition generation (§9.5).
@@ -3467,7 +3463,7 @@ bun run test:e2e                  # Playwright; starts its own API + Vite on ran
 
 Every service picks a free port at random rather than a fixed one, so several checkouts (parallel worktrees, an agent per branch) can each run a dev server and an E2E suite without fighting over `:3000`. Each prints the port it got, and takes an override when one has to be pinned: `-p <port>` for the API, `--port <port>` for Vite. The dev server's proxy still has to be told where the API is, so a dev session either pins the API with `-p 3000` or passes the port it was given as `VITE_API_URL`.
 
-`bun run test:e2e` builds a throwaway library under `$TMPDIR/bowerbird-e2e-<checkout hash>` from the ARW fixture and drives the real stack, so it needs LibRaw present. The path is keyed by checkout so two worktrees testing at once do not wipe each other's fixture, and stable across runs of one checkout so the copies are overwritten rather than piling up. `VITE_API_URL` points the dev server's proxy at a non-default API origin.
+`bun run test:e2e` builds a throwaway library under `$TMPDIR/bowerbird-e2e-<checkout hash>` from the ARW fixture and drives the real stack, so it needs `librawshim.so` built. The path is keyed by checkout so two worktrees testing at once do not wipe each other's fixture, and stable across runs of one checkout so the copies are overwritten rather than piling up. `VITE_API_URL` points the dev server's proxy at a non-default API origin.
 
 ---
 
@@ -4331,7 +4327,10 @@ writes over every member it judges.
 
 > **Status: this section describes the editor that was replaced, and is kept for what it
 > measured rather than for what it builds.** None of the code named below still exists.
-> `rawshim` is no longer compiled to wasm; `raw_edit_route.ts`, `raw_edit_worker.ts`,
+> The wasm module described here - `rawshim` plus LibRaw, libaom and libavif through wasi-sdk -
+> is gone, and `native/toolchain/build_wasm_libs.sh` with it. (The crate does build and run for
+> `wasm32-unknown-unknown` again, but as pure Rust with no C linked and the GPU handed in from JS;
+> `tests/wasm_build.rs` is what pins that.) `raw_edit_route.ts`, `raw_edit_worker.ts`,
 > `raw_edit_daemon.ts`, `wasi_stub.ts`, the rayon pool and the three engine routes were all
 > deleted, and with them the 960px interactive preview, the second `Prepared` and the
 > in-page AV1 encoder. The editor now decodes natively - on the server, or in the desktop
@@ -4442,7 +4441,7 @@ The HDR setting asks the reader to believe something they cannot check from the 
 
 **The HDR arm comes out of `runJob`** (`scripts/hdr-demo-assets.ts`) at the settings the app ships with - `SettingsSchema.parse({})`, not a table of numbers copied into the script - with only the size changed, 1200px rather than 3840.
 
-**The 8-bit arm is derived from that file rather than asked for as a second target**, and getting this wrong is what the first version of the page did. A library's SDR rendition is *not* the HDR one with its highlights removed: it comes off LibRaw's sRGB output, auto-brightened and fitted to the camera's JPEG (§10.8), where the HDR one is a scene-linear decode graded against a quantile (§10.7.1). On a daylight frame those land in nearly the same place. On a night frame they do not - measured on the neon sign, the SDR arm sat at a black level of 0.059 with a red cast where the HDR arm was at 0.003 and neutral, and on the WC sign it was darker everywhere rather than only in the highlights. Both are defensible renderings and neither is a bug. But a page whose entire claim is *the same picture with less room at the top* cannot be built from two pictures that disagree at the bottom, and a reader looking at those pairs correctly reported that the 8-bit one was simply broken.
+**The 8-bit arm is derived from that file rather than asked for as a second target**, and getting this wrong is what the first version of the page did. A library's SDR rendition is *not* the HDR one with its highlights removed: it came off LibRaw's sRGB output, auto-brightened and fitted to the camera's JPEG (§10.8), where the HDR one is a scene-linear decode graded against a quantile (§10.7.1). On a daylight frame those land in nearly the same place. On a night frame they do not - measured on the neon sign, the SDR arm sat at a black level of 0.059 with a red cast where the HDR arm was at 0.003 and neutral, and on the WC sign it was darker everywhere rather than only in the highlights. Both are defensible renderings and neither is a bug. But a page whose entire claim is *the same picture with less room at the top* cannot be built from two pictures that disagree at the bottom, and a reader looking at those pairs correctly reported that the 8-bit one was simply broken.
 
 So the 8-bit arm is now the HDR arm with its ceiling brought down to white: the PQ taken back to light with 203 nits tied to 1.0, everything above that clipped by the sRGB transfer, written out at the quantizer a stored SDR rendition would have used. A clamp and a colour conversion, no second grade - which is exactly what the page says it is showing, and now literally true rather than nearly true.
 
