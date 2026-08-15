@@ -40,7 +40,7 @@ export class LocalDecoder {
     const wasm = await this.ready();
     let decoded: Decoded | undefined;
     try {
-      decoded = decodeRaw(raw, atLeastLongEdge);
+      decoded = await decodeRaw(raw, atLeastLongEdge);
       const view = new Uint16Array(wasm.memory.buffer, decoded.ptr, decoded.length);
       return {
         width: decoded.width,

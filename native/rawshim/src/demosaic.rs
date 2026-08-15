@@ -88,7 +88,7 @@ pub fn cpu(mosaic: &[f32], width: usize, height: usize, cfa: [u32; 4]) -> Option
         .collect();
     let pattern = rawler::cfa::CFA::new(&name);
 
-    eprintln!("rawshim: no GPU for the demosaic, so this frame is PPG on the CPU rather than RCD");
+    crate::warn("rawshim: no GPU for the demosaic, so this frame is PPG on the CPU rather than RCD");
     let plane = rawler::pixarray::PixF32::new_with(mosaic[..width * height].to_vec(), width, height);
     let whole = rawler::imgop::Rect::new(
         rawler::imgop::Point::new(0, 0),
@@ -189,19 +189,15 @@ impl Rcd {
 /// `cfa` is the sensor's 2x2 pattern read row-major from the top-left of the frame, with 0 red,
 /// 1 green and 2 blue. Bayer only: a pattern that is not two greens on a diagonal is refused,
 /// because every stage here pairs rows and columns into 2x2 sites.
-pub fn demosaic_with<T>(
+pub async fn demosaic_with<T>(
     gpu: &crate::gpu::Gpu,
     rcd: &Rcd,
-    mosaic: &[f32],
-    width: usize,
-    height: usize,
+    mosaic: &crate::condition::Mosaic,
     cfa: [u32; 4],
     consume: impl FnOnce(&[u8]) -> T,
 ) -> Option<T> {
+    let (width, height) = (mosaic.width, mosaic.height);
     if width < (2 * MARGIN as usize) + 4 || height < (2 * MARGIN as usize) + 4 {
-        return None;
-    }
-    if mosaic.len() < width * height {
         return None;
     }
     if !is_bayer(cfa) {
@@ -220,25 +216,7 @@ pub fn demosaic_with<T>(
         usage: wgpu::BufferUsages::UNIFORM,
     });
 
-    let mosaic_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("rcd mosaic"),
-        size: plane_bytes,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    // A megabyte at a time rather than one buffer of the whole frame, for the reason `galosh`
-    // gives: the intermediate would be a quarter of a gigabyte at 61MP, held beside a decode that
-    // is already the largest thing in the process.
-    const CHUNK: usize = 1 << 18;
-    let mut bytes: Vec<u8> = Vec::with_capacity(CHUNK * 4);
-    for (at, block) in mosaic[..pixels].chunks(CHUNK).enumerate() {
-        bytes.clear();
-        for sample in block {
-            bytes.extend_from_slice(&sample.to_ne_bytes());
-        }
-        gpu.queue.write_buffer(&mosaic_buf, (at * CHUNK * 4) as u64, &bytes);
-    }
-    lap("upload");
+    let mosaic_buf = mosaic.buffer.clone();
 
     let plane = |label: &str, bytes: u64| {
         device.create_buffer(&wgpu::BufferDescriptor {
@@ -306,16 +284,8 @@ pub fn demosaic_with<T>(
     encoder.copy_buffer_to_buffer(&rgb, 0, &readback, 0, plane_bytes * 3);
     gpu.queue.submit(Some(encoder.finish()));
 
-    let slice = readback.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |_| {});
-    device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
-    lap("dispatch");
-    let out = {
-        let mapped = slice.get_mapped_range().ok()?;
-        consume(&mapped)
-    };
-    readback.unmap();
-    lap("read back");
+    let out = crate::gpu::read_back(device, &readback, consume).await?;
+    lap("dispatch, read back");
     Some(out)
 }
 
@@ -358,12 +328,13 @@ mod tests {
             .flat_map(|r| (0..w).map(move |c| truth(r, c, cfa[(r & 1) * 2 + (c & 1)] as usize)))
             .collect();
 
-        let rgb = super::demosaic_with(gpu, rcd, &mosaic, w, h, cfa, |bytes| {
+        let uploaded = crate::condition::Mosaic::upload(gpu, &mosaic, w, h);
+        let rgb = pollster::block_on(super::demosaic_with(gpu, rcd, &uploaded, cfa, |bytes| {
             bytes
                 .chunks_exact(4)
                 .map(|word| f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
                 .collect::<Vec<f32>>()
-        })
+        }))
         .expect("the demosaic runs");
 
         let margin = super::MARGIN as usize;

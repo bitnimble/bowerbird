@@ -44,7 +44,11 @@ fn main() {
             (level + ((state >> 40) as f32 / 16777216.0 - 0.5) * 0.05).clamp(0.0, 1.0)
         })
         .collect();
-    let fit = rawshim::galosh::fit(gpu, kernels, &mosaic, width, height);
+    let upload = |values: &[f32]| rawshim::condition::Mosaic::upload(gpu, values, width, height);
+    let read = |frame: &rawshim::condition::Mosaic| {
+        pollster::block_on(frame.read(gpu)).expect("the mosaic reads back")
+    };
+    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &upload(&mosaic)));
     println!(
         "{}x{} ({:.1}MP), halo {}\n",
         width,
@@ -53,28 +57,27 @@ fn main() {
         rawshim::RENDITION_TILE_HALO,
     );
 
-    let mut whole = mosaic.clone();
     let mut one = std::time::Duration::MAX;
     for _ in 0..3 {
+        let scratch = upload(&mosaic);
         let began = std::time::Instant::now();
-        rawshim::galosh::denoise_with(gpu, kernels, &mut whole, width, height, amounts, fit);
+        pollster::block_on(rawshim::galosh::denoise_with(gpu, kernels, &scratch, amounts, fit));
         one = one.min(began.elapsed());
-        whole.copy_from_slice(&mosaic);
     }
-    rawshim::galosh::denoise_with(gpu, kernels, &mut whole, width, height, amounts, fit);
+    let whole = upload(&mosaic);
+    pollster::block_on(rawshim::galosh::denoise_with(gpu, kernels, &whole, amounts, fit));
+    let whole = read(&whole);
     // The median gap and not the largest: a run picks up occasional stalls that say more about
     // what else holds the GPU than about what a caller would see between two updates.
     let tiled = |tile: usize, halo: usize| {
-        let mut out = mosaic.clone();
+        let mut out = upload(&mosaic);
         let mut gaps: Vec<std::time::Duration> = Vec::new();
         let mut last = std::time::Instant::now();
         let began = std::time::Instant::now();
-        rawshim::galosh::denoise_in_tiles(
+        pollster::block_on(rawshim::galosh::denoise_in_tiles(
             gpu,
             kernels,
             &mut out,
-            width,
-            height,
             amounts,
             fit,
             halo,
@@ -83,10 +86,10 @@ fn main() {
                 gaps.push(last.elapsed());
                 last = std::time::Instant::now();
             },
-        );
+        ));
         let taken = began.elapsed();
         gaps.sort();
-        (out, taken, gaps.len(), gaps[gaps.len() / 2])
+        (read(&out), taken, gaps.len(), gaps[gaps.len() / 2])
     };
     let apart = |a: &[f32], b: &[f32]| {
         a.iter().zip(b).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max)

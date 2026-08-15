@@ -44,3 +44,35 @@ fn condition(
 
   mosaic[at] = curve[(position << 16u) | raw];
 }
+
+// A rectangle of one mosaic into another, which is how a tile is cut and put back without the frame
+// ever leaving the device.
+struct Rect {
+  src_stride: u32,
+  src_left: u32,
+  src_top: u32,
+  dst_stride: u32,
+  dst_left: u32,
+  dst_top: u32,
+  width: u32,
+  height: u32,
+}
+
+// Past `condition`'s own, because one module may not declare two resources at one binding.
+@group(0) @binding(4) var<uniform> rect: Rect;
+@group(0) @binding(5) var<storage, read> source: array<f32>;
+@group(0) @binding(6) var<storage, read_write> written: array<f32>;
+
+@compute @workgroup_size(64)
+fn copy_rect(
+  @builtin(global_invocation_id) id: vec3u,
+  @builtin(num_workgroups) groups: vec3u,
+) {
+  let at = linear(id, groups);
+  if (at >= rect.width * rect.height) { return; }
+
+  let row = at / rect.width;
+  let col = at - row * rect.width;
+  written[(rect.dst_top + row) * rect.dst_stride + rect.dst_left + col] =
+      source[(rect.src_top + row) * rect.src_stride + rect.src_left + col];
+}

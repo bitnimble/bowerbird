@@ -127,6 +127,27 @@ mod raw {
 /// pointers that are already the caller's responsibility. What it gives up - seeing a
 /// half-updated value after a panic - is not available here anyway: every one of these
 /// reports failure and hands back nothing.
+/// A line about something the pipeline declined to do, where the reader will actually see it.
+///
+/// **`eprintln!` is dropped on `wasm32-unknown-unknown`**, whose std has no stderr behind it - so
+/// the announcements that exist to stop a fall-through being silent were silent in the one host
+/// that has the most to fall through to. The console is where a page's are.
+pub(crate) fn warn(message: &str) {
+    #[cfg(target_arch = "wasm32")]
+    console::warn(message);
+    #[cfg(not(target_arch = "wasm32"))]
+    eprintln!("{message}");
+}
+
+#[cfg(target_arch = "wasm32")]
+mod console {
+    #[wasm_bindgen::prelude::wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_namespace = console)]
+        pub fn warn(message: &str);
+    }
+}
+
 pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
         Ok(value) => value,

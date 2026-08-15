@@ -126,6 +126,16 @@ pub fn decode_tile(
     fit: crate::galosh::Fit,
     halo: usize,
 ) -> Option<Frame> {
+    blocking(decode_tile_source(path, tile, amounts, fit, halo))
+}
+
+async fn decode_tile_source(
+    path: &str,
+    tile: crate::Tile,
+    amounts: crate::galosh::Amounts,
+    fit: crate::galosh::Fit,
+    halo: usize,
+) -> Option<Frame> {
     let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
     let decoder = rawler::get_decoder(&source).ok()?;
     let params = rawler::decoders::RawDecodeParams::default();
@@ -196,57 +206,55 @@ pub fn decode_tile(
     // one tile and copy it twice, so that stays the single pass it has always been.
     let tiled = region_w > RENDER_TILE || region_h > RENDER_TILE;
 
-    let noise = gpu.and_then(crate::galosh::device).and_then(|kernels| {
-        let gpu = gpu?;
-        if !amounts.does_anything() {
-            return None;
+    let mut noise = None;
+    if let (Mosaic::Device(frame), Some(gpu)) = (&mut mosaic, gpu) {
+        if let Some(kernels) = crate::galosh::device(gpu).filter(|_| amounts.does_anything()) {
+            // **The frame's fit, where the caller had one.** Every whole-region reduction in Phase
+            // 0 and Phase 2 measures this crop rather than the photograph, and a crop is not a
+            // sample of the frame: measured on the fixtures, a 512px tile fitted between 0.49 and
+            // 1.51 times its own frame's noise, which is the strength it is then denoised at. So a
+            // loupe disagreed with the export it exists to predict, and moved as the reader panned.
+            let measured = match fit {
+                crate::galosh::Fit::Given(fit) => Some(fit),
+                // A tile fitting itself is the case above's cost, not its correctness: it is what a
+                // caller with no frame's fit to hand back gets, and it is what the numbers describe.
+                // Measured by the one filtering run below rather than by a pass of its own.
+                _ if !tiled => None,
+                // Tiled, the fit has to be taken over the whole region first: measured inside the
+                // filtering run it would be each tile's own statistics, which is the disagreement
+                // above at a smaller scale and against itself.
+                _ => Some(crate::galosh::fit(gpu, kernels, frame).await),
+            };
+            noise = Some(match (measured, tiled) {
+                (Some(fit), true) => {
+                    denoise_in_tiles(gpu, kernels, frame, amounts, fit, halo).await;
+                    fit
+                }
+                (Some(fit), false) => {
+                    crate::galosh::denoise_with(gpu, kernels, frame, amounts, fit).await
+                }
+                (None, _) => crate::galosh::denoise(gpu, kernels, frame, amounts).await,
+            });
         }
-        // **The frame's fit, where the caller had one.** Every whole-region reduction in Phase 0
-        // and Phase 2 measures this crop rather than the photograph, and a crop is not a sample of
-        // the frame: measured on the fixtures, a 512px tile fitted between 0.49 and 1.51 times its
-        // own frame's noise, which is the strength it is then denoised at. So a loupe disagreed
-        // with the export it exists to predict, and moved as the reader panned.
-        let measured = match fit {
-            crate::galosh::Fit::Given(fit) => fit,
-            // A tile fitting itself is the case above's cost, not its correctness: it is what a
-            // caller with no frame's fit to hand back gets, and it is what the numbers describe.
-            _ if !tiled => {
-                return Some(crate::galosh::denoise(
-                    gpu, kernels, &mut mosaic, region_w, region_h, amounts,
-                ))
-            }
-            // Tiled, the fit has to be taken over the whole region first: measured inside the
-            // filtering run it would be each tile's own statistics, which is the disagreement
-            // above at a smaller scale and against itself.
-            _ => crate::galosh::fit(gpu, kernels, &mosaic, region_w, region_h),
-        };
-        match tiled {
-            true => denoise_in_tiles(
-                gpu, kernels, &mut mosaic, region_w, region_h, amounts, measured, halo,
-            ),
-            false => {
-                crate::galosh::denoise_with(
-                    gpu, kernels, &mut mosaic, region_w, region_h, amounts, measured,
-                );
-            }
-        }
-        Some(measured)
-    });
+    }
+    declined_galosh(&noise, amounts, fit);
 
     let matrix = camera_to_rec2020(&image)?;
     // The tile's place inside the region, which is where the margin that was grown on ends.
     let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
     let crop = (inset.0, inset.1, tile.width.min(region_w - inset.0), tile.height.min(region_h - inset.1));
     let on_gpu = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)));
-    let pixels = match on_gpu {
-        Some((gpu, rcd)) => match tiled {
-            true => demosaic_in_tiles(gpu, rcd, &mosaic, region_w, region_h, cfa, crop, matrix)?,
-            false => crate::demosaic::demosaic_with(gpu, rcd, &mosaic, region_w, region_h, cfa, |rgb| {
+    let pixels = match (&mosaic, on_gpu) {
+        (Mosaic::Device(frame), Some((gpu, rcd))) => match tiled {
+            true => demosaic_in_tiles(gpu, rcd, frame, cfa, crop, matrix).await?,
+            false => crate::demosaic::demosaic_with(gpu, rcd, frame, cfa, |rgb| {
                 to_rec2020(rgb, region_w, crop, matrix)
-            })?,
+            })
+            .await?,
         },
-        None => {
-            let rgb = crate::demosaic::cpu(&mosaic, region_w, region_h, cfa)?;
+        _ => {
+            let host = mosaic.host(gpu).await?;
+            let rgb = crate::demosaic::cpu(&host, region_w, region_h, cfa)?;
             to_rec2020_from(&rgb, region_w, crop, matrix)
         }
     };
@@ -272,12 +280,8 @@ pub fn decode(path: &str, amounts: crate::galosh::Amounts) -> Option<Frame> {
 /// `at_least_long_edge` is the smallest long edge that would still serve. Halving a frame whose own
 /// long edge is at least twice that leaves it still large enough, and saves the demosaic outright.
 pub fn decode_fitted(path: &str, amounts: crate::galosh::Amounts, at_least_long_edge: u32) -> Option<Frame> {
-    decode_source(
-        &rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?,
-        amounts,
-        at_least_long_edge,
-        crate::galosh::Fit::Measure,
-    )
+    let source = rawler::rawsource::RawSource::new(std::path::Path::new(path)).ok()?;
+    blocking(decode_source(&source, amounts, at_least_long_edge, crate::galosh::Fit::Measure))
 }
 
 /// One RGB pixel per 2x2 CFA site, which is a half-resolution frame with no demosaic in it.
@@ -352,15 +356,39 @@ pub fn decode_bytes(
     at_least_long_edge: u32,
     fit: crate::galosh::Fit,
 ) -> Option<Frame> {
+    blocking(decode_bytes_async(bytes, amounts, at_least_long_edge, fit))
+}
+
+/// The same, awaited, which is the only spelling a browser can take.
+///
+/// The chain's one readback is the demosaic's, and wgpu's WebGPU backend cannot be blocked for a
+/// map ([`crate::gpu::read_back`]). Native drives this to completion without ever suspending, which
+/// is what lets every blocking entry point above stay exactly as blocking as it was.
+pub async fn decode_bytes_async(
+    bytes: &[u8],
+    amounts: crate::galosh::Amounts,
+    at_least_long_edge: u32,
+    fit: crate::galosh::Fit,
+) -> Option<Frame> {
     decode_source(
         &rawler::rawsource::RawSource::new_from_slice(bytes),
         amounts,
         at_least_long_edge,
         fit,
     )
+    .await
 }
 
-fn decode_source(
+/// A decode driven to completion on this thread.
+///
+/// **Every host but a browser.** These futures suspend only on `wasm32`, where the readback awaits
+/// the browser's own event loop; there the page's executor drives them
+/// ([`decode_bytes_async`]) and nothing in the wasm build reaches the blocking spellings.
+fn blocking<T>(work: impl std::future::Future<Output = T>) -> T {
+    pollster::block_on(work)
+}
+
+async fn decode_source(
     source: &rawler::rawsource::RawSource,
     amounts: crate::galosh::Amounts,
     at_least_long_edge: u32,
@@ -401,29 +429,44 @@ fn decode_source(
     // same denoise - `open_bench` puts a measured fit against a given one at `worst 0e0`. The fit
     // has to be whole-frame either way, since Phase 0 reduces over everything it is shown and a
     // tile's own statistics are not the photograph's.
-    let noise = gpu.and_then(crate::galosh::device).and_then(|kernels| {
-        let gpu = gpu?;
-        match fit {
-        crate::galosh::Fit::Only => {
-            Some(crate::galosh::fit(gpu, kernels, &mosaic, width, height))
+    let mut noise = None;
+    if let (Mosaic::Device(frame), Some(gpu)) = (&mut mosaic, gpu) {
+        if let Some(kernels) = crate::galosh::device(gpu) {
+            noise = match fit {
+                crate::galosh::Fit::Only => Some(crate::galosh::fit(gpu, kernels, frame).await),
+                _ if !amounts.does_anything() => None,
+                crate::galosh::Fit::Measure => {
+                    let measured = crate::galosh::fit(gpu, kernels, frame).await;
+                    denoise_in_tiles(
+                        gpu,
+                        kernels,
+                        frame,
+                        amounts,
+                        measured,
+                        crate::RENDITION_TILE_HALO,
+                    )
+                    .await;
+                    Some(measured)
+                }
+                crate::galosh::Fit::Given(fit) => {
+                    denoise_in_tiles(
+                        gpu,
+                        kernels,
+                        frame,
+                        amounts,
+                        fit,
+                        crate::RENDITION_TILE_HALO,
+                    )
+                    .await;
+                    Some(fit)
+                }
+            };
         }
-        _ if !amounts.does_anything() => None,
-        crate::galosh::Fit::Measure => {
-            let measured = crate::galosh::fit(gpu, kernels, &mosaic, width, height);
-            denoise_in_tiles(
-                gpu, kernels, &mut mosaic, width, height, amounts, measured,
-                crate::RENDITION_TILE_HALO,
-            );
-            Some(measured)
-        }
-        crate::galosh::Fit::Given(fit) => {
-            denoise_in_tiles(
-                gpu, kernels, &mut mosaic, width, height, amounts, fit,
-                crate::RENDITION_TILE_HALO,
-            );
-            Some(fit)
-        }
-    }});
+    }
+    // Every way GALOSH can be missed at once - no adapter, no kernels, a mosaic that never reached
+    // the device - said where the decode wanted something from it, since a frame that carries no
+    // fit and was never filtered is otherwise indistinguishable from one that was.
+    declined_galosh(&noise, amounts, fit);
 
     lap("denoise");
     let matrix = camera_to_rec2020(&image)?;
@@ -446,26 +489,29 @@ fn decode_source(
         && crop.1 % 2 == 0;
 
     let (pixels, crop) = match halved {
+        // The one place the mosaic still comes back whole: a halved frame skips the demosaic, so
+        // there is no later stage on the device to hand it to.
         true => {
-            let small = half_size(&mosaic, width, height, cfa);
+            let host = mosaic.host(gpu).await?;
+            let small = half_size(&host, width, height, cfa);
             let crop = (crop.0 / 2, crop.1 / 2, crop.2 / 2, crop.3 / 2);
             (to_rec2020_from(&small, width / 2, crop, matrix), crop)
         }
         false => {
-            let on_gpu = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)));
-            let pixels = match on_gpu {
-                Some((gpu, rcd)) => {
-                    demosaic_in_tiles(gpu, rcd, &mosaic, width, height, cfa, crop, matrix)?
+            let rcd = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)));
+            let pixels = match (&mosaic, rcd) {
+                (Mosaic::Device(frame), Some((gpu, rcd))) => {
+                    demosaic_in_tiles(gpu, rcd, frame, cfa, crop, matrix).await?
                 }
-                None => {
-                    let rgb = crate::demosaic::cpu(&mosaic, width, height, cfa)?;
+                _ => {
+                    let host = mosaic.host(gpu).await?;
+                    let rgb = crate::demosaic::cpu(&host, width, height, cfa)?;
                     to_rec2020_from(&rgb, width, crop, matrix)
                 }
             };
             (pixels, crop)
         }
     };
-    drop(mosaic);
 
     lap("demosaic, colour, crop");
 
@@ -510,35 +556,52 @@ fn spans(total: usize) -> impl Iterator<Item = (usize, usize)> {
     (0..count).map(move |at| (at * step, ((at + 1) * step).min(total)))
 }
 
-/// A tile and the haloed region that has to be decoded to produce it, in one space.
-#[derive(Clone, Copy)]
-struct Region {
-    left: usize,
-    top: usize,
-    w: usize,
-    h: usize,
-    x0: usize,
-    y0: usize,
-    x1: usize,
-    y1: usize,
+/// Says so where a decode asked GALOSH for something and got nothing.
+///
+/// A decode that filters nothing measures nothing, so `None` is the ordinary answer for most
+/// callers and only means a decline when the caller wanted the fit or asked for an amount.
+fn declined_galosh(
+    noise: &Option<crate::galosh::NoiseFit>,
+    amounts: crate::galosh::Amounts,
+    fit: crate::galosh::Fit,
+) {
+    let wanted = matches!(fit, crate::galosh::Fit::Only) || amounts.does_anything();
+    if wanted && noise.is_none() {
+        crate::warn(
+            "rawshim: no GPU for GALOSH, so this frame carries no noise fit and was not denoised",
+        );
+    }
 }
 
-fn window_of(mosaic: &[f32], stride: usize, region: Region) -> Vec<f32> {
-    let mut out = vec![0f32; region.w * region.h];
-    for row in 0..region.h {
-        let from = (region.top + row) * stride + region.left;
-        out[row * region.w..(row + 1) * region.w].copy_from_slice(&mosaic[from..from + region.w]);
+/// Where the mosaic is, which is on the device wherever there is one.
+///
+/// Two spellings rather than one because the fall-throughs are real: a host with no adapter
+/// conditions on the CPU and demosaics with PPG, and neither of those has a buffer to read.
+enum Mosaic {
+    Device(crate::condition::Mosaic),
+    Host(Vec<f32>),
+}
+
+impl Mosaic {
+    /// The samples on the host, for the stages that have no device path.
+    ///
+    /// Borrowed where they were never on one, so the no-GPU route pays nothing for the choice.
+    async fn host(
+        &self,
+        gpu: Option<&'static crate::gpu::Gpu>,
+    ) -> Option<std::borrow::Cow<'_, [f32]>> {
+        match self {
+            Mosaic::Host(values) => Some(std::borrow::Cow::Borrowed(values)),
+            Mosaic::Device(frame) => frame.read(gpu?).await.map(std::borrow::Cow::Owned),
+        }
     }
-    out
 }
 
 /// The mosaic denoise, tile by tile, at the halo this caller grew its region by.
-fn denoise_in_tiles(
+async fn denoise_in_tiles(
     gpu: &'static crate::gpu::Gpu,
     kernels: &'static crate::galosh::Galosh,
-    mosaic: &mut [f32],
-    width: usize,
-    height: usize,
+    mosaic: &mut crate::condition::Mosaic,
     amounts: crate::galosh::Amounts,
     fit: crate::galosh::NoiseFit,
     halo: usize,
@@ -548,8 +611,9 @@ fn denoise_in_tiles(
     // whole-frame answer never uses - `pass12` shrinks inside a tile indexed from the region
     // origin, so a region off the grid shifts the tiling under every pixel in it.
     crate::galosh::denoise_in_tiles(
-        gpu, kernels, mosaic, width, height, amounts, fit, halo, RENDER_TILE, |_| {},
-    );
+        gpu, kernels, mosaic, amounts, fit, halo, RENDER_TILE, |_| {},
+    )
+    .await;
 }
 
 /// The demosaic and the colour transform, tile by tile, straight into the cropped frame.
@@ -557,16 +621,15 @@ fn denoise_in_tiles(
 /// Tiled over the *crop* rather than the sensor, since that is the frame being built; the region
 /// each tile needs is that rectangle in sensor coordinates grown by RCD's own margin. Whole-frame
 /// RCD holds thirteen planes at once - 3.1GB at 61MP - which is the allocation this removes.
-fn demosaic_in_tiles(
+async fn demosaic_in_tiles(
     gpu: &'static crate::gpu::Gpu,
     rcd: &'static crate::demosaic::Rcd,
-    mosaic: &[f32],
-    width: usize,
-    height: usize,
+    mosaic: &crate::condition::Mosaic,
     cfa: [u32; 4],
     crop: (usize, usize, usize, usize),
     matrix: [[f32; 3]; 3],
 ) -> Option<Vec<u16>> {
+    let (width, height) = (mosaic.width, mosaic.height);
     let (crop_left, crop_top, crop_w, crop_h) = crop;
     let mut out = vec![0u16; crop_w * crop_h * 3];
 
@@ -595,26 +658,21 @@ fn demosaic_in_tiles(
             if right <= left || bottom <= top {
                 continue;
             }
-            let region =
-                Region { left, top, w: right - left, h: bottom - top, x0: 0, y0: 0, x1: 0, y1: 0 };
+            let (region_w, region_h) = (right - left, bottom - top);
 
-            let window = window_of(mosaic, width, region);
+            let window = mosaic.window(gpu, left, top, region_w, region_h);
             // Where this tile sits inside its own region, which is where the halo ends.
             let inner = (
                 sx0 - left,
                 sy0 - top,
-                (sx1 - sx0).min(region.w - (sx0 - left)),
-                (sy1 - sy0).min(region.h - (sy0 - top)),
+                (sx1 - sx0).min(region_w - (sx0 - left)),
+                (sy1 - sy0).min(region_h - (sy0 - top)),
             );
-            let rgb = crate::demosaic::demosaic_with(
-                gpu,
-                rcd,
-                &window,
-                region.w,
-                region.h,
-                cfa,
-                |bytes| to_rec2020(bytes, region.w, inner, matrix),
-            )?;
+            let rgb = crate::demosaic::demosaic_with(gpu, rcd, &window, cfa, |bytes| {
+                to_rec2020(bytes, region_w, inner, matrix)
+            })
+            .await?;
+            window.buffer.destroy();
             for row in 0..inner.3 {
                 let to = ((ty0 + row) * crop_w + tx0) * 3;
                 let from = row * inner.2 * 3;
@@ -718,7 +776,7 @@ fn condition(
     height: usize,
     image: &rawler::RawImage,
     cfa: [u32; 4],
-) -> Vec<f32> {
+) -> Mosaic {
     let levels = Levels {
         black: per_channel_black(image),
         white: saturation_of(image),
@@ -726,18 +784,22 @@ fn condition(
     };
     let (floor, range, gain) = coefficients(cfa, &levels);
     let kernel = gpu.and_then(|gpu| {
-        let kernels = crate::condition::device(gpu)?;
         let curve = curve(floor, range, gain);
-        crate::condition::normalise(gpu, kernels, samples, width, height, &curve)
+        crate::condition::normalise(gpu, crate::condition::device(gpu), samples, width, height, &curve)
     });
-    match kernel {
-        Some(mosaic) => mosaic,
-        None => {
-            // Announced for the reason `demosaic::cpu` announces itself: a fall-through nothing
-            // says out loud is how a regression passes a whole fixture suite.
-            eprintln!("rawshim: no GPU for the conditioning, so this mosaic is built on the CPU");
-            normalise(samples, width, height, floor, range, gain)
-        }
+    if let Some(mosaic) = kernel {
+        return Mosaic::Device(mosaic);
+    }
+    // Announced for the reason `demosaic::cpu` announces itself: a fall-through nothing says out
+    // loud is how a regression passes a whole fixture suite.
+    crate::warn("rawshim: no GPU for the conditioning, so this mosaic is built on the CPU");
+    let host = normalise(samples, width, height, floor, range, gain);
+    match gpu {
+        // The kernel declined but the device is there, and everything after this reads a buffer.
+        // Uploading is what keeps RCD and GALOSH on the frame rather than making one refusal
+        // cascade into a PPG decode.
+        Some(gpu) => Mosaic::Device(crate::condition::Mosaic::upload(gpu, &host, width, height)),
+        None => Mosaic::Host(host),
     }
 }
 
@@ -1127,7 +1189,7 @@ mod tests {
     #[test]
     fn the_kernel_conditions_exactly_as_the_cpu_does() {
         let Some(gpu) = crate::gpu::device() else { return };
-        let Some(kernels) = crate::condition::device(gpu) else { return };
+        let kernels = crate::condition::device(gpu);
 
         // RGGB, so the two greens are one colour on two positions with two black levels, which is
         // the distinction the tables exist to hold.
@@ -1155,9 +1217,12 @@ mod tests {
         for (width, height) in [(64usize, 48usize), (63, 47), (1, 1), (3, 2), (2049, 2201)] {
             let samples: Vec<u16> = (0..width * height).map(sample).collect();
             let theirs = super::normalise(&samples, width, height, floor, range, gain);
-            let mine =
+            let mine = pollster::block_on(
                 crate::condition::normalise(gpu, kernels, &samples, width, height, &curve)
-                    .expect("the kernel runs");
+                    .expect("the kernel runs")
+                    .read(gpu),
+            )
+            .expect("the mosaic reads back");
 
             let differs = mine
                 .iter()

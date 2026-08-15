@@ -71,11 +71,18 @@ fn main() {
     let amounts = Amounts::from_sliders(sliders.0, sliders.1);
     // Fitted off the pattern rather than stated, so the shrinkage is calibrated to the noise that
     // is actually in it - which is what makes the artefact the halo's rather than a mismatch's.
-    let fit = rawshim::galosh::fit(gpu, kernels, &mosaic, side, side);
+    let upload = |values: &[f32], w: usize, h: usize| {
+        rawshim::condition::Mosaic::upload(gpu, values, w, h)
+    };
+    let read = |frame: &rawshim::condition::Mosaic| {
+        pollster::block_on(frame.read(gpu)).expect("the mosaic reads back")
+    };
+    let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, &upload(&mosaic, side, side)));
     eprintln!("pattern {side}x{side}, fitted alpha {:.3e} sigma_sq {:.3e}", fit.alpha, fit.sigma_sq);
 
-    let mut reference = mosaic.clone();
-    rawshim::galosh::denoise_with(gpu, kernels, &mut reference, side, side, amounts, fit);
+    let reference = upload(&mosaic, side, side);
+    pollster::block_on(rawshim::galosh::denoise_with(gpu, kernels, &reference, amounts, fit));
+    let reference = read(&reference);
     let shown = render(gpu, rcd, &reference, side, cfa);
     write(&format!("{out}/pattern-reference"), &shown, side, side);
     write(&format!("{out}/pattern-noisy"), &render(gpu, rcd, &mosaic, side, cfa), side, side);
@@ -110,7 +117,11 @@ fn main() {
                 let from = (top + row) * side + left;
                 window[row * rw..(row + 1) * rw].copy_from_slice(&mosaic[from..from + rw]);
             }
-            rawshim::galosh::denoise_with(gpu, kernels, &mut window, rw, rh, amounts, fit);
+            let denoised = upload(&window, rw, rh);
+            pollster::block_on(rawshim::galosh::denoise_with(
+                gpu, kernels, &denoised, amounts, fit,
+            ));
+            let window = read(&denoised);
             for row in y0..y0 + half {
                 let to = row * side + x0;
                 let from = (row - top) * rw + (x0 - left);
@@ -293,7 +304,8 @@ fn render(
     side: usize,
     cfa: [u32; 4],
 ) -> Vec<u8> {
-    rawshim::demosaic::demosaic_with(gpu, rcd, mosaic, side, side, cfa, |bytes| {
+    let uploaded = rawshim::condition::Mosaic::upload(gpu, mosaic, side, side);
+    pollster::block_on(rawshim::demosaic::demosaic_with(gpu, rcd, &uploaded, cfa, |bytes| {
         bytes
             .chunks_exact(4)
             .map(|w| {
@@ -301,7 +313,7 @@ fn render(
                 (linear.powf(1.0 / 2.2) * 255.0).round() as u8
             })
             .collect::<Vec<u8>>()
-    })
+    }))
     .expect("the pattern demosaics")
 }
 
