@@ -265,9 +265,9 @@ pub fn levels(samples: &[u16], quantile: f64) -> Levels {
 
 /// The walk up the bins, once something has counted them.
 ///
-/// Split out for `base::levels`, which builds the same histogram on the GPU and cannot walk it
-/// there: 65536 serial bins are microseconds, and a second spelling of the two marks and the
-/// fallback is exactly the drift `the_levels_match_the_cpu` is held against.
+/// Split from the counting so the threaded blocks above merge into one histogram and this reads
+/// it once: 65536 serial bins are microseconds, and the two marks and the fallback are the part
+/// that must not be spelled twice.
 pub(crate) fn scan(histogram: &[u32], counted: usize, quantile: f64) -> Levels {
     let mut highest = 0usize;
     let mut peak: isize = -1;
