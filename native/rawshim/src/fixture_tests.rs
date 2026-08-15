@@ -238,6 +238,60 @@ mod decode_geometry {
         }
     }
 
+    /// A tile large enough to be cut into more than one is still the frame's own samples.
+    ///
+    /// **The size is the whole point.** Past `RENDER_TILE` the region is demosaiced in pieces
+    /// rather than in one pass, which is a second route through the decode for a caller that
+    /// cannot tell it took one - so it has to land on exactly what the whole frame does. Nothing
+    /// smaller reaches it: `a_tile_is_graded_as_the_rendition_is` cuts 512 and its grown region
+    /// stays inside one tile.
+    ///
+    /// The denoise is off because it fits whatever region it is shown, so with it on this would be
+    /// comparing two fits rather than the tiling.
+    ///
+    /// **Both widths, because a seam at an odd offset is the case that broke.** The demosaic's
+    /// window is aligned down to an even origin, so a tile boundary on an odd column left it a
+    /// pixel short of RCD's margin and border-extended the last column - one seam, invisible in a
+    /// mean and worth thousands of counts on an edge. The two widths differ by one in their half,
+    /// so whichever parity the region's own inset lands on, one of them puts a boundary on an odd
+    /// column.
+    #[test]
+    fn a_tile_past_one_render_tile_is_the_frame_it_was_cut_from() {
+        let amounts = crate::galosh::Amounts::default();
+        assert!(!amounts.does_anything(), "a fitted denoise would not compare against the frame");
+        let path = canon();
+        let path = path.to_str().unwrap();
+        let whole = crate::decode_rawler::decode(path, amounts).expect("the whole frame");
+        let frame = whole.samples16().expect("16-bit");
+
+        // Large enough that the region grown around it crosses 2048 on both axes.
+        for span in [2200usize, 2202] {
+            let tile = crate::Tile { left: 700, top: 900, width: span, height: span };
+            let cut = crate::decode_rawler::decode_tile(
+                path,
+                tile,
+                amounts,
+                crate::galosh::Fit::Measure,
+                crate::RENDITION_TILE_HALO,
+            )
+            .expect("the tile");
+            assert_eq!((cut.width, cut.height), (tile.width, tile.height));
+
+            let cut_samples = cut.samples16().expect("16-bit");
+            let mut worst = 0u32;
+            for row in 0..cut.height {
+                for col in 0..cut.width {
+                    for channel in 0..3 {
+                        let from = ((tile.top + row) * whole.width + tile.left + col) * 3 + channel;
+                        let to = (row * cut.width + col) * 3 + channel;
+                        worst = worst.max(u32::from(frame[from].abs_diff(cut_samples[to])));
+                    }
+                }
+            }
+            assert_eq!(worst, 0, "the {span} tile is not what the frame decoded to");
+        }
+    }
+
     /// The fit taken alone is the fit the denoise takes, and neither depends on the size asked for.
     ///
     /// Both halves matter. The first is what makes `Fit::Only` a prefix of the chain rather than a

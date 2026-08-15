@@ -144,7 +144,8 @@ pub fn decode_tile(
     // Grown by what reads past the tile, and by the denoise's own window, then aligned to whole CFA
     // sites so the pattern inside the region is the pattern the frame has. An odd origin would
     // relabel every colour in it.
-    let reach = RCD_MARGIN + crate::tile_halo(halo);
+    let halo = crate::tile_halo(halo);
+    let reach = RCD_MARGIN + halo;
     let left = (origin.0 + tile.left).saturating_sub(reach) & !1;
     let top = (origin.1 + tile.top).saturating_sub(reach) & !1;
     let right = (origin.0 + tile.left + tile.width + reach).min(frame_w);
@@ -183,6 +184,14 @@ pub fn decode_tile(
     let cfa = cfa_of(&image);
     let mut mosaic = condition(&window, region_w, region_h, &image, cfa);
 
+    // **Tiled inside the region, once the region is worth tiling.** A loupe window is no longer the
+    // size of the glass - it is grown by the reach of everything after the gather - so the region
+    // reaches the size at which whole-region RCD is gigabytes of planes. Safe within a grown region
+    // because the tiles' halos read real mosaic either side of every interior seam, and the band at
+    // the region's own edge is the halo the crop discards. Below one tile the machinery would cut
+    // one tile and copy it twice, so that stays the single pass it has always been.
+    let tiled = region_w > RENDER_TILE || region_h > RENDER_TILE;
+
     let gpu = crate::gpu::device()?;
     let noise = crate::galosh::device(gpu).and_then(|kernels| {
         if !amounts.does_anything() {
@@ -193,14 +202,31 @@ pub fn decode_tile(
         // the frame: measured on the fixtures, a 512px tile fitted between 0.49 and 1.51 times its
         // own frame's noise, which is the strength it is then denoised at. So a loupe disagreed
         // with the export it exists to predict, and moved as the reader panned.
-        Some(match fit {
-            crate::galosh::Fit::Given(fit) => crate::galosh::denoise_with(
-                gpu, kernels, &mut mosaic, region_w, region_h, amounts, fit,
-            ),
+        let measured = match fit {
+            crate::galosh::Fit::Given(fit) => fit,
             // A tile fitting itself is the case above's cost, not its correctness: it is what a
             // caller with no frame's fit to hand back gets, and it is what the numbers describe.
-            _ => crate::galosh::denoise(gpu, kernels, &mut mosaic, region_w, region_h, amounts),
-        })
+            _ if !tiled => {
+                return Some(crate::galosh::denoise(
+                    gpu, kernels, &mut mosaic, region_w, region_h, amounts,
+                ))
+            }
+            // Tiled, the fit has to be taken over the whole region first: measured inside the
+            // filtering run it would be each tile's own statistics, which is the disagreement
+            // above at a smaller scale and against itself.
+            _ => crate::galosh::fit(gpu, kernels, &mosaic, region_w, region_h),
+        };
+        match tiled {
+            true => denoise_in_tiles(
+                gpu, kernels, &mut mosaic, region_w, region_h, amounts, measured, halo,
+            ),
+            false => {
+                crate::galosh::denoise_with(
+                    gpu, kernels, &mut mosaic, region_w, region_h, amounts, measured,
+                );
+            }
+        }
+        Some(measured)
     });
 
     let matrix = camera_to_rec2020(&image)?;
@@ -208,9 +234,12 @@ pub fn decode_tile(
     // The tile's place inside the region, which is where the margin that was grown on ends.
     let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
     let crop = (inset.0, inset.1, tile.width.min(region_w - inset.0), tile.height.min(region_h - inset.1));
-    let pixels = crate::demosaic::demosaic_with(gpu, rcd, &mosaic, region_w, region_h, cfa, |rgb| {
-        to_rec2020(rgb, region_w, crop, matrix)
-    })?;
+    let pixels = match tiled {
+        true => demosaic_in_tiles(gpu, rcd, &mosaic, region_w, region_h, cfa, crop, matrix)?,
+        false => crate::demosaic::demosaic_with(gpu, rcd, &mosaic, region_w, region_h, cfa, |rgb| {
+            to_rec2020(rgb, region_w, crop, matrix)
+        })?,
+    };
 
     let (pixels, out_w, out_h) = orient(pixels, crop.2, crop.3, upright);
     Some(Frame {
@@ -378,11 +407,17 @@ fn decode_source(
         _ if !amounts.does_anything() => None,
         crate::galosh::Fit::Measure => {
             let measured = crate::galosh::fit(gpu, kernels, &mosaic, width, height);
-            denoise_in_tiles(gpu, kernels, &mut mosaic, width, height, amounts, measured);
+            denoise_in_tiles(
+                gpu, kernels, &mut mosaic, width, height, amounts, measured,
+                crate::RENDITION_TILE_HALO,
+            );
             Some(measured)
         }
         crate::galosh::Fit::Given(fit) => {
-            denoise_in_tiles(gpu, kernels, &mut mosaic, width, height, amounts, fit);
+            denoise_in_tiles(
+                gpu, kernels, &mut mosaic, width, height, amounts, fit,
+                crate::RENDITION_TILE_HALO,
+            );
             Some(fit)
         }
     });
@@ -452,6 +487,19 @@ fn decode_source(
 /// only finer progressive updates, which is a latency question and not this module's.
 const RENDER_TILE: usize = 2048;
 
+/// Where the tiles fall along one axis, as `(start, end)` pairs.
+///
+/// **Split evenly rather than into whole `RENDER_TILE`s, so that no strip is a few pixels wide.**
+/// The demosaic declines a window narrower than twice its own margin, and a loupe names an
+/// arbitrary rectangle - a tile 2049 pixels across would leave a one-pixel column and take the
+/// whole decode down with it. The boundaries are free to move: each tile is computed with the halo
+/// its stage reads through, so where they fall does not change the answer.
+fn spans(total: usize) -> impl Iterator<Item = (usize, usize)> {
+    let count = total.div_ceil(RENDER_TILE).max(1);
+    let step = total.div_ceil(count);
+    (0..count).map(move |at| (at * step, ((at + 1) * step).min(total)))
+}
+
 /// A tile and the haloed region that has to be decoded to produce it, in one space.
 #[derive(Clone, Copy)]
 struct Region {
@@ -471,10 +519,8 @@ struct Region {
 /// relabels every colour in the region, and the denoise pairs samples into 2x2 sites. Clamped at
 /// the field's own edge, where there is nothing to grow into.
 fn tiles_of(width: usize, height: usize, halo: usize, mut visit: impl FnMut(Region)) {
-    for ty in 0..height.div_ceil(RENDER_TILE) {
-        for tx in 0..width.div_ceil(RENDER_TILE) {
-            let (x0, y0) = (tx * RENDER_TILE, ty * RENDER_TILE);
-            let (x1, y1) = ((x0 + RENDER_TILE).min(width), (y0 + RENDER_TILE).min(height));
+    for (y0, y1) in spans(height) {
+        for (x0, x1) in spans(width) {
             let left = x0.saturating_sub(halo) & !1;
             let top = y0.saturating_sub(halo) & !1;
             let right = (x1 + halo).min(width);
@@ -520,9 +566,10 @@ fn denoise_in_tiles(
     height: usize,
     amounts: crate::galosh::Amounts,
     fit: crate::galosh::NoiseFit,
+    halo: usize,
 ) {
     let source = mosaic.to_vec();
-    tiles_of(width, height, crate::RENDITION_TILE_HALO, |region| {
+    tiles_of(width, height, halo, |region| {
         let mut window = window_of(&source, width, region);
         crate::galosh::denoise_with(
             gpu, kernels, &mut window, region.w, region.h, amounts, fit,
@@ -554,11 +601,8 @@ fn demosaic_in_tiles(
     let (crop_left, crop_top, crop_w, crop_h) = crop;
     let mut out = vec![0u16; crop_w * crop_h * 3];
 
-    for ty in 0..crop_h.div_ceil(RENDER_TILE) {
-        for tx in 0..crop_w.div_ceil(RENDER_TILE) {
-            let (tx0, ty0) = (tx * RENDER_TILE, ty * RENDER_TILE);
-            let (tx1, ty1) =
-                ((tx0 + RENDER_TILE).min(crop_w), (ty0 + RENDER_TILE).min(crop_h));
+    for (ty0, ty1) in spans(crop_h) {
+        for (tx0, tx1) in spans(crop_w) {
             // **Grown in the sensor's coordinates and clamped to the sensor, not to the crop.**
             // The crop is inset from the readable area, so there is real mosaic outside it, and
             // the whole-frame demosaic this replaces read that: it ran over everything and was
@@ -569,8 +613,14 @@ fn demosaic_in_tiles(
             let (sx1, sy1) = (crop_left + tx1, crop_top + ty1);
             let left = sx0.saturating_sub(RCD_MARGIN) & !1;
             let top = sy0.saturating_sub(RCD_MARGIN) & !1;
-            let right = (sx1 + RCD_MARGIN).min(width);
-            let bottom = (sy1 + RCD_MARGIN).min(height);
+            // **Rounded out to even, never in.** The origin is aligned down to a whole CFA site, so
+            // the far edge has to move to keep the extent even - and trimming it is a pixel off the
+            // margin, which on a boundary at an odd column leaves RCD nine pixels of context where
+            // it reads ten and border-extends the last column. That is one seam, worth nothing to a
+            // mean and thousands of counts on an edge. Only at the field's own edge does the clamp
+            // below take it back, and there the trimmed pixel is outside the picture anyway.
+            let right = (sx1 + RCD_MARGIN).next_multiple_of(2).min(width);
+            let bottom = (sy1 + RCD_MARGIN).next_multiple_of(2).min(height);
             let (right, bottom) =
                 (right - ((right - left) & 1), bottom - ((bottom - top) & 1));
             if right <= left || bottom <= top {
@@ -1039,6 +1089,23 @@ mod tests {
                 (channel - neutral[1]).abs() < 1e-3,
                 "camera white renders as {neutral:?}",
             );
+        }
+    }
+
+    /// **A strip a few pixels wide is a decode that declines**, because the demosaic refuses a
+    /// window narrower than twice its margin - and a loupe names the width, so one pixel past a
+    /// whole tile is an ordinary request rather than a contrived one.
+    #[test]
+    fn no_tile_is_left_a_runt_strip() {
+        for total in [1usize, 2047, 2048, 2049, 4096, 4097, 6024, 9504] {
+            let spans: Vec<(usize, usize)> = super::spans(total).collect();
+            assert_eq!(spans.first().map(|s| s.0), Some(0), "{total} starts short");
+            assert_eq!(spans.last().map(|s| s.1), Some(total), "{total} ends short");
+            for pair in spans.windows(2) {
+                assert_eq!(pair[0].1, pair[1].0, "{total} leaves a gap");
+            }
+            let smallest = spans.iter().map(|(a, b)| b - a).min().expect("a span");
+            assert!(smallest >= total.min(1024), "{total} cut a {smallest}-wide strip");
         }
     }
 
