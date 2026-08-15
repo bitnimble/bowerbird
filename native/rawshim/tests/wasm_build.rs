@@ -77,8 +77,9 @@ fn the_wasm_modules_read_the_clock_through_the_shim() {
 /// The modules a plain `--no-default-features` build compiles, read off `lib.rs` rather than
 /// listed here, so a module added tomorrow is scanned without anyone remembering to add it.
 ///
-/// The wasm build is that build, and every `#[cfg]` in the declarations excludes a module from
-/// it: `renditions` is lensfun and libavif, and the rest are test-only.
+/// The wasm build is that build, and every `#[cfg]` in the declarations excludes a module from it
+/// bar one: `renditions` is lensfun and libavif and the rest are test-only, while
+/// `target_arch = "wasm32"` is the browser's own entry points and is in this build alone.
 fn wasm_modules() -> Vec<String> {
     let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
     let text = std::fs::read_to_string(&lib).expect("lib.rs reads");
@@ -87,7 +88,7 @@ fn wasm_modules() -> Vec<String> {
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with("#[cfg(") {
-            gated = true;
+            gated = line != r#"#[cfg(target_arch = "wasm32")]"#;
             continue;
         }
         if line.is_empty() || line.starts_with("//") {
@@ -103,10 +104,28 @@ fn wasm_modules() -> Vec<String> {
         gated = false;
     }
     assert!(out.contains(&"decode_rawler.rs".to_string()), "the module scan found nothing");
+    assert!(out.contains(&"wasm.rs".to_string()), "the browser's own entry points went unscanned");
     for excluded in ["lensfun.rs", "job.rs", "pin.rs", "fixture_tests.rs"] {
         assert!(!out.contains(&excluded.to_string()), "{excluded} is not in a wasm build");
     }
     out
+}
+
+/// The names the page imports, which are `wasm.rs`'s to declare and nothing native's to notice.
+///
+/// The bindings are generated at build time, so a renamed export is a page that calls a function
+/// the module does not have - and a native suite that stays green through it. Pinned by equality
+/// so that adding one is as deliberate as renaming one, with the web side in the same commit.
+#[test]
+fn the_page_imports_the_entry_points_this_declares() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/wasm.rs");
+    let text = std::fs::read_to_string(&src).expect("wasm.rs reads");
+    let exported: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("#[wasm_bindgen(js_name = "))
+        .filter_map(|rest| rest.strip_suffix(")]"))
+        .collect();
+    assert_eq!(exported, ["openGpuDevice", "decodeRaw"]);
 }
 
 /// The CPU demosaic reconstructs the picture, which is what makes it a fall-through rather than

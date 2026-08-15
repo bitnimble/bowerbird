@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e-tauri/tsconfig.json",
     "build:native": "bun run scripts/cargo.ts build --profile quick --manifest-path native/rawshim/Cargo.toml",
     "build:native:release": "bun run scripts/cargo.ts build --release --manifest-path native/rawshim/Cargo.toml",
+    "build:wasm": "wasm-pack build native/rawshim --target web --out-dir pkg -- --no-default-features",
     "e2e:tauri:build": "bun run scripts/build-wdio-app.ts",
     "e2e:tauri": "bun run e2e:tauri:build && bun run scripts/e2e-tauri-full.ts",
     "tauri": "bun x @tauri-apps/cli",

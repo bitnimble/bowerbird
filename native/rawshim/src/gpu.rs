@@ -16,8 +16,8 @@
 //! through every caller, because the alternative is threading a device through
 //! `job::run` -> `hdr::graded` -> `tone` for a resource there is exactly one of.
 
-// Nothing can obtain a `Gpu` in a browser (`device` below), which leaves the private machinery
-// for building one - the shader sources, the bind-group tables - unreachable rather than unwanted.
+// The grade's callers all reach it through `device`, which is None in a browser (see below), so
+// the encode, the peak and the readback are unreachable there rather than unwanted.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
 use crate::hdr_fit::{self, HdrColour};
@@ -250,15 +250,64 @@ pub fn device() -> Option<&'static Gpu> {
     GPU.get_or_init(Gpu::new).as_ref()
 }
 
-/// Always None in a browser: this crate does not own a device there.
+/// Always None in a browser, which is what keeps the decode there on the CPU.
 ///
-/// The page holds the `GPUDevice` already and the editor's shaders run on it, so one built here
-/// would be a second device rather than that one. It could not be built anyway - a `OnceLock`
-/// wants `Sync` and wgpu's WebGPU types are `Rc`-based, and `pollster::block_on` cannot block the
-/// browser's thread. Filling this means taking a device from JS.
+/// There is a device on that target - [`page_device`] opens one - and it is deliberately not
+/// returned here. Every GPU stage a decode reaches ends by mapping a readback buffer behind a
+/// blocking `Device::poll`, and wgpu's WebGPU backend answers a poll with `QueueEmpty` without
+/// waiting for anything: `get_mapped_range` then asks a buffer whose `mapAsync` has not resolved,
+/// and the browser throws where a native run would have blocked. Handing the device over would
+/// take a tab's first frame down instead of leaving it on the CPU fall-through that works.
 #[cfg(target_arch = "wasm32")]
 pub fn device() -> Option<&'static Gpu> {
     None
+}
+
+/// The device this crate opens for the page, on the first call and once.
+///
+/// **Ours, handed out to JS rather than taken from it** ([`crate::wasm::open_gpu_device`]). wgpu 30
+/// has no `from_webgpu` to inject a JS `GPUDevice` through - `wgpu-hal` has no WebGPU backend at
+/// all, since WebGPU there is a backend rather than a hal target - and `Device::as_webgpu` is the
+/// only seam, pointing outwards. So the page runs its shaders on what this returns, which is still
+/// one device and still nothing read back between an upload here and the grade.
+///
+/// None where the browser offers no adapter, which is supported rather than fatal.
+#[cfg(target_arch = "wasm32")]
+pub async fn page_device() -> Option<&'static Gpu> {
+    if let Some(open) = PAGE.with(std::cell::Cell::get) {
+        return Some(open);
+    }
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::BROWSER_WEBGPU,
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions::default()).await.ok()?;
+    // The browser's own, which are already WebGPU's portable floor - there is nothing more to ask
+    // for here, where a native adapter has far more than the floor and the frames need it.
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("rawshim"),
+            required_limits: adapter.limits(),
+            ..Default::default()
+        })
+        .await
+        .ok()?;
+
+    let info = adapter.get_info();
+    // Leaked because wgpu's WebGPU handles are `Rc`s, so a `Gpu` cannot sit in a `static` the way
+    // the native one does, and a tab's device is alive until the tab is not.
+    let open: &'static Gpu = Box::leak(Box::new(Gpu::build(
+        format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type),
+        device,
+        queue,
+    )));
+    PAGE.with(|held| held.set(Some(open)));
+    Some(open)
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static PAGE: std::cell::Cell<Option<&'static Gpu>> = const { std::cell::Cell::new(None) };
 }
 
 impl Gpu {
@@ -324,6 +373,20 @@ impl Gpu {
                 ..Default::default()
             }))
             .ok()?;
+
+        let info = adapter.get_info();
+        Some(Gpu::build(
+            format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type),
+            device,
+            queue,
+        ))
+    }
+
+    /// Everything a `Gpu` is once a device exists, which is all of it bar asking for one.
+    ///
+    /// Split out so that the browser's request - async, and on a backend that enumerates nothing -
+    /// builds the *same* shaders, layouts and PQ table as the server's rather than a second set.
+    fn build(adapter: String, device: wgpu::Device, queue: wgpu::Queue) -> Gpu {
         // A validation error here is a bug in the shader or in what is bound to it, and
         // both are ours. Left to the default handler it would print and continue, and the
         // frame would come back wrong rather than not at all.
@@ -433,11 +496,8 @@ impl Gpu {
         }
         queue.submit([encoder.finish()]);
 
-        Some(Gpu {
-            adapter: {
-                let info = adapter.get_info();
-                format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type)
-            },
+        Gpu {
+            adapter,
             device,
             queue,
             layout,
@@ -459,7 +519,7 @@ impl Gpu {
             balance_pipeline,
             sampler,
             nits_of_code,
-        })
+        }
     }
 
     /// The largest binding one frame needs: `encode`'s output, two `u16` components to a
