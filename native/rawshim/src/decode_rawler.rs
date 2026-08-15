@@ -196,8 +196,8 @@ pub fn decode_tile(
     // one tile and copy it twice, so that stays the single pass it has always been.
     let tiled = region_w > RENDER_TILE || region_h > RENDER_TILE;
 
-    let gpu = gpu?;
-    let noise = crate::galosh::device(gpu).and_then(|kernels| {
+    let noise = gpu.and_then(crate::galosh::device).and_then(|kernels| {
+        let gpu = gpu?;
         if !amounts.does_anything() {
             return None;
         }
@@ -234,15 +234,21 @@ pub fn decode_tile(
     });
 
     let matrix = camera_to_rec2020(&image)?;
-    let rcd = crate::demosaic::device(gpu)?;
     // The tile's place inside the region, which is where the margin that was grown on ends.
     let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
     let crop = (inset.0, inset.1, tile.width.min(region_w - inset.0), tile.height.min(region_h - inset.1));
-    let pixels = match tiled {
-        true => demosaic_in_tiles(gpu, rcd, &mosaic, region_w, region_h, cfa, crop, matrix)?,
-        false => crate::demosaic::demosaic_with(gpu, rcd, &mosaic, region_w, region_h, cfa, |rgb| {
-            to_rec2020(rgb, region_w, crop, matrix)
-        })?,
+    let on_gpu = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)));
+    let pixels = match on_gpu {
+        Some((gpu, rcd)) => match tiled {
+            true => demosaic_in_tiles(gpu, rcd, &mosaic, region_w, region_h, cfa, crop, matrix)?,
+            false => crate::demosaic::demosaic_with(gpu, rcd, &mosaic, region_w, region_h, cfa, |rgb| {
+                to_rec2020(rgb, region_w, crop, matrix)
+            })?,
+        },
+        None => {
+            let rgb = crate::demosaic::cpu(&mosaic, region_w, region_h, cfa)?;
+            to_rec2020_from(&rgb, region_w, crop, matrix)
+        }
     };
 
     let (pixels, out_w, out_h) = orient(pixels, crop.2, crop.3, upright);
@@ -517,36 +523,6 @@ struct Region {
     y1: usize,
 }
 
-/// Every tile of a `width` x `height` field, each grown by `halo` and aligned to whole CFA sites.
-///
-/// Aligned down to even and trimmed to even for the reason `decode_tile` gives: an odd origin
-/// relabels every colour in the region, and the denoise pairs samples into 2x2 sites. Clamped at
-/// the field's own edge, where there is nothing to grow into.
-fn tiles_of(width: usize, height: usize, halo: usize, mut visit: impl FnMut(Region)) {
-    for (y0, y1) in spans(height) {
-        for (x0, x1) in spans(width) {
-            let left = x0.saturating_sub(halo) & !1;
-            let top = y0.saturating_sub(halo) & !1;
-            let right = (x1 + halo).min(width);
-            let bottom = (y1 + halo).min(height);
-            let (right, bottom) = (right - ((right - left) & 1), bottom - ((bottom - top) & 1));
-            if right <= left || bottom <= top {
-                continue;
-            }
-            visit(Region {
-                left,
-                top,
-                w: right - left,
-                h: bottom - top,
-                x0,
-                y0,
-                x1: x1.min(right),
-                y1: y1.min(bottom),
-            });
-        }
-    }
-}
-
 fn window_of(mosaic: &[f32], stride: usize, region: Region) -> Vec<f32> {
     let mut out = vec![0f32; region.w * region.h];
     for row in 0..region.h {
@@ -556,12 +532,7 @@ fn window_of(mosaic: &[f32], stride: usize, region: Region) -> Vec<f32> {
     out
 }
 
-/// The mosaic denoise, tile by tile, over a frame's worth of it.
-///
-/// **Read from a copy and written to the original**, because a tile's halo reaches into its
-/// neighbours: filtering in place would have every tile after the first reading samples that had
-/// already been filtered, which is a second denoise applied in a band the width of the halo. The
-/// copy is one plane - 241MB at 61MP - against the gigabytes tiling takes off the GPU.
+/// The mosaic denoise, tile by tile, at the halo this caller grew its region by.
 fn denoise_in_tiles(
     gpu: &'static crate::gpu::Gpu,
     kernels: &'static crate::galosh::Galosh,
@@ -572,19 +543,13 @@ fn denoise_in_tiles(
     fit: crate::galosh::NoiseFit,
     halo: usize,
 ) {
-    let source = mosaic.to_vec();
-    tiles_of(width, height, halo, |region| {
-        let mut window = window_of(&source, width, region);
-        crate::galosh::denoise_with(
-            gpu, kernels, &mut window, region.w, region.h, amounts, fit,
-        );
-        let span = region.x1 - region.x0;
-        for row in region.y0..region.y1 {
-            let to = row * width + region.x0;
-            let from = (row - region.top) * region.w + (region.x0 - region.left);
-            mosaic[to..to + span].copy_from_slice(&window[from..from + span]);
-        }
-    });
+    // `galosh`'s own, which rounds each region's origin to the shrinkage's grid. This had the same
+    // geometry without that rounding, and so denoised every rendition against a neighbourhood the
+    // whole-frame answer never uses - `pass12` shrinks inside a tile indexed from the region
+    // origin, so a region off the grid shifts the tiling under every pixel in it.
+    crate::galosh::denoise_in_tiles(
+        gpu, kernels, mosaic, width, height, amounts, fit, halo, RENDER_TILE, |_| {},
+    );
 }
 
 /// The demosaic and the colour transform, tile by tile, straight into the cropped frame.
