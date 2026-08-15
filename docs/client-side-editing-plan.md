@@ -29,31 +29,31 @@ something measured says the 582ms is the problem.
       --manifest-path native/rawshim/Cargo.toml` links a `.wasm` now. `gpu::device` is `None`
       there, because the page owns the `GPUDevice` and this crate's wasm half ends at the fit.
       Only `Gpu`'s own construction is gated, so nothing native moved.
-- [ ] **A wasm decode compiles and does not yet run.** Both blockers were found by reading
-      `decode_rawler::decode_source` after it compiled, not by a compiler, and the pieces each
-      needs now exist - what is left in both cases is the routing in that one function.
+- [x] **A wasm decode runs, not merely compiles** (`a7bfbf1`). Both blockers were found by reading
+      `decode_rawler::decode_source` after it compiled, not by a compiler - a decode that links and
+      then panics on its first frame is what a build alone can tell you nothing about.
 
       - **The clock, answered by `clock::Mark`.** `std::time::Instant::now()` panics on
         `wasm32-unknown-unknown`, and four paths read it for `BOWERBIRD_DECODE_PROFILE`'s laps
         before deciding whether anyone asked for them. `Mark` is `Instant` off wasm and a
         stopped clock on it, and `clock::laps` is the one lap closure those four had copied
-        between them. `edit`, `galosh` and `demosaic` take it; `decode_source` is the one site
-        left, and `wasm_build.rs` fails the moment a fifth appears.
+        between them. `edit`, `galosh`, `demosaic` and `decode_source` all take it, and
+        `wasm_build.rs` fails the moment a new one appears - by a source scan rather than a
+        compile, since the regression it guards compiles clean on both targets.
 
         Two more were in rawler itself, which no reading of this crate would have found: the
         CRX decoder (already patched) and **PPG**, which is what the fall-through below runs.
 
-      - **The demosaic's fall-through, built but unrouted.** `decode_source` takes
-        `gpu::device()?` with RCD behind it, so `None` there is no frame at all rather than a
-        worse one. `demosaic::cpu` is rawler's PPG - the algorithm RCD replaced, already a
-        dependency - and it is held against RCD by `the_cpu_demosaic_reconstructs_what_rcd_does`
-        on the one field both are exact on. It **logs when taken**: PPG is a different picture,
-        not a slower one, and a fall-through nothing announces is how the chain's 8x regression
-        passed a whole fixture suite.
+      - **The demosaic's fall-through, routed.** `decode_source` took `gpu::device()?` with RCD
+        behind it, so `None` there was no frame at all rather than a worse one. `demosaic::cpu` is
+        rawler's PPG - the algorithm RCD replaced, already a dependency - held against RCD by
+        `the_cpu_demosaic_reconstructs_what_rcd_does` on the one field both are exact on. It
+        **logs when taken**: PPG is a different picture, not a slower one, and a fall-through
+        nothing announces is how the chain's 8x regression passed a whole fixture suite.
 
-        `decode_source` still has to take it, in the shape `edit::open` already uses for the
-        chain - `gpu.and_then(demosaic::device)`, and `to_rec2020_from` on the miss, which the
-        half-size path already calls.
+        `is_bayer` is now shared by both. They refused different things - RCD checked 2x2
+        structure, PPG *panics* on what it cannot read - so a sensor the GPU turned away came back
+        through the CPU, and which files the product opened depended on whether the host had a GPU.
 
       **Threads are not a third blocker.** rayon 1.13 detects that the target cannot spawn and
       configures a single-threaded fallback pool, so `par_chunks_mut` runs sequentially rather
@@ -79,9 +79,22 @@ something measured says the 582ms is the problem.
 
 ## Memory, if the RAW is decoded in a tab
 
-- [ ] **Fork rawler to yield strips** rather than a whole `RawImage`. The open peaks over a
-      gigabyte today; streaming strips straight into VRAM leaves the file plus one strip, so tens
-      of megabytes against wasm32's 4GB address space.
+- [x] **rawler decodes a region into a region, and a frame a band at a time** (`ee72430`).
+      `raw_image_region_tight` returns the tile-aligned rectangle it actually covered rather than a
+      frame with a hole in it, and `raw_image_band_height` lets a caller loop it over full-width
+      bands - a band *is* a region, so one extra method beats a second decode API with a closure
+      through it. Whole frame 232MB/187ms becomes 118MB in strips; `raw_image` is untouched in
+      result and slightly faster (187 -> 161ms).
+
+      **The frame-sized allocation was never the cost.** `vec![0; n]` is calloc, so the untouched
+      pages never fault in - the 122MB was virtual. What a loupe tile actually paid was
+      `read_params` calling `file.as_vec()`, copying the whole 78MB mmap to decrypt a few kilobytes
+      of it: **83 of its 89ms**. Now a borrow, and the tile is 104MB/6ms.
+
+- [ ] **Stop mapping the file with `MAP_POPULATE`.** `RawSource::new` prefaults, so opening a 72MB
+      RAW is 78MB resident before a sample is decoded - a floor under every figure above. Removing
+      it trades cold-cache sequential read for demand paging, which is a real fork rather than an
+      oversight, and in a tab there is no mmap at all.
 - [ ] **`condition` as a kernel.** Per-sample over four black levels and four gains, so the upload
       becomes packed `u16` and the mosaic plane halves: 120MB rather than 241MB.
 
@@ -198,12 +211,11 @@ share one buffer this whole section buys correctness and nothing else.
       Timings taken on a loaded box (four agents, load average ~24). Contention makes threading
       look worse, not better, so 12ms is pessimistic and the ratio is not what the argument rests
       on - the ceiling is.
-- [ ] **Give the block reduction a median that is not a selection sort.** That is where the noise
-      measure's time goes, and the transfer is not: at 61MP the frame is 1188 x 792 blocks, each
-      taking the CPU's exact order statistic by partial selection - 48 passes over 96 laps, twice
-      over, so about 8.7 billion comparisons, every one of them indexing a private array
-      dynamically and spilling to scratch. A bitonic pass over 96, or a histogram, held to the
-      same order statistic.
+- [x] **The block reduction sorts its median instead of selecting it** (`4a4329a`), **8089ms to
+      221ms**. At 61MP the frame is 1188 x 792 blocks, each taking the CPU's exact order statistic
+      by partial selection - 48 passes over 96 laps, twice over, about 8.7 billion comparisons,
+      every one indexing a private array dynamically and spilling to scratch. A bitonic network
+      holds the same order statistic without the dynamic indexing.
 - [ ] ~~**sharpen, 2926ms**~~ - **skip it entirely.** A GPU sharpener is replacing it, so its
       parity, its performance and the round trip through system memory it currently forces are all
       about to stop existing. Do not design the residency around it: reading back before it and
@@ -254,8 +266,8 @@ share one buffer this whole section buys correctness and nothing else.
 
       The evidence behind the halo itself is in `examples/halo_seams.rs` and
       `examples/halo_pattern.rs`, and in `29f8200`, `4287c03`, `1697656`, `df9f86a`.
-- [ ] **`pass12`** is now 82% of GALOSH (4326ms of 5286). The next real optimisation, and unlike
-      the table it is genuine per-pixel work.
+- [x] **`pass12` sorts its median instead of bisecting for it** (`f978344`), **4354ms to 2979ms**.
+      It was 82% of GALOSH and, unlike the table, genuine per-pixel work.
 
 ## Found while measuring the halo
 
@@ -272,12 +284,18 @@ share one buffer this whole section buys correctness and nothing else.
       `a_tile_is_graded_as_the_rendition_is` now asserts equality rather than closeness, and it
       passes with the render assembled from tiles.
 
-- [ ] **Tile the loupe's own decode too.** `decode_rawler::decode_tile` still does its region in
-      one pass, so it does not use the 2048 tiling the whole-frame path got. That was harmless
-      while a loupe window was the glass; `db0e726` grows it by the reach of everything after the
-      gather - 42px for the deconvolution, ~216px for the guided filter - and measured 4x the
-      decode with a presence slider off zero. A window that large wants the same bound on the GPU
-      as a frame does, for the same reason. Additive, not a correctness problem.
+- [x] **The loupe's own decode tiles too** (`8860019`). Past one `RENDER_TILE` on either axis it
+      takes `denoise_in_tiles` / `demosaic_in_tiles`; below that it keeps the single pass verbatim.
+      RCD holds 13 planes at 52 B/px, so a single pass cost 52 B times the whole window - unbounded
+      in how far `db0e726` grows it. Tiled it caps at 2068² × 52 B = **222MB** whatever the window,
+      against **3.13GB** for one grown to a full frame. No speedup, and none was the point.
+
+      **`spans` splits evenly, and the far edge rounds outward to even.** Splitting into whole
+      2048s leaves a runt column on an arbitrary width, which the demosaic declines outright; but
+      an even split puts boundaries on odd columns, where the window's origin aligns down to a
+      whole CFA site and trimming inward stole a pixel of RCD's margin. `tile_check` read
+      `worst 25081` at 3000 while every size whose rectangle missed the frame's own odd seam read
+      `worst 0` - including the default 512, which never reaches the tiled path at all.
 
 ## Falls out of the above
 
@@ -291,5 +309,10 @@ share one buffer this whole section buys correctness and nothing else.
 
 ## Stale, noticed on the way
 
-- [ ] DESIGN.md still describes LibRaw as the decoder throughout (§ lines 28-30, 37, 52, 58).
-- [ ] `raw_edit_presenter.ts` says a matched header is 11KB; it measures 32KB.
+- [x] `raw_edit_presenter.ts` said a matched header is 11KB; it measures 32KB.
+- [x] DESIGN.md's stack table and §10.4 named LibRaw as the decoder.
+- [ ] **DESIGN.md still has stale decoder claims further down**, which the first sweep took the
+      named lines of and missed: §"What is left is the decode, and it is LibRaw's rather than ours"
+      with its `decode_with_libraw` peak figures, and the Canon section's account of LibRaw
+      decoding CR3. Not every mention is wrong - the orientation field really is LibRaw's flip
+      code, and §10.4 is marked historical - so this wants reading, not a replace.
