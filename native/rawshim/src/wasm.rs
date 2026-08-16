@@ -37,7 +37,7 @@ pub async fn open_gpu_device() -> Result<GpuDevice, JsValue> {
 
 #[wasm_bindgen]
 extern "C" {
-    /// Declared only so the generated `.d.ts` says `GPUDevice` rather than `any`. wgpu's own
+    /// Declared only so the generated declarations say `GPUDevice` rather than `any`. wgpu's own
     /// handle type is its private binding, and a `web_sys::GpuDevice` would be a third copy of
     /// the same JS object's Rust wrapper.
     #[wasm_bindgen(typescript_type = "GPUDevice")]
