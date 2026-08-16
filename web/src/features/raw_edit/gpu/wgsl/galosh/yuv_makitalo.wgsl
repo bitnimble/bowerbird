@@ -11,7 +11,10 @@
 @group(0) @binding(4) var<storage, read> lut_params: array<f32>;
 
 struct Push {
+  /// One past the last pixel this dispatch owns; `start` is the first. Zero and the whole frame
+  /// is what every native caller sends, so a banded browser tick is the only thing that differs.
   npix: i32,
+  start: i32,
 };
 @group(0) @binding(20) var<uniform> pc: Push;
 
@@ -22,7 +25,7 @@ fn yuv_makitalo(
   @builtin(global_invocation_id) id: vec3u,
   @builtin(num_workgroups) groups: vec3u,
 ) {
-  let i = flat_index(id, groups, 256u);
+  let i = pc.start + flat_index(id, groups, 256u);
   if (i >= pc.npix) { return; }
 
   let d = d_stab[i];

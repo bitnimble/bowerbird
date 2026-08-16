@@ -16,6 +16,9 @@
 
 struct Push {
   npix: i32,
+  /// The first *pair* this dispatch owns, not the first pixel: this kernel packs two pixels a
+  /// word, so its unit is the pair and a band has to start on one. Zero for a whole frame.
+  start: i32,
 };
 @group(0) @binding(20) var<uniform> pc: Push;
 
@@ -40,7 +43,7 @@ fn yuv_join(
   @builtin(global_invocation_id) id: vec3u,
   @builtin(num_workgroups) groups: vec3u,
 ) {
-  let pair = flat_index(id, groups, 256u);
+  let pair = pc.start + flat_index(id, groups, 256u);
   let first = pair * 2;
   if (first >= pc.npix) { return; }
 

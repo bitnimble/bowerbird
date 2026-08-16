@@ -21,7 +21,10 @@
 @group(0) @binding(3) var<storage, read_write> cr_out: array<f32>;
 
 struct Push {
+  /// One past the last pixel this dispatch owns, so a band ends where the next one starts.
   npix: i32,
+  /// The first pixel it owns. Zero for a whole frame, which is what every native caller sends.
+  start: i32,
 };
 @group(0) @binding(20) var<uniform> pc: Push;
 
@@ -43,7 +46,7 @@ fn yuv_split(
   @builtin(global_invocation_id) id: vec3u,
   @builtin(num_workgroups) groups: vec3u,
 ) {
-  let i = flat_index(id, groups, 256u);
+  let i = pc.start + flat_index(id, groups, 256u);
   if (i >= pc.npix) { return; }
 
   let base = u32(i) * 3u;
