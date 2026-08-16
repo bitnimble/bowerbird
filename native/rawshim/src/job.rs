@@ -356,7 +356,7 @@ impl Base {
         let strengths = job.strengths().before_the_fit();
         let chained = crate::gpu::device().and_then(crate::base::device).and_then(|base| {
             let gpu = crate::gpu::device()?;
-            crate::base::prepare(
+            pollster::block_on(crate::base::prepare(
                 gpu,
                 base,
                 &samples,
@@ -366,11 +366,12 @@ impl Base {
                 job.grade.reference_white_nits,
                 strengths,
                 &crate::fit::Lens::none(),
-            )
+            ))
         });
         match chained {
             Some(prepared) => samples = prepared,
             None => {
+                crate::base::declined("the coding and the defringe");
                 tone::encode_base(&mut samples, levels, job.grade.reference_white_nits);
                 hdr::filter_base(&mut samples, width, height, strengths);
             }

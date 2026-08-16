@@ -134,11 +134,13 @@ fn time_the_noise(path: &str) {
     let Some(gpu) = rawshim::gpu::device() else { return };
     let Some(base) = rawshim::base::device(gpu) else { return };
     repeat("base::measure (the GPU's)", || {
-        std::hint::black_box(rawshim::base::measure(gpu, base, samples, width, height));
+        std::hint::black_box(pollster::block_on(rawshim::base::measure(
+            gpu, base, samples, width, height,
+        )));
     });
 
     let theirs = rawshim::noise::measure(samples, width, height);
-    let mine = rawshim::base::measure(gpu, base, samples, width, height);
+    let mine = pollster::block_on(rawshim::base::measure(gpu, base, samples, width, height));
     if let Some(mine) = mine {
         let off = |mine: f32, theirs: f32| (mine - theirs).abs() / theirs;
         println!(

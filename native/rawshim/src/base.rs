@@ -47,16 +47,34 @@ pub struct Base {
     defocus_residuals: wgpu::ComputePipeline,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
-    // Every stage here ends on a blocking map, which a browser answers with `QueueEmpty` without
-    // having waited for anything (`gpu::read_back` is the awaited seam these have not been given).
-    // The CPU path each caller already falls through to is what a tab runs instead. `cfg!` rather
-    // than `#[cfg]` so the pipelines below are still compiled and checked for that target.
-    if cfg!(target_arch = "wasm32") {
-        return None;
-    }
     static BUILT: std::sync::OnceLock<Option<Base>> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| Base::new(gpu)).as_ref()
+}
+
+/// The same pipelines, built once per page.
+///
+/// Leaked into a thread local rather than held in a `OnceLock`, for [`crate::gpu::page_device`]'s
+/// reason: wgpu's WebGPU handles are `Rc`s, so a `Base` is neither `Send` nor `Sync` and cannot sit
+/// in a static.
+#[cfg(target_arch = "wasm32")]
+pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Base> {
+    thread_local! {
+        static BUILT: std::cell::Cell<Option<&'static Base>> = const { std::cell::Cell::new(None) };
+    }
+    if let Some(built) = BUILT.with(std::cell::Cell::get) {
+        return Some(built);
+    }
+    let built: &'static Base = Box::leak(Box::new(Base::new(gpu)?));
+    BUILT.with(|held| held.set(Some(built)));
+    Some(built)
+}
+
+/// Says so where a caller had to run these stages on the CPU, as `demosaic::cpu` says it for RCD
+/// and for the same reason: the fall-through produces a picture, so nothing downstream can see it.
+pub fn declined(stages: &str) {
+    crate::warn(&format!("rawshim: no GPU for {stages}, so this frame took the CPU path"));
 }
 
 impl Base {
@@ -303,7 +321,7 @@ fn storage_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 /// identity, so the result is `out`-sized where the lens warps and `source`-sized where it does
 /// not. None where the frame is too small to be worth the trip, which is the caller's cue for the
 /// CPU path.
-pub fn prepare(
+pub async fn prepare(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
     samples: &[u16],
@@ -335,6 +353,7 @@ pub fn prepare(
                 gpu.device.create_command_encoder(&Default::default()),
             );
             measure_defocus_into(gpu, base, taken, &frame, sw, sh)
+                .await
                 .map(|(red, blue)| {
                     let scale = strengths.defringe.clamp(0.0, 1.0) as f32;
                     (red * scale, blue * scale)
@@ -349,7 +368,7 @@ pub fn prepare(
 
     if !warps(samples.len(), source, out, lens) {
         let mut prepared = vec![0u16; samples.len()];
-        read_back(gpu, encoder, &frame, samples.len().div_ceil(2), &mut prepared)?;
+        read_back(gpu, encoder, &frame, samples.len().div_ceil(2), &mut prepared).await?;
         reclaim(gpu, [frame]);
         return Some(prepared);
     }
@@ -357,7 +376,7 @@ pub fn prepare(
     let warped = warped_buffer(gpu, words);
     warp_lens_into(gpu, base, &mut encoder, &frame, &warped, source, out, lens);
     let mut prepared = vec![0u16; out.0 * out.1 * 3];
-    read_back(gpu, encoder, &warped, words, &mut prepared)?;
+    read_back(gpu, encoder, &warped, words, &mut prepared).await?;
     reclaim(gpu, [frame, warped]);
     Some(prepared)
 }
@@ -380,7 +399,7 @@ fn reclaim<const N: usize>(gpu: &crate::gpu::Gpu, buffers: [wgpu::Buffer; N]) {
 /// `Strengths::before_the_fit`.
 ///
 /// `defocus` is [`measure_defocus`]'s pair, already scaled by the setting.
-pub fn defringe(
+pub async fn defringe(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
     samples: &mut [u16],
@@ -394,7 +413,7 @@ pub fn defringe(
     let frame = upload(gpu, samples);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     defringe_into(gpu, base, &mut encoder, &frame, width, height, defocus);
-    read_back(gpu, encoder, &frame, (width * height * 3).div_ceil(2), samples)
+    read_back(gpu, encoder, &frame, (width * height * 3).div_ceil(2), samples).await
 }
 
 /// The same refusal `image::finish_in_strips` makes: a frame with no room for the stencil has no
@@ -523,7 +542,7 @@ fn upload(gpu: &crate::gpu::Gpu, samples: &[u16]) -> wgpu::Buffer {
 }
 
 /// Submits the work and copies the frame back over the samples it came from.
-fn read_back(
+async fn read_back(
     gpu: &crate::gpu::Gpu,
     mut encoder: wgpu::CommandEncoder,
     frame: &wgpu::Buffer,
@@ -539,23 +558,19 @@ fn read_back(
     encoder.copy_buffer_to_buffer(frame, 0, &readback, 0, (words * 4) as u64);
     gpu.queue.submit([encoder.finish()]);
 
-    readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
-    {
-        let mapped = readback.slice(..).get_mapped_range().ok()?;
+    crate::gpu::read_back(&gpu.device, &readback, |mapped| {
         for (sample, pair) in samples.iter_mut().zip(mapped.chunks_exact(2)) {
             *sample = u16::from_le_bytes([pair[0], pair[1]]);
         }
-    }
-    readback.unmap();
-    Some(())
+    })
+    .await
 }
 
 /// Scene-linear levels to normalised PQ, as [`crate::tone::encode_base`] does it.
 ///
 /// Takes and returns the frame rather than leaving it on the GPU, which [`prepare`] is the version
 /// that does not: this spelling is what lets the stage be held against the CPU on its own.
-pub fn encode_base(
+pub async fn encode_base(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
     samples: &mut [u16],
@@ -569,7 +584,7 @@ pub fn encode_base(
     let frame = upload(gpu, samples);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     encode_base_into(gpu, base, &mut encoder, &frame, samples.len(), levels, reference_white_nits);
-    read_back(gpu, encoder, &frame, words, samples)
+    read_back(gpu, encoder, &frame, words, samples).await
 }
 
 /// Records the coding against a frame already in VRAM, `count` samples of it.
@@ -684,7 +699,7 @@ fn float_storage(gpu: &crate::gpu::Gpu, label: &str, values: &[f32]) -> wgpu::Bu
 ///
 /// Bicubic only. The bilinear is the fit's, and the fit warps 8-bit and `f64` planes that never
 /// reach this buffer layout.
-pub fn warp_lens(
+pub async fn warp_lens(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
     samples: &[u16],
@@ -703,7 +718,7 @@ pub fn warp_lens(
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     warp_lens_into(gpu, base, &mut encoder, &frame, &warped, source, out, lens);
     let mut gathered = vec![0u16; pixels * 3];
-    read_back(gpu, encoder, &warped, words, &mut gathered)?;
+    read_back(gpu, encoder, &warped, words, &mut gathered).await?;
     Some(gathered)
 }
 
@@ -835,7 +850,7 @@ fn noise_params(
 }
 
 /// Submits the work and brings back one pair per block: its mean level, and its sigma.
-fn read_blocks(
+async fn read_blocks(
     gpu: &crate::gpu::Gpu,
     mut encoder: wgpu::CommandEncoder,
     stats: &wgpu::Buffer,
@@ -851,10 +866,7 @@ fn read_blocks(
     encoder.copy_buffer_to_buffer(stats, 0, &readback, 0, bytes);
     gpu.queue.submit([encoder.finish()]);
 
-    readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
-    let blocks = {
-        let mapped = readback.slice(..).get_mapped_range().ok()?;
+    crate::gpu::read_back(&gpu.device, &readback, |mapped| {
         mapped
             .chunks_exact(8)
             .map(|block| {
@@ -864,9 +876,8 @@ fn read_blocks(
                 [at(0), at(4)]
             })
             .collect()
-    };
-    readback.unmap();
-    Some(blocks)
+    })
+    .await
 }
 
 /// What the prepared frame's noise is, as [`crate::noise::measure`] reads it.
@@ -881,7 +892,7 @@ fn read_blocks(
 ///
 /// `None` where the GPU declines, including the frame too small to bin: the CPU answers that one
 /// in microseconds and there is nothing to save.
-pub fn measure(
+pub async fn measure(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
     samples: &[u16],
@@ -893,14 +904,14 @@ pub fn measure(
     }
     let frame = upload(gpu, samples);
     let encoder = gpu.device.create_command_encoder(&Default::default());
-    measure_into(gpu, base, encoder, &frame, width, height)
+    measure_into(gpu, base, encoder, &frame, width, height).await
 }
 
 /// Reads a frame already in VRAM, and the one stage that takes its encoder rather than borrowing
 /// one: the transform the second reduction runs under is a quantile of the first's output, so this
 /// has to submit and map before it can record the rest. Whatever the caller had recorded goes down
 /// with the coarse pass.
-fn measure_into(
+async fn measure_into(
     gpu: &crate::gpu::Gpu,
     base: &Base,
     mut encoder: wgpu::CommandEncoder,
@@ -965,7 +976,7 @@ fn measure_into(
         let (x, y) = groups(count);
         pass.dispatch_workgroups(x, y, 1);
     }
-    let coarse = read_blocks(gpu, encoder, &stats, count)?;
+    let coarse = read_blocks(gpu, encoder, &stats, count).await?;
 
     // One sigma to parameterise the transform with, and the round trip the split is built around:
     // the second pass cannot be encoded until this number exists.
@@ -983,7 +994,7 @@ fn measure_into(
         let (x, y) = groups(count);
         pass.dispatch_workgroups(x, y, 1);
     }
-    let measured = read_blocks(gpu, encoder, &stats, count)?;
+    let measured = read_blocks(gpu, encoder, &stats, count).await?;
 
     let mut bins: Vec<Vec<f32>> = vec![Vec::new(); crate::noise::BINS];
     for block in &measured {
@@ -1032,7 +1043,7 @@ const _: () = assert!(crate::image::NOISE_BINS == 1024);
 ///
 /// None wherever the CPU answers None: too few samples, too few bins that resolve, a coefficient
 /// past what a lens does, or two channels that disagree in sign.
-pub fn measure_defocus(
+pub async fn measure_defocus(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
     samples: &[u16],
@@ -1044,13 +1055,13 @@ pub fn measure_defocus(
     }
     let frame = upload(gpu, samples);
     let encoder = gpu.device.create_command_encoder(&Default::default());
-    measure_defocus_into(gpu, base, encoder, &frame, width, height)
+    measure_defocus_into(gpu, base, encoder, &frame, width, height).await
 }
 
 /// Reads a frame already in VRAM. Takes the encoder rather than borrowing one, as [`measure_into`]
 /// does and for the same reason: the answer is a host computation over what the kernels write, so
 /// this has to submit and map before it can return one.
-fn measure_defocus_into(
+async fn measure_defocus_into(
     gpu: &crate::gpu::Gpu,
     base: &Base,
     mut encoder: wgpu::CommandEncoder,
@@ -1124,7 +1135,7 @@ fn measure_defocus_into(
         pass.dispatch_workgroups(x, y, 1);
     }
     let [packed, histograms] =
-        read_all(gpu, encoder, [(&partials, partial_bytes), (&residuals, histogram_bytes)])?;
+        read_all(gpu, encoder, [(&partials, partial_bytes), (&residuals, histogram_bytes)]).await?;
 
     // The widening the shader could not do: an invocation sums 64 samples in `f32` where the CPU
     // sums a row in `f64`, and the segments meet here.
@@ -1203,9 +1214,9 @@ fn measure_defocus_into(
     }
 }
 
-/// Submits the work and brings every result back on one fence, since no kernel here reads what
-/// another writes and a second wait would buy nothing.
-fn read_all<const N: usize>(
+/// Submits the work once and brings every result back, since no kernel here reads what another
+/// writes.
+async fn read_all<const N: usize>(
     gpu: &crate::gpu::Gpu,
     mut encoder: wgpu::CommandEncoder,
     sources: [(&wgpu::Buffer, usize); N],
@@ -1222,14 +1233,9 @@ fn read_all<const N: usize>(
     });
     gpu.queue.submit([encoder.finish()]);
 
-    for readback in &staged {
-        readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    }
-    gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
     let mut read = Vec::with_capacity(N);
     for readback in &staged {
-        read.push(readback.slice(..).get_mapped_range().ok()?.to_vec());
-        readback.unmap();
+        read.push(crate::gpu::read_back(&gpu.device, readback, <[u8]>::to_vec).await?);
     }
     read.try_into().ok()
 }
@@ -1258,7 +1264,8 @@ mod tests {
         crate::tone::encode_base(&mut theirs, anchored, 203.0);
 
         let mut mine = levels.clone();
-        super::encode_base(gpu, base, &mut mine, anchored, 203.0).expect("the coding runs");
+        pollster::block_on(super::encode_base(gpu, base, &mut mine, anchored, 203.0))
+            .expect("the coding runs");
 
         let worst = theirs
             .iter()
@@ -1344,7 +1351,8 @@ mod tests {
         crate::image::finish_with(&mut theirs, width, height, strengths, defocus);
 
         let mut mine = frame.clone();
-        super::defringe(gpu, base, &mut mine, width, height, defocus).expect("the defringe runs");
+        pollster::block_on(super::defringe(gpu, base, &mut mine, width, height, defocus))
+            .expect("the defringe runs");
 
         // **Asserted before the bound, and on the size of the correction rather than on how many
         // samples it touched.** A count of moved samples says a stage ran; it does not say it did
@@ -1409,8 +1417,15 @@ mod tests {
         )
         .expect("a lens that moves pixels");
         let theirs = warp.apply_u16(&frame);
-        let mine = super::warp_lens(gpu, base, &frame, (width, height), (width, height), &lens)
-            .expect("the warp runs");
+        let mine = pollster::block_on(super::warp_lens(
+            gpu,
+            base,
+            &frame,
+            (width, height),
+            (width, height),
+            &lens,
+        ))
+        .expect("the warp runs");
 
         // The warp has to have moved the frame before a tolerance on it means anything: a gather
         // that returned its source would otherwise agree with itself perfectly.
@@ -1446,8 +1461,9 @@ mod tests {
         let strengths = crate::image::Strengths { sharpen: 0.0, defringe: 1.0 };
         let defocus = {
             let mut coded = frame.clone();
-            super::encode_base(gpu, base, &mut coded, levels, 203.0).expect("the coding runs");
-            super::measure_defocus(gpu, base, &coded, width, height)
+            pollster::block_on(super::encode_base(gpu, base, &mut coded, levels, 203.0))
+                .expect("the coding runs");
+            pollster::block_on(super::measure_defocus(gpu, base, &coded, width, height))
                 .map(|(red, blue)| {
                     let scale = strengths.defringe.clamp(0.0, 1.0) as f32;
                     (red * scale, blue * scale)
@@ -1464,15 +1480,22 @@ mod tests {
 
         let staged = |lens: &crate::fit::Lens| {
             let mut samples = frame.clone();
-            super::encode_base(gpu, base, &mut samples, levels, 203.0).expect("the coding runs");
-            super::defringe(gpu, base, &mut samples, width, height, defocus)
+            pollster::block_on(super::encode_base(gpu, base, &mut samples, levels, 203.0))
+                .expect("the coding runs");
+            pollster::block_on(super::defringe(gpu, base, &mut samples, width, height, defocus))
                 .expect("the defringe runs");
-            let gathered =
-                super::warp_lens(gpu, base, &samples, (width, height), (width, height), lens);
+            let gathered = pollster::block_on(super::warp_lens(
+                gpu,
+                base,
+                &samples,
+                (width, height),
+                (width, height),
+                lens,
+            ));
             gathered.unwrap_or(samples)
         };
         let chained = |lens: &crate::fit::Lens| {
-            super::prepare(
+            pollster::block_on(super::prepare(
                 gpu,
                 base,
                 &frame,
@@ -1482,7 +1505,7 @@ mod tests {
                 203.0,
                 strengths,
                 lens,
-            )
+            ))
             .expect("the chain runs")
         };
         let differing = |mine: &[u16], theirs: &[u16]| {
@@ -1642,7 +1665,7 @@ mod tests {
         // before.
         assert!(theirs.0 > 0.03 && theirs.1 > 0.08, "the CPU's own fit is {theirs:?}");
 
-        let mine = super::measure_defocus(gpu, base, &frame, width, height)
+        let mine = pollster::block_on(super::measure_defocus(gpu, base, &frame, width, height))
             .expect("the measurement runs");
         let off = |mine: f32, theirs: f32| (mine - theirs).abs() / theirs;
         assert!(off(mine.0, theirs.0) < 0.005, "red {} against {}", mine.0, theirs.0);
@@ -1680,7 +1703,8 @@ mod tests {
         // bound against one.
         assert!(theirs.stabilised > 0.01, "the CPU's own answer is {}", theirs.stabilised);
 
-        let mine = super::measure(gpu, base, &frame, width, height).expect("the measurement runs");
+        let mine = pollster::block_on(super::measure(gpu, base, &frame, width, height))
+            .expect("the measurement runs");
         let off = |mine: f32, theirs: f32| (mine - theirs).abs() / theirs;
         assert!(
             off(mine.stabilised, theirs.stabilised) < 0.002,

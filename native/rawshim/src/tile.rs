@@ -177,23 +177,28 @@ pub async fn prepared_async(
     // Coded against those levels and defringed, as `job::Base::build` codes a whole frame: no lens
     // here, because a window's warp is the photograph's own over that window and happens below.
     let strengths = request.strengths.before_the_fit();
-    let chained = crate::gpu::device().and_then(crate::base::device).and_then(|base| {
-        let gpu = crate::gpu::device()?;
-        crate::base::prepare(
-            gpu,
-            base,
-            &samples,
-            (width, height),
-            (width, height),
-            levels,
-            request.grade.reference_white_nits,
-            strengths,
-            &crate::fit::Lens::none(),
-        )
-    });
+    let chained = match crate::gpu::device().and_then(crate::base::device) {
+        Some(base) => {
+            let gpu = crate::gpu::device().expect("the device the pipelines were built on");
+            crate::base::prepare(
+                gpu,
+                base,
+                &samples,
+                (width, height),
+                (width, height),
+                levels,
+                request.grade.reference_white_nits,
+                strengths,
+                &crate::fit::Lens::none(),
+            )
+            .await
+        }
+        None => None,
+    };
     match chained {
         Some(prepared) => samples = prepared,
         None => {
+            crate::base::declined("the coding and the defringe");
             crate::tone::encode_base(&mut samples, levels, request.grade.reference_white_nits);
             crate::hdr::filter_base(&mut samples, width, height, strengths);
         }

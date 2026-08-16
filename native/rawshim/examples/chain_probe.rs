@@ -62,7 +62,7 @@ fn main() {
     let gpu_defocus = {
         let mut coded = prepared.samples.clone();
         rawshim::tone::encode_base(&mut coded, levels, grade.reference_white_nits);
-        rawshim::base::measure_defocus(gpu, base, &coded, width, height)
+        pollster::block_on(rawshim::base::measure_defocus(gpu, base, &coded, width, height))
     };
     // Both printed, though neither is handed to `prepare` any more: it measures its own off the
     // frame it has just coded. What they are for is the agreement itself, which is what said the
@@ -70,7 +70,7 @@ fn main() {
     println!("defocus cpu {cpu_defocus:?} gpu {gpu_defocus:?}");
 
     let began = std::time::Instant::now();
-    let mine = rawshim::base::prepare(
+    let mine = pollster::block_on(rawshim::base::prepare(
         gpu,
         base,
         &prepared.samples,
@@ -80,7 +80,7 @@ fn main() {
         grade.reference_white_nits,
         strengths.before_the_fit(),
         &lens(width, height),
-    )
+    ))
     .expect("the chain runs");
     println!("gpu  chain          {:>6}ms", began.elapsed().as_millis());
     let mut mine = mine;

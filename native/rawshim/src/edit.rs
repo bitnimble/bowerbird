@@ -339,22 +339,26 @@ async fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
         // 361MB up and back to run a few instructions a pixel, and the warp wired in alone measured
         // no faster than the CPU it replaced. `base::prepare` measures its own defocus off the
         // frame it has just coded, so nothing has to come back between the stages.
-        let chained = crate::gpu::device().and_then(crate::base::device).and_then(|base| {
-            let gpu = crate::gpu::device()?;
-            let (width, height) = (prepared.width, prepared.height);
-            let none = crate::fit::Lens::none();
-            crate::base::prepare(
-                gpu,
-                base,
-                &prepared.samples,
-                (width, height),
-                (width, height),
-                prepared.levels.anchored(),
-                request.grade.reference_white_nits,
-                request.strengths.before_the_fit(),
-                matched.as_ref().map_or(&none, |m| &m.lens),
-            )
-        });
+        let chained = match crate::gpu::device().and_then(crate::base::device) {
+            Some(base) => {
+                let gpu = crate::gpu::device().expect("the device the pipelines were built on");
+                let (width, height) = (prepared.width, prepared.height);
+                let none = crate::fit::Lens::none();
+                crate::base::prepare(
+                    gpu,
+                    base,
+                    &prepared.samples,
+                    (width, height),
+                    (width, height),
+                    prepared.levels.anchored(),
+                    request.grade.reference_white_nits,
+                    request.strengths.before_the_fit(),
+                    matched.as_ref().map_or(&none, |m| &m.lens),
+                )
+                .await
+            }
+            None => None,
+        };
         if let Some(samples) = chained {
             prepared.samples = samples;
             lap("code, defringe, warp");
@@ -365,11 +369,13 @@ async fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
                 Strengths { sharpen: request.strengths.sharpen, ..Default::default() },
             );
             lap("sharpen");
-            let out = payload(prepared, matched.as_ref(), frame.as_shot, request, keep, noise_fit);
+            let out =
+                payload(prepared, matched.as_ref(), frame.as_shot, request, keep, noise_fit).await;
             lap("noise measure, header");
             return Ok(out);
         }
 
+        crate::base::declined("the coding, the defringe and the lens warp");
         crate::tone::encode_base(
             &mut prepared.samples,
             prepared.levels.anchored(),
@@ -396,14 +402,17 @@ async fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
                 prepared.width,
                 prepared.height,
                 colour,
-            ) {
+            )
+            .await
+            {
                 prepared.samples = warped;
             }
         }
         lap("lens warp");
         filter(&mut prepared, Strengths { sharpen: request.strengths.sharpen, ..Default::default() });
         lap("sharpen");
-        let out = payload(prepared, matched.as_ref(), frame.as_shot, request, keep, noise_fit);
+        let out =
+            payload(prepared, matched.as_ref(), frame.as_shot, request, keep, noise_fit).await;
         lap("noise measure, header");
         Ok(out)
     }
@@ -462,7 +471,7 @@ fn fit(
     .map(|(_, matched)| matched)
 }
 
-fn payload(
+async fn payload(
     prepared: HdrPrepared,
     matched: Option<&crate::hdr_fit::HdrMatch>,
     as_shot: Option<crate::white_balance::AsShot>,
@@ -501,15 +510,17 @@ fn payload(
     // `median96` it is 221ms against 910ms, and 227ms measured in this lap rather than alone. It is
     // the one stage that pays an upload and gets no readback, so that margin is the whole of its
     // case for being here.
-    let noise = crate::gpu::device()
-        .and_then(crate::base::device)
-        .and_then(|base| {
-            let gpu = crate::gpu::device()?;
-            crate::base::measure(gpu, base, &prepared.samples, prepared.width, prepared.height)
-        })
-        .unwrap_or_else(|| {
-            crate::noise::measure(&prepared.samples, prepared.width, prepared.height)
-        });
+    let measured = match crate::gpu::device().and_then(crate::base::device) {
+        Some(base) => {
+            let gpu = crate::gpu::device().expect("the device the pipelines were built on");
+            crate::base::measure(gpu, base, &prepared.samples, prepared.width, prepared.height).await
+        }
+        None => None,
+    };
+    let noise = measured.unwrap_or_else(|| {
+        crate::base::declined("the noise measure");
+        crate::noise::measure(&prepared.samples, prepared.width, prepared.height)
+    });
 
     let header = PreparedHeader {
         width: prepared.width,

@@ -1368,7 +1368,8 @@ mod hdr_grade {
         let mut samples = frame.samples16().expect("a 16-bit decode").to_vec();
         let levels = crate::tone::levels(&samples, QUANTILE).anchored();
         crate::tone::encode_base(&mut samples, levels, REFERENCE);
-        let lit = crate::hdr_fit::apply_lens(&samples, width, height, &fitted).expect("the lens stage runs");
+        let lit = pollster::block_on(crate::hdr_fit::apply_lens(&samples, width, height, &fitted))
+            .expect("the lens stage runs");
 
         let at = |data: &[u16], x: usize, y: usize| {
             crate::tone::pq_inv(f64::from(data[(y * width + x) * 3 + 1]) / 65535.0)

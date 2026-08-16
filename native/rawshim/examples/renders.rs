@@ -81,12 +81,12 @@ fn editor(path: &str, detail: f64, sigma_scale: f32) -> (Vec<u8>, usize, usize) 
     };
     filter(&mut prepared, strengths().before_the_fit());
     if let Some(colour) = matched.as_ref() {
-        if let Some(warped) = rawshim::hdr_fit::apply_lens(
+        if let Some(warped) = pollster::block_on(rawshim::hdr_fit::apply_lens(
             &prepared.samples,
             prepared.width,
             prepared.height,
             colour,
-        ) {
+        )) {
             prepared.samples = warped;
         }
     }
