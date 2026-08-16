@@ -774,11 +774,13 @@ browser build has to choose.
 
 ### 10.1 Linux has no WebGPU in WebKit, so Linux does not get WebKit
 
-The conclusion below stands as a fact about `webkit2gtk` and is now routed
-around rather than lived with: `docs/tauri-cef-evaluation.md` has Linux on
+The conclusion below stands as a fact about `webkit2gtk`, and is routed around
+rather than lived with: `src-tauri/Cargo.toml` puts Linux on
 **`tauri-runtime-cef`**, a bundled Chromium, with wry's system webview on macOS
-and Windows. That is a per-target Cargo feature (that doc's §4.4), so the switch
-itself is nearly free.
+and Windows. It is a per-target Cargo feature (`docs/tauri-cef-evaluation.md`
+§4.4), and `default-features = false` on the Linux entry is what makes WebKitGTK
+unreachable rather than merely unused - `cargo tree` on Linux has no `wry` and no
+`webkit2gtk` in it at all.
 
 With that, every platform has WebGPU: WebView2 and CEF are Chromium, and
 WKWebView has it from macOS 26. **The canvas plan reaches all three**, and §10.2
@@ -866,7 +868,7 @@ written around. Kept here only as the shape being replaced.
 
 **(b) The frontend owns the GPU, the backend owns the open.** The canvas and the
 shaders live in the webview, already measured working end to end on macOS
-(§7.3), and available on every platform once Linux runs CEF (§10.1).
+(§7.3), and available on every platform now that Linux runs CEF (§10.1).
 
 The part worth spelling out is that **the tick path needs no wasm at all**.
 `Prepared` is immutable between matches (§6), so:

@@ -1,29 +1,28 @@
 // The shell's transport, over real IPC, in the real binary.
 //
-// What this covers and Playwright cannot: `api` is registered on the invoke handler, the
-// request crosses as JSON, and the reply comes back as *bytes* rather than base64 with the
-// status and headers framed in front of them. Every part of that only exists in a built
-// app, and all of it is load-bearing - an editor open is several hundred megabytes through
-// this command, which base64 would make untenable.
+// What this covers and the `web/e2e` suite cannot: `api` is registered on the invoke handler,
+// the request crosses as JSON, and the reply comes back as *bytes* rather than base64 with the
+// status and headers framed in front of them. Every part of that only exists in a built app,
+// and all of it is load-bearing - an editor open is several hundred megabytes through this
+// command, which base64 would make untenable.
 //
 // Deliberately not asserting on any picture: what the shaders do with a frame is pinned by
 // `web/e2e/gpu_parity.spec.ts` against the CPU. That a device exists at all is asserted below,
-// and on Linux that needs the CEF manifest - `scripts/build-wdio-app.ts` builds `Cargo.toml`,
-// whose WebKitGTK has ENABLE_WEBGPU off (`docs/raw-edit-gpu.md` §10.1), so the WebGPU spec is
-// the one thing here that a Wry build cannot pass.
+// and on Linux that needs CEF - WebKitGTK has ENABLE_WEBGPU off (`docs/raw-edit-gpu.md`
+// §10.1), so the WebGPU spec is the one thing here a WebKitGTK build could never pass.
 //
 // The servers come from `scripts/e2e-tauri-full.ts`, which `e2e:tauri` runs. These used to be
 // optional, and every specimen needing one skipped itself without it - so the ordinary run
 // reported green over four specimens while five never executed. The RAW round-trip below was
 // among them, and was timing out the whole time. Missing now is a failure, not a skip.
+import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { APP_BINARY, CDP_URL } from './shell';
 
 const SERVER = process.env.BOWERBIRD_E2E_SERVER ?? '';
 // A second running library, for the one case that needs two: moving between them.
 const SECOND_SERVER = process.env.BOWERBIRD_E2E_SERVER_2 ?? '';
-// The binary wdio launched, which `wdio.conf.ts` builds to the debug target dir.
-const APP_BINARY = join(import.meta.dirname, '..', 'src-tauri', 'target', 'debug', 'app');
 
 type Bridge = {
   __TAURI__: {
@@ -34,29 +33,55 @@ type Bridge = {
   };
 };
 
-describe('Bowerbird desktop shell', () => {
-  // The address lives in a `config.json` beside the binary and survives the run that wrote
-  // it, so a suite that only ever reads it inherits whatever the last one left - a port from
-  // a server that is no longer there, or one of these tests' own deliberate detours if it
-  // failed before its restore. Every specimen below that asserts on which library the shell
-  // followed then fails for that reason rather than its own, which is a morning spent
-  // reading the wrong code.
-  before(async function () {
+let browser: Browser;
+// One webview for the file, not one per test: attaching is cheap but the shell's state is
+// not, and these specimens deliberately hand each other a shell that is already running.
+let shell: Page;
+
+// The address lives in a `config.json` beside the binary and survives the run that wrote it,
+// so a suite that only ever reads it inherits whatever the last one left - a port from a
+// server that is no longer there, or one of these tests' own deliberate detours if it failed
+// before its restore. Every specimen below that asserts on which library the shell followed
+// then fails for that reason rather than its own, which is a morning spent reading the wrong
+// code. Serial for the same reason: they share one webview and one config file.
+test.describe.configure({ mode: 'serial' });
+
+test.describe('Bowerbird desktop shell', () => {
+  // Attached to rather than launched: `playwright.config.ts` starts the binary and waits for
+  // its CDP port, so what is left here is picking the app's own page out of what that port
+  // lists.
+  test.beforeAll(async () => {
     if (SERVER === '' || SECOND_SERVER === '') {
       throw new Error('run this through `bun run e2e:tauri`, which stands the servers up');
     }
-    await browser.execute(async (origin: string) => {
+    browser = await chromium.connectOverCDP(CDP_URL);
+    let found: Page | undefined;
+    for (let attempt = 0; attempt < 40 && found == null; attempt++) {
+      found = browser
+        .contexts()
+        .flatMap((context) => context.pages())
+        .find((candidate) => candidate.url().startsWith('http://tauri.localhost'));
+      if (found == null) await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (found == null) throw new Error('the shell never opened a page on tauri.localhost');
+    shell = found;
+
+    await shell.evaluate(async (origin: string) => {
       const { invoke } = (window as unknown as Bridge).__TAURI__.core;
       await invoke('set_server_origin', { value: origin });
     }, SERVER);
   });
 
-  it('serves the bundle from the Tauri app', async () => {
-    expect(await browser.getTitle()).toContain('Bowerbird');
+  test.afterAll(async () => {
+    await browser?.close();
   });
 
-  it('exposes the Tauri IPC bridge the transport reaches for', async () => {
-    const hasInvoke = await browser.execute(
+  test('serves the bundle from the Tauri app', async () => {
+    expect(await shell.title()).toContain('Bowerbird');
+  });
+
+  test('exposes the Tauri IPC bridge the transport reaches for', async () => {
+    const hasInvoke = await shell.evaluate(
       () =>
         typeof (window as { __TAURI__?: { core?: { invoke?: unknown } } }).__TAURI__?.core
           ?.invoke === 'function',
@@ -64,8 +89,8 @@ describe('Bowerbird desktop shell', () => {
     expect(hasInvoke).toBe(true);
   });
 
-  it('frames a reply as a length, a header and bytes', async () => {
-    const reply = await browser.execute(async () => {
+  test('frames a reply as a length, a header and bytes', async () => {
+    const reply = await shell.evaluate(async () => {
       const { invoke } = (window as unknown as Bridge).__TAURI__.core;
       const framed = new Uint8Array(
         await invoke('api', {
@@ -95,8 +120,8 @@ describe('Bowerbird desktop shell', () => {
    * device the wasm decode falls through to PPG, which is a *different picture* rather than a
    * slower one, so a webview that lost WebGPU has to fail here and not quietly downstream.
    */
-  it('has WebGPU in its webview, which the editor now has no fall-back for', async () => {
-    const gpu = await browser.execute(async () => {
+  test('has WebGPU in its webview, which the editor now has no fall-back for', async () => {
+    const gpu = await shell.evaluate(async () => {
       const adapter = (navigator as { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
       if (adapter == null) return { present: false, adapter: false };
       return { present: true, adapter: (await adapter.requestAdapter()) != null };
@@ -105,8 +130,8 @@ describe('Bowerbird desktop shell', () => {
     expect(gpu.adapter).toBe(true);
   });
 
-  it('keeps the server address beside the binary, so an unpacked build is portable', async () => {
-    const before = await browser.execute(async () => {
+  test('keeps the server address beside the binary, so an unpacked build is portable', async () => {
+    const before = await shell.evaluate(async () => {
       const { invoke } = (window as unknown as Bridge).__TAURI__.core;
       const held = (await invoke('server_origin', {})) as unknown as string;
       await invoke('set_server_origin', { value: 'http://portable.test:1234/' });
@@ -127,7 +152,7 @@ describe('Bowerbird desktop shell', () => {
       // Trailing slash trimmed, or every path joined to it would double its first one.
       expect(written.server).toBe('http://portable.test:1234');
     } finally {
-      await browser.execute(async (restore: string) => {
+      await shell.evaluate(async (restore: string) => {
         const { invoke } = (window as unknown as Bridge).__TAURI__.core;
         await invoke('set_server_origin', { value: restore });
       }, before);
@@ -137,8 +162,8 @@ describe('Bowerbird desktop shell', () => {
   // The transport's one exception, and the only part of it a unit test cannot reach: that
   // the shell really does hold the library's SSE stream and really does put it on the IPC
   // channel the page listens to. Through the scheme this hung forever without erroring.
-  it('follows the library event stream and forwards it over IPC', async () => {
-    const state = await browser.execute(async () => {
+  test('follows the library event stream and forwards it over IPC', async () => {
+    const state = await shell.evaluate(async () => {
       const { core } = (window as unknown as Bridge).__TAURI__;
       const origin = (await core.invoke('server_origin', {})) as unknown as string;
       // Polled rather than sampled: the stream is dialled at startup and reconnects with a
@@ -161,9 +186,9 @@ describe('Bowerbird desktop shell', () => {
   // one - its heartbeat holds the socket open for as long as the process lives. So the shell
   // stayed on the library the reader had just left, reporting itself connected the whole
   // time.
-  it('follows the address when it changes, off a server that is still running', async () => {
-    const moved = await browser.execute(
-      async (to: string, back: string) => {
+  test('follows the address when it changes, off a server that is still running', async () => {
+    const moved = await shell.evaluate(
+      async ([to, back]: [string, string]) => {
         const { core } = (window as unknown as Bridge).__TAURI__;
         // Which library, not whether: a connection to the one just left still answers
         // "connected", which is exactly how this looked like it worked.
@@ -187,8 +212,7 @@ describe('Bowerbird desktop shell', () => {
         await core.invoke('set_server_origin', { value: back });
         return { before, after };
       },
-      SECOND_SERVER,
-      SERVER,
+      [SECOND_SERVER, SERVER] as [string, string],
     );
 
     expect(moved).toEqual({ before: SERVER, after: SECOND_SERVER });
@@ -199,9 +223,9 @@ describe('Bowerbird desktop shell', () => {
   // that doubles to thirty seconds. A `Notify` reaches only the waits registered when it is
   // raised and there are none during a sleep, so the correction used to be dropped and took
   // effect whenever the backoff next happened to expire.
-  it('takes up a corrected address without waiting out the backoff', async () => {
+  test('takes up a corrected address without waiting out the backoff', async () => {
     try {
-      const moved = await browser.execute(async (to: string) => {
+      const moved = await shell.evaluate(async (to: string) => {
         const { core } = (window as unknown as Bridge).__TAURI__;
         const following = async (): Promise<string | null> =>
           (await core.invoke('events_following', {})) as unknown as string | null;
@@ -237,7 +261,7 @@ describe('Bowerbird desktop shell', () => {
       expect(moved.took).toBeGreaterThanOrEqual(0);
       expect(moved.took).toBeLessThan(3000);
     } finally {
-      await browser.execute(async (restore: string) => {
+      await shell.evaluate(async (restore: string) => {
         const { invoke } = (window as unknown as Bridge).__TAURI__.core;
         await invoke('set_server_origin', { value: restore });
       }, SERVER);
@@ -248,9 +272,9 @@ describe('Bowerbird desktop shell', () => {
   // to hold. Written the second way it accepted "resolved" as a pass, which is what a
   // reachable server returns for a 404 - so in every configured run it asserted nothing about
   // unreachability, which is the whole of what it is named for.
-  it('reports an unreachable server rather than panicking the shell', async () => {
+  test('reports an unreachable server rather than panicking the shell', async () => {
     try {
-      const reply = await browser.execute(async () => {
+      const reply = await shell.evaluate(async () => {
         const { invoke } = (window as unknown as Bridge).__TAURI__.core;
         // Port 1 needs root to bind, so nothing is listening and the dial is refused.
         await invoke('set_server_origin', { value: 'http://127.0.0.1:1' });
@@ -268,7 +292,7 @@ describe('Bowerbird desktop shell', () => {
       // looking at Settings.
       expect(reply).toContain('could not reach');
     } finally {
-      await browser.execute(async (restore: string) => {
+      await shell.evaluate(async (restore: string) => {
         const { invoke } = (window as unknown as Bridge).__TAURI__.core;
         await invoke('set_server_origin', { value: restore });
       }, SERVER);

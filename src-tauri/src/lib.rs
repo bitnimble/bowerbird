@@ -10,16 +10,17 @@ mod api;
 /// The one call that is not request/response, and so cannot go through `api.rs`.
 mod events;
 
+// `#[default_runtime(crate::Wry, wry)]` only defaults `AppHandle`'s generic while the `wry`
+// feature is on, and the Linux build turns it off to get CEF - so every `AppHandle` has to
+// name the runtime rather than rely on the default.
+#[cfg(target_os = "linux")]
+pub type Runtime = tauri::Cef;
+#[cfg(not(target_os = "linux"))]
+pub type Runtime = tauri::Wry;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
-
-    #[cfg(feature = "wdio")]
-    let builder = builder
-        .plugin(tauri_plugin_wdio::init())
-        .plugin(tauri_plugin_wdio_webdriver::init());
-
-    builder
+    tauri::Builder::default()
         .setup(|app| {
             // Before the stream, which reads the address it was told about.
             api::load_config(app.handle());

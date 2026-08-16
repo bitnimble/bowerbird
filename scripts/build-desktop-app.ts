@@ -1,4 +1,4 @@
-// Builds the desktop binary the WebdriverIO run drives (see `wdio.conf.ts`).
+// Builds the desktop binary the e2e run drives (see `e2e-tauri/playwright.config.ts`).
 //
 // One thing a normal build does not do: `tauri/custom-protocol`, which serves the embedded
 // `frontendDist` instead of the dev URL. It is the feature the Tauri CLI passes for a real
@@ -25,5 +25,5 @@ run('bun', [
   '--manifest-path',
   'src-tauri/Cargo.toml',
   '--features',
-  'wdio,tauri/custom-protocol',
+  'tauri/custom-protocol',
 ]);

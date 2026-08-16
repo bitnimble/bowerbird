@@ -9,12 +9,11 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c" }
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", features = [] }
 # The shell proxies for the hosted server, so it needs a client. `rustls` rather than the
 # system TLS so a bundled build carries its own and does not want OpenSSL on the box.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -23,13 +22,18 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # timer. `Response::chunk` is not feature-gated, so reading the stream itself needs nothing.
 tokio = { version = "1", features = ["time", "sync", "macros"] }
 
-# WebdriverIO desktop e2e: the in-app Execute API and the embedded WebDriver server.
-# Optional and behind a feature so they never ride a shipped build.
-tauri-plugin-wdio = { version = "1", optional = true }
-tauri-plugin-wdio-webdriver = { version = "1", optional = true }
+# `default-features = false` is load-bearing. Nothing emits a compile_error when both
+# runtimes are on: build.rs would report `cef` (so the build takes the CEF manifest and
+# rpath) while `Builder::default()` still resolves to `Builder<Wry>`, because
+# `#[default_runtime(crate::Wry, wry)]` keeps defaulting the generic to Wry whenever the
+# `wry` feature is present. A silently mismatched build.
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", default-features = false, features = [
+  "cef",
+] }
 
-[features]
-wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = [] }
 
 [profile.release]
 # The symbol table is 9MB of the Windows binary and 3MB of the macOS one, for builds

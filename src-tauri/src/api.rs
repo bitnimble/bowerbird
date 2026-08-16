@@ -56,7 +56,7 @@ pub(crate) fn origin() -> String {
 /// `/Applications` sits somewhere it may not write to, and would otherwise fail to save at
 /// all. Decided by trying rather than by a marker file or a permissions check, because on
 /// Windows the answer depends on which directory it landed in and on who is running it.
-fn config_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+fn config_file(app: &tauri::AppHandle<crate::Runtime>) -> Option<std::path::PathBuf> {
     use tauri::Manager;
     if let Some(beside) = std::env::current_exe()
         .ok()
@@ -89,7 +89,7 @@ fn writable(path: &std::path::Path) -> bool {
 /// A file that will not parse is treated as one that is not there. It holds preferences
 /// rather than anything a reader would grieve, and refusing to start over a stray comma
 /// would be the worse failure.
-pub fn load_config(app: &tauri::AppHandle) {
+pub fn load_config(app: &tauri::AppHandle<crate::Runtime>) {
     let held = config_file(app)
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str::<Config>(&text).ok())
@@ -100,7 +100,7 @@ pub fn load_config(app: &tauri::AppHandle) {
 }
 
 /// Writes the whole object back, so a field added later is not dropped by this one.
-fn save(app: &tauri::AppHandle, config: &Config) -> Result<(), String> {
+fn save(app: &tauri::AppHandle<crate::Runtime>, config: &Config) -> Result<(), String> {
     let Some(path) = config_file(app) else { return Ok(()) };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("could not make {parent:?}: {e}"))?;
@@ -119,7 +119,10 @@ pub fn server_origin() -> String {
 /// Trailing slashes trimmed, because every path this is joined to starts with one and
 /// `//api` is a different route to the server that answers it.
 #[tauri::command]
-pub fn set_server_origin(app: tauri::AppHandle, value: String) -> Result<String, String> {
+pub fn set_server_origin(
+    app: tauri::AppHandle<crate::Runtime>,
+    value: String,
+) -> Result<String, String> {
     let trimmed = value.trim().trim_end_matches('/').to_string();
     let server = if trimmed.is_empty() { None } else { Some(trimmed) };
 

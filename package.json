@@ -17,7 +17,7 @@
     "build:native": "bun run scripts/cargo.ts build --profile quick --manifest-path native/rawshim/Cargo.toml",
     "build:native:release": "bun run scripts/cargo.ts build --release --manifest-path native/rawshim/Cargo.toml",
     "build:wasm": "wasm-pack build native/rawshim --target web --out-dir pkg -- --no-default-features",
-    "e2e:tauri:build": "bun run scripts/build-wdio-app.ts",
+    "e2e:tauri:build": "bun run scripts/build-desktop-app.ts",
     "e2e:tauri": "bun run e2e:tauri:build && bun run scripts/e2e-tauri-full.ts",
     "tauri": "bun x @tauri-apps/cli",
     "mac:build": "bun run scripts/mac-build.ts",
@@ -31,19 +31,10 @@
     "zod": "^4.0.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
-    "@wdio/cli": "^9",
-    "@wdio/globals": "^9",
-    "@wdio/local-runner": "^9",
-    "@wdio/mocha-framework": "^9",
-    "@wdio/spec-reporter": "^9",
-    "@wdio/tauri-plugin": "1.2.0",
-    "@wdio/tauri-service": "1.2.0",
     "oxlint": "^1.76.0",
     "typescript": "^5.7.2"
-  },
-  "patchedDependencies": {
-    "@wdio/native-utils@2.4.0": "patches/@wdio%2Fnative-utils@2.4.0.patch"
   }
 }

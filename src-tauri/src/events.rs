@@ -90,7 +90,7 @@ struct Emitted {
 /// laptop that slept, both of which are reconnects rather than failures. `Last-Event-ID`
 /// carries across them, so the events missed in between are replayed rather than lost -
 /// which is the same guarantee the browser's own `EventSource` gives the web build.
-pub fn follow(app: &AppHandle) {
+pub fn follow(app: &AppHandle<crate::Runtime>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut resume = Resume::default();
@@ -163,7 +163,7 @@ impl Resume {
 
 /// One connection, until it ends. `Ok` if it was answered before it did.
 async fn stream(
-    app: &AppHandle,
+    app: &AppHandle<crate::Runtime>,
     resume: &mut Resume,
     moved: &mut tokio::sync::watch::Receiver<()>,
 ) -> Result<Ended, String> {

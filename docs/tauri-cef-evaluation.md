@@ -15,9 +15,11 @@ Reviewed: 2026-08-03 (claims re-checked against live GitHub/API, Tauri docs, and
 > considered and **not** taken - `docs/raw-edit-gpu.md` §0 and §6.2 record why, and it is the
 > current architecture. §6's smoke tests are for that unbuilt editor.
 >
-> What stands, and why this stays: §2 on what the `feat/cef` branch is, and §4.4 on CEF for
-> Linux with wry elsewhere, which is what `src-tauri/Cargo.cef.toml` cites and the reason
-> that manifest exists.
+> **The question this doc was written to answer is settled: Linux runs CEF.** `src-tauri/Cargo.toml`
+> takes `tauri` from the `feat/cef` branch with `default-features = false, features = ["cef"]`
+> on `target_os = "linux"`, so WebKitGTK is not reachable from a Linux build at all. What
+> stands is §2 on what the branch is and §4.4 on how the switch works; read both as a record
+> of what shipped rather than of an option being weighed.
 
 Whether Bowerbird’s desktop shell should be **Tauri with a bundled Chromium
 (CEF)** rather than Electron or stock Tauri (system webview). Product constraint:
@@ -26,8 +28,8 @@ backend; NAS traffic is proxied through that Rust layer.
 
 ## 1. Verdict
 
-Tauri + CEF is a reasonable fit. Nothing in the current codebase is a hard
-blocker.
+Tauri + CEF is what Linux ships. Nothing in the codebase was a hard blocker, and
+§4.4 is now the build rather than a proposal.
 
 The two checks this doc first called load-bearing (Chromium feature parity for
 the HDR editor, cross-origin isolation for `SharedArrayBuffer`) were load-bearing
@@ -35,14 +37,18 @@ only while the shell graded in wasm, and it no longer does. The second is gone
 outright: nothing holds a `SharedArrayBuffer` any more, so cross-origin isolation
 is not needed anywhere. The first came back sharper than this doc expected -
 §4.1's answer was to grade in Rust, and what shipped grades in WGSL in the page,
-so **Chromium feature parity is the whole reason a CEF pin is wanted on Linux**:
-WebKitGTK is built with `ENABLE_WEBGPU` off and cannot run the tick at all.
+so **Chromium feature parity is the whole reason Linux takes CEF**: WebKitGTK is
+built with `ENABLE_WEBGPU` off and cannot run the tick at all.
 See `docs/raw-edit-gpu.md` §0 and §6.2.
 
 Stock Tauri (WebView2 / WKWebView / WebKitGTK) is the wrong default: Linux
 WebKitGTK is a known QA sink (maintainers have said as much on
 [tauri#14963](https://github.com/tauri-apps/tauri/issues/14963)), and we want a
 pinned Chromium everywhere.
+
+`e2e-tauri/api.desktop.ts` asserts the consequence - `navigator.gpu` and a real
+adapter in the shell's own webview - so a Linux build that lost CEF fails there
+rather than in an editor that quietly draws a different picture.
 
 ## 2. What Tauri CEF is today
 
@@ -241,10 +247,10 @@ stylesheet `<link>` (no `crossorigin` required for the no-cors path) and the
 no-network installs. Optional: add `crossorigin` on the stylesheet link for the
 CORS path (`ACAO: *` already permits it).
 
-### 4.4 CEF on Linux only, wry on Windows/macOS?
+### 4.4 CEF on Linux, wry on Windows/macOS
 
-**As a build switch: yes, near enough free.** The runtime is a Cargo feature, and
-everything downstream follows it:
+**This is the build.** The runtime is a Cargo feature, and everything downstream
+follows it:
 
 - `crates/tauri/build.rs` emits
   `println!("cargo:runtime={}", if has_feature("cef") { "cef" } else { "wry" })`.
@@ -257,15 +263,22 @@ everything downstream follows it:
   wry one, so `tauri::Builder::default()` resolves to `Builder<Cef>` on a
   cef-only build.
 
-So a per-target dependency table is the whole switch:
+So a per-target dependency table is the whole switch, and it is what
+`src-tauri/Cargo.toml` carries. Both sides name the branch by `rev` rather than
+`branch`, because the branch is not on crates.io and its tip moves:
 
 ```toml
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-tauri = { version = "2", features = ["..."] }
-
 [target.'cfg(target_os = "linux")'.dependencies]
-tauri = { version = "2", default-features = false, features = ["cef", "..."] }
+tauri = { git = "...", rev = "...", default-features = false, features = ["cef"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri = { git = "...", rev = "...", features = [] }
 ```
+
+One consequence in app code: with `wry` off there is no default runtime, so every
+`AppHandle` has to name one. `src-tauri/src/lib.rs` exports a `Runtime` alias that
+is `tauri::Cef` on Linux and `tauri::Wry` elsewhere, and the handlers take
+`AppHandle<crate::Runtime>`.
 
 `default-features = false` is load-bearing. Nothing emits a `compile_error!` when
 both features are on: `build.rs` would report `cef` (so the build takes the CEF

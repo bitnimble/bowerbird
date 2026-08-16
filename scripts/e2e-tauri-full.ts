@@ -66,13 +66,25 @@ try {
 
   await fetch(`${origins[0]}/api/libraries/${library.id}/sync`, { method: 'POST' });
 
-  const wdio = spawn(['xvfb-run', '-a', './node_modules/.bin/wdio', 'run', 'wdio.conf.ts'], {
-    cwd: ROOT,
-    env: { ...process.env, BOWERBIRD_E2E_SERVER: origins[0]!, BOWERBIRD_E2E_SERVER_2: origins[1]! },
-    stdout: 'inherit',
-    stderr: 'inherit',
-  });
-  process.exitCode = await wdio.exited;
+  // Under `xvfb-run` because the binary the config launches is a real windowed app, and the
+  // display has to be there before it starts rather than around the test process only.
+  const suite = spawn(
+    [
+      'xvfb-run',
+      '-a',
+      './node_modules/.bin/playwright',
+      'test',
+      '--config',
+      'e2e-tauri/playwright.config.ts',
+    ],
+    {
+      cwd: ROOT,
+      env: { ...process.env, BOWERBIRD_E2E_SERVER: origins[0]!, BOWERBIRD_E2E_SERVER_2: origins[1]! },
+      stdout: 'inherit',
+      stderr: 'inherit',
+    },
+  );
+  process.exitCode = await suite.exited;
 } finally {
   for (const server of servers) server.kill();
 }
