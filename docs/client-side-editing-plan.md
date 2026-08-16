@@ -419,6 +419,11 @@ share one buffer this whole section buys correctness and nothing else.
       either would re-anchor a grid, which is the same defect `decode_rawler`'s tiled denoise
       carried until its origins were rounded (above).
 
+      Pinned on a GPU by `native/rawshim/tests/galosh_band.rs`, which runs `pass12` and `yuv_loess`
+      over a textured plane twice - once whole, once in bands - and demands exact equality. Both
+      were confirmed red by dropping the offset each takes. The per-pixel kernels are left to the
+      TypeScript side, where a band is a range and the test reads the pushes back.
+
       **The flat passes are not all idempotent, which decides the halo's shape.** `yuv_sigma_norm`
       scales in place, so the rows two bands' neighbourhoods share cannot be run twice: each band
       sweeps from where the last one stopped to its own end plus seven rows, and the union is the
