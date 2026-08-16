@@ -78,6 +78,11 @@ class Pipeline {
     this.denoises++;
   }
 
+  /** The real one bands the frame; nothing here is owed a second strip. */
+  stepDenoise(): boolean {
+    return false;
+  }
+
   /**
    * Every frame asked for: the window it read, the picture that window is on, and the canvas
    * it landed on. Which is the whole of a draw, geometrically.

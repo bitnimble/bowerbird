@@ -407,6 +407,28 @@ share one buffer this whole section buys correctness and nothing else.
       from `loess` on writes a plane the earlier passes read, so those planes still hold this
       frame's luma. Pinned by a recording device rather than an adapter, since which passes run is
       decided before any of it reaches a driver.
+- [x] **A Detail slider draws its answer a band at a time.** `DenoiseChain.record` takes a band and
+      `EditPipeline.stepDenoise` submits one per draw, so a 61MP frame arrives in strips instead of
+      after seconds of black-box work. The bands land *final* - the levels, the warp and the camera
+      match are all cached by the time a Detail slider is touched, so nothing a strip shows is
+      re-graded or shifted by the strips below it.
+
+      Six kernels took a `start`, `pass12` a `tile_y0` and `yuv_loess` a `y0`, all trailing so the
+      native host keeps sending a zero and dispatching the whole frame. A band is 112 rows because
+      that is a whole number of `pass12` tiles *and* of regression workgroups: a band that split
+      either would re-anchor a grid, which is the same defect `decode_rawler`'s tiled denoise
+      carried until its origins were rounded (above).
+
+      **The flat passes are not all idempotent, which decides the halo's shape.** `yuv_sigma_norm`
+      scales in place, so the rows two bands' neighbourhoods share cannot be run twice: each band
+      sweeps from where the last one stopped to its own end plus seven rows, and the union is the
+      frame exactly once. That, the tile anchoring and the pair alignment of `yuv_join` are what
+      `denoise_chain.test.ts` reads back out of the pushes.
+
+      Found on the way, and older than the banding: `yuv_sigma_scale`'s `start` had been added
+      *ahead* of `sigma_slot`, so both hosts were silently normalising against `params[0]` - not a
+      sigma at all. The editor's denoise had stopped denoising; a crop of the ARW fixture reads 1.56
+      roughness undenoised, 0.17 at Detail 60 with the field back in its place.
 - [x] **Delete what only exists to cross a wire**: `bb_prepare_edit_*`, `rawshim_edit.ts`, the
       `/prepared` route, `edit::prepare` and its `raw_file_path`, and the refusal frame the FFI
       raised. All of it is gone now that the shell has no open of its own either. What stays is

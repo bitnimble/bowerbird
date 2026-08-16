@@ -25,6 +25,9 @@ struct Push {
   strength: f32,
   blend: f32,
   radius: i32,
+  /// The first row this dispatch owns, so a band writes its own rows and gathers across them.
+  /// Zero for a whole frame, which is what every native caller sends.
+  y0: i32,
 };
 @group(0) @binding(20) var<uniform> pc: Push;
 
@@ -33,7 +36,7 @@ const BW: f32 = 3.0;
 @compute @workgroup_size(16, 16)
 fn yuv_loess(@builtin(global_invocation_id) id: vec3u) {
   let x = i32(id.x);
-  let y = i32(id.y);
+  let y = i32(id.y) + pc.y0;
   if (x >= pc.width || y >= pc.height) { return; }
 
   let centre = y * pc.width + x;

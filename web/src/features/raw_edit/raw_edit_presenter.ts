@@ -1229,6 +1229,9 @@ export class RawEditPresenter {
       this.drawing = true;
       const landed = (): void => {
         this.drawing = false;
+        // A denoise arrives a band at a time and each band is a picture, so the frame that just
+        // landed is what paces it: submit the next one and ask for the draw that shows it.
+        if (!this.closed && this.pipeline?.stepDenoise()) this.request(this.store.exposureEv);
         this.pump();
       };
       // Both arms, because a device lost mid-draw rejects - and a rejection swallowed here

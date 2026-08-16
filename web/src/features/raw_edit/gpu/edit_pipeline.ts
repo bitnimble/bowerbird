@@ -24,7 +24,12 @@ import {
   edits,
   wholeFrameGeometry,
 } from './shaders';
-import { buildDenoiseChain, type DenoiseChain, type NoiseCurve } from './denoise_chain';
+import {
+  buildDenoiseChain,
+  type DenoiseAmounts,
+  type DenoiseChain,
+  type NoiseCurve,
+} from './denoise_chain';
 import type { DetailPass, DetailSize, EditAdjust, EditGeometry } from './shaders';
 import type { NoiseFit } from '../../../../../src/services/processing/rawshim_job';
 import type { LocalTile } from '../local_open';
@@ -1451,8 +1456,7 @@ export class EditPipeline {
    * eight dispatches over the whole frame, so it runs when one of these two moves and
    * not once per tick. Everything downstream reads `denoised`, so nothing else has to know.
    *
-   * The neighbourhood the presence sliders read is rebuilt with it, because it is a blur of
-   * this frame and a denoise changes what is in it.
+   * Only the first band is submitted here; `stepDenoise` owes the rest, one to a draw.
    */
   setDenoise(next: { luminance: number; colour: number }): void {
     if (
@@ -1463,8 +1467,7 @@ export class EditPipeline {
       return;
     }
     this.denoiseAt = next;
-    this.runDenoise(next);
-    this.buildDetail();
+    this.startDenoise(next);
   }
 
   /**
@@ -1474,17 +1477,47 @@ export class EditPipeline {
    * eight dispatches, and having `denoised` always be the thing to read is what keeps
    * every consumer from carrying a branch.
    */
-  private runDenoise({ luminance, colour }: { luminance: number; colour: number }): void {
-    const encoder = this.device.createCommandEncoder();
+  private startDenoise({ luminance, colour }: { luminance: number; colour: number }): void {
     const chain = luminance > 0 || colour > 0 ? this.denoiseChainFor() : null;
     if (chain == null) {
+      this.sweep = null;
+      const encoder = this.device.createCommandEncoder();
       encoder.copyBufferToBuffer(this.frame, 0, this.denoised, 0, this.denoised.size);
       this.device.queue.submit([encoder.finish()]);
+      this.buildDetail();
       return;
     }
-    chain.record(encoder, denoiseAmounts(luminance, colour));
-    this.device.queue.submit([encoder.finish()]);
+    this.sweep = { chain, amounts: denoiseAmounts(luminance, colour), band: 0 };
+    this.stepDenoise();
   }
+
+  /**
+   * The next band of the denoise, submitted on its own. True if one was, so a caller that draws
+   * between two of them knows the picture moved.
+   *
+   * A band at a time rather than one submit for the frame because the whole frame is seconds of
+   * work on a large photograph, and the strips land final: the levels, the warp and the camera
+   * match are cached by the time a Detail slider is touched, so nothing a band draws is re-graded
+   * or shifted by the bands after it.
+   */
+  stepDenoise(): boolean {
+    const sweep = this.sweep;
+    if (sweep == null) return false;
+    const encoder = this.device.createCommandEncoder();
+    sweep.chain.record(encoder, sweep.amounts, sweep.band);
+    this.device.queue.submit([encoder.finish()]);
+    sweep.band += 1;
+    if (sweep.band >= sweep.chain.bands) {
+      this.sweep = null;
+      // The neighbourhood the presence sliders read is a blur of this frame, so it is rebuilt
+      // with it - once the frame is whole, rather than per band.
+      this.buildDetail();
+    }
+    return true;
+  }
+
+  /** The denoise in flight, and which of its bands is next. */
+  private sweep: { chain: DenoiseChain; amounts: DenoiseAmounts; band: number } | null = null;
 
   /** The pipelines and planes, built the first time a photo is actually denoised. */
   private denoiseChainFor(): DenoiseChain | null {

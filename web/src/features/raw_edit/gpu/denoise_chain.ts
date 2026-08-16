@@ -37,9 +37,26 @@ const P_ALPHA = 13;
 const P_SIGMA_SQ = 14;
 const P_SIGMA_GAT = 21;
 
-/** The chroma regression's window, and the shrinkage's tile. */
+/** The chroma regression's window, its workgroup, and the shrinkage's tile. */
 const LOESS_RADIUS = 7;
+const LOESS_GROUP = 16;
 const PASS12_TILE = 28;
+
+/**
+ * The rows one `record` covers, a whole number of `pass12` tiles and of regression workgroups.
+ *
+ * A band that split either would be a band that re-anchored a grid: `pass12`'s shrinkage is
+ * defined over tiles from the frame's origin, and a regression group that straddled two bands
+ * would write rows the next band has not prepared its neighbourhood for. Being even also lands
+ * `yuv_join`'s pairs, whose unit is two pixels and whose band therefore has to start on one.
+ */
+const BAND_ROWS = 112;
+
+/**
+ * The rows a band's neighbourhood reaches past it, which is the widest gather below the flat
+ * passes: the regression's 7, over `pass12`'s 6.
+ */
+const HALO_ROWS = LOESS_RADIUS;
 
 export interface DenoiseAmounts {
   luma: number;
@@ -62,7 +79,17 @@ export interface NoiseCurve {
 export interface DenoiseChain {
   /** Everything to destroy with the pipeline. */
   planes: GPUBuffer[];
-  record(encoder: GPUCommandEncoder, amounts: DenoiseAmounts): void;
+  /** How many `record` calls a whole frame takes, band 0 first. */
+  bands: number;
+  /**
+   * One band's dispatches. Submit each on its own and the picture arrives in strips rather than
+   * after the whole frame, which is what makes a Detail slider feel answered.
+   *
+   * The bands of one sweep have to be recorded in order and none of them skipped: each prepares
+   * the neighbourhood the next one gathers over, and a band abandoned part way leaves the chain
+   * saying it owes the luma again.
+   */
+  record(encoder: GPUCommandEncoder, amounts: DenoiseAmounts, band: number): void;
 }
 
 type Binding = 'read' | 'write' | 'uniform';
@@ -199,42 +226,63 @@ export function buildDenoiseChain(
     const x = Math.max(1, Math.min(wanted, wide));
     return [x, Math.max(1, Math.ceil(wanted / x))];
   };
-  const flat = spread(npix);
-  const pairs = spread(Math.ceil(npix / 2));
-  const tiles: [number, number] = [over(width, PASS12_TILE), over(height, PASS12_TILE)];
-  const full: [number, number] = [over(width, 16), over(height, 16)];
+  const acrossGroups = over(width, LOESS_GROUP);
+  const acrossTiles = over(width, PASS12_TILE);
+  const bands = Math.max(1, Math.ceil(height / BAND_ROWS));
 
-  // The luma the planes below `loess` currently hold, or null where nothing has run yet.
+  // The luma the planes below `loess` currently hold, or null where no sweep has finished at it.
   let shrunkAt: number | null = null;
+  let from: 'split' | 'loess' = 'split';
+  // The row the flat passes have reached, which is a band's own end plus the halo the next one
+  // will gather over. They are not all idempotent - `yuv_sigma_norm` scales in place - so the
+  // overlap between two bands' neighbourhoods has to be run once, not twice.
+  let prepared = 0;
 
   return {
     planes,
-    record(encoder, amounts) {
-      // **A colour-only tick resumes at the regression.** `luma` is the only amount that enters
-      // before it - `ridge` and `blend` are the regression's own - and nothing from `loess` on
-      // writes a plane the passes before it read, so their output is still this frame's. Skipping
-      // them is what makes the colour slider interactive rather than a five-second wait.
-      const from = shrunkAt === amounts.luma ? 'loess' : 'split';
-      shrunkAt = amounts.luma;
+    bands,
+    record(encoder, amounts, band) {
+      if (band === 0) {
+        // **A colour-only tick resumes at the regression.** `luma` is the only amount that enters
+        // before it - `ridge` and `blend` are the regression's own - and nothing from `loess` on
+        // writes a plane the passes before it read, so their output is still this frame's.
+        // Skipping them is what makes the colour slider interactive rather than a five-second
+        // wait.
+        from = shrunkAt === amounts.luma ? 'loess' : 'split';
+        // Only a finished sweep can claim the planes: a slider moved again part way through
+        // abandons the bands below this one, and they still hold the previous luma.
+        shrunkAt = null;
+        prepared = 0;
+      }
+      const y0 = band * BAND_ROWS;
+      const y1 = Math.min(y0 + BAND_ROWS, height);
+      if (band === bands - 1) shrunkAt = amounts.luma;
 
-      // One write per run, which is sound because `writeBuffer` lands before the command
-      // buffer recorded alongside it: no two passes here want different values in a slot.
+      const flatFrom = prepared * width;
+      const flatTo = Math.min((y1 + HALO_ROWS) * width, npix);
+      prepared = Math.min(y1 + HALO_ROWS, height);
+      const bandFrom = y0 * width;
+      const bandTo = Math.min(y1 * width, npix);
+
+      // One write per band, which is sound because `writeBuffer` lands before the command buffer
+      // recorded alongside it: no two passes here want different values in a slot.
       const scalars = new ArrayBuffer(SLOTS * SLOT);
       const ints = new Int32Array(scalars);
       const floats = new Float32Array(scalars);
       const at = (slot: number) => (slot * SLOT) / 4;
-      ints[at(0)] = npix;
-      ints[at(1)] = npix;
-      ints.set([npix, P_SIGMA_GAT], at(2));
+      ints.set([flatTo, flatFrom], at(0));
+      ints.set([flatTo, flatFrom], at(1));
+      ints.set([flatTo, P_SIGMA_GAT, flatFrom], at(2));
       ints.set([width, height], at(3));
       floats[at(3) + 2] = amounts.luma;
-      ints.set([npix, P_SIGMA_GAT], at(4));
-      ints[at(5)] = npix;
+      ints[at(3) + 3] = y0 / PASS12_TILE;
+      ints.set([bandTo, P_SIGMA_GAT, bandFrom], at(4));
+      ints.set([bandTo, bandFrom], at(5));
       ints.set([width, height], at(6));
       floats[at(6) + 2] = amounts.ridge;
       floats[at(6) + 3] = amounts.blend;
-      ints[at(6) + 4] = LOESS_RADIUS;
-      ints[at(7)] = npix;
+      ints.set([LOESS_RADIUS, y0], at(6) + 4);
+      ints.set([bandTo, bandFrom / 2], at(7));
       device.queue.writeBuffer(uniform, 0, scalars);
 
       const pass = encoder.beginComputePass({ label: 'denoise' });
@@ -250,18 +298,26 @@ export function buildDenoiseChain(
       };
 
       if (from === 'split') {
-        run(pipelines.split, groups.split, 0, flat);
-        run(pipelines.gat, groups.gat, 1, flat);
-        run(pipelines.norm, groups.norm, 2, flat);
-        run(pipelines.lut, groups.lut, null, [16, 1]);
-        run(pipelines.lutFin, groups.lutFin, null, [1, 1]);
-        run(pipelines.shrink, groups.shrink, 3, tiles);
-        run(pipelines.denorm, groups.denorm, 4, flat);
-        run(pipelines.invert, groups.invert, 5, flat);
+        if (flatTo > flatFrom) {
+          const ahead = spread(flatTo - flatFrom);
+          run(pipelines.split, groups.split, 0, ahead);
+          run(pipelines.gat, groups.gat, 1, ahead);
+          run(pipelines.norm, groups.norm, 2, ahead);
+        }
+        // The inverse table is a function of the frame's noise and of nothing else, so it is one
+        // dispatch for the sweep rather than one per band.
+        if (band === 0) {
+          run(pipelines.lut, groups.lut, null, [16, 1]);
+          run(pipelines.lutFin, groups.lutFin, null, [1, 1]);
+        }
+        const own = spread(bandTo - bandFrom);
+        run(pipelines.shrink, groups.shrink, 3, [acrossTiles, over(y1 - y0, PASS12_TILE)]);
+        run(pipelines.denorm, groups.denorm, 4, own);
+        run(pipelines.invert, groups.invert, 5, own);
       }
-      run(pipelines.loess, groups.loess, 6, full);
+      run(pipelines.loess, groups.loess, 6, [acrossGroups, over(y1 - y0, LOESS_GROUP)]);
       // Two pixels an invocation, which is what makes the pack race-free.
-      run(pipelines.join, groups.join, 7, pairs);
+      run(pipelines.join, groups.join, 7, spread(Math.ceil(bandTo / 2) - bandFrom / 2));
       pass.end();
     },
   };
