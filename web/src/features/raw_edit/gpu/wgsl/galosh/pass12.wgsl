@@ -30,6 +30,14 @@ struct Push {
   width: i32,
   height: i32,
   sigma_strength: f32,
+  /// The first tile row this dispatch owns, so a band covers tiles rather than rows.
+  ///
+  /// **This is what keeps a band shrinking against the frame's own neighbourhood.** The shrinkage
+  /// is defined over a tile grid anchored at the frame's origin, so a band that began mid-tile
+  /// would re-anchor that grid under every pixel in it - which is the defect `decode_rawler`'s
+  /// tiled denoise carried until it was made to round each origin to `2 * PASS12_TILE`. Counting
+  /// in tiles rather than rows makes that impossible to express. Zero for a whole frame.
+  tile_y0: i32,
 };
 @group(0) @binding(20) var<uniform> pc: Push;
 
@@ -394,7 +402,7 @@ fn pass12(
   @builtin(local_invocation_id) local: vec3u,
 ) {
   let tile_x = i32(group.x) * TILE_SIZE;
-  let tile_y = i32(group.y) * TILE_SIZE;
+  let tile_y = (i32(group.y) + pc.tile_y0) * TILE_SIZE;
   let lid = i32(local.y) * 8 + i32(local.x);
 
   // The reference iterates blocks over `ref in [0, dim - BS]`; a block anchored outside
