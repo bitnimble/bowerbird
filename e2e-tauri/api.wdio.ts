@@ -84,6 +84,34 @@ describe('Bowerbird desktop shell', () => {
     expect(() => JSON.parse(reply.body)).not.toThrow();
   });
 
+  /**
+   * Whether this webview could open a RAW the way a browser tab does.
+   *
+   * **Recorded rather than asserted, because the answer decides an architecture.** The shell opens
+   * natively and the tab opens itself, which is two paths for one job; collapsing them onto the
+   * tab's is only correct if this webview has WebGPU. Tauri does not ship Chromium - WebKitGTK on
+   * Linux, WKWebView on macOS, WebView2 only on Windows - and without a device the wasm decode
+   * falls through to PPG, which is a *different picture* rather than a slower one.
+   *
+   * So this fails nothing and reports what it found. Whoever can run a bundled build on each
+   * platform gets the fact; today it is guessed at, which is how the second path stays unexamined.
+   */
+  it('reports whether its webview has WebGPU, which decides if the native open is still needed', async () => {
+    const gpu = await browser.execute(async () => {
+      const adapter = (navigator as { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
+      if (adapter == null) return { present: false, adapter: false };
+      return { present: true, adapter: (await adapter.requestAdapter()) != null };
+    });
+    // The finding is the point of the test, and only a human running a bundled build can collect
+    // it - there is nothing to assert against, since the answer differs per platform.
+    // eslint-disable-next-line no-console
+    console.log(
+      `[webgpu] navigator.gpu=${gpu.present} adapter=${gpu.adapter} ` +
+        `- an adapter here means the shell could drop its native open and use the tab's`,
+    );
+    expect(typeof gpu.present).toBe('boolean');
+  });
+
   it('prepares a RAW in the shell process rather than forwarding for it', async () => {
     // The one command this shell answers itself. What it proves is the whole reason the
     // desktop build exists: the frame is decoded here, so what crosses the network is the
