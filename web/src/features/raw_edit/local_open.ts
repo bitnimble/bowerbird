@@ -27,8 +27,16 @@ export type LocalOpen = {
    */
   cameraMatch?: number[];
   grade: JobGrade;
-  /** No denoise: it runs in the tick, so a frame prepared here carries its noise deliberately. */
   strengths: { sharpen: number; defringe: number };
+  /**
+   * The Detail sliders, which the open denoises the mosaic at.
+   *
+   * On this side of the wire rather than in the tick because the denoise belongs on the mosaic,
+   * where the noise is still one photosite's own - the same call a rendition makes, so the editor
+   * and the export are one pipeline rather than two that have to be argued into agreeing.
+   */
+  denoiseLuminance: number;
+  denoiseColour: number;
 };
 
 /** `crate::tile::TileRequest`, which the module takes as JSON. */

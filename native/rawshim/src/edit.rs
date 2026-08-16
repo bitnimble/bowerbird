@@ -30,6 +30,22 @@ pub struct EditRequest {
     /// did (`crate::camera_match`).
     #[serde(default)]
     pub camera_match: Option<Vec<u8>>,
+    /// The Detail sliders, which the open denoises the mosaic at exactly as a rendition does.
+    ///
+    /// Here rather than on the client because the denoise belongs on the mosaic, where the noise
+    /// is still one photosite's own, and the mosaic exists only inside the decode
+    /// (`job::Base::build` makes the same call).
+    #[serde(default)]
+    pub denoise_luminance: f64,
+    #[serde(default)]
+    pub denoise_colour: f64,
+}
+
+impl EditRequest {
+    /// The Detail sliders in the units the kernels read, spelled as `job::Job::amounts` spells it.
+    pub fn amounts(&self) -> crate::galosh::Amounts {
+        crate::galosh::Amounts::from_sliders(self.denoise_luminance, self.denoise_colour)
+    }
 }
 
 /// The camera match, flattened into what a shader can index.
@@ -286,11 +302,16 @@ async fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
 
         // `decode_frame_bytes` with 16-bit scene-linear Rec.2020 asked for, which is that
         // function's identity arm - reached directly because only this spelling can be awaited.
+        //
+        // **Denoised on the mosaic, at the reader's own Detail, exactly as `job::Base::build`
+        // does it.** The editor used to decode undenoised and filter the prepared frame on the
+        // client instead, in another domain, which made "what the editor shows" and "what the
+        // export ships" two pipelines that had to be argued into agreeing. They are one call now.
         let frame = crate::decode_rawler::decode_bytes_async(
             bytes,
-            crate::galosh::Amounts::default(),
+            request.amounts(),
             request.long_edge,
-            crate::galosh::Fit::Only,
+            crate::galosh::Fit::Measure,
         )
         .await
         .ok_or("the decoder could not read this file")?;

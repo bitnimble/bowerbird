@@ -269,8 +269,10 @@ export class RawEditPresenter {
   async open(photoId: string, longEdge: number): Promise<void> {
     this.begin();
     this.photoId = photoId;
-    // Started here and awaited below, so the decode and the settings load overlap:
-    // the open is seconds of LibRaw and this is one small row.
+    // Awaited before the decode rather than alongside it, which it used to be. The open denoises
+    // the mosaic at this document's Detail, so the document is now an input to the decode rather
+    // than something applied to a frame that is already prepared - one small row ahead of seconds
+    // of LibRaw.
     const edits = api.getEdits(photoId).catch(() => null);
     try {
       const adapter = await navigator.gpu?.requestAdapter();
@@ -304,7 +306,12 @@ export class RawEditPresenter {
       };
 
       this.preparing();
-      const { header, samples, local } = await fetchPrepared(photoId, longEdge);
+      const saved = await edits;
+      if (this.closed) return;
+      const { header, samples, local } = await fetchPrepared(photoId, longEdge, {
+        luminance: saved?.doc.luminanceNoise ?? 0,
+        colour: saved?.doc.colourNoise ?? 0,
+      });
       if (this.closed) {
         // Closed here rather than left to `close`, which has already run and found no decoder
         // to take: leaving it would hold a thread and this photograph's RAW for the life of the page.
@@ -349,8 +356,6 @@ export class RawEditPresenter {
       // top of a live pipeline and draws. A read that failed leaves the editor
       // usable at neutral rather than refusing to open: the frame is the expensive
       // part and it is already here.
-      const saved = await edits;
-      if (this.closed) return;
       if (saved != null) this.applyState(saved);
       // Through `preview` rather than `request` alone: the pipeline holds the sliders
       // separately from the tick's exposure, so a document has to reach both or the frame
@@ -1328,13 +1333,14 @@ export class RawEditPresenter {
 async function fetchPrepared(
   photoId: string,
   longEdge: number,
+  detail: Detail,
 ): Promise<{
   header: PreparedHeader;
   samples: Uint16Array<ArrayBuffer>;
   /** What the loupe's tiles are built from. */
   local: LocalSource;
 }> {
-  const local = await preparedHere(photoId, longEdge);
+  const local = await preparedHere(photoId, longEdge, detail);
   const { header, samples } = framed(local.prepared);
   // The one this open had to fit, where nothing had kept one: a tile cannot fit its own, and an
   // unmatched tile is a magnifier showing a different picture from the stage it sits over.
@@ -1348,9 +1354,13 @@ async function fetchPrepared(
 /** The worker holding this photograph's RAW, and the settings the open used, for the loupe's tiles. */
 type LocalSource = { decoder: LocalDecoder; open: LocalOpen };
 
+/** The Detail sliders the open denoises the mosaic at, as the document holds them. */
+type Detail = { luminance: number; colour: number };
+
 async function preparedHere(
   photoId: string,
   longEdge: number,
+  detail: Detail,
 ): Promise<LocalSource & { prepared: Uint8Array }> {
   const { LocalDecoder } = await import('./local_open');
   const [settings, raw, cameraMatch] = await Promise.all([
@@ -1366,9 +1376,9 @@ async function preparedHere(
       referenceWhiteNits: settings.hdr_reference_white_nits,
       whiteQuantile: settings.hdr_white_quantile,
     },
-    // No denoise: the frame carries its noise and the tick takes it out, so the Detail sliders
-    // move without re-opening.
     strengths: { sharpen: settings.raw_sharpen, defringe: settings.raw_defringe },
+    denoiseLuminance: detail.luminance,
+    denoiseColour: detail.colour,
   };
   // Kept rather than dropped once the frame is out: a tile is decoded from the same bytes, and
   // re-fetching 72MB per loupe position is the round trip this whole path exists to remove.

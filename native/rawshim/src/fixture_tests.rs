@@ -1869,6 +1869,10 @@ mod one_open_at_a_time {
             },
             strengths: crate::image::Strengths { sharpen: 0.6, defringe: 0.5 },
             camera_match: None,
+            // The document's own defaults, so the open this times is the one a reader gets
+            // rather than a cheaper one that skips the denoise.
+            denoise_luminance: 20.0,
+            denoise_colour: 30.0,
         }
     }
 
