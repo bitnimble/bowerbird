@@ -19,9 +19,6 @@ function serving(libraryId: string): Hono {
     new ImageApi(
       photos as unknown as ConstructorParameters<typeof ImageApi>[0],
       { get: () => undefined } as unknown as ConstructorParameters<typeof ImageApi>[1],
-      { renderTile: (async () => new Uint8Array()) as unknown as ConstructorParameters<
-        typeof ImageApi
-      >[2]['renderTile'] },
     ).routes,
   );
   return app;

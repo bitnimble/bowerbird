@@ -869,34 +869,6 @@ describe('the loupe', () => {
   });
 
   /**
-   * The tile a settled pointer asks for carries what the crop cannot measure about the photograph.
-   *
-   * Three things travel: the frame's noise fit and levels off the open, and the scene peak the
-   * tick measured on its last draw - which is why the peak is *read* here rather than kept, and
-   * why this asserts the pipeline was asked for one. Without it the server measures all three off
-   * the few hundred thousand pixels under the glass, which is the class of fault the loupe has
-   * had three of.
-   *
-   * The request itself goes nowhere - there is no server under a unit test - and it does not need
-   * to: `tile_path.test.ts` pins what the query says, and what this catches is the wiring in
-   * between, which throws rather than lying when it is wrong.
-   */
-  test('asks the tick for the scene peak when the pointer settles', async () => {
-    fitted();
-    store.noiseFit = { alpha: 0.0001, sigmaSq: 0.000001, unifiedSigma: 1.19, darkRef: [0, 0, 0, 0] };
-    store.levels = { white: 8133, peak: 13783 };
-    // A photograph is open, which is what the tiles are addressed by; the rest of the harness
-    // stands in for an open the way `beforeEach` does for the device and the canvas.
-    Object.assign(presenter, { photoId: 'a-photo-id' });
-    presenter.setLoupe(true);
-    presenter.moveLoupe({ x: 500, y: 375 }, BOX);
-    expect(pipeline.scenePeakCalls).toBe(0);
-
-    await Bun.sleep(TILE_QUIET_MS + 50);
-    expect(pipeline.scenePeakCalls).toBe(1);
-  });
-
-  /**
    * A tile decoded in the tab is handed the *photograph's* numbers, not left to measure a crop's.
    *
    * The fit is the one this exists to pin. `galosh::Fit::Given` is what the request carries it as,
@@ -1007,8 +979,6 @@ describe('the loupe', () => {
     await drawn();
 
     expect(store.loupeSharp).toBe(true);
-    // Pixels rather than a picture, so nothing is drawn over the glass.
-    expect(store.loupeTile).toBeNull();
     expect(pipeline.tiles).toHaveLength(1);
     expect(pipeline.tiles[0]).toBe(held);
     expect(pipeline.loupeFromTile).toBe(true);

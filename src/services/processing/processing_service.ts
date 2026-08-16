@@ -6,7 +6,6 @@ import type { Library } from '../../schemas/libraries';
 import { EditDocSchema } from '../../schemas/photo_edits';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { dataPathForLibraryId, getDataPath, renditionPathFor } from '../../utils/paths';
-import { readCameraMatch } from './camera_match_store';
 import type { PendingPhoto, PhotosRepository } from '../photos/photos_repository';
 import type { SettingsRepository } from '../settings/settings_repository';
 import type {
@@ -18,8 +17,7 @@ import type {
   RenditionWritten,
   RenditionSource,
 } from './processing_types';
-import { renderTile } from './rawshim_job';
-import type { JobAdjust, JobGeometry, JobLevels, NoiseFit } from './rawshim_job';
+import type { JobAdjust, JobGeometry } from './rawshim_job';
 import { RENDITION_EXTENSION, renditionDirs, type Rendition } from './renditions';
 
 const WORKER_URL = new URL('./processing_worker.ts', import.meta.url).href;
@@ -262,59 +260,6 @@ export class ProcessingService {
       // And the same edits, for the same reason. This is the path a `max` export takes,
       // so without it the one rendition a reader asks for by name is the one that ignores
       // what they did to the picture.
-      ...developed(this.editsFor(photoId)),
-      ...this.render(),
-    });
-  }
-
-  /**
-   * One tile of a photograph, at the export's own quality.
-   *
-   * What the loupe magnifies. The reader's edits are the ones the export would use, from the
-   * same `developed` this path already reads them through, so the magnified crop is the
-   * photograph they are about to have rather than a second opinion on it.
-   *
-   * **Nothing is kept between calls.** A crop restricts the demosaic's own work and the mosaic
-   * denoise takes a window, so a tile is an unpack and two small pieces of work rather than a
-   * frame; because it caches nothing, a tile is a pure function of its arguments and there is
-   * no invalidation to get wrong when a slider moves.
-   *
-   * Synchronous, like `runJob` beside it: a tile is ~110ms where a rendition is seconds, and
-   * the caller is one request rather than an import queue.
-   *
-   * An HDR AVIF, as every other picture served here is: a loupe held over the stage has to tone
-   * map the way the stage does, which an SDR encode with the roll-off already baked in cannot.
-   */
-  renderTile(
-    rawFilePath: string,
-    photoId: string,
-    library: Library,
-    tile: [number, number, number, number],
-    noiseFit?: NoiseFit,
-    levels?: JobLevels,
-    scenePeak?: number,
-  ): Buffer {
-    const dataPath = getDataPath(library);
-    return renderTile({
-      rawFilePath,
-      tile,
-      // The frame's own, from the editor that is holding the glass. Without it the crop fits its
-      // own noise, which is between half and half again the photograph's, so the loupe would stop
-      // predicting the export and start changing as the reader pans.
-      noiseFit,
-      // The same argument about the grade rather than the denoise: a crop's own diffuse white is
-      // a third of the frame's over anything dark, and the whole picture is coded against it.
-      levels,
-      // And the top end, which the roll-off compresses into the display: a crop of shadow reaches
-      // nowhere near the photograph's, so its highlights would be rolled by a different curve.
-      scenePeak,
-      targets: [],
-      grade: this.grade(),
-      matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
-      // The kept match, which is the difference between 660ms a tile and 105ms. A photo with
-      // none yet fits one and does not store it: a tile hands back an image rather than an
-      // outcome, and the next render of the photograph writes it anyway.
-      cameraMatch: readCameraMatch(dataPath, photoId),
       ...developed(this.editsFor(photoId)),
       ...this.render(),
     });

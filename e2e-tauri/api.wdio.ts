@@ -7,8 +7,10 @@
 // this command, which base64 would make untenable.
 //
 // Deliberately not asserting on any picture: what the shaders do with a frame is pinned by
-// `web/e2e/gpu_parity.spec.ts` against the CPU, and the webview here has no WebGPU to grade
-// with anyway (WebKitGTK is built with ENABLE_WEBGPU off, `docs/raw-edit-gpu.md` §10.1).
+// `web/e2e/gpu_parity.spec.ts` against the CPU. That a device exists at all is asserted below,
+// and on Linux that needs the CEF manifest - `scripts/build-wdio-app.ts` builds `Cargo.toml`,
+// whose WebKitGTK has ENABLE_WEBGPU off (`docs/raw-edit-gpu.md` §10.1), so the WebGPU spec is
+// the one thing here that a Wry build cannot pass.
 //
 // The servers come from `scripts/e2e-tauri-full.ts`, which `e2e:tauri` runs. These used to be
 // optional, and every specimen needing one skipped itself without it - so the ordinary run
@@ -85,94 +87,22 @@ describe('Bowerbird desktop shell', () => {
   });
 
   /**
-   * Whether this webview could open a RAW the way a browser tab does.
+   * That this webview can open a RAW the way a browser tab does.
    *
-   * **Recorded rather than asserted, because the answer decides an architecture.** The shell opens
-   * natively and the tab opens itself, which is two paths for one job; collapsing them onto the
-   * tab's is only correct if this webview has WebGPU. Tauri does not ship Chromium - WebKitGTK on
-   * Linux, WKWebView on macOS, WebView2 only on Windows - and without a device the wasm decode
-   * falls through to PPG, which is a *different picture* rather than a slower one.
-   *
-   * So this fails nothing and reports what it found. Whoever can run a bundled build on each
-   * platform gets the fact; today it is guessed at, which is how the second path stays unexamined.
+   * **The editor has no fall-back left, so this is an assertion rather than a note.** The shell
+   * opened natively until every platform's webview became Chromium - CEF on Linux, WebView2 on
+   * Windows, and the same engine on macOS - and that one path is the whole editor now. Without a
+   * device the wasm decode falls through to PPG, which is a *different picture* rather than a
+   * slower one, so a webview that lost WebGPU has to fail here and not quietly downstream.
    */
-  it('reports whether its webview has WebGPU, which decides if the native open is still needed', async () => {
+  it('has WebGPU in its webview, which the editor now has no fall-back for', async () => {
     const gpu = await browser.execute(async () => {
       const adapter = (navigator as { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
       if (adapter == null) return { present: false, adapter: false };
       return { present: true, adapter: (await adapter.requestAdapter()) != null };
     });
-    // The finding is the point of the test, and only a human running a bundled build can collect
-    // it - there is nothing to assert against, since the answer differs per platform.
-    // eslint-disable-next-line no-console
-    console.log(
-      `[webgpu] navigator.gpu=${gpu.present} adapter=${gpu.adapter} ` +
-        `- an adapter here means the shell could drop its native open and use the tab's`,
-    );
-    expect(typeof gpu.present).toBe('boolean');
-  });
-
-  it('prepares a RAW in the shell process rather than forwarding for it', async () => {
-    // The one command this shell answers itself. What it proves is the whole reason the
-    // desktop build exists: the frame is decoded here, so what crosses the network is the
-    // RAW rather than the several hundred megabytes it becomes.
-    const photoId = await browser.execute(async (origin: string) => {
-      const libraries = (await (await fetch(`${origin}/api/libraries`)).json()) as { id: string }[];
-      const listed = (await (
-        await fetch(`${origin}/api/libraries/${libraries[0]!.id}/photos?limit=1`)
-      ).json()) as { photos: { id: string }[] };
-      return listed.photos[0]?.id ?? '';
-    }, SERVER);
-    expect(photoId).not.toBe('');
-
-    const opened = await browser.execute(async (id: string) => {
-      const { invoke } = (window as unknown as Bridge).__TAURI__.core;
-      const framed = new Uint8Array(
-        await invoke('api', {
-          request: JSON.stringify({
-            cmd: 'get:prepared',
-            method: 'GET',
-            // The sensor's own, which is what the editor asks for. At a bounded size the
-            // camera match does not fit and the frame's description is 247 bytes rather
-            // than 11KB, so the path that matters would go untested.
-            //
-            // Spelled out rather than built by `preparedPath`, which this cannot reach: the
-            // callback runs in the page, against a built bundle with no module to import
-            // from. That it agrees with `preparedPath` and with the shell's `parse` is held
-            // by `web/src/api/tests/prepared_path.test.ts` instead.
-            path: `/image/${id}/prepared?longEdge=0`,
-          }),
-        }),
-      );
-      const view = new DataView(framed.buffer, framed.byteOffset, framed.byteLength);
-      const length = view.getUint32(0, true);
-      const head = JSON.parse(new TextDecoder().decode(framed.subarray(4, 4 + length)));
-
-      const body = framed.subarray(4 + length);
-      const described = new DataView(body.buffer, body.byteOffset, body.byteLength).getUint32(
-        0,
-        true,
-      );
-      return {
-        head,
-        header: JSON.parse(new TextDecoder().decode(body.subarray(4, 4 + described))),
-        described,
-        samples: body.byteLength - 4 - described,
-        samplesAt: body.byteOffset + 4 + described,
-      };
-    }, photoId);
-
-    expect(opened.head.status).toBe(200);
-    expect(opened.header.width).toBeGreaterThan(500);
-    // The description rides in the body, not in a response header: matched, it is 11KB, and
-    // a reverse proxy answers 502 rather than forward one that size.
-    expect(opened.head.headers['x-prepared']).toBeUndefined();
-    expect(opened.header.matched).toBe(true);
-    expect(opened.described).toBeGreaterThan(4096);
-    // Three `u16` a pixel, at an offset a `Uint16Array` can be mapped over in place rather
-    // than copying 361MB to get the alignment.
-    expect(opened.samples).toBe(opened.header.width * opened.header.height * 6);
-    expect(opened.samplesAt % 4).toBe(0);
+    expect(gpu.present).toBe(true);
+    expect(gpu.adapter).toBe(true);
   });
 
   it('keeps the server address beside the binary, so an unpacked build is portable', async () => {

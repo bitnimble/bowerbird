@@ -417,56 +417,15 @@ fn matched_for(
     (fitted, keep)
 }
 
-/// A loupe is judging grain at 1:1, so it is encoded at the quality the `max` rendition is
-/// rather than the one the viewing sizes are: the artefacts a reader is looking for have to be
-/// the photograph's rather than the encoder's.
-const TILE_QUANTIZER: i32 = 4;
-
-// Fastest libaom will go. A tile is looked at once and thrown away, and it is on the reader's
-// critical path where a rendition's encode is not - at 400px the quantizer above is what decides
-// how it looks, and the speed only decides how long they waited for it.
-const TILE_SPEED: i32 = 10;
-
-/// One tile, graded and encoded, without a target or a file.
+/// One tile of the photograph, graded, as pixels.
 ///
 /// The same `Base` every rendition is cut from, with `job.tile` restricting the decode - so the
 /// pixels a reader magnifies are the pixels their export would have, through the same fit, the
-/// same mosaic denoise and the same grade shaders.
-///
-/// PQ Rec.2020 in an HDR AVIF, which is what every other picture this library serves is. A
-/// loupe held over the stage has to tone map the way the stage does, and an SDR encode cannot:
-/// it has already had the roll-off baked into it and the highlights clipped, so the one thing a
-/// reader opens a loupe to check - what the export actually does up there - is the thing it
-/// could not show.
-///
-/// 4:4:4, and that is the part worth being deliberate about: subsampled chroma would halve the
-/// resolution of the colour noise the Colour slider is being set against.
-///
-/// No size fitting: a magnifier that resampled would be answering a different question.
-pub fn tile(job: &Job) -> Option<Vec<u8>> {
-    let (coded, out_width, out_height) = graded(job)?;
-    let (primaries, transfer, matrix) = crate::hdr_args::cicp();
-    crate::avif::encode_still(
-        std::borrow::Cow::Owned(coded),
-        out_width,
-        out_height,
-        &crate::avif::StillOptions {
-            cicp: crate::avif::Cicp { primaries, transfer, matrix },
-            format: crate::hdr_args::Chroma::Yuv444.avif_format(),
-            quantizer: TILE_QUANTIZER,
-            speed: TILE_SPEED,
-        },
-    )
-    .ok()
-}
-
-/// The tile's pixels, before an encoder has been anywhere near them.
-///
-/// Split from the encode so a test can hold a tile against the same rectangle of the whole
-/// render, which is the claim the loupe makes and the one an AVIF cannot be asked about.
-pub(crate) fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
-    // A job with no rectangle is not a tile, and the route that reaches here refuses a request
-    // without one long before the decode.
+/// same mosaic denoise and the same grade shaders. `crate::tile` is where the page's own tiles
+/// come from, so this is the native side of the claim the loupe makes, and what a fixture test
+/// can hold against the same rectangle of the whole render.
+pub fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
+    // A job with no rectangle is not a tile.
     let asked = job.tile?;
     let window = crate::tile::prepared(
         crate::tile::Source::Path(&job.raw_file_path),

@@ -71,41 +71,6 @@ pub unsafe extern "C" fn bb_run_job(
     payload.len() as isize
 }
 
-/// One tile of a photograph, graded and encoded, as JPEG bytes.
-///
-/// Takes the same `Job` JSON `bb_run_job` does, with `tile` set, and hands back an image rather
-/// than a descriptor - a tile is a response and not a file, so writing one to disk to read it
-/// back would be the only reason a path existed.
-///
-/// The two-call sizing protocol is `bb_run_job`'s, and cheap here for the reason it is cheap
-/// there: the second call re-runs the *encode* against a buffer that fits, not the decode.
-/// Being generous with the first buffer is what keeps that from happening at all.
-///
-/// # Safety
-/// `command` must point to `command_len` readable bytes, and `out` to `out_cap` writable ones.
-#[unsafe(no_mangle)]
-#[expect(unsafe_code)]
-pub unsafe extern "C" fn bb_render_tile(
-    command: *const u8,
-    command_len: usize,
-    out: *mut u8,
-    out_cap: usize,
-) -> isize {
-    if command.is_null() {
-        return -1;
-    }
-    let bytes = unsafe { std::slice::from_raw_parts(command, command_len) };
-    let Ok(parsed) = serde_json::from_slice::<job::Job>(bytes) else { return -1 };
-    let rendered = crate::guard("bb_render_tile", None, || job::tile(&parsed));
-    let Some(payload) = rendered else { return -1 };
-
-    if payload.len() > out_cap || out.is_null() {
-        return payload.len() as isize;
-    }
-    let destination = unsafe { std::slice::from_raw_parts_mut(out, payload.len()) };
-    destination.copy_from_slice(&payload);
-    payload.len() as isize
-}
 
 /// The envelope every job reply comes back in.
 #[derive(serde::Serialize)]

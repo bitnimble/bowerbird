@@ -52,11 +52,7 @@ function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) 
   // every case in this file wait on LibRaw to assert something about HTTP.
   app.route(
     '/image',
-    new ImageApi(photos, settingsForTest(), {
-      renderTile: () => {
-        throw new Error('this suite renders no tiles');
-      },
-    }).routes,
+    new ImageApi(photos, settingsForTest()).routes,
   );
   applyErrorHandler(app);
   return app;

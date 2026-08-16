@@ -73,38 +73,6 @@ export interface Job {
   rawFilePath: string;
   matchEmbeddedJpeg: boolean;
   /**
-   * The whole frame's noise, for a tile that would otherwise measure its own.
-   *
-   * Only `renderTile` sends it, because only a tile is a crop: a whole-frame job fits the same
-   * thing itself and better. Absent means "measure it", which is what a caller with no open
-   * editor behind it wants.
-   */
-  noiseFit?: NoiseFit;
-  /**
-   * The whole frame's levels, for a tile that would otherwise read its crop's.
-   *
-   * Only `renderTile` sends it, for the reason `noiseFit` above is: a crop's diffuse white is a
-   * property of where the loupe is pointing, and the grade divides by it. Absent means "measure
-   * them", which is right for every job that holds the whole frame.
-   */
-  levels?: JobLevels;
-  /**
-   * The whole frame's scene peak in nits, for a tile whose crop reaches nowhere near it.
-   *
-   * What the highlight roll-off compresses into the display, measured through the colour
-   * transform. Only `renderTile` sends it, and unlike the two above it moves with the reader's
-   * edits - so it is read off the editor's own tick per request rather than kept from the open.
-   */
-  scenePeak?: number;
-  /**
-   * One tile of the photograph rather than the whole of it: `[left, top, width, height]` in the
-   * decoded image's own pixels, and only for `renderTile`.
-   *
-   * What the loupe magnifies. The crop restricts the demosaic's own work and the mosaic denoise
-   * takes a window with it, so a tile is an unpack and two small pieces of work.
-   */
-  tile?: [number, number, number, number];
-  /**
    * This photograph's camera match, where one has been kept.
    *
    * Half a second of fitting that depends on nothing but the file, so every path that has one
@@ -271,35 +239,6 @@ const TRANSCODE_CAPACITY = 32 * 1024 * 1024;
  * body, which is the exception the no-pixels rule was always stated with. Still no
  * address crosses: the bytes are copied into a buffer this side owns.
  */
-/**
- * One tile of a photograph, graded and encoded as an HDR AVIF - PQ Rec.2020, 4:4:4, the same
- * encode every other picture this library serves takes. See `job::tile`: a loupe held over the
- * stage has to tone map the way the stage does, and an SDR encode has already clipped the
- * highlights a reader opened the loupe to look at.
- *
- * The same `Job` a rendition takes, with `tile` set. Bytes back rather than a descriptor,
- * because a tile is a response and not a file: writing one to disk to read it straight back is
- * the only reason it would have a path.
- *
- * Sized the way `transcodeJpeg` beside it is, and generously, because the retry costs the
- * *encode* again rather than the decode.
- */
-export function renderTile(job: Job): Buffer {
-  const command = Buffer.from(JSON.stringify(job), 'utf8');
-  let out = new Uint8Array(TILE_CAPACITY);
-  let written = Number(shim().bb_render_tile(command, command.byteLength, ptr(out), out.byteLength));
-  if (written > out.byteLength) {
-    out = new Uint8Array(written);
-    written = Number(shim().bb_render_tile(command, command.byteLength, ptr(out), out.byteLength));
-  }
-  if (written < 0) throw new Error('rawshim could not render the tile');
-  return Buffer.from(out.subarray(0, written));
-}
-
-// A 700px 4:4:4 AVIF is a few hundred kilobytes; 8MB is far past any tile this serves and costs
-// one allocation on a path that answers in about a tenth of a second.
-const TILE_CAPACITY = 8 * 1024 * 1024;
-
 export function transcodeJpeg(filePath: string, longEdge: number, quality: number): Buffer {
   const path = Buffer.from(`${filePath}\0`);
   let out = new Uint8Array(TRANSCODE_CAPACITY);

@@ -66,11 +66,7 @@ beforeAll(() => {
   const app = new Hono();
   app.route(
     '/image',
-    new ImageApi(photos, settingsForTest(), {
-      renderTile: () => {
-        throw new Error('this suite renders no tiles');
-      },
-    }).routes,
+    new ImageApi(photos, settingsForTest()).routes,
   );
   applyErrorHandler(app);
 

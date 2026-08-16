@@ -15,7 +15,6 @@ export type EditStatus = 'idle' | 'fetching' | 'preparing' | 'live' | 'failed';
  * One value rather than the two booleans below it because that is what the header's selector
  * is: a one-of-N, where "neither" is a choice a reader makes rather than a state they fall into.
  */
-import type { LoupeTile } from './loupe_tiles';
 
 export type EditTool = 'cursor' | 'crop' | 'perspective' | 'loupe';
 
@@ -168,23 +167,10 @@ export class RawEditStore {
   /**
    * Whether what the glass is showing is the export's pixels rather than the tick's own render.
    *
-   * True for either kind of tile - the pixels this tab decoded and the picture the shell sent -
-   * because what it answers is "has the glass sharpened yet", which is the same question either
-   * way and the only one a reader or a test can ask from outside.
+   * What it answers is "has the glass sharpened yet", which is the only part of the loupe a
+   * reader or a test can ask about from outside the canvas.
    */
   @observable accessor loupeSharp = false;
-
-  /**
-   * The tile under the glass where it arrived as a *picture*, and what it is showing.
-   *
-   * Null while the editor's own render is all there is, and null for a tile this tab decoded:
-   * those are pixels and go onto the glass's own canvas rather than over it.
-   */
-  @observable.ref accessor loupeTile: {
-    tile: LoupeTile;
-    centre: { x: number; y: number };
-    span: number;
-  } | null = null;
 
   /**
    * The stage's CSS box, as the component last measured it.

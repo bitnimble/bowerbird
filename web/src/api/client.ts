@@ -26,7 +26,6 @@ import type { ViewerRendition, ViewerRenditionMode, Settings, UpdateSettingsRequ
 import type { CreateShootRequest, Shoot, ShootRemoval, UpdateShootRequest } from '../../../src/schemas/shoots';
 import type { Rendition } from '../../../src/services/processing/renditions';
 import type { ProcessingStage } from '../../../src/services/processing/processing_types';
-import type { JobLevels, NoiseFit } from '../../../src/services/processing/rawshim_job';
 import { describe } from '../errors';
 import { type Reply, assetUrl, send } from './transport';
 
@@ -357,59 +356,6 @@ export function downloadUrl(photoId: string, form: 'original' | ViewerRendition)
  */
 export function cameraMatchUrl(photoId: string): string {
   return assetUrl(`/image/${photoId}/camera-match`);
-}
-
-/**
- * The editor's open: the decoded, fitted and warped frame every tick then grades.
- *
- * Seconds of work and hundreds of megabytes back, asked for once per photo rather than per
- * tick (`docs/raw-edit-gpu.md` §10.2b). `longEdge` is the client's, not the library's, and
- * 0 is the sensor's own resolution.
- *
- * A path rather than a URL: this one *is* fetched, through `send`, because the frame is the
- * one response whose bytes go straight into a texture upload.
- */
-export function preparedPath(photoId: string, longEdge: number): string {
-  return `/image/${photoId}/prepared?longEdge=${Math.round(longEdge)}`;
-}
-
-/**
- * One tile of a photograph at rendition quality, for the loupe.
- *
- * A path, like the prepared frame beside it, because these bytes are fetched and decoded into a
- * bitmap rather than handed to an `<img>`. Rendered per request and cached by nobody but the
- * client, so nothing here carries a version: a tile is a pure function of the photo, the
- * rectangle and the reader's current edits.
- */
-export function tilePath(
-  photoId: string,
-  rect: { left: number; top: number; width: number; height: number },
-  noiseFit?: NoiseFit | null,
-  levels?: JobLevels | null,
-  scenePeak?: number | null,
-): string {
-  const at = [rect.left, rect.top, rect.width, rect.height].map(Math.round);
-  let path = `/image/${photoId}/tile?left=${at[0]}&top=${at[1]}&width=${at[2]}&height=${at[3]}`;
-  if (noiseFit != null) {
-    // Seven numbers in one parameter rather than seven parameters: this is one measurement and it
-    // is round-tripped rather than read, so a caller that splits it up has invented six ways to
-    // send half of one.
-    const words = [
-      noiseFit.alpha,
-      noiseFit.sigmaSq,
-      noiseFit.unifiedSigma,
-      ...noiseFit.darkRef,
-    ];
-    path += `&noise=${words.join(',')}`;
-  }
-  // The frame's, and one parameter for the same reason: white and peak are meaningless apart -
-  // the grade divides by one and rolls into the other.
-  if (levels != null) path += `&levels=${levels.white},${levels.peak}`;
-  // The tick's own measurement, in nits. Not part of `levels` above though it reads like a third
-  // of them: those are the frame's input levels, settled at the open, where this is taken through
-  // the whole colour transform and moves with every slider.
-  if (scenePeak != null) path += `&scenePeak=${scenePeak}`;
-  return path;
 }
 
 // What the viewer shows for one of its three choices: the camera's JPEG served

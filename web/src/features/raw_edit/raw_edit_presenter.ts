@@ -4,12 +4,9 @@ import {
   api,
   cameraMatchUrl,
   downloadUrl,
-  preparedPath,
-  tilePath,
   type EditDoc,
   type EditState,
 } from '../../api/client';
-import { isTauri, send } from '../../api/transport';
 import { describe } from '../../errors';
 import {
   draggedCrop,
@@ -31,7 +28,6 @@ import {
   editFeatures,
   editLimits,
 } from './gpu/edit_pipeline';
-import type { JobLevels, NoiseFit } from '../../../../src/services/processing/rawshim_job';
 import { readSetting, writeSetting } from '../../app/local_setting';
 import {
   LOUPE_MAX_MAGNIFICATION,
@@ -506,8 +502,7 @@ export class RawEditPresenter {
       const photoId = this.photoId;
       if (photoId != null && this.tiles == null) {
         this.tiles = new LoupeTiles(
-          photoId,
-          async (id, rect, signal) => this.renderTile(id, rect, signal),
+          async (rect) => this.renderTile(rect),
           // A tile landing is not a state change anything renders from directly - the glass is
           // a canvas - so this asks for the draw that will put it there.
           () => this.drawLoupe(this.store.loupeBox),
@@ -519,7 +514,6 @@ export class RawEditPresenter {
       return;
     }
     this.store.loupeAt = null;
-    this.store.loupeTile = null;
     this.store.loupeSharp = false;
     // A draw and a tile owed to a glass nobody is holding any more.
     this.pendingLoupe = null;
@@ -620,12 +614,10 @@ export class RawEditPresenter {
     const tiles = frame.width === 0 ? null : this.tiles;
     tiles?.invalidate(this.tileRevision());
     const held = tiles?.covering(centre, span, frame) ?? null;
-    // Its pixels rather than its picture: a tile this tab decoded is the window the grade reads,
-    // so it is drawn *through* the glass's own canvas by the same shaders the frame under it is.
-    // The shell's arrives encoded and stays an `<img>` over the top (`loupe_overlay`).
+    // A tile is the window the grade reads, so it is drawn *through* the glass's own canvas by
+    // the same shaders the frame under it is.
     const origin = this.holdTile(held);
     this.store.loupeSharp = held != null;
-    this.store.loupeTile = held == null || origin != null ? null : { tile: held, centre, span };
     this.requestLoupe(
       origin == null
         ? glass
@@ -651,27 +643,25 @@ export class RawEditPresenter {
   private tileTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * Puts a locally decoded tile on the device, and says where its window sits in the frame.
+   * Puts a decoded tile on the device, and says where its window sits in the frame.
    *
-   * Null for a tile that is a picture rather than pixels, which is the shell's, and for no tile at
-   * all - both of which are a glass drawing the editor's own frame.
+   * Null for no tile at all, which is a glass drawing the editor's own frame.
    *
    * Uploaded once per tile rather than per move: a pointer sweep inside one tile is dozens of
    * draws from the same buffer.
    */
   private holdTile(held: LoupeTile | null): { left: number; top: number } | null {
-    const tile = held?.art.tile;
-    if (tile == null) {
+    if (held == null) {
       if (this.tileOnGpu != null) this.pipeline?.holdTile(null);
       this.tileOnGpu = null;
       return null;
     }
     if (this.tileOnGpu !== held) {
-      this.pipeline?.holdTile(tile);
+      this.pipeline?.holdTile(held.tile);
       this.tileOnGpu = held;
     }
     // The window's own origin, which is the rectangle asked for less the margin grown around it.
-    const [left, top] = tile.keep;
+    const [left, top] = held.tile.keep;
     return { left: held.rect.left - left, top: held.rect.top - top };
   }
 
@@ -679,38 +669,21 @@ export class RawEditPresenter {
   private tileOnGpu: LoupeTile | null = null;
 
   /**
-   * One tile of the photograph at rendition quality: decoded here, or rendered by the shell.
+   * One tile of the photograph at rendition quality, decoded here.
    *
-   * **The tab's arm is pixels and the shell's is a picture**, and that difference is the whole of
-   * why this forks. A tile that never crosses a wire has nothing to encode for: what the glass
-   * needs is the window the grade reads, and the page has the module, the RAW and the device to
-   * produce it - 35ms against 425ms and no request at all. The shell opens in its own process and
-   * answers over its own transport, where an AVIF is what survives the trip.
+   * **Pixels rather than a picture.** A tile that never crosses a wire has nothing to encode for:
+   * what the glass needs is the window the grade reads, and the page has the module, the RAW and
+   * the device to produce it - 35ms against 425ms and no request at all.
    *
-   * The frame's own numbers travel with the request for the reason `job::Base::build` gives: a
-   * crop's own noise fit and diffuse white describe where the reader is pointing rather than the
-   * photograph. The scene peak is not among them here - the tile is drawn through the same peak
-   * buffer the tick measured, which is that same argument answered by construction.
+   * The frame's own numbers go into the request for the reason `job::Base::build` gives: a crop's
+   * own noise fit and diffuse white describe where the reader is pointing rather than the
+   * photograph. The scene peak is not among them - the tile is drawn through the same peak buffer
+   * the tick measured, which is that same argument answered by construction.
    */
-  private async renderTile(
-    photoId: string,
-    rect: TileRect,
-    signal: AbortSignal,
-  ): Promise<Blob | LocalTile> {
+  private async renderTile(rect: TileRect): Promise<LocalTile> {
     const local = this.local;
     const doc = this.store.doc;
-    if (local == null) {
-      return fetchTile(
-        photoId,
-        rect,
-        signal,
-        this.store.noiseFit,
-        this.store.levels,
-        // Read now rather than kept on the store: it is the tick's own measurement and it
-        // moves with every slider, so the current one is the one this tile is graded with.
-        (await this.pipeline?.scenePeak()) ?? null,
-      );
-    }
+    if (local == null) throw new Error('this editor has not opened a RAW to magnify');
     // Nothing to grade a tile with, which is an editor whose document could not be read: it is
     // usable at neutral and the glass keeps showing the tick's own render.
     if (doc == null) throw new Error('there is no document to build a tile against');
@@ -741,7 +714,7 @@ export class RawEditPresenter {
     });
   }
 
-  /** What this tab opens and magnifies from, or null where the shell did the open. */
+  /** What this tab opens and magnifies from, until it has opened one. */
   private local: LocalSource | null = null;
 
   /**
@@ -1334,34 +1307,12 @@ export class RawEditPresenter {
 }
 
 /**
- * One loupe tile, as a blob the browser can decode.
+ * The frame every tick grades, opened here through the wasm module.
  *
- * Over the same transport everything else uses, so the desktop shell's IPC answers it too - the
- * loupe is not a browser feature and the bytes are an HDR AVIF either way.
- */
-async function fetchTile(
-  photoId: string,
-  rect: TileRect,
-  signal: AbortSignal,
-  noiseFit: NoiseFit | null,
-  levels: JobLevels | null,
-  scenePeak: number | null,
-): Promise<Blob> {
-  const path = tilePath(photoId, rect, noiseFit, levels, scenePeak);
-  const reply = await send('get:tile', 'GET', path, undefined, signal);
-  if (reply.status < 200 || reply.status >= 300) {
-    throw new Error(`could not render that tile: ${reply.status}`);
-  }
-  return new Blob([reply.bytes as BlobPart], { type: 'image/avif' });
-}
-
-/**
- * The frame every tick grades: opened in this tab, or by the shell where the tab is one.
+ * One path, under the shell as much as in a tab: every platform's webview is Chromium, so there is
+ * nothing the shell could open that this cannot.
  *
- * Both arms answer with the same bytes - `edit::encode`'s framing - so what follows cannot tell
- * which of them ran, and neither can the picture.
- *
- * There is no third arm. A browser that cannot run the module has no editor, deliberately: the
+ * There is no second arm. A browser that cannot run the module has no editor, deliberately: the
  * server's `/prepared` is gone, and a fall-back that produced a picture anyway is exactly how a
  * tab that had quietly stopped decoding went unnoticed.
  */
@@ -1371,14 +1322,9 @@ async function fetchPrepared(
 ): Promise<{
   header: PreparedHeader;
   samples: Uint16Array<ArrayBuffer>;
-  /** What the loupe's tiles are built from, where this tab opened the RAW itself. */
-  local: LocalSource | null;
+  /** What the loupe's tiles are built from. */
+  local: LocalSource;
 }> {
-  // The shell already opens in its own process, on real threads and off a file it has: downloading
-  // the RAW into the webview to open it single-threaded would be slower for the same picture.
-  if (isTauri()) {
-    return { ...framed(await preparedByTheShell(photoId, longEdge)), local: null };
-  }
   const local = await preparedHere(photoId, longEdge);
   const { header, samples } = framed(local.prepared);
   // The one this open had to fit, where nothing had kept one: a tile cannot fit its own, and an
@@ -1411,23 +1357,14 @@ async function preparedHere(
       referenceWhiteNits: settings.hdr_reference_white_nits,
       whiteQuantile: settings.hdr_white_quantile,
     },
-    // No denoise, as the shell's open sends none: the frame carries its noise and the tick takes
-    // it out, so the Detail sliders move without re-opening.
+    // No denoise: the frame carries its noise and the tick takes it out, so the Detail sliders
+    // move without re-opening.
     strengths: { sharpen: settings.raw_sharpen, defringe: settings.raw_defringe },
   };
   // Kept rather than dropped once the frame is out: a tile is decoded from the same bytes, and
   // re-fetching 72MB per loupe position is the round trip this whole path exists to remove.
   const decoder = new LocalDecoder();
   return { decoder, raw, open, prepared: await decoder.prepare(raw, open) };
-}
-
-async function preparedByTheShell(photoId: string, longEdge: number): Promise<Uint8Array> {
-  const reply = await send('get:prepared', 'GET', preparedPath(photoId, longEdge));
-  if (reply.status < 200 || reply.status >= 300) {
-    const detail = new TextDecoder().decode(reply.bytes).slice(0, 200);
-    throw new Error(`could not open this RAW: ${reply.status} ${detail}`);
-  }
-  return reply.bytes;
 }
 
 /**
@@ -1459,9 +1396,8 @@ function keepCameraMatch(photoId: string, match: number[]): void {
 async function downloadedRaw(photoId: string): Promise<Uint8Array> {
   const reply = await fetch(downloadUrl(photoId, 'original'));
   if (!reply.ok) {
-    // Named and quoted, as the shell's arm reports its own: this is the first request an open
-    // makes, so it is where a photograph that is not there is found out, and "404" alone leaves
-    // a reader with nothing to act on.
+    // Named and quoted: this is the first request an open makes, so it is where a photograph
+    // that is not there is found out, and "404" alone leaves a reader with nothing to act on.
     const detail = (await reply.text()).slice(0, 200);
     throw new Error(`could not open ${photoId}: ${reply.status} ${detail}`);
   }

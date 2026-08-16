@@ -44,10 +44,6 @@ export const LoupeOverlay = observer(function LoupeOverlay({
       // and a mount per pointer move would rebuild the canvas and its swapchain with it.
       style={at == null ? { visibility: 'hidden' } : { left: `${at.x}px`, top: `${at.y}px` }}
     >
-      {/* The rendition's own pixels, over the tick's, once they have arrived. Two canvases
-          rather than one because they are drawn by different things - the tick by WebGPU and
-          this by the 2D context - and a context is claimed for the life of an element. */}
-      <TileGlass store={store} />
       <canvas
         ref={canvas}
         className="loupe__glass"
@@ -68,55 +64,6 @@ export const LoupeOverlay = observer(function LoupeOverlay({
           <span className="loupe__spinner" data-testid="raw-edit-loupe-spinner" aria-label="Rendering" />
         )}
       </span>
-    </div>
-  );
-});
-
-/**
- * A tile that arrived as a picture, drawn over the tick's own render of the same place.
- *
- * **Only the shell's tiles come through here.** A tile this tab decoded is pixels, and the
- * presenter puts those on the glass's own canvas through the same shaders the frame under it is
- * graded with - so there is nothing to overlay and `store.loupeTile` stays null.
- *
- * **The two agree about geometry or the reader sees the picture jump.** The glass is showing a
- * `span`-wide window of the frame centred on the pointer; the tile holds some larger rectangle
- * around it. So what is drawn is the part of the tile that window covers, scaled to the glass -
- * which is the same arithmetic the tick's own draw does with its region, arrived at from the
- * other side.
- *
- * **An `<img>` rather than a canvas, and that is what keeps it HDR.** The shell's tile is a PQ
- * AVIF; a 2D canvas composites in SDR, so drawing it there clipped the highlights the loupe
- * exists to show and made the glass disagree with the stage underneath it. An `<img>` goes
- * through the same compositing path the grid's renditions do, so the two tone map alike.
- */
-const TileGlass = observer(function TileGlass({ store }: { store: RawEditStore }): JSX.Element | null {
-  const showing = store.loupeTile;
-  if (showing?.tile.art.url == null) return null;
-
-  const { tile, centre, span } = showing;
-  const src = tile.art.url;
-  const scale = LOUPE_SIZE / span;
-  return (
-    <div
-      className="loupe__glass loupe__glass--tile"
-      data-testid="raw-edit-loupe-tile"
-      style={{ width: `${LOUPE_SIZE}px`, height: `${LOUPE_SIZE}px`, overflow: 'hidden' }}
-    >
-      <img
-        src={src}
-        alt=""
-        style={{
-          position: 'absolute',
-          width: `${tile.rect.width * scale}px`,
-          height: `${tile.rect.height * scale}px`,
-          left: `${-(centre.x - span / 2 - tile.rect.left) * scale}px`,
-          top: `${-(centre.y - span / 2 - tile.rect.top) * scale}px`,
-          // Nearest, not smoothed: a magnifier that interpolated would be showing its own
-          // guesses where the reader is looking for the photograph's grain.
-          imageRendering: 'pixelated',
-        }}
-      />
     </div>
   );
 });

@@ -3423,15 +3423,6 @@ p.ui-text--mono {
   white-space: nowrap;
 }
 
-
-/* The rendition tile sits exactly over the tick's own render of the same place, so the reader
-   sees one picture that sharpens rather than two that swap. */
-.loupe__glass--tile {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-}
-
 /* Beside the magnification: the same `spin` the stage's own busy indicator uses, at the size of
    the text it sits next to rather than the stage's. It says the glass is still the tick's
    render and the export's is on its way - worth saying, because the two differ in exactly the

@@ -39,14 +39,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Mirrors the real manifest, which is the whole contract of this file: it is copied over
 # `Cargo.toml`, so anything only that one carries is absent from a CEF build. `reqwest` is
-# what the proxy is written against, and `default-features = false` keeps `rawshim` down to
-# LibRaw rather than relinking lensfun and libavif for an open that never asks for them.
+# what the proxy is written against.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # The event stream's reconnect backoff. Already in the tree - `tauri` runs on it - and named
 # here only because `tauri::async_runtime` re-exports the channel and lock types but not the
 # timer. `Response::chunk` is not feature-gated, so reading the stream itself needs nothing.
 tokio = { version = "1", features = ["time", "sync", "macros"] }
-rawshim = { path = "../native/rawshim", default-features = false }
 
 # `default-features = false` is load-bearing. Nothing emits a compile_error when both
 # runtimes are on: build.rs would report `cef` (so the build takes the CEF manifest and
@@ -72,12 +70,9 @@ optional = true
 [features]
 wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
-# The same profile as the real manifest, and for the same reasons: cargo reads profiles from
-# the top-level package only, so a CEF build inherits nothing from `rawshim` and gets cargo's
-# defaults - wrapping arithmetic through the decode, no cross-crate inlining, and a symbol
-# table larger than the code.
+# The same profile as the real manifest, and for the same reasons: no cross-crate inlining
+# and a symbol table larger than the code.
 [profile.release]
-overflow-checks = true
 strip = "symbols"
 lto = "fat"
 codegen-units = 1

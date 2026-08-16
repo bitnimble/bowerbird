@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { LoupeTiles, covers, tileFor } from '../loupe_tiles';
+import type { LocalTile } from '../local_open';
 
 const FRAME = { width: 6000, height: 4000 };
 
@@ -64,34 +65,52 @@ describe('which tile the loupe asks for', () => {
 });
 
 describe('the tiles held', () => {
-  /** A fetch that never settles, so nothing arrives unless a test lets it. */
-  function pending(): { tiles: LoupeTiles; asked: string[]; signals: AbortSignal[] } {
+  const decoded = (): LocalTile => ({
+    width: 600,
+    height: 600,
+    keep: [0, 0, 600, 600],
+    edits: [],
+    detail: { width: 600, height: 600 },
+    samples: new Uint16Array(0),
+  });
+
+  /** A decode that settles only when a test hands it an answer. */
+  function pending(): {
+    tiles: LoupeTiles;
+    asked: string[];
+    arrive: ((tile: LocalTile) => void)[];
+  } {
     const asked: string[] = [];
-    const signals: AbortSignal[] = [];
+    const arrive: ((tile: LocalTile) => void)[] = [];
     const tiles = new LoupeTiles(
-      'photo',
-      async (_photo, rect, signal) => {
+      async (rect) => {
         asked.push(`${rect.left},${rect.top}`);
-        signals.push(signal);
-        return new Promise<Blob>(() => {});
+        return new Promise<LocalTile>((resolve) => arrive.push(resolve));
       },
       () => {},
     );
-    return { tiles, asked, signals };
+    return { tiles, asked, arrive };
   }
 
-  test('a new area supersedes the one in flight rather than queueing behind it', () => {
-    const { tiles, asked, signals } = pending();
-    tiles.want(tileFor({ x: 3000, y: 2000 }, 400, FRAME));
+  test('a new area supersedes the one in flight rather than queueing behind it', async () => {
+    const { tiles, asked, arrive } = pending();
+    const here = { x: 3000, y: 2000 };
     // Far enough that the first tile cannot cover it, so it is genuinely somewhere else.
-    tiles.want(tileFor({ x: 5000, y: 2000 }, 400, FRAME));
-
-    // **Both were asked for, and only the second is still wanted.** A pointer crosses tiles
-    // faster than one renders, so a queue is a backlog of places the reader has left - and the
-    // server spends 110ms on each of them whether or not anyone is still looking.
+    const there = { x: 5000, y: 2000 };
+    tiles.want(tileFor(here, 400, FRAME));
+    tiles.want(tileFor(there, 400, FRAME));
     expect(asked).toHaveLength(2);
-    expect(signals[0]!.aborted).toBe(true);
-    expect(signals[1]!.aborted).toBe(false);
+
+    // **Both were asked for, and only the second is kept.** A decode already running cannot be
+    // stopped, so the one the reader left behind arrives and is dropped rather than held: a
+    // pointer crosses tiles faster than one decodes, and a queue is a backlog of places nobody
+    // is looking at.
+    arrive[0]!(decoded());
+    arrive[1]!(decoded());
+    await Bun.sleep(0);
+
+    expect(tiles.covering(here, 400, FRAME)).toBeNull();
+    expect(tiles.covering(there, 400, FRAME)).not.toBeNull();
   });
 
   test('coming back to the area in flight does not restart it', () => {
@@ -112,11 +131,10 @@ describe('the tiles held', () => {
     expect(asked).toHaveLength(2);
   });
 
-  test('says when it is fetching, so the glass can show it is still sharpening', () => {
+  test('says when it is decoding, so the glass can show it is still sharpening', () => {
     const busy: boolean[] = [];
     const tiles = new LoupeTiles(
-      'photo',
-      async () => new Promise<Blob>(() => {}),
+      async () => new Promise<LocalTile>(() => {}),
       () => {},
       (is) => busy.push(is),
     );

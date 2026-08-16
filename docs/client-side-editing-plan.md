@@ -20,11 +20,13 @@ something measured says the 582ms is the problem.
 - [x] **The client does the open** (`b8646f2`). `prepareRaw(bytes, request)` returns `edit::encode`'s
       own framing, byte for byte what `/prepared` served, so the client's parse never changed.
 
-      **The desktop shell keeps its path**, which the deletion item's wording did not anticipate:
-      `preparedHere` returns null under Tauri, so the shell goes `api.rs` -> `src-tauri/src/edit.rs`
-      -> `edit::prepare_bytes` -> `edit::encode` -> `PreparedHeader`. Those are its only decoder, so
-      they stay. A browser that cannot run the module now has no editor, which is the consequence
-      agreed when this was scoped.
+      **The desktop shell has no path of its own**, and the one it had is deleted: the shell runs
+      CEF on Linux and Chromium everywhere else, so its webview has WebGPU and there is nothing the
+      shell could open that the page cannot. `src-tauri/src/edit.rs`, the `get:prepared` branch and
+      the HTTP tile round trip are gone, and the shell proxies everything again. The cost is the
+      measured one - a single-threaded webview decode, about +582ms an open - and it buys one
+      implementation instead of two. A browser that cannot run the module now has no editor, which
+      is the consequence agreed when this was scoped.
 
       **The decode itself is done and proven in a browser** (`3542685`): `web/e2e/local_decode.spec.ts`
       fetches a real ARW in the tab, decodes it through the wasm module, and asserts the frame -
@@ -374,8 +376,9 @@ share one buffer this whole section buys correctness and nothing else.
       `Base::build` is a rendition's again: its tile arm, its `asked` field and the levels branch
       that only a tile took are gone.
 
-      **The desktop shell keeps its own path**, as the open's item records: `isTauri()` picks it,
-      the tile arrives as an AVIF over the shell's transport and stays an `<img>` over the glass.
+      **And now one host.** The shell's AVIF tile went with its native open: `GET /:photoId/tile`,
+      `serveTile`, `bb_render_tile` and `job::tile` are deleted, `TileArt`'s `<img>` arm collapsed
+      to the window the page decoded, and `job::graded` stays as the native side of the same claim.
 
       Proven in a browser by `local_decode.spec.ts`: the tile route is never requested, nothing
       announces a fall-through, and the glass reports that it is holding the export's own pixels.
@@ -389,10 +392,9 @@ share one buffer this whole section buys correctness and nothing else.
       decided before any of it reaches a driver.
 - [x] **Delete what only exists to cross a wire**: `bb_prepare_edit_*`, `rawshim_edit.ts`, the
       `/prepared` route, `edit::prepare` and its `raw_file_path`, and the refusal frame the FFI
-      raised. Three of the six named here stay, and the same call chain is why: the desktop shell
-      opens in its own process (`preparedHere` returns null under Tauri), so `src-tauri/src/edit.rs`
-      is its only decoder, and it answers through `edit::encode`'s framing and `PreparedHeader`.
-      What crossed a *network* is gone; what the shell hands its own webview is not a wire.
+      raised. All of it is gone now that the shell has no open of its own either. What stays is
+      `edit::prepare_bytes`, `prepare_bytes_async`, `edit::encode` and `PreparedHeader` - the wasm
+      export's own framing, which the client parses and the fixture tests hold.
 
 ## Stale, noticed on the way
 

@@ -152,8 +152,9 @@ pub(crate) fn client() -> &'static reqwest::Client {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Request {
-    /// What the caller asked for, by name. The seam a locally-answered command dispatches
-    /// on, which `get:prepared` already does.
+    /// What the caller asked for, by name. Unused while everything proxies; carried
+    /// because it is the seam a local handler dispatches on.
+    #[allow(dead_code)]
     cmd: String,
     method: String,
     path: String,
@@ -161,33 +162,9 @@ struct Request {
 }
 
 #[derive(serde::Serialize)]
-pub struct Head {
-    pub status: u16,
-    pub headers: HashMap<String, String>,
-}
-
-/// What a command answered with, framed for the page. Shared with `edit`, which builds a
-/// reply rather than forwarding one.
-pub fn reply(status: u16, headers: HashMap<String, String>, body: &[u8]) -> Vec<u8> {
-    frame(&Head { status, headers }, body)
-}
-
-/// A GET against the library, for a command answering locally off its bytes.
-pub async fn get(path: &str) -> Result<Vec<u8>, String> {
-    let url = format!("{}{}", origin(), path);
-    let reply = client()
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("could not reach {url}: {e}"))?;
-    if !reply.status().is_success() {
-        return Err(format!("{url} answered {}", reply.status()));
-    }
-    Ok(reply
-        .bytes()
-        .await
-        .map_err(|e| format!("{url} stopped mid-reply: {e}"))?
-        .to_vec())
+struct Head {
+    status: u16,
+    headers: HashMap<String, String>,
 }
 
 /// Forwards a request and frames the reply.
@@ -199,12 +176,6 @@ pub async fn get(path: &str) -> Result<Vec<u8>, String> {
 pub async fn api(request: String) -> Result<Response, String> {
     let request: Request =
         serde_json::from_str(&request).map_err(|e| format!("bad request: {e}"))?;
-
-    // The first command this shell answers itself rather than forwarding, and the seam
-    // `cmd` was carried for. Everything else still proxies.
-    if request.cmd == "get:prepared" {
-        return crate::edit::prepared(&request.path).await.map(Response::new);
-    }
 
     let url = format!("{}{}", origin(), request.path);
     let method = reqwest::Method::from_bytes(request.method.as_bytes())

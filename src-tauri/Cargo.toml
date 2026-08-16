@@ -22,15 +22,6 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # here only because `tauri::async_runtime` re-exports the channel and lock types but not the
 # timer. `Response::chunk` is not feature-gated, so reading the stream itself needs nothing.
 tokio = { version = "1", features = ["time", "sync", "macros"] }
-# The editor's open, in process: the shell fetches the RAW and prepares it here, because
-# the RAW is tens of megabytes where the frame it decodes to is hundreds.
-#
-# Without `renditions`, so it links LibRaw and nothing else. The editor's open never
-# touches lensfun or libavif - its geometry is the spline the camera recorded or a fit
-# against the embedded JPEG, and its display transform is the client's GPU - so this is
-# three fewer C libraries on every platform, and the difference between an Android build
-# being possible and not.
-rawshim = { path = "../native/rawshim", default-features = false }
 
 # WebdriverIO desktop e2e: the in-app Execute API and the embedded WebDriver server.
 # Optional and behind a feature so they never ride a shipped build.
@@ -40,25 +31,12 @@ tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 [features]
 wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
-# The wdio build is a debug build, and an unoptimised demosaic of a 24MP frame does not
-# finish inside the suite's 120s timeout - so the one spec covering the whole reason the
-# desktop build exists could only ever time out. Dependencies only: this crate stays
-# debug, and it is `rawshim` that does the work.
-[profile.dev.package."*"]
-opt-level = 2
-
 [profile.release]
-# `rawshim` asks for this in its own manifest and does not get it: cargo reads profiles
-# from the top-level package only, so a dependency's are ignored. Without it here the
-# shells run the decode with wrapping arithmetic where the server does not - and an index
-# product that wraps is a picture that comes out wrong rather than a crash.
-overflow-checks = true
 # The symbol table is 9MB of the Windows binary and 3MB of the macOS one, for builds
 # nothing debugs remotely.
 strip = "symbols"
-# Cargo's release defaults are `lto = false` and `codegen-units = 16`, which is
-# per-crate optimisation and sixteen independent units inside each one. A shipped build
-# has no reason to leave either there: the whole program is available, and the tick's hot
-# path crosses crate boundaries into `rawshim`.
+# Cargo's release defaults are `lto = false` and `codegen-units = 16`, which is per-crate
+# optimisation and sixteen independent units inside each one, and a shipped build has no
+# reason to leave either there.
 lto = "fat"
 codegen-units = 1

@@ -1,13 +1,12 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { AppError } from '../../errors';
-import { Logger } from '../../logger';
 import type { Library } from '../../schemas/libraries';
 import { getDataPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
 import { readCameraMatch, writeCameraMatch } from '../../services/processing/camera_match_store';
-import { transcodeJpeg, type JobLevels, type NoiseFit } from '../../services/processing/rawshim_job';
+import { transcodeJpeg } from '../../services/processing/rawshim_job';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
 import type { BasicPhoto } from '../../services/photos/photos_repository';
@@ -22,84 +21,7 @@ import type { PhotosService } from '../../services/photos/photos_service';
 // rendition on every rendition in the grid (§8.2 `locate`).
 type PathFor = (library: Library, photo: BasicPhoto) => string;
 
-/**
- * One tile of a photograph, graded through the reader's own edits.
- *
- * Structural rather than the whole `ProcessingService`: this route wants one method, and a test
- * that exercises it should not have to stand up an import queue to get it.
- */
-type TileRenderer = (
-  rawFilePath: string,
-  photoId: string,
-  library: Library,
-  tile: [number, number, number, number],
-  noiseFit?: NoiseFit,
-  levels?: JobLevels,
-  scenePeak?: number,
-) => Uint8Array;
-
 const JPEG_QUALITY = 92;
-
-const log = new Logger('image');
-
-// What a loupe tile's sides may be. The floor is the mosaic denoise's own: below 64 the chroma
-// pyramid has no quarter-resolution level to build. The ceiling is what keeps a tile a tile -
-// past this it is a rendition, it costs like one, and there is a route that caches those.
-const MIN_TILE = 64;
-const MAX_TILE = 2048;
-
-/**
- * The frame's noise as the editor's open measured it, off a tile request's `noise` parameter.
- *
- * Seven numbers, comma-separated, in `galosh::NoiseFit`'s own order. Round-tripped rather than
- * read: nothing on this side interprets them, and the native side refuses a fit that does not
- * describe a sensor, so a malformed one is dropped here and the tile measures its own.
- */
-function noiseFitOf(words: string | undefined): NoiseFit | undefined {
-  if (words == null) return undefined;
-  const parts = words.split(',').map(Number);
-  if (parts.length !== 7 || parts.some((value) => !Number.isFinite(value))) return undefined;
-  const [alpha, sigmaSq, unifiedSigma, ...darkRef] = parts as [
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-    number,
-  ];
-  return { alpha, sigmaSq, unifiedSigma, darkRef };
-}
-
-/**
- * The photograph's diffuse white and scene peak, off a tile request's `levels` parameter.
- *
- * The editor's open measured them over the whole frame and the loupe hands them back, for the
- * reason `job::Base::build` gives: a crop's own quantile describes where the reader is pointing,
- * so a tile that measured its own was coded against a white that moved with the glass. Dropped
- * rather than refused when it is malformed, exactly as the fit above is - the far side can reach
- * both answers itself, worse but not wrongly.
- */
-function levelsOf(words: string | undefined): JobLevels | undefined {
-  if (words == null) return undefined;
-  const parts = words.split(',').map(Number);
-  if (parts.length !== 2 || parts.some((value) => !Number.isFinite(value))) return undefined;
-  const [white, peak] = parts as [number, number];
-  return { white, peak };
-}
-
-/**
- * The frame's scene peak in nits, off a tile request's `scenePeak` parameter.
- *
- * The editor's tick measures it over the whole frame every time it draws; a tile left to measure
- * its own rolls its highlights into whatever the crop reached. Dropped rather than refused when
- * it is not a peak, as the two above are.
- */
-function scenePeakOf(nits: string | undefined): number | undefined {
-  if (nits == null) return undefined;
-  const found = Number(nits);
-  return Number.isFinite(found) && found > 0 ? found : undefined;
-}
 
 // The viewer reports the weight of the rendition it is showing, and reads it off
 // the response it already received rather than asking for a number the server
@@ -135,8 +57,6 @@ export class ImageApi {
   constructor(
     private readonly photos: PhotosService,
     private readonly settings: SettingsRepository,
-    /** Renders a loupe tile, which is the one thing here that needs the reader's own edits. */
-    private readonly processing: { renderTile: TileRenderer },
   ) {
     const app = new Hono();
     // One route for every stored rendition, named rather than spelled out per
@@ -158,88 +78,12 @@ export class ImageApi {
     // camera's JPEG, and either rendered rendition. One route because the menu
     // offering them is one list and only the bytes differ.
     app.get('/:photoId/download/:form', (c) => this.serveDownload(c));
-    // One tile of the photograph at rendition quality, which is what the loupe magnifies.
-    app.get('/:photoId/tile', (c) => this.serveTile(c));
     // The camera match this photograph was fitted with, for a client that is going to open the
     // RAW itself. Half a second of fitting that depends on nothing but the file, so a client
     // holding it skips the slowest part of an open it did not have to do at all.
     app.get('/:photoId/camera-match', (c) => this.serveCameraMatch(c));
     app.put('/:photoId/camera-match', (c) => this.keepCameraMatch(c));
     this.routes = app;
-  }
-
-  /**
-   * A crop of the photograph, decoded, denoised on the mosaic and graded - the export's own
-   * pipeline, on the part the reader is holding a magnifier over.
-   *
-   * **Nothing is kept between requests, and that is the design rather than a shortcut.**
-   * `params.cropbox` restricts the demosaic's own work and the mosaic denoise takes a window,
-   * so a tile is an unpack and two small pieces of work - about 110ms for a 400px tile of a
-   * 24MP frame, against 3.1 seconds for the whole of it. Because nothing is cached, a tile is a
-   * pure function of the query, so there is no invalidation to get wrong when a slider moves:
-   * the client keys its own cache on the same values and a stale one cannot be served.
-   *
-   * The editor keeps showing its own render underneath until this lands, so the latency is a
-   * sharpening rather than a wait.
-   */
-  private async serveTile(c: Context): Promise<Response> {
-    const photoId = c.req.param('photoId');
-    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
-    const { photo, library } = this.photos.locate(photoId);
-
-    const asked = ['left', 'top', 'width', 'height'].map((name) => Number(c.req.query(name)));
-    if (asked.some((value) => !Number.isFinite(value) || value < 0)) {
-      throw new AppError('VALIDATION_ERROR', 'a tile is left, top, width and height in pixels');
-    }
-    const [left, top, width, height] = asked.map(Math.round) as [number, number, number, number];
-    // Bounded here rather than several layers down: a size the native side will refuse still
-    // crosses the FFI and unpacks a RAW first, and comes back a 500 for what the caller
-    // plainly got wrong.
-    if (width < MIN_TILE || height < MIN_TILE || width > MAX_TILE || height > MAX_TILE) {
-      throw new AppError(
-        'VALIDATION_ERROR',
-        `a tile's sides are between ${MIN_TILE} and ${MAX_TILE}: ${width}x${height}`,
-      );
-    }
-
-    const original = getOriginalPath(library, photo.file_path);
-    if (!(await Bun.file(original).exists())) {
-      throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
-    }
-
-    // Through the processing service, which is where the reader's stored edits already become
-    // job fields: a loupe showing anything else would be magnifying a photograph nobody is
-    // about to export.
-    // **Timed separately from the request, because the two answer different questions.** The
-    // access log measures arrival to response, so a tile that waited behind another reads as a
-    // slow render - and this handler is synchronous, so during a pointer sweep several arrive
-    // at once and every one of them reports the queue as its own cost. When these two numbers
-    // disagree, the gap is the wait and not the renderer.
-    const started = Bun.nanoseconds();
-    const tile = this.processing.renderTile(
-      original,
-      photoId,
-      library,
-      [left, top, width, height],
-      noiseFitOf(c.req.query('noise')),
-      levelsOf(c.req.query('levels')),
-      scenePeakOf(c.req.query('scenePeak')),
-    );
-    log.info('rendered a loupe tile', {
-      photoId,
-      tile: `${width}x${height}+${left}+${top}`,
-      renderMs: Math.round((Bun.nanoseconds() - started) / 1e6),
-    });
-
-    return new Response(new Uint8Array(tile), {
-      headers: {
-        'Content-Type': 'image/avif',
-        // The client caches these itself, keyed on the same values this is a function of, so
-        // there is nothing for a shared cache to get wrong or to hold.
-        'Cache-Control': 'no-store',
-        ...TIMING_ALLOW_ORIGIN,
-      },
-    });
   }
 
   /**

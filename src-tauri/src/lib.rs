@@ -7,9 +7,6 @@
 // name in one file rather than a second client in the page.
 
 mod api;
-/// The open, run here rather than asked of the library: the RAW is tens of megabytes
-/// where the frame it decodes to is hundreds.
-mod edit;
 /// The one call that is not request/response, and so cannot go through `api.rs`.
 mod events;
 

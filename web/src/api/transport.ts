@@ -21,11 +21,6 @@ export interface Reply {
   bytes: Uint8Array<ArrayBuffer>;
 }
 
-/** Whether this is the desktop shell rather than a page. */
-export function isTauri(): boolean {
-  return invoker() != null;
-}
-
 type Invoke = <T>(command: string, args: unknown) => Promise<T>;
 
 function invoker(): Invoke | null {
