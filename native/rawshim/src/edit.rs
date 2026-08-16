@@ -179,9 +179,11 @@ impl ChromaPayload {
 /// buffer the client uploads. Grading an unwarped frame through a curve fitted from warped
 /// pairs is the bug that arrangement exists to prevent.
 ///
-/// The desktop shell fetches the RAW from the library and prepares it in its own process,
-/// which is the point - the RAW is tens of megabytes and the prepared frame is hundreds, so
-/// the smaller of the two is the one worth putting on a network.
+/// The page fetches the RAW from the library and prepares it in the tab, which is the point -
+/// the RAW is tens of megabytes and the prepared frame is hundreds, so the smaller of the two
+/// is the one worth putting on a network. Every host does this now, the desktop shell included;
+/// what still calls the blocking form here is the fixture suite, where `prepare_bytes_async`
+/// would want a runtime to no purpose.
 pub fn prepare_bytes(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
     let _open = admit();
     pollster::block_on(open(bytes, request))

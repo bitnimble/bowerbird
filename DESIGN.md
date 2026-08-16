@@ -1683,7 +1683,7 @@ Single-threaded against a libvips that spread over the machine, which is why the
 
 **`jpeg-decoder` rather than the faster `zune-jpeg`, because DCT scaling matters more than throughput here.** libjpeg can scale by 1/2, 1/4 or 1/8 during the transform, and a 61MP body embeds a *full-resolution* preview - 9504x6336 - that a grid tile needs at 800px, so decoding it whole spends ~250-540ms producing pixels 99% of which are discarded. `Decoder::scale` is the pure-Rust exposure of that, and `zune-jpeg`, quicker on a whole frame, has no equivalent. Full chroma on the encode, no subsampling, which is where libvips also landed above quality 90 and where every caller here sits.
 
-**One decoder, for everybody.** There were two for a while - this one behind the server's fit and the browser's own behind the editor's - which is the divergence `image::resize` was introduced to remove. The editor's went with the wasm build (§21): a shell fetches the RAW and prepares it through `edit::fit`, which reads the embedded preview through this module, so nothing on a client decodes a JPEG any more.
+**One decoder, for everybody.** There were two for a while - this one behind the server's fit and the browser's own behind the editor's - which is the divergence `image::resize` was introduced to remove. The editor's went with the wasm build (§21): the page fetches the RAW and prepares it through `edit::fit`, which reads the embedded preview through this module, so nothing on a client decodes a JPEG in JavaScript any more - the decoder a tab runs is this one, compiled to wasm.
 
 ### 10.5 Lossless export
 

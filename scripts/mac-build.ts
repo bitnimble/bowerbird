@@ -3,15 +3,6 @@
 // Unsigned and unnotarised, so the first launch is right-click > Open. Modelled on
 // utai.au's `scripts/mac-build.ts`.
 //
-// **No MacPorts tree is needed any more.** The shell does not build `rawshim` at all now -
-// the editor opens its RAW in the webview - so it links no C, and did not even when it did
-// build it: the RAW decoder is rawler, the demosaic and the grade are WGSL, and the JPEG
-// codec either side is Rust. What used to be here was a
-// MacPorts fetch of libraw, jpeg, lcms2 and zlib, and a static link of all four, done for a
-// code-signing reason: `install_name_tool` repointing the dylibs rewrote load commands in
-// page 0 of `__TEXT`, which broke the ad-hoc signature and got the process killed on arm64.
-// With nothing to relocate, none of that applies.
-//
 // One-time host prereqs: `rustup target add aarch64-apple-darwin` and an
 // osxcross toolchain with the Xcode-extracted macOS SDK (Apple's is not redistributable,
 // which is why this cannot be a `bun install`).
