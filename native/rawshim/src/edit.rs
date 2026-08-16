@@ -295,27 +295,39 @@ pub fn served() -> Vec<(u64, u64)> {
 
 /// The open itself, with the turn already taken.
 async fn open(bytes: &[u8], request: &EditRequest) -> Result<Prepared, String> {
+    // `decode_frame_bytes` with 16-bit scene-linear Rec.2020 asked for, which is that
+    // function's identity arm - reached directly because only this spelling can be awaited.
+    //
+    // **Denoised on the mosaic, at the reader's own Detail, exactly as `job::Base::build`
+    // does it.** The editor used to decode undenoised and filter the prepared frame on the
+    // client instead, in another domain, which made "what the editor shows" and "what the
+    // export ships" two pipelines that had to be argued into agreeing. They are one call now.
+    let frame = crate::decode_rawler::decode_bytes_async(
+        bytes,
+        request.amounts(),
+        request.long_edge,
+        crate::galosh::Fit::Measure,
+    )
+    .await
+    .ok_or("the decoder could not read this file")?;
+    from_frame(frame, bytes, request).await
+}
+
+/// Everything an open does once it has a frame, which is everything a Detail amount cannot move.
+///
+/// **Split out so a caller holding a mosaic can re-run the pipeline without re-reading a file.**
+/// The editor keeps a `decode_rawler::Held` for as long as a photograph is open and re-denoises a
+/// copy of it when a slider moves; this is the half below that, and it is the same half a fresh
+/// open runs, so the two cannot drift.
+pub async fn from_frame(
+    frame: crate::frame::Frame,
+    bytes: &[u8],
+    request: &EditRequest,
+) -> Result<Prepared, String> {
     {
         // The same switch and the same shape as `decode_rawler::decode_source`, so an open reads
         // as one run of laps rather than as a decode that reports and a half that does not.
         let mut lap = crate::clock::laps("  open ");
-
-        // `decode_frame_bytes` with 16-bit scene-linear Rec.2020 asked for, which is that
-        // function's identity arm - reached directly because only this spelling can be awaited.
-        //
-        // **Denoised on the mosaic, at the reader's own Detail, exactly as `job::Base::build`
-        // does it.** The editor used to decode undenoised and filter the prepared frame on the
-        // client instead, in another domain, which made "what the editor shows" and "what the
-        // export ships" two pipelines that had to be argued into agreeing. They are one call now.
-        let frame = crate::decode_rawler::decode_bytes_async(
-            bytes,
-            request.amounts(),
-            request.long_edge,
-            crate::galosh::Fit::Measure,
-        )
-        .await
-        .ok_or("the decoder could not read this file")?;
-        lap("decode");
         let noise_fit = frame.noise;
         let samples = frame.samples16().ok_or("the decode was not 16-bit")?;
         let source = hdr::Source { samples, width: frame.width, height: frame.height };

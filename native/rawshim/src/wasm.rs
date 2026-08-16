@@ -95,6 +95,66 @@ pub async fn prepare_raw(bytes: &[u8], request: &str) -> Result<Vec<u8>, JsValue
     crate::edit::encode(&prepared).map_err(|e| JsValue::from_str(&e))
 }
 
+/// A photograph opened and kept at the mosaic, so a Detail slider costs a denoise and not a file.
+///
+/// **The frame below the denoise is a function of the amounts; everything above it is not.** The
+/// read, the black levels, the white balance and the conditioning depend on the bytes alone, and
+/// they are the seconds of an open. Held here, a slider re-runs the denoise, the demosaic and the
+/// grade against a mosaic that is already on the device.
+///
+/// The fit is measured once for the same reason it is measured whole: Phase 0 reduces over
+/// everything it is shown, so it describes the photograph rather than an amount, and re-measuring
+/// per slider position would be sixteen reductions bought for nothing.
+#[wasm_bindgen]
+pub struct HeldRaw {
+    held: crate::decode_rawler::Held,
+    /// The file, kept because the camera match is fitted against its embedded JPEG.
+    bytes: Vec<u8>,
+    fit: Option<crate::galosh::NoiseFit>,
+    request: crate::edit::EditRequest,
+}
+
+/// Opens a RAW as far as the mosaic and keeps it, for a page that will ask for more than one
+/// Detail amount. `request` is [`crate::edit::EditRequest`] as JSON, as [`prepare_raw`] takes it.
+#[wasm_bindgen(js_name = holdRaw)]
+pub async fn hold_raw(bytes: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
+    if crate::gpu::page_device().await.is_none() {
+        crate::warn("rawshim: this browser offered no WebGPU adapter, so the open is on the CPU");
+    }
+    let request: crate::edit::EditRequest = serde_json::from_str(request)
+        .map_err(|e| JsValue::from_str(&format!("rawshim: this open request is malformed: {e}")))?;
+    let held = crate::decode_rawler::hold_bytes(bytes)
+        .await
+        .ok_or_else(|| JsValue::from_str("rawshim: no decoder read these bytes"))?;
+    let fit = held.fit().await;
+    Ok(HeldRaw { held, bytes: bytes.to_vec(), fit, request })
+}
+
+#[wasm_bindgen]
+impl HeldRaw {
+    /// The frame this photograph makes at these Detail positions, framed as [`prepare_raw`] frames
+    /// it so the page has one reader whichever call produced it.
+    ///
+    /// Filters a copy of the mosaic, so the next position starts from the same unfiltered frame
+    /// rather than from this one's answer.
+    #[wasm_bindgen(js_name = prepare)]
+    pub async fn prepare(&self, luminance: f64, colour: f64) -> Result<Vec<u8>, JsValue> {
+        let amounts = crate::galosh::Amounts::from_sliders(luminance, colour);
+        // The photograph's own fit where one was measured, which is what a region would be
+        // denoised at too - never a fit of whatever this amount happens to produce.
+        let fit = self.fit.map_or(crate::galosh::Fit::Measure, crate::galosh::Fit::Given);
+        let frame = self
+            .held
+            .frame(amounts, self.request.long_edge, fit)
+            .await
+            .ok_or_else(|| JsValue::from_str("rawshim: the held mosaic would not finish"))?;
+        let prepared = crate::edit::from_frame(frame, &self.bytes, &self.request)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
+        crate::edit::encode(&prepared).map_err(|e| JsValue::from_str(&e))
+    }
+}
+
 /// One rectangle of a photograph at rendition quality, for the loupe to magnify.
 ///
 /// **Pixels, not a picture.** The server encodes its tile as an HDR AVIF because the bytes have to

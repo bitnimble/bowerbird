@@ -444,6 +444,11 @@ pub struct Held {
     sensor: Sensor,
 }
 
+/// The decode as far as the mosaic, from bytes a caller is already holding.
+pub async fn hold_bytes(bytes: &[u8]) -> Option<Held> {
+    hold(&rawler::rawsource::RawSource::new_from_slice(bytes)).await
+}
+
 /// The decode as far as the mosaic, which is as far as a Detail amount is irrelevant.
 async fn hold(source: &rawler::rawsource::RawSource) -> Option<Held> {
     let mut lap = crate::clock::laps("  decode ");
@@ -534,10 +539,10 @@ impl Held {
         at_least_long_edge: u32,
         fit: crate::galosh::Fit,
     ) -> Option<Frame> {
-        let copy = match (&self.mosaic, crate::gpu::device()) {
-            (Mosaic::Device(mosaic), Some(gpu)) => Mosaic::Device(mosaic.duplicate(gpu)),
-            (Mosaic::Device(mosaic), None) => Mosaic::Host(mosaic.read(crate::gpu::device()?).await?),
-            (Mosaic::Host(values), _) => Mosaic::Host(values.clone()),
+        // A device mosaic cannot exist without a device, so there is no arm for one.
+        let copy = match &self.mosaic {
+            Mosaic::Device(mosaic) => Mosaic::Device(mosaic.duplicate(crate::gpu::device()?)),
+            Mosaic::Host(values) => Mosaic::Host(values.clone()),
         };
         Held { mosaic: copy, sensor: self.sensor.clone() }
             .into_frame(amounts, at_least_long_edge, fit)
