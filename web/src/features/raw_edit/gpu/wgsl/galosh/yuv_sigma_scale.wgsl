@@ -27,8 +27,10 @@ struct Push {
   /// One past the last pixel this dispatch owns; `start` is the first. Zero and the whole frame
   /// is what every native caller sends, so a banded browser tick is the only thing that differs.
   npix: i32,
-  start: i32,
   sigma_slot: i32,
+  /// Trailing, so a caller that does not band still reads zero here. Ahead of `sigma_slot` this
+  /// silently took its value and left the divisor at `params[0]`, which is not the sigma.
+  start: i32,
 };
 @group(0) @binding(20) var<uniform> pc: Push;
 
