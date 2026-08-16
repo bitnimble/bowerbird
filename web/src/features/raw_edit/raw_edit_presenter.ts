@@ -1383,7 +1383,10 @@ async function fetchPrepared(
   const { header, samples } = framed(local.prepared);
   // The one this open had to fit, where nothing had kept one: a tile cannot fit its own, and an
   // unmatched tile is a magnifier showing a different picture from the stage it sits over.
-  local.open.cameraMatch ??= header.cameraMatch;
+  if (local.open.cameraMatch == null && header.cameraMatch != null) {
+    local.open.cameraMatch = header.cameraMatch;
+    keepCameraMatch(photoId, header.cameraMatch);
+  }
   return { header, samples, local };
 }
 
@@ -1437,6 +1440,20 @@ async function storedCameraMatch(photoId: string): Promise<number[] | undefined>
   const reply = await fetch(cameraMatchUrl(photoId));
   if (!reply.ok) return undefined;
   return Array.from(new Uint8Array(await reply.arrayBuffer()));
+}
+
+/**
+ * Hands back a match this open had to fit, so the next one does not spend the half second again.
+ *
+ * Not awaited, and a failure is not raised: the picture is already on screen by then, and a
+ * photograph that refits next time is slower rather than wrong. The server refuses to overwrite one
+ * it already has, so this cannot race the rendition worker.
+ */
+function keepCameraMatch(photoId: string, match: number[]): void {
+  void fetch(cameraMatchUrl(photoId), {
+    method: 'PUT',
+    body: new Uint8Array(match),
+  }).catch(() => undefined);
 }
 
 async function downloadedRaw(photoId: string): Promise<Uint8Array> {

@@ -6,7 +6,7 @@ import type { Library } from '../../schemas/libraries';
 import { getDataPath, getOriginalPath, getRenditionPath } from '../../utils/paths';
 import { rawMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/raw_decoder';
-import { readCameraMatch } from '../../services/processing/camera_match_store';
+import { readCameraMatch, writeCameraMatch } from '../../services/processing/camera_match_store';
 import { transcodeJpeg, type JobLevels, type NoiseFit } from '../../services/processing/rawshim_job';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions';
@@ -164,6 +164,7 @@ export class ImageApi {
     // RAW itself. Half a second of fitting that depends on nothing but the file, so a client
     // holding it skips the slowest part of an open it did not have to do at all.
     app.get('/:photoId/camera-match', (c) => this.serveCameraMatch(c));
+    app.put('/:photoId/camera-match', (c) => this.keepCameraMatch(c));
     this.routes = app;
   }
 
@@ -264,6 +265,36 @@ export class ImageApi {
         ...TIMING_ALLOW_ORIGIN,
       },
     });
+  }
+
+  /**
+   * A match the client fitted, kept so the next open does not fit it again.
+   *
+   * **Idempotent, and first writer wins.** A match is a function of the RAW alone, so two clients
+   * fitting the same photograph produce the same blob and there is nothing to reconcile; a request
+   * for one already on disk is answered without writing, which also means a client cannot overwrite
+   * the rendition worker's.
+   *
+   * The bytes are opaque here, as they are on the way out: a build that cannot read a blob ignores
+   * it and refits, so there is no version to negotiate at this boundary.
+   */
+  private async keepCameraMatch(c: Context): Promise<Response> {
+    const photoId = c.req.param('photoId');
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+    const { library } = this.photos.locate(photoId);
+    const dataPath = getDataPath(library);
+    if (readCameraMatch(dataPath, photoId) != null) {
+      return new Response(null, { status: 204, headers: TIMING_ALLOW_ORIGIN });
+    }
+
+    const match = new Uint8Array(await c.req.arrayBuffer());
+    // A match is thousands of bytes of fitted coefficients; anything outside that is not one, and
+    // this writes into the library's own data directory under an id the caller chose.
+    if (match.length < 256 || match.length > 64 * 1024) {
+      throw new AppError('VALIDATION_ERROR', `a camera match is not ${match.length} bytes`);
+    }
+    writeCameraMatch(dataPath, photoId, match);
+    return new Response(null, { status: 204, headers: TIMING_ALLOW_ORIGIN });
   }
 
   // The camera's own JPEG, lifted out of the RAW and handed over unchanged. No
