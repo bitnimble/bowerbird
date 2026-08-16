@@ -11,11 +11,15 @@
 
 use wasm_bindgen::prelude::*;
 
-/// Opens rawshim's device and hands the page the `GPUDevice` behind it.
+/// Opens rawshim's device and hands back the `GPUDevice` behind it.
 ///
 /// **Outbound, because wgpu 30 has no inbound seam** - see [`crate::gpu::page_device`] for why
-/// this is the direction rather than taking the page's own device. The page's pipelines and
-/// anything this crate uploads then sit on one device, with nothing read back between them.
+/// this is the direction rather than taking a device that already exists.
+///
+/// Nothing shares the device it returns: the module runs in a worker (`local_open_worker.ts`) and a
+/// `GPUDevice` does not cross that boundary, so the caller uses this to learn whether an adapter
+/// was offered at all - a browser with none decodes on the CPU rather than not at all, and the
+/// fall-through is otherwise a picture that merely looks worse.
 ///
 /// Rejects rather than panics where the browser has no adapter, which is a browser the product
 /// still opens.

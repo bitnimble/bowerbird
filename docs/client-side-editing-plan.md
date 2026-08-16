@@ -103,6 +103,23 @@ something measured says the 582ms is the problem.
       photograph, and a third of that is `condition`, which becomes a kernel anyway. Not worth
       `SharedArrayBuffer` and the cross-origin isolation the whole page would carry for it.
       `wasm-bindgen-rayon` stays available if something measured later says otherwise.
+- [x] **One thread, but not the page's.** Single-threaded was costed above as 582ms; what it also
+      meant, unnoticed, is that the whole open ran where the editor draws. Measured with a
+      `longtask` observer over one open: **a single 8377ms task**, from the moment the panel
+      mounted to the frame arriving - eight seconds in which nothing renders, no key is heard and
+      no pointer moves. `raw_editing.spec.ts` found it first, as a Playwright query that could not
+      be answered inside its five seconds and a different editor test failing each run.
+
+      The module has no seam to yield through, so it runs in a dedicated worker
+      (`local_open_worker.ts`) and `LocalDecoder` is the proxy: the RAW is `hold`-ed once and
+      transferred, so a tile carries a request rather than 72MB, and the results come back
+      transferred too. Longest main-thread task over the same open afterwards: **143ms**.
+
+      **The page never did borrow the module's device**, which is what made this possible: the
+      presenter opens its own through `navigator.gpu`, the module opens its own for the decode, and
+      what crosses between them is samples. A `GPUDevice` cannot cross a worker boundary at all, so
+      the claim above is now structural rather than aspirational; `openGpuDevice` is what the
+      worker asks to know whether it got an adapter, and nothing hands one out.
 - [x] **The camera match is served** (`9e11861`), at `/image/:id/camera-match`, immutable under a
       per-photo URL because a match is a function of the file alone. Bytes, opaquely: a build that
       cannot read a blob ignores it and refits, so there is no version to negotiate at that

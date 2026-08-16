@@ -305,7 +305,12 @@ export class RawEditPresenter {
 
       this.preparing();
       const { header, samples, local } = await fetchPrepared(photoId, longEdge);
-      if (this.closed) return;
+      if (this.closed) {
+        // Closed here rather than left to `close`, which has already run and found no decoder
+        // to take: leaving it would hold a thread and this photograph's RAW for the life of the page.
+        local.decoder.close();
+        return;
+      }
       this.local = local;
 
       const canvas = this.canvas;
@@ -687,7 +692,7 @@ export class RawEditPresenter {
     // Nothing to grade a tile with, which is an editor whose document could not be read: it is
     // usable at neutral and the glass keeps showing the tick's own render.
     if (doc == null) throw new Error('there is no document to build a tile against');
-    return local.decoder.tile(local.raw, {
+    return local.decoder.tile({
       tile: [rect.left, rect.top, rect.width, rect.height],
       frame: [this.store.width, this.store.height],
       grade: local.open.grade,
@@ -1152,7 +1157,8 @@ export class RawEditPresenter {
     this.pipeline = null;
     this.device?.destroy();
     this.device = null;
-    // The RAW the tiles were decoded from, which is tens of megabytes held for as long as this is.
+    // The thread the tiles were decoded on, holding the RAW and the module's heap.
+    this.local?.decoder.close();
     this.local = null;
     this.tileOnGpu = null;
   }
@@ -1336,8 +1342,8 @@ async function fetchPrepared(
   return { header, samples, local };
 }
 
-/** The module, the RAW it decodes and the settings the open used, kept for the loupe's tiles. */
-type LocalSource = { decoder: LocalDecoder; raw: Uint8Array; open: LocalOpen };
+/** The worker holding this photograph's RAW, and the settings the open used, for the loupe's tiles. */
+type LocalSource = { decoder: LocalDecoder; open: LocalOpen };
 
 async function preparedHere(
   photoId: string,
@@ -1364,7 +1370,8 @@ async function preparedHere(
   // Kept rather than dropped once the frame is out: a tile is decoded from the same bytes, and
   // re-fetching 72MB per loupe position is the round trip this whole path exists to remove.
   const decoder = new LocalDecoder();
-  return { decoder, raw, open, prepared: await decoder.prepare(raw, open) };
+  await decoder.hold(raw);
+  return { decoder, open, prepared: await decoder.prepare(open) };
 }
 
 /**
@@ -1393,7 +1400,7 @@ function keepCameraMatch(photoId: string, match: number[]): void {
   }).catch(() => undefined);
 }
 
-async function downloadedRaw(photoId: string): Promise<Uint8Array> {
+async function downloadedRaw(photoId: string): Promise<Uint8Array<ArrayBuffer>> {
   const reply = await fetch(downloadUrl(photoId, 'original'));
   if (!reply.ok) {
     // Named and quoted: this is the first request an open makes, so it is where a photograph

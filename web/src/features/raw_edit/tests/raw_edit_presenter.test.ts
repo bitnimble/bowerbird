@@ -894,7 +894,7 @@ describe('the loupe', () => {
 
     const asked: unknown[] = [];
     const decoder = {
-      tile: (_raw: Uint8Array, request: unknown) => {
+      tile: (request: unknown) => {
         asked.push(request);
         return Promise.resolve({
           width: 600,
@@ -910,7 +910,6 @@ describe('the loupe', () => {
       photoId: 'a-photo-id',
       local: {
         decoder,
-        raw: new Uint8Array(4),
         open: {
           longEdge: 0,
           grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },

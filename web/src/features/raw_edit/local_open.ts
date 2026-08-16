@@ -1,12 +1,3 @@
-import init, {
-  type Decoded,
-  type InitOutput,
-  type Tile,
-  decodeRaw,
-  openGpuDevice,
-  prepareRaw,
-  renderTile,
-} from '../../../../native/rawshim/pkg/rawshim';
 import type {
   JobAdjust,
   JobGrade,
@@ -18,7 +9,7 @@ export type LocalFrame = {
   width: number;
   height: number;
   halved: boolean;
-  samples: Uint16Array;
+  samples: Uint16Array<ArrayBuffer>;
 };
 
 /** `crate::edit::EditRequest`, which the module takes as JSON. */
@@ -77,47 +68,65 @@ export type LocalTile = {
   samples: Uint16Array<ArrayBuffer>;
 };
 
+/** What `local_open_worker.ts` is asked for, and what it answers with. */
+type Job =
+  | { kind: 'hold'; raw: Uint8Array }
+  | { kind: 'open'; atLeastLongEdge: number }
+  | { kind: 'prepare'; request: string }
+  | { kind: 'tile'; request: string }
+  | { kind: 'gpu' };
+
+export type Ask = Job & { id: number };
+
+export type Answer =
+  | { id: number; ok: true; value: unknown }
+  | { id: number; ok: false; error: string };
+
 /**
- * The decoder module, and the device it opened.
+ * The wasm module, on a thread of its own.
  *
- * wgpu cannot adopt a `GPUDevice` from JS - there is no `from_webgpu`, and wgpu-hal has no WebGPU
- * backend to inject one through - so the module requests the device and the page borrows *its*
- * one. Two devices cannot share a texture, so whichever side owns it, the other takes it from
- * there.
+ * **Every call here is seconds of unyielding wasm**, so none of it may run where the editor draws:
+ * a 61MP open measured eight seconds in one task, which froze the page from the moment the panel
+ * mounted until the frame arrived. The module has no seam to yield through and the frame is copied
+ * out of its memory anyway, so it lives behind a worker and the results are transferred.
+ *
+ * The RAW is `hold`-ed once rather than passed per call: it is tens of megabytes, and a tile that
+ * carried it would copy all of it across the boundary for every position the loupe stops at.
  */
 export class LocalDecoder {
-  private module: Promise<InitOutput> | null = null;
-  private device: Promise<GPUDevice | null> | null = null;
+  private readonly worker = new Worker(new URL('./local_open_worker.ts', import.meta.url), {
+    type: 'module',
+  });
+  private readonly waiting = new Map<
+    number,
+    { resolve: (value: never) => void; reject: (error: Error) => void }
+  >();
+  private asked = 0;
 
-  async ready(): Promise<InitOutput> {
-    this.module ??= init();
-    return this.module;
+  constructor() {
+    this.worker.onmessage = (event: MessageEvent<Answer>) => {
+      const answer = event.data;
+      const waiter = this.waiting.get(answer.id);
+      if (waiter == null) return;
+      this.waiting.delete(answer.id);
+      if (answer.ok) waiter.resolve(answer.value as never);
+      else waiter.reject(new Error(answer.error));
+    };
+    this.worker.onerror = (event) => this.refuse(new Error(event.message));
   }
 
-  /** The module's device, or null where the browser has no WebGPU and the decode runs on the CPU. */
-  async gpu(): Promise<GPUDevice | null> {
-    await this.ready();
-    this.device ??= openGpuDevice().catch(() => null);
-    return this.device;
+  /** The bytes every later call reads, transferred: the page has no use for them afterwards. */
+  hold(raw: Uint8Array<ArrayBuffer>): Promise<void> {
+    return this.ask({ kind: 'hold', raw }, [raw.buffer]);
   }
 
-  async open(raw: Uint8Array, atLeastLongEdge: number): Promise<LocalFrame> {
-    const wasm = await this.ready();
-    let decoded: Decoded | undefined;
-    try {
-      decoded = await decodeRaw(raw, atLeastLongEdge);
-      const view = new Uint16Array(wasm.memory.buffer, decoded.ptr, decoded.length);
-      return {
-        width: decoded.width,
-        height: decoded.height,
-        halved: decoded.halved,
-        // Copied, not handed out: the view is over the module's memory, and the next allocation
-        // that grows it detaches every view taken before the growth.
-        samples: new Uint16Array(view),
-      };
-    } finally {
-      decoded?.free();
-    }
+  /** Whether the module opened a device, or fell through to the CPU's conditioning and PPG. */
+  gpu(): Promise<boolean> {
+    return this.ask({ kind: 'gpu' });
+  }
+
+  open(atLeastLongEdge: number): Promise<LocalFrame> {
+    return this.ask({ kind: 'open', atLeastLongEdge });
   }
 
   /**
@@ -125,35 +134,35 @@ export class LocalDecoder {
    *
    * Handed back rather than parsed here, so one reader takes it apart whichever host prepared it.
    */
-  async prepare(raw: Uint8Array, request: LocalOpen): Promise<Uint8Array> {
-    await this.ready();
-    return prepareRaw(raw, JSON.stringify(request));
+  prepare(request: LocalOpen): Promise<Uint8Array> {
+    return this.ask({ kind: 'prepare', request: JSON.stringify(request) });
+  }
+
+  /** One tile of the photograph at rendition quality, decoded here rather than fetched. */
+  tile(request: LocalTileRequest): Promise<LocalTile> {
+    return this.ask({ kind: 'tile', request: JSON.stringify(request) });
   }
 
   /**
-   * One tile of the photograph at rendition quality, decoded here rather than fetched.
-   *
-   * The samples are copied out for the reason `open` copies its frame out: the view is over the
-   * module's memory and the next allocation that grows it detaches every view taken before.
+   * Terminated rather than left to be collected: the thread holds the RAW, the module's heap and
+   * the device it opened, and a decode in flight for an editor nobody is looking at any more still
+   * runs to the end of the file.
    */
-  async tile(raw: Uint8Array, request: LocalTileRequest): Promise<LocalTile> {
-    const wasm = await this.ready();
-    let tile: Tile | undefined;
-    try {
-      tile = await renderTile(raw, JSON.stringify(request));
-      const [left, top, width, height] = tile.keep;
-      const [detailWidth, detailHeight] = tile.detail;
-      const view = new Uint16Array(wasm.memory.buffer, tile.ptr, tile.length);
-      return {
-        width: tile.width,
-        height: tile.height,
-        keep: [left ?? 0, top ?? 0, width ?? 0, height ?? 0],
-        edits: [...tile.edits],
-        detail: { width: detailWidth ?? 1, height: detailHeight ?? 1 },
-        samples: new Uint16Array(view),
-      };
-    } finally {
-      tile?.free();
-    }
+  close(): void {
+    this.refuse(new Error('this decoder was closed'));
+    this.worker.terminate();
+  }
+
+  private ask<T>(job: Job, transfer: Transferable[] = []): Promise<T> {
+    const id = ++this.asked;
+    return new Promise<T>((resolve, reject) => {
+      this.waiting.set(id, { resolve: resolve as (value: never) => void, reject });
+      this.worker.postMessage({ ...job, id }, transfer);
+    });
+  }
+
+  private refuse(error: Error): void {
+    for (const waiter of this.waiting.values()) waiter.reject(error);
+    this.waiting.clear();
   }
 }

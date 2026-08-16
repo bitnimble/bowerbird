@@ -51,10 +51,14 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
     const raw = new Uint8Array(
       await (await fetch(`/image/${id}/download/original`)).arrayBuffer(),
     );
+    const bytes = raw.byteLength;
     const decoder = new LocalDecoder();
-    const frame = await decoder.open(raw, 0);
+    // The bytes are transferred to the decoder's thread, so `raw` is detached from here on.
+    await decoder.hold(raw);
+    const frame = await decoder.open(0);
+    decoder.close();
     return {
-      bytes: raw.byteLength,
+      bytes,
       width: frame.width,
       height: frame.height,
       halved: frame.halved,
@@ -180,8 +184,10 @@ test('reports whether it opened a device, rather than throwing when it cannot', 
 
   const device = await page.evaluate(async () => {
     const { LocalDecoder } = await import('/src/features/raw_edit/local_open.ts');
-    const opened = await new LocalDecoder().gpu();
-    return { opened: opened != null, hasWebGpu: 'gpu' in navigator };
+    const decoder = new LocalDecoder();
+    const opened = await decoder.gpu();
+    decoder.close();
+    return { opened, hasWebGpu: 'gpu' in navigator };
   });
 
   // The harness runs Chromium with `--enable-unsafe-webgpu`, so a null here is the module failing
