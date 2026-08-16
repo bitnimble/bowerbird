@@ -144,9 +144,17 @@ export const SUPERSAMPLE = 1.5;
  *
  * Then the two multipliers and the two clamps. `devicePixelRatio` is how many device
  * pixels a CSS pixel is, so without it a Retina panel shows a half-resolution picture, and
- * `SUPERSAMPLE` is on top of that. The clamps stop them compounding into nonsense: past
- * the region's own resolution there is nothing left to resolve, and past
- * `maxTextureDimension2D` there is no canvas.
+ * `SUPERSAMPLE` is on top of that. The clamps stop them compounding into nonsense: there is
+ * nothing to supersample once the region is being magnified, since the frame has no detail
+ * above 1:1 to resolve, and past `maxTextureDimension2D` there is no canvas.
+ *
+ * **The floor of one device pixel per canvas pixel is what keeps a magnified sky smooth.**
+ * Clamped at the region's own resolution instead, a zoomed-in draw hands the compositor a
+ * canvas a fraction of the box - eight times under it per axis at 4x on a 2x panel - and its
+ * upscale filter runs over the extended-range values on the way to the display. That averages
+ * away the per-pixel variation dithering the panel's own quantisation, and a gradient lands on
+ * flat plateaus. Magnifying here instead costs no more than the zoomed-out draw already pays,
+ * and `covered`'s point sample is what the reader wants of a magnifier anyway.
  *
  * **All of it is one scale, applied to both axes.** Clamped per axis instead, a limit that
  * binds on the long edge alone leaves the short one where it was, and the backing store stops
@@ -166,7 +174,7 @@ export function stageResolution(
   const contain = Math.min(css.width / region.width, css.height / region.height);
   const scale = Math.min(
     contain * dpr * SUPERSAMPLE,
-    1,
+    Math.max(contain * dpr, 1),
     maxTexture / region.width,
     maxTexture / region.height,
   );
