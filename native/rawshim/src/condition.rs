@@ -128,6 +128,19 @@ impl Mosaic {
         Mosaic { buffer, width, height }
     }
 
+    /// A second buffer holding what this one holds, on the device.
+    ///
+    /// For a caller that has to keep an unfiltered frame: the denoise writes where it reads, so
+    /// filtering twice at two amounts means filtering two copies. A frame is four bytes a
+    /// photosite - 96MB at 24MP - which is worth it to answer a slider without re-reading a file.
+    pub fn duplicate(&self, gpu: &crate::gpu::Gpu) -> Mosaic {
+        let copy = Mosaic::plane(gpu, self.width, self.height);
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &copy.buffer, 0, (self.samples() * 4) as u64);
+        gpu.queue.submit([encoder.finish()]);
+        copy
+    }
+
     /// A mosaic that is already on the host, for a caller that built one another way.
     pub fn upload(gpu: &crate::gpu::Gpu, values: &[f32], width: usize, height: usize) -> Mosaic {
         let mosaic = Mosaic::plane(gpu, width, height);

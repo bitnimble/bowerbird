@@ -412,22 +412,49 @@ fn blocking<T>(work: impl std::future::Future<Output = T>) -> T {
     pollster::block_on(work)
 }
 
-async fn decode_source(
-    source: &rawler::rawsource::RawSource,
-    amounts: crate::galosh::Amounts,
-    at_least_long_edge: u32,
-    fit: crate::galosh::Fit,
-) -> Option<Frame> {
+/// Everything the rest of a decode needs of the file, once the mosaic has been conditioned.
+///
+/// Held rather than re-read because none of it depends on a Detail amount: a slider moves the
+/// denoise and nothing above it, so a caller re-running the chain re-reads no bytes.
+#[derive(Clone)]
+struct Sensor {
+    width: usize,
+    height: usize,
+    cfa: [u32; 4],
+    crop: (usize, usize, usize, usize),
+    matrix: [[f32; 3]; 3],
+    upright: rawler::decoders::Orientation,
+    as_shot: Option<crate::white_balance::AsShot>,
+}
+
+/// A decode paused at the mosaic: conditioned, on the device where there is one, and not yet
+/// denoised.
+///
+/// **What the editor holds while a photograph is open.** Everything above the denoise - the read,
+/// the black levels, the white balance, the conditioning - depends on the file alone, and
+/// everything below it depends on the Detail amounts. Splitting there is what lets a slider re-run
+/// the denoise, the demosaic and the grade against a mosaic that is already on the GPU rather than
+/// re-reading a 25MB file and conditioning it again.
+///
+/// A rendition holds one for a moment and takes [`Held::into_frame`], which filters in place; the
+/// editor keeps one and takes [`Held::frame`], which filters a copy so the original survives the
+/// next slider move.
+pub struct Held {
+    mosaic: Mosaic,
+    sensor: Sensor,
+}
+
+/// The decode as far as the mosaic, which is as far as a Detail amount is irrelevant.
+async fn hold(source: &rawler::rawsource::RawSource) -> Option<Held> {
     let mut lap = crate::clock::laps("  decode ");
 
-    let source = &source;
     let decoder = rawler::get_decoder(source).ok()?;
     let params = rawler::decoders::RawDecodeParams::default();
 
-    let upright = upright_of(decoder.as_ref(), &source, &params);
+    let upright = upright_of(decoder.as_ref(), source, &params);
 
     lap("open");
-    let image = decoder.raw_image(&source, &params, false).ok()?;
+    let image = decoder.raw_image(source, &params, false).ok()?;
     lap("read");
     let (width, height) = (image.width, image.height);
 
@@ -441,59 +468,9 @@ async fn decode_source(
     }
 
     let gpu = crate::gpu::device();
-    let mut mosaic = condition(gpu, &samples[..width * height], width, height, &image, cfa);
+    let mosaic = condition(gpu, &samples[..width * height], width, height, &image, cfa);
 
     lap("condition");
-    // **Tiled, and at the halo a loupe takes.** A render assembled from the same regions as the
-    // magnifier that predicts it is the same arithmetic rather than two routes that ought to
-    // agree, which is the argument `job::Base::build` already makes about handing a tile the
-    // frame's fit. It also bounds the GPU: whole-frame RCD is 3.1GB of planes at 61MP.
-    //
-    // `Fit::Measure` becomes a whole-frame fit and then a tiled denoise against it, which is the
-    // same denoise - `open_bench` puts a measured fit against a given one at `worst 0e0`. The fit
-    // has to be whole-frame either way, since Phase 0 reduces over everything it is shown and a
-    // tile's own statistics are not the photograph's.
-    let mut noise = None;
-    if let (Mosaic::Device(frame), Some(gpu)) = (&mut mosaic, gpu) {
-        if let Some(kernels) = crate::galosh::device(gpu) {
-            noise = match fit {
-                crate::galosh::Fit::Only => Some(crate::galosh::fit(gpu, kernels, frame).await),
-                _ if !amounts.does_anything() => None,
-                crate::galosh::Fit::Measure => {
-                    let measured = crate::galosh::fit(gpu, kernels, frame).await;
-                    denoise_in_tiles(
-                        gpu,
-                        kernels,
-                        frame,
-                        amounts,
-                        measured,
-                        crate::RENDITION_TILE_HALO,
-                    )
-                    .await;
-                    Some(measured)
-                }
-                crate::galosh::Fit::Given(fit) => {
-                    denoise_in_tiles(
-                        gpu,
-                        kernels,
-                        frame,
-                        amounts,
-                        fit,
-                        crate::RENDITION_TILE_HALO,
-                    )
-                    .await;
-                    Some(fit)
-                }
-            };
-        }
-    }
-    // Every way GALOSH can be missed at once - no adapter, no kernels, a mosaic that never reached
-    // the device - said where the decode wanted something from it, since a frame that carries no
-    // fit and was never filtered is otherwise indistinguishable from one that was.
-    declined_galosh(&noise, amounts, fit);
-
-    lap("denoise");
-    let matrix = camera_to_rec2020(&image)?;
 
     // The sensor's readable area is larger than the picture: there are masked columns for the
     // black level and a few rows the manufacturer does not consider valid. LibRaw hands back the
@@ -504,58 +481,185 @@ async fn decode_source(
         .map(|area| (area.p.x, area.p.y, area.d.w, area.d.h))
         .unwrap_or((0, 0, width, height));
 
-    // Halved where the caller said a smaller frame would do, which skips the demosaic outright.
-    // The crop halves with it, and its origin has to stay on a whole CFA site or the colours in the
-    // half-size frame are the ones next door - so an odd origin declines rather than shifts.
-    let halved = at_least_long_edge > 0
-        && (width.max(height) as u32) / 2 >= at_least_long_edge
-        && crop.0 % 2 == 0
-        && crop.1 % 2 == 0;
-
-    let (pixels, crop) = match halved {
-        // The one place the mosaic still comes back whole: a halved frame skips the demosaic, so
-        // there is no later stage on the device to hand it to.
-        true => {
-            let host = mosaic.host(gpu).await?;
-            let small = half_size(&host, width, height, cfa);
-            let crop = (crop.0 / 2, crop.1 / 2, crop.2 / 2, crop.3 / 2);
-            (to_rec2020_from(&small, width / 2, crop, matrix), crop)
-        }
-        false => {
-            let rcd = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)));
-            let pixels = match (&mosaic, rcd) {
-                (Mosaic::Device(frame), Some((gpu, rcd))) => {
-                    demosaic_in_tiles(gpu, rcd, frame, cfa, crop, matrix).await?
-                }
-                _ => {
-                    let host = mosaic.host(gpu).await?;
-                    let rgb = crate::demosaic::cpu(&host, width, height, cfa)?;
-                    to_rec2020_from(&rgb, width, crop, matrix)
-                }
-            };
-            (pixels, crop)
-        }
-    };
-
-    lap("demosaic, colour, crop");
-
-    // **The sensor reads in its own orientation; the photograph has another one.** LibRaw applies
-    // this from `sizes.flip` and hands back an upright frame, so this must too - and not only
-    // because the picture would be sideways. The camera match is fitted by comparing this frame
-    // against the camera's own embedded JPEG, which is always upright, so a frame left in sensor
-    // orientation produces a fit against unrelated content and a grade built on it.
-    let (pixels, out_w, out_h) = orient(pixels, crop.2, crop.3, upright);
-
-    lap("colour, crop, orient");
-
-    Some(Frame {
-        width: out_w,
-        height: out_h,
-        pixels: Pixels::Sixteen(pixels),
-        halved,
-        as_shot: as_shot_of(&image),
-        noise,
+    Some(Held {
+        mosaic,
+        sensor: Sensor {
+            width,
+            height,
+            cfa,
+            crop,
+            matrix: camera_to_rec2020(&image)?,
+            upright,
+            as_shot: as_shot_of(&image),
+        },
     })
+}
+
+async fn decode_source(
+    source: &rawler::rawsource::RawSource,
+    amounts: crate::galosh::Amounts,
+    at_least_long_edge: u32,
+    fit: crate::galosh::Fit,
+) -> Option<Frame> {
+    hold(source).await?.into_frame(amounts, at_least_long_edge, fit).await
+}
+
+impl Held {
+    /// This photograph's noise, measured over the whole mosaic and filtering nothing.
+    ///
+    /// Whole-frame on purpose, and the same argument `decode_source` already makes about handing a
+    /// tile the frame's fit: Phase 0 reduces over everything it is shown, so a region's own
+    /// statistics are not the photograph's.
+    pub async fn fit(&self) -> Option<crate::galosh::NoiseFit> {
+        let gpu = crate::gpu::device()?;
+        let Mosaic::Device(frame) = &self.mosaic else { return None };
+        let kernels = crate::galosh::device(gpu)?;
+        Some(crate::galosh::fit(gpu, kernels, frame).await)
+    }
+
+    pub fn width(&self) -> usize {
+        self.sensor.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.sensor.height
+    }
+
+    /// The frame this mosaic makes at these amounts, filtering a *copy* so this stays pristine.
+    ///
+    /// For a caller that will ask again at another amount, which is what a Detail slider is.
+    pub async fn frame(
+        &self,
+        amounts: crate::galosh::Amounts,
+        at_least_long_edge: u32,
+        fit: crate::galosh::Fit,
+    ) -> Option<Frame> {
+        let copy = match (&self.mosaic, crate::gpu::device()) {
+            (Mosaic::Device(mosaic), Some(gpu)) => Mosaic::Device(mosaic.duplicate(gpu)),
+            (Mosaic::Device(mosaic), None) => Mosaic::Host(mosaic.read(crate::gpu::device()?).await?),
+            (Mosaic::Host(values), _) => Mosaic::Host(values.clone()),
+        };
+        Held { mosaic: copy, sensor: self.sensor.clone() }
+            .into_frame(amounts, at_least_long_edge, fit)
+            .await
+    }
+
+    /// The same, filtering this mosaic where it lies. For a caller that will not ask twice.
+    pub async fn into_frame(
+        mut self,
+        amounts: crate::galosh::Amounts,
+        at_least_long_edge: u32,
+        fit: crate::galosh::Fit,
+    ) -> Option<Frame> {
+        let mut lap = crate::clock::laps("  decode ");
+        let gpu = crate::gpu::device();
+        let Sensor { width, height, cfa, crop, matrix, upright, as_shot } = self.sensor;
+        let mosaic = &mut self.mosaic;
+        // **Tiled, and at the halo a loupe takes.** A render assembled from the same regions as the
+    // magnifier that predicts it is the same arithmetic rather than two routes that ought to
+    // agree, which is the argument `job::Base::build` already makes about handing a tile the
+    // frame's fit. It also bounds the GPU: whole-frame RCD is 3.1GB of planes at 61MP.
+    //
+    // `Fit::Measure` becomes a whole-frame fit and then a tiled denoise against it, which is the
+    // same denoise - `open_bench` puts a measured fit against a given one at `worst 0e0`. The fit
+    // has to be whole-frame either way, since Phase 0 reduces over everything it is shown and a
+    // tile's own statistics are not the photograph's.
+        let mut noise = None;
+        if let (Mosaic::Device(frame), Some(gpu)) = (&mut *mosaic, gpu) {
+            if let Some(kernels) = crate::galosh::device(gpu) {
+                noise = match fit {
+                    crate::galosh::Fit::Only => Some(crate::galosh::fit(gpu, kernels, frame).await),
+                    _ if !amounts.does_anything() => None,
+                    crate::galosh::Fit::Measure => {
+                        let measured = crate::galosh::fit(gpu, kernels, frame).await;
+                        denoise_in_tiles(
+                            gpu,
+                            kernels,
+                            frame,
+                            amounts,
+                            measured,
+                            crate::RENDITION_TILE_HALO,
+                        )
+                        .await;
+                        Some(measured)
+                    }
+                    crate::galosh::Fit::Given(fit) => {
+                        denoise_in_tiles(
+                            gpu,
+                            kernels,
+                            frame,
+                            amounts,
+                            fit,
+                            crate::RENDITION_TILE_HALO,
+                        )
+                        .await;
+                        Some(fit)
+                    }
+                };
+            }
+        }
+        // Every way GALOSH can be missed at once - no adapter, no kernels, a mosaic that never
+        // reached the device - said where the decode wanted something from it, since a frame that
+        // carries no fit and was never filtered is otherwise indistinguishable from one that was.
+        declined_galosh(&noise, amounts, fit);
+
+        lap("denoise");
+
+        // Halved where the caller said a smaller frame would do, which skips the demosaic
+        // outright. The crop halves with it, and its origin has to stay on a whole CFA site or the
+        // colours in the half-size frame are the ones next door - so an odd origin declines rather
+        // than shifts.
+        let halved = at_least_long_edge > 0
+            && (width.max(height) as u32) / 2 >= at_least_long_edge
+            && crop.0 % 2 == 0
+            && crop.1 % 2 == 0;
+
+        let (pixels, crop) = match halved {
+            // The one place the mosaic still comes back whole: a halved frame skips the demosaic,
+            // so there is no later stage on the device to hand it to.
+            true => {
+                let host = mosaic.host(gpu).await?;
+                let small = half_size(&host, width, height, cfa);
+                let crop = (crop.0 / 2, crop.1 / 2, crop.2 / 2, crop.3 / 2);
+                (to_rec2020_from(&small, width / 2, crop, matrix), crop)
+            }
+            false => {
+                let rcd = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)));
+                let pixels = match (&*mosaic, rcd) {
+                    (Mosaic::Device(frame), Some((gpu, rcd))) => {
+                        demosaic_in_tiles(gpu, rcd, frame, cfa, crop, matrix).await?
+                    }
+                    _ => {
+                        let host = mosaic.host(gpu).await?;
+                        let rgb = crate::demosaic::cpu(&host, width, height, cfa)?;
+                        to_rec2020_from(&rgb, width, crop, matrix)
+                    }
+                };
+                (pixels, crop)
+            }
+        };
+
+        lap("demosaic, colour, crop");
+
+        // **The sensor reads in its own orientation; the photograph has another one.** LibRaw
+        // applies this from `sizes.flip` and hands back an upright frame, so this must too - and
+        // not only because the picture would be sideways. The camera match is fitted by comparing
+        // this frame against the camera's own embedded JPEG, which is always upright, so a frame
+        // left in sensor orientation produces a fit against unrelated content and a grade built
+        // on it.
+        let (pixels, out_w, out_h) = orient(pixels, crop.2, crop.3, upright);
+
+        lap("colour, crop, orient");
+
+        Some(Frame {
+            width: out_w,
+            height: out_h,
+            pixels: Pixels::Sixteen(pixels),
+            halved,
+            as_shot,
+            noise,
+        })
+    }
 }
 
 /// How wide a tile the denoise and the demosaic are cut into, for a whole frame as much as for a
