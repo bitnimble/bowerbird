@@ -248,6 +248,6 @@ fn ne_finalize(@builtin(local_invocation_id) local: vec3u) {
     }
   }
 
-  params[P_ALPHA] = max(alpha_est, 1e-8);
+  params[P_ALPHA] = max(alpha_est, ALPHA_MIN);
   params[P_SIGMA_SQ] = 0.0;
 }

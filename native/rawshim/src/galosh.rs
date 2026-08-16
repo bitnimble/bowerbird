@@ -44,6 +44,11 @@ const P_DARK_REF0: usize = 6;
 const P_ALPHA: usize = 13;
 const P_SIGMA_SQ: usize = 14;
 
+/// `prelude.wgsl`'s floor on the shot-noise slope, held against its text by
+/// `the_alpha_floor_is_the_one_the_shader_declares`. The GAT divides by it; this is not a
+/// judgement about how clean a sensor may be.
+pub const ALPHA_MIN: f32 = 1e-8;
+
 /// What `pass12` needs of a workgroup: four tile planes of 40x40 f32.
 const WORKGROUP_STORAGE: u32 = 4 * 40 * 40 * 4;
 
@@ -406,7 +411,9 @@ impl NoiseFit {
     /// It crosses the API from a client, so it is not the decode's own arithmetic any more. The
     /// bounds are deliberately wide - this is a guard against a corrupted or invented payload, not
     /// a judgement about what a sensor may do - but `alpha` at zero would divide by it in the GAT
-    /// and a negative sigma would `sqrt` to a NaN that reaches every pixel.
+    /// and a negative sigma would `sqrt` to a NaN that reaches every pixel. A slope merely *under*
+    /// [`ALPHA_MIN`] is not refused here: the seed floors it, and refusing would refit on the
+    /// tile, which is the wrong strength this fit crosses the wire to avoid.
     pub fn usable(&self) -> bool {
         let finite = |v: f32| v.is_finite();
         finite(self.alpha)
@@ -811,7 +818,9 @@ async fn run(
     // otherwise write.
     let mut seed = [0f32; 32];
     if let Some(fit) = supplied {
-        seed[P_ALPHA] = fit.alpha;
+        // Floored like `ne_finalize`'s, because this is the same slot by another route and the
+        // transform divides by it.
+        seed[P_ALPHA] = fit.alpha.max(ALPHA_MIN);
         seed[P_SIGMA_SQ] = fit.sigma_sq;
         seed[P_UNIFIED_SIGMA] = fit.unified_sigma;
         seed[P_INV_SG] = 1.0 / fit.unified_sigma;
@@ -1235,8 +1244,8 @@ fn fit_of(mapped: &[u8]) -> NoiseFit {
 #[cfg(test)]
 mod tests {
     use super::{
-        Amounts, NoiseModel, P_ALPHA, P_DARK_REF0, P_INV_SG, P_SIGMA_SQ, P_UNIFIED_SIGMA, denoise,
-        device,
+        ALPHA_MIN, Amounts, NoiseModel, P_ALPHA, P_DARK_REF0, P_INV_SG, P_SIGMA_SQ,
+        P_UNIFIED_SIGMA, denoise, device,
     };
 
     /// The params slots, against the shader that declares them.
@@ -1265,6 +1274,23 @@ mod tests {
         ] {
             assert_eq!(declared(name), here, "{name}: the shader and this host disagree");
         }
+    }
+
+    /// The floor on `alpha`, against the shader that declares it.
+    ///
+    /// Two spellings of one number: this side floors a supplied fit before seeding the slot and
+    /// `ne_finalize` floors the one it measures, so a prelude edit that moved only the shader's
+    /// would leave a fit crossing the API able to do what the test below describes.
+    #[test]
+    fn the_alpha_floor_is_the_one_the_shader_declares() {
+        const WGSL: &str =
+            include_str!("../../../web/src/features/raw_edit/gpu/wgsl/galosh/prelude.wgsl");
+        let opener = "const ALPHA_MIN: f32 = ";
+        let start = WGSL.find(opener).expect("the prelude declares ALPHA_MIN");
+        let literal: String =
+            WGSL[start + opener.len()..].chars().take_while(|c| *c != ';').collect();
+        let declared: f32 = literal.trim().parse().expect("ALPHA_MIN is a number");
+        assert_eq!(declared, ALPHA_MIN, "the shader and this host floor alpha differently");
     }
 
     /// The Detail track's landmarks, on this side of it.
@@ -1418,6 +1444,52 @@ mod tests {
         assert!(at(0.0045 * 0.0045) < at(0.006 * 0.006));
     }
 
+    /// A frame clean enough that its Poisson means run past what f32 can sum.
+    ///
+    /// The inverse table's photon count is `x / alpha`, so a clean frame asks for the sum where
+    /// it cannot be evaluated: measured against an f64 reference, the old kernel drifted 1.86 at
+    /// lambda 19569 and returned *zero* past lambda 125000, which is a table whose ends bracket
+    /// nothing. `gat_inv_lut` then took its `d >= d_max` arm for every pixel and returned 1.0,
+    /// and the frame came out flat white with nothing logged anywhere. An ISO 50 exposure in a
+    /// real library fits 4e-6 and did exactly this - a clean frame being the one nobody thinks
+    /// to test a *denoise* on.
+    ///
+    /// Asserting on the edge rather than on the variance: what fails here is not the filter
+    /// working too hard, it is the picture being replaced by a constant.
+    #[test]
+    fn a_frame_too_clean_to_fit_still_comes_back_a_picture() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(galosh) = device(gpu) else {
+            return;
+        };
+
+        let (width, height) = (256, 192);
+        // Two orders under the noisy frame above, which is where the fitted slope falls under
+        // what the table could be summed for.
+        let clean = frame_with_noise(width, height, 0.0005);
+        let uploaded = crate::condition::Mosaic::upload(gpu, &clean, width, height);
+        let fit = pollster::block_on(denoise(gpu, galosh, &uploaded, Amounts { luma: 1.0, colour: 1.0 }));
+        let denoised = read(gpu, &uploaded);
+
+        assert!(
+            fit.alpha >= ALPHA_MIN,
+            "the fit must not report a slope the table cannot be summed for: {}",
+            fit.alpha,
+        );
+        let step = |frame: &[f32]| {
+            let row = 96 * width;
+            frame[row + width / 2 + 8] - frame[row + width / 2 - 8]
+        };
+        assert!(
+            step(&denoised) > step(&clean) * 0.9,
+            "the edge should survive a frame this clean: {} -> {}",
+            step(&clean),
+            step(&denoised),
+        );
+    }
+
     /// The mosaic back on the host, which is where these tests compare frames.
     fn read(gpu: &crate::gpu::Gpu, mosaic: &crate::condition::Mosaic) -> Vec<f32> {
         pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back")
@@ -1426,6 +1498,10 @@ mod tests {
     /// A synthetic frame: four flat CFA levels with Gaussian noise on top, and one hard
     /// vertical edge, so a test can ask both what was removed and what was kept.
     fn frame(width: usize, height: usize) -> Vec<f32> {
+        frame_with_noise(width, height, 0.05)
+    }
+
+    fn frame_with_noise(width: usize, height: usize, amplitude: f32) -> Vec<f32> {
         let level = |slot: usize| [0.20, 0.34, 0.34, 0.12][slot];
         let mut seed = 0x2545_f491_4f6c_dd1du64;
         let mut noise = || {
@@ -1438,7 +1514,7 @@ mod tests {
                 seed ^= seed << 17;
                 sum += (seed >> 40) as f32 / 16777216.0 - 0.5;
             }
-            sum * 0.05
+            sum * amplitude
         };
         (0..width * height)
             .map(|at| {

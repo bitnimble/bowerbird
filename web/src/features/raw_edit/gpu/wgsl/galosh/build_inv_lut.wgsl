@@ -41,12 +41,39 @@ fn exp_s(x: f32) -> f32 {
   return exp(x);
 }
 
+// The Poisson terms a mean of `lambda` needs: up to its peak, plus the window around it.
+fn terms_for(lambda: f32) -> i32 {
+  return i32(lambda + 8.0 * sqrt(max(lambda, 1.0))) + 20;
+}
+
+/// The photon count above which this table is the forward transform, and the sum is not run.
+///
+/// **The unbiased correction is a photon-starved effect, and the sum is only computable there.**
+/// `E[t|x]` departs from `t(x)` because a Poisson mean of a handful of photons is skewed; as the
+/// count grows the two converge, and measured against an f64 evaluation the gap falls from
+/// -0.0123 at zero to -0.0018 by lambda 19569, and to a part in a million by lambda 124420.
+///
+/// The same growth is what makes the sum impossible in f32. Its weights come from
+/// `log(k!)`, which at k = 19569 is about 174000 - an f32 ulp of 0.015 there, so every
+/// probability is wrong by a percent and a half however the logs are accumulated. Measured, the
+/// f32 sum drifts from the exact curve by 1.86 at lambda 19569 and returns *zero* past lambda
+/// 125000, which is a table whose top half reads as black and whose ends bracket nothing.
+///
+/// So the crossover is not a tuning knob but the point where the two errors meet: below it the
+/// sum is the more accurate of the two (0.0019 against 0.0124 at lambda 306), above it the
+/// closed form is (0.0069 against 0.0146 at lambda 1223). Either side of the switch this table
+/// is within 0.007 of the exact curve, where it used to be out by a thousand.
+const LAMBDA_EXACT_MAX: f32 = 1000.0;
+
 @compute @workgroup_size(256)
 fn build_inv_lut(@builtin(global_invocation_id) id: vec3u) {
   let i = i32(id.x);
   if (i >= LUT_SIZE) { return; }
 
-  let a = params[P_ALPHA];
+  // Floored at the read, not merely where the slot is written: everything below scales by
+  // `2/alpha`, so a zero in the slot is an infinity in the table. The two GAT forwards read it
+  // through the same floor, so the transform this inverts is still the one that ran.
+  let a = max(params[P_ALPHA], ALPHA_MIN);
   let sq = params[P_SIGMA_SQ];
   let sig = sqrt(max(sq, 1e-20));
   let y_break = -0.375 * a;
@@ -55,51 +82,59 @@ fn build_inv_lut(@builtin(global_invocation_id) id: vec3u) {
   let x_val = f32(i) / f32(LUT_SIZE - 1);
   let lambda = x_val / a;
 
-  var exg_s = 0.0;
-  var exg_c = 0.0;
-  // **Bounded, because the term count is 1/alpha and alpha is fitted.** The sum runs to about
-  // lambda, and lambda is `x / alpha` - so the cost of this kernel is set by a number the noise
-  // estimate solves for rather than by anything the frame's size bounds. `ne_finalize` accepts any
-  // positive slope and floors it at 1e-8, four orders below the 1e-4 it falls back to when the fit
-  // fails, and a low-contrast frame can land there: the loop then runs 1e8 iterations of a
-  // 10-node inner loop, per invocation, which is not slow but a lost device - the watchdog resets
-  // the GPU and `on_uncaptured_error` takes the process with it.
-  //
-  // The cap sits above every alpha the two estimators can legitimately produce - the editor's own
-  // floor is 1e-5 (`noise.rs`), so lambda reaches 1e5 and the window around its peak wants about
-  // 1.03e5 terms - and it is chosen so it never truncates one of those. What it bounds is the
-  // pathological fit alone, at 500 times less work than 1e-8 would cost.
-  const K_TERMS_MAX: i32 = 200000;
-  let k_max = min(i32(lambda + 8.0 * sqrt(max(lambda, 1.0))) + 20, K_TERMS_MAX);
-  var lp_s = -lambda;
-  var lp_c = 0.0;
-  let log_lambda = log_s(lambda);
+  var value: f32;
+  if (lambda > LAMBDA_EXACT_MAX) {
+    // The closed form, which is what the exact inverse has converged to by here - and the only
+    // one of the two f32 can still evaluate. The same expression `gat_forward_full` and
+    // `yuv_gat_fwd` apply, so a level round-trips through this table exactly.
+    value = (2.0 / a) * sqrt(max(a * x_val + 0.375 * a * a + sq, 0.0));
+  } else {
+    // Bounded by the branch above rather than by a cap of its own: the sum only runs where
+    // lambda is small, so it is at most a few thousand terms whatever alpha is. That is also
+    // what retired the old ceiling, which had to guess a bound and truncated real tables when
+    // it guessed low.
+    let k_max = terms_for(lambda);
+    var exg_s = 0.0;
+    var exg_c = 0.0;
+    var mass_s = 0.0;
+    var mass_c = 0.0;
+    var lp_s = -lambda;
+    var lp_c = 0.0;
+    let log_lambda = log_s(lambda);
 
-  for (var k = 0; k <= k_max; k++) {
-    if (k > 0) { kacc(&lp_s, &lp_c, log_lambda - log(f32(k))); }
-    let prob = exp_s(lp_s + lp_c);
-    if (prob < 1e-15 && k > i32(lambda) + 1) { break; }
+    for (var k = 0; k <= k_max; k++) {
+      if (k > 0) { kacc(&lp_s, &lp_c, log_lambda - log(f32(k))); }
+      let prob = exp_s(lp_s + lp_c);
+      if (prob < 1e-15 && k > i32(lambda) + 1) { break; }
 
-    var eg_s = 0.0;
-    var eg_c = 0.0;
-    for (var g = 0; g < 10; g++) {
-      let z = 1.4142135623730951 * sig * GH_NODES[g];
-      let noisy_y = f32(k) * a + z;
-      var t: f32;
-      if (noisy_y >= y_break) {
-        let arg = a * noisy_y + 0.375 * a * a + sq;
-        t = (2.0 / a) * sqrt(max(arg, 0.0));
-      } else {
-        t = t_break + (noisy_y - y_break) / sig;
+      var eg_s = 0.0;
+      var eg_c = 0.0;
+      for (var g = 0; g < 10; g++) {
+        let z = 1.4142135623730951 * sig * GH_NODES[g];
+        let noisy_y = f32(k) * a + z;
+        var t: f32;
+        if (noisy_y >= y_break) {
+          let arg = a * noisy_y + 0.375 * a * a + sq;
+          t = (2.0 / a) * sqrt(max(arg, 0.0));
+        } else {
+          t = t_break + (noisy_y - y_break) / sig;
+        }
+        kacc(&eg_s, &eg_c, GH_WEIGHTS[g] * t);
       }
-      kacc(&eg_s, &eg_c, GH_WEIGHTS[g] * t);
+      // 1 / sqrt(pi), the Gauss-Hermite normalisation.
+      let eg = (eg_s + eg_c) * 0.5641895835477563;
+      kacc(&exg_s, &exg_c, prob * eg);
+      kacc(&mass_s, &mass_c, prob);
     }
-    // 1 / sqrt(pi), the Gauss-Hermite normalisation.
-    let eg = (eg_s + eg_c) * 0.5641895835477563;
-    kacc(&exg_s, &exg_c, prob * eg);
+
+    // Divided by the mass actually gathered, so what the window and the early break leave out
+    // cannot land in the answer as a shortfall. It is an expectation, and an expectation taken
+    // over part of a distribution has to be renormalised over that part.
+    let mass = mass_s + mass_c;
+    value = select((exg_s + exg_c) / mass, exg_s + exg_c, mass <= 0.0);
   }
 
-  lut_d[i] = exg_s + exg_c;
+  lut_d[i] = value;
   lut_x[i] = x_val;
 
   if (i == 0) {

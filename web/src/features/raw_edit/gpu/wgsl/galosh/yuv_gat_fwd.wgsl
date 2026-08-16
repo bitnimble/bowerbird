@@ -23,7 +23,10 @@ fn yuv_gat_fwd(
 ) {
   let i = pc.start + flat_index(id, groups, 256u);
   if (i >= pc.npix) { return; }
-  let a = params[P_ALPHA];
+  // `ALPHA_MIN` rather than this kernel's own 1e-12, which was a guard against dividing by zero
+  // and not the same number `build_inv_lut` sums for: the table undoes this transform, so a
+  // slope the two read differently is a frame inverted against a curve that never ran.
+  let a = max(params[P_ALPHA], ALPHA_MIN);
   let c = 0.375 * a * a + params[P_SIGMA_SQ];
-  y_stab[i] = (2.0 / max(a, 1e-12)) * sqrt(max(a * y_lin[i] + c, 0.0));
+  y_stab[i] = (2.0 / a) * sqrt(max(a * y_lin[i] + c, 0.0));
 }

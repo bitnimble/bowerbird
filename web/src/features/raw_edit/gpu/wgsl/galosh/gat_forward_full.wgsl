@@ -20,7 +20,9 @@ fn gat_forward_full(@builtin(global_invocation_id) id: vec3u) {
   let fy = i32(id.y);
   if (fx >= pc.width || fy >= pc.height) { return; }
 
-  let a = params[P_ALPHA];
+  // Through `ALPHA_MIN`, exactly as `build_inv_lut` reads it: the table undoes this transform,
+  // so the two must divide by the same slope whatever reached the slot.
+  let a = max(params[P_ALPHA], ALPHA_MIN);
   let sq = params[P_SIGMA_SQ];
   let sigma_raw = sqrt(max(sq, 1e-20));
   let y_break = -0.375 * a;

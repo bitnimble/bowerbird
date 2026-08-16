@@ -24,6 +24,13 @@ const P_S_MAX: i32 = 17;
 
 const FLT_MAX: f32 = 3.402823466e+38;
 
+// The smallest shot-noise slope the GAT will divide by. Every kernel here scales by `2/alpha`,
+// so a zero or a NaN in the slot is an infinity in the transform and a NaN in every pixel; this
+// is that guard and nothing more. It is deliberately far below any slope an estimator reports -
+// a frame with no measurable shot noise is a frame the transform still has to code - because
+// `build_inv_lut` is accurate at any alpha now that it stops summing where f32 cannot.
+const ALPHA_MIN: f32 = 1e-8;
+
 /// One invocation's place in a flat sweep, over however many workgroups the host split it
 /// into.
 ///
