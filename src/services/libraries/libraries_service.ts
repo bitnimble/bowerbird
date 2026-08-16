@@ -134,6 +134,8 @@ export class LibrariesService {
       name: request.name == null || request.name === '' ? inferredLibraryName(request.root_path) : request.name,
       ordering: request.ordering,
       ...DEFAULT_LIBRARY_SETTINGS,
+      rendition_source: request.rendition_source,
+      auto_stack: request.auto_stack,
       include_subfolders: request.include_subfolders,
       // A shoot is a subfolder, so mirroring folders the scan will never reach
       // would only ever produce nothing (§4.1).

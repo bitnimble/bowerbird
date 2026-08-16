@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
-import type { Ordering } from '../../api/client';
+import type { Ordering, RenditionSource } from '../../api/client';
 import { useLibrariesStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { Modal } from '../../ui/modal';
@@ -11,6 +11,7 @@ import { FolderBrowser } from '../browse/folder_browser';
 import { FolderBrowserPresenter } from '../browse/folder_browser_presenter';
 import { FolderBrowserStore } from '../browse/folder_browser_store';
 import { ORDERINGS } from '../photos/grid_controls';
+import { RENDITION_SOURCES } from '../photos/renditions';
 import { inferredLibraryName } from './inferred_library_name';
 
 function newBrowser(): { store: FolderBrowserStore; presenter: FolderBrowserPresenter } {
@@ -42,6 +43,8 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   const [ordering, setOrdering] = useState<Ordering>('taken_asc');
   const [includeSubfolders, setIncludeSubfolders] = useState(true);
   const [mirrorShoots, setMirrorShoots] = useState(true);
+  const [renditionSource, setRenditionSource] = useState<RenditionSource>('render');
+  const [autoStack, setAutoStack] = useState(true);
   const [saving, setSaving] = useState(false);
 
   // Reopening starts over rather than resuming wherever the last attempt was
@@ -57,6 +60,8 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     setOrdering('taken_asc');
     setIncludeSubfolders(true);
     setMirrorShoots(true);
+    setRenditionSource('render');
+    setAutoStack(true);
     // Including whatever the last attempt failed with, which is answered by
     // this attempt rather than still standing over it.
     libraries.clearError();
@@ -97,6 +102,8 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
       ordering,
       include_subfolders: includeSubfolders,
       mirror_shoots: mirrorShoots,
+      rendition_source: renditionSource,
+      auto_stack: autoStack,
     });
     setSaving(false);
     // The server found the root unwritable after all - `access(2)` can be wrong,
@@ -184,10 +191,22 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
           <Select label="Sort photos by" options={ORDERINGS} value={ordering} onChange={setOrdering} />
         </div>
 
-        {/* Asked here rather than left to Settings because both decide what the
-            first sync imports, and a library that has already spent an hour
-            building renditions for a folder of decade-old rejects has answered
-            the question the expensive way. */}
+        {/* Asked here rather than left to Settings because every one of them
+            decides what the first import does, and the import starts as the
+            library lands. A library that has already spent an hour building
+            renditions for a folder of decade-old rejects, or that has already
+            stacked them, has answered the question the expensive way. */}
+        <div className="field">
+          <Text variant="label" as="span">
+            Build renditions from
+          </Text>
+          <Select label="Build renditions from" options={RENDITION_SOURCES} value={renditionSource} onChange={setRenditionSource} />
+          <Text variant="mono" as="p">
+            The camera&apos;s JPEG is much faster and carries the colour the camera chose, but it is only as large as the camera
+            saved it. Rendering develops the RAW at full resolution and is the only source that can produce HDR.
+          </Text>
+        </div>
+
         <div className="field">
           <label className="check">
             <input type="checkbox" checked={includeSubfolders} onChange={(e) => setIncludeSubfolders(e.currentTarget.checked)} />
@@ -206,6 +225,17 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
             {includeSubfolders
               ? 'Shoots follow the folders on disk, so the two can never disagree. You can set a folder aside later from the Shoots page.'
               : 'The library is the photographs in the folder above and nothing else, so it has no folders to make shoots from.'}
+          </Text>
+        </div>
+
+        <div className="field">
+          <label className="check">
+            <input type="checkbox" checked={autoStack} onChange={(e) => setAutoStack(e.currentTarget.checked)} />
+            Group similar photos automatically
+          </label>
+          <Text variant="mono" as="p">
+            Frames of the same shot arrive as one tile you can open. Photos imported before this is switched on are not looked
+            at, so turning it on later only groups what comes next.
           </Text>
         </div>
 

@@ -33,33 +33,40 @@ export async function addLibrary(
   if (options.readOnly === true) {
     await page.locator('.ui-modal').getByRole('checkbox', { name: "Don't change anything in this folder" }).check();
   }
+  // Both answered in the dialog rather than PATCHed once the row exists: the import
+  // starts as the library lands (§9.8), so either of them written afterwards is
+  // racing an import that has already acted on the defaults. A rendition source
+  // arrives with a render per photo dispatched, which Stop cannot call back until it
+  // has landed; stacking has already grouped the frames, and §19.4 never revisits a
+  // photograph imported before it was switched off.
+  //
+  // Renditions default to a full HDR render, which is minutes of work per frame on
+  // the fixture and is not what most specs are looking at; they assert against the
+  // embedded JPEG, which the sync lifts straight out of the RAW. The specs that
+  // want the render switch back with `setRenditionSource`.
+  await page.locator('.ui-modal').getByRole('combobox', { name: 'Build renditions from' }).click();
+  await page.getByRole('option', { name: 'Embedded JPEG' }).click();
+  // The fixture is the same ARW copied under several names, so every frame in it
+  // is identical to every other and automatic stacking - correctly - collapses
+  // the whole library into one tile. That is a property of the fixture rather
+  // than of anything most specs are testing, so it is off unless a spec asks for
+  // it; `stacks.spec.ts` is the one that does.
+  if (options.autoStack !== true) {
+    await page.locator('.ui-modal').getByRole('checkbox', { name: 'Group similar photos automatically' }).uncheck();
+  }
   // The dialog's own button carries the same name as the one that opened it, so
   // the confirm has to be scoped to the dialog.
   await page.locator('.ui-modal').getByRole('button', { name: 'Add library' }).click();
   // Creating a library walks the folder before the row can be re-read, so this one is a real
   // wait rather than a render.
   await expect(libraryRow(page, rootPath)).toBeVisible({ timeout: 30_000 });
-  // The fixture is the same ARW copied under several names, so every frame in it
-  // is identical to every other and automatic stacking - correctly - collapses
-  // the whole library into one tile. That is a property of the fixture rather
-  // than of anything most specs are testing, so it is off unless a spec asks for
-  // it; `stacks.spec.ts` is the one that does.
-  //
-  // Written once, not toggled off and back on by the specs that want it: the
-  // control PATCHes and then re-reads the library list, so two of those in
-  // flight together can land in either order and leave the setting wherever the
-  // slower one put it.
-  if (options.autoStack !== true) await setAutoStack(page, rootPath, false);
-  // Renditions default to a full HDR render, which is minutes of work per frame
-  // on the fixture and is not what most specs are looking at; they assert against
-  // the embedded JPEG, which the sync lifts straight out of the RAW. The specs
-  // that want the render switch back with `setRenditionSource`.
-  await setRenditionSource(page, rootPath, 'Embedded JPEG');
-  // Adding a library starts its import (§9.8), which is running under the library's
-  // defaults while the two settings above are being written. Stopped rather than
-  // waited out: what it was building is not what the spec asked for, and its own
-  // sync re-imports whatever this run did not reach.
-  await stopSync(page, rootPath);
+  // Waited out rather than stopped: with the settings above answered in the dialog
+  // the import is building exactly what the spec asked for, and only the grid
+  // tiles - a tenth of a second for the whole library. Stopping it was worth it
+  // while it was minutes of renders nobody wanted, but a stop landing before the
+  // batch starts leaves the library with no descriptors, and stack detection runs
+  // on the settle of the import that *added* the photographs and never again.
+  await waitForIdle(page, rootPath);
 }
 
 // Folders / renditions / stacks sit behind this disclosure so Settings stays
@@ -70,16 +77,6 @@ async function openLibrarySettings(page: Page, rootPath: string): Promise<void> 
     await details.locator('summary').click();
   }
   await expect(details).toHaveAttribute('open', '');
-}
-
-// The per-library "Group similar photos automatically" toggle (§19.4).
-export async function setAutoStack(page: Page, rootPath: string, on: boolean): Promise<void> {
-  await openLibrarySettings(page, rootPath);
-  // Role rather than getByLabel: a Reset button next to a changed value shares
-  // the setting's name in its accessible name and would steal the click.
-  const toggle = libraryRow(page, rootPath).getByRole('checkbox', { name: 'Group similar photos automatically' });
-  if ((await toggle.isChecked()) !== on) await toggle.click();
-  await expect(toggle).toBeChecked({ checked: on });
 }
 
 // Points a library at the pixels its renditions are built from. The control is a
@@ -104,32 +101,32 @@ export async function syncLibrary(page: Page, rootPath: string): Promise<void> {
   await libraryRow(page, rootPath).getByRole('button', { name: /Sync/ }).click();
 }
 
-// Stops whatever the library is doing, and returns once the row offers Sync again
-// - the two share a slot, so a spec that clicked Sync while the run it stopped
-// was still settling would hit the Stop button instead.
-async function stopSync(page: Page, rootPath: string): Promise<void> {
-  const stop = libraryRow(page, rootPath).getByRole('button', { name: 'Stop' });
-  // The status is reported from the poll rather than from the create's answer, so
+// Returns once the row has taken a run up and settled again, which it says by
+// offering Sync once more - Stop and Sync now share a slot, so a spec that clicked
+// Sync while a run was going would hit the Stop button instead.
+//
+// The run is waited for from its *start*, not from its result: a photo count, a
+// tile or a row all appear while the scan is still going, so anything that reads
+// one of those as "finished" is reading a signal the run wrote on its way past.
+async function waitForIdle(page: Page, rootPath: string): Promise<void> {
+  // The status is reported from the poll rather than from the request's answer, so
   // the button takes a tick to appear. Not an assertion: a run short enough to be
-  // over before the first poll needs no stopping.
-  await stop.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {});
-  // The run can end between the check and the click, and Stop is replaced by Sync now when it
-  // does - so a click that misses reaches the same place as one that lands, and only the
-  // assertion below decides whether it did.
-  if (await stop.isVisible()) await stop.click().catch(() => {});
-  await expect(libraryRow(page, rootPath).getByRole('button', { name: 'Sync now' })).toBeVisible({ timeout: 30_000 });
+  // over before the first poll has nothing left to wait for.
+  await libraryRow(page, rootPath)
+    .getByRole('button', { name: 'Stop' })
+    .waitFor({ state: 'visible', timeout: 5_000 })
+    .catch(() => {});
+  await expect(libraryRow(page, rootPath).getByRole('button', { name: 'Sync now' })).toBeVisible({ timeout: 60_000 });
 }
 
 // Waits on the Settings page until the run has finished and the catalogue has
-// been re-read.
-//
-// The library's photo count is the signal because it is written by the same tick
-// that notices the run has finished, so seeing it move means the client has
-// re-read everything that tick re-reads. A spec that navigates away before then
-// takes the grid it happens to catch mid-import: fine when it is only waiting
-// for tiles, which arrive by announcement, and not fine when it is waiting on
-// something that changes the shape of the collection (§19.4.1).
+// been re-read. A spec that navigates away before then takes the grid it happens
+// to catch mid-run: fine when it is only waiting for tiles, which arrive by
+// announcement, and not fine when it is waiting on something that changes the
+// shape of the collection (§19.4.1) - a re-read landing after the grid was opened
+// drops whatever was unfolded in it.
 export async function waitForSyncSettled(page: Page, rootPath: string, photos: number): Promise<void> {
+  await waitForIdle(page, rootPath);
   await expect(libraryRow(page, rootPath)).toContainText(`${photos} photo`, { timeout: 60_000 });
 }
 

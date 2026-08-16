@@ -40,14 +40,23 @@ export class LibrariesRepository {
   insert(
     library: Pick<
       Library,
-      'id' | 'root_path' | 'bin_name' | 'read_only' | 'name' | 'ordering' | 'include_subfolders' | 'mirror_shoots'
+      | 'id'
+      | 'root_path'
+      | 'bin_name'
+      | 'read_only'
+      | 'name'
+      | 'ordering'
+      | 'rendition_source'
+      | 'auto_stack'
+      | 'include_subfolders'
+      | 'mirror_shoots'
     > & { identity?: BinIdentity },
   ): void {
     this.db
       .query(
-        `INSERT INTO libraries (id, root_path, bin_name, read_only, name, ordering, include_subfolders, mirror_shoots,
-           bin_dev, bin_ino, bin_birthtime)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO libraries (id, root_path, bin_name, read_only, name, ordering, rendition_source, auto_stack,
+           include_subfolders, mirror_shoots, bin_dev, bin_ino, bin_birthtime)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         library.id,
@@ -56,6 +65,8 @@ export class LibrariesRepository {
         library.read_only ? 1 : 0,
         library.name,
         library.ordering,
+        library.rendition_source,
+        library.auto_stack ? 1 : 0,
         library.include_subfolders ? 1 : 0,
         library.mirror_shoots ? 1 : 0,
         library.identity?.dev ?? null,

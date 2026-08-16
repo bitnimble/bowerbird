@@ -1,13 +1,13 @@
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
 import { CircleStop, FolderPlus, Image, RefreshCw, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
-import type { Library, Settings, UpdateSettingsRequest, ViewerRenditionMode, RenditionSource } from '../../api/client';
+import type { Library, Settings, UpdateSettingsRequest, ViewerRenditionMode } from '../../api/client';
 import { serverOrigin, setServerOrigin } from '../../api/transport';
 import { describe } from '../../errors';
 import { useAppSettingsStore, useLibrariesStore, usePresenters, useSyncStore } from '../../app/stores_context';
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
 import { libraryLabel } from '../libraries/library_label';
-import { renditionLabel } from '../photos/renditions';
+import { RENDITION_SOURCES, renditionLabel } from '../photos/renditions';
 import { SyncStrip } from '../sync/sync_strip';
 import { Button } from '../../ui/button';
 import { Heading } from '../../ui/heading';
@@ -171,13 +171,6 @@ const LibraryName = observer(function LibraryName({ library }: { library: Librar
     </span>
   );
 });
-
-// Named as the viewer names the rendition each one produces, so the setting and
-// the picker are visibly the same two choices.
-const SOURCES: Option<RenditionSource>[] = [
-  { value: 'embedded', label: renditionLabel('embedded') },
-  { value: 'render', label: renditionLabel('full') },
-];
 
 // What this browser and display say they can do. Reported, never enforced: HDR
 // support is negotiated between the browser, the compositor and the monitor's
@@ -373,7 +366,7 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
       >
         <Select
           label="Build renditions from"
-          options={SOURCES}
+          options={RENDITION_SOURCES}
           value={library.rendition_source}
           onChange={(source) => void libraries.setRenditionSource(library.id, source)}
         />

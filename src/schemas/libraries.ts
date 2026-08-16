@@ -25,11 +25,17 @@ export const CreateLibraryRequestSchema = z.object({
   // parent) and that name is stored, not held as a placeholder.
   name: z.string().trim().optional(),
   ordering: OrderingSchema.default('taken_asc'),
-  // Asked here rather than left to Settings because both change what the first
-  // sync imports, and a library that has already built renditions for a folder of
-  // decade-old rejects has answered the question the expensive way (§4.1).
+  // Asked here rather than left to Settings because every one of them decides
+  // what the first import does, and the import begins as the row lands (§9.8) -
+  // so any of them PATCHed after the create is a setting the import has already
+  // answered for itself. A rendition source arrives with a render per photo
+  // dispatched, which Stop cannot call back until it has landed; stacking has
+  // already grouped the frames it was going to group, and photographs imported
+  // before it was switched on are never looked at again (§19.4).
   include_subfolders: z.boolean().default(true),
   mirror_shoots: z.boolean().default(true),
+  rendition_source: RenditionSourceSchema.default('render'),
+  auto_stack: z.boolean().default(true),
 });
 export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
 

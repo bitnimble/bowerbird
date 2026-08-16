@@ -447,6 +447,10 @@ p.ui-text--mono {
   padding: 16px;
   min-width: 320px;
   z-index: 51;
+  /* Without this a dialog taller than the window puts its own Cancel and confirm
+     off-screen, where nothing can reach them and Escape is the only way out. */
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
 }
 
 .dialog {

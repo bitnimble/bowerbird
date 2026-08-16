@@ -86,6 +86,8 @@ test('creating a library imports its photographs without a second request', asyn
     ordering: 'taken_desc',
     include_subfolders: true,
     mirror_shoots: false,
+    rendition_source: 'render',
+    auto_stack: true,
   });
   libraryId = library.id;
   await settled;
@@ -113,6 +115,8 @@ test('creating a library over a folder already at the bin name imports its photo
     ordering: 'taken_desc',
     include_subfolders: true,
     mirror_shoots: false,
+    rendition_source: 'render',
+    auto_stack: true,
   });
   libraryId = library.id;
   await settled;
