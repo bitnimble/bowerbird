@@ -23,6 +23,7 @@ function photo(id: string, stackId: string | null = null, stackSize = 1): PhotoS
     triage: 'untriaged',
     rating: 0,
     is_missing: false,
+    is_offloaded: false,
     is_deleted: false,
     is_hidden: false,
     tile_built_at: null,

@@ -10,6 +10,7 @@ import { runMigrations } from '../../../db/migrate';
 import { AssemblyRecipeSchema, type AssemblyRecipe, type Seams } from '../../../schemas/assembly';
 import { DEFAULT_SETTINGS, type Settings } from '../../../schemas/settings';
 import { dataPathForLibraryId, draftLayerPath, draftVolumePath } from '../../../utils/paths';
+import { localOriginals } from '../../blobs/originals_for_testing';
 import { LibrariesRepository } from '../../libraries/libraries_repository';
 import { PhotoEditsRepository } from '../../photo_edits/photo_edits_repository';
 import { PhotoCompositesRepository } from '../../photos/composites/photo_composites_repository';
@@ -246,6 +247,7 @@ beforeEach(() => {
     // so a render that could not read them would compose the whole canvas.
     new ProcessingService(photoProcessing, photoPaths, photoListing, settings(), (photoId) => edits.docFor(photoId)),
     edits,
+    localOriginals(),
   );
 });
 
@@ -333,6 +335,7 @@ describe('CompositesService.merge', () => {
       renditions,
       processing,
       edits,
+      localOriginals(),
     );
 
     await service.mergePanorama(['photo001', 'photo002']);

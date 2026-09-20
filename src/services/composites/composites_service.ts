@@ -30,6 +30,7 @@ import {
 } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import { deleteGeneratedFilesFor } from '../maintenance/prune_service';
+import type { Originals } from '../blobs/originals';
 import type { PhotoEditsRepository } from '../photo_edits/photo_edits_repository';
 import type { PhotoCompositesRepository } from '../photos/composites/photo_composites_repository';
 import type { PhotoMetadataRepository } from '../photos/metadata/photo_metadata_repository';
@@ -133,7 +134,24 @@ export class CompositesService {
     private readonly processing: ProcessingService,
     /** Where the framing the align found is written, the composite being a photograph like any other. */
     private readonly edits: PhotoEditsRepository,
+    /** The way to a frame's bytes, which may be on a backup rather than on this disk (§14.4). */
+    private readonly originals: Originals,
   ) {}
+
+  /**
+   * Every frame on this disk before anything opens one.
+   *
+   * A frame this device has given back to a backup (§14.5) has a path that resolves and no file
+   * behind it, which reaches a decoder as a failure rather than as a wait. Asked once, at the top
+   * of each flow that is about to read them, rather than per decode: a merge opens every frame
+   * several times over, and `open` on a file that is here is a stat.
+   */
+  private async bringFrames(photoIds: readonly string[], library: Library): Promise<void> {
+    for (const photoId of photoIds) {
+      const frame = this.photoPaths.getBasicById(photoId);
+      if (frame != null) await this.originals.open(library, frame);
+    }
+  }
 
   /**
    * A selection into a panorama: align it, write the photograph, build what it owes.
@@ -163,6 +181,7 @@ export class CompositesService {
   private async mergeNow(photoIds: readonly string[]): Promise<CompositePhoto> {
     const frames = this.framesOf(photoIds);
     const { library, sources } = frames;
+    await this.bringFrames(photoIds, library);
     const watching = { photoId: null, photoIds: sources.map((source) => source.photoId) };
     // **One worker for the three jobs.** Each of them opens a GPU device and compiles the shader
     // modules before it can start - half a second, measured - so a worker apiece spent more of the
@@ -229,7 +248,10 @@ export class CompositesService {
       fraction: 0,
     };
     this.keep(job);
-    void this.serially(() => this.analyseNow(job, sources, library)).then(
+    void this.serially(async () => {
+      await this.bringFrames(job.photoIds, library);
+      return this.analyseNow(job, sources, library);
+    }).then(
       (carved) => {
         if (this.cancelledJobs.delete(job.id)) {
           job.status = 'cancelled';
@@ -417,7 +439,7 @@ export class CompositesService {
    * left has been reaped and the tiles are the seams.
    */
   async solveSeams(recipe: AssemblyRecipe, picks: number[][]): Promise<(Seams | null)[] | null> {
-    const { library } = this.framesFor(recipe);
+    const { library } = await this.framesFor(recipe);
     return this.solved(recipe, picks, library);
   }
 
@@ -429,7 +451,7 @@ export class CompositesService {
    * should not hold the device again.
    */
   async previewOf(recipe: AssemblyRecipe): Promise<string> {
-    const { library } = this.framesFor(recipe);
+    const { library } = await this.framesFor(recipe);
     // The page has solved these seams already and posts them; only a set it could not solve costs
     // a solve here, which is what keeps a preview one render rather than a solve and a render.
     const held = recipe.seams;
@@ -502,7 +524,7 @@ export class CompositesService {
   }
 
   private async commitNow(asked: AssemblyRecipe): Promise<CompositePhoto> {
-    const { library, sources } = this.framesFor(asked);
+    const { library, sources } = await this.framesFor(asked);
     const recipe = await this.seamed(asked, library);
     const photoId = this.photoComposites.insertComposite({
       libraryId: library.id,
@@ -539,7 +561,7 @@ export class CompositesService {
     if (photo?.recipe.kind !== 'assembly') {
       throw new AppError('NOT_FOUND', `${photoId} is not an assembly to update`);
     }
-    const { library, sources } = this.framesFor(asked);
+    const { library, sources } = await this.framesFor(asked);
     const recipe = await this.seamed(asked, library);
 
     this.photoComposites.updateRecipe(photoId, recipe);
@@ -570,11 +592,15 @@ export class CompositesService {
   }
 
   /** The library a recipe's frames are in, and the files behind them - every one re-checked. */
-  private framesFor(recipe: AssemblyRecipe): { library: Library; sources: CompositeJobSource[] } {
+  private async framesFor(recipe: AssemblyRecipe): Promise<{ library: Library; sources: CompositeJobSource[] }> {
     const first = recipe.sources[0];
     if (first == null) throw new AppError('VALIDATION_ERROR', 'this recipe names no frames');
     const library = this.libraries.getById(this.frameOf(first.photoId).library_id);
     if (library == null) throw new AppError('NOT_FOUND', 'that library is gone');
+    await this.bringFrames(
+      recipe.sources.map((source) => source.photoId),
+      library,
+    );
     return { library, sources: recipe.sources.map((source) => this.sourceOf(source.photoId, library)) };
   }
 

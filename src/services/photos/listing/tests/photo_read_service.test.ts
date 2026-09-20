@@ -9,6 +9,7 @@ import type { PhotoDetail, PhotoSummary } from '../../../../schemas/photos';
 import { fileRecipe } from '../../../../schemas/recipes';
 import type { Shoot } from '../../../../schemas/shoots';
 import type { AlbumsRepository } from '../../../albums/albums_repository';
+import { localOriginals } from '../../../blobs/originals_for_testing';
 import type { LibrariesRepository } from '../../../libraries/libraries_repository';
 import type { ProcessingService } from '../../../processing/pipeline/processing_service';
 import type { SettingsRepository } from '../../../settings/settings_repository';
@@ -77,6 +78,7 @@ function build(over: {
     photoProcessing,
     libraries,
     processing,
+    localOriginals(),
     undefined,
     null,
   );

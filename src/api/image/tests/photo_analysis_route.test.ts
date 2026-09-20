@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { PathSegment, route } from '../../../schemas/route';
 import { writePhotoAnalysis } from '../../../services/processing/analysis/photo_analysis_store';
 import { dataPathForLibraryId } from '../../../utils/paths';
+import { localOriginals } from '../../../services/blobs/originals_for_testing';
 import { ImageApi } from '../image_api';
 
 // Keyed by the library's *id*, which is what `getDataPath` reads - a `data_path` on the mock would
@@ -18,7 +19,8 @@ function serving(libraryId: string): Hono {
       {} as ConstructorParameters<typeof ImageApi>[0],
       photos as unknown as ConstructorParameters<typeof ImageApi>[1],
       null,
-      {} as ConstructorParameters<typeof ImageApi>[3],
+      localOriginals(),
+      {} as ConstructorParameters<typeof ImageApi>[4],
     ).routes,
   );
   return app;

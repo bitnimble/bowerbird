@@ -83,7 +83,7 @@ for (const top of readdirSync(ROOT)) {
 
 // Files the app writes rather than files the repo holds, which a comment may name for the
 // same reasons and which no checkout will ever contain.
-const AT_RUNTIME = new Set(['config.json', 'release.yml']);
+const AT_RUNTIME = new Set(['.bowerbird-backup.json', 'config.json', 'release.yml']);
 
 function named(token: string): boolean {
   // Not a path of ours: somebody else's tree, a URL, a glob, a sentence.

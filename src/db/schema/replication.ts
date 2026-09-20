@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { check, index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { oneOf } from './checks';
 import { libraries } from './libraries';
 import { photos } from './photos';
 
@@ -26,6 +27,10 @@ export const replicationLibraries = sqliteTable('replication_libraries', {
   // replicated unit: it is a statement about one device's disk, and a laptop that wants only the
   // catalogue must not have that answer overwritten by the desktop's.
   syncOriginals: integer('sync_originals').notNull().default(1),
+  // What this library's originals may take up on this disk before the cull gives the oldest of
+  // them back (§14.5). Null is no ceiling, which is every library until somebody sets one, and it
+  // is as local as the flag above for the same reason.
+  localBudgetBytes: integer('local_budget_bytes'),
 });
 
 // One row per replicated unit, holding the stamp it currently carries: the index that answers
@@ -88,6 +93,8 @@ export const replicationPeerVectors = sqliteTable(
   (t) => [primaryKey({ columns: [t.libraryId, t.peerId, t.origin] })],
 );
 
+export const PEER_KINDS = ['active', 'passive'] as const;
+
 // The peers this install has paired with, per library: the record every replication request's
 // peer_id is checked against. An interlock against pairing the wrong library, not authentication
 // (docs/replication.md §6.5, §11.1); the trusted network is the security boundary.
@@ -101,16 +108,23 @@ export const replicationPeers = sqliteTable(
     name: text('name').notNull(),
     pairedAt: text('paired_at').notNull(),
     lastReplicatedAt: text('last_replicated_at'),
+    // Whether the other side runs Bowerbird (§14.1). An active peer merges a catalogue and answers
+    // for its own disk; a passive one is a directory on a drive or a share, and every fact about
+    // what it holds is this device's own reading of it.
+    kind: text('kind').notNull().default('active'),
     // Where a peer can be reached, on the side that has to reach it. Only one side ever does: a
     // laptop dials the server it paired with, and the server never dials the laptop, which is what
     // lets a laptop behind NAT open nothing (§6.4). NULL is therefore ordinary rather than missing.
+    //
+    // A passive peer's is the absolute path of its directory, which is the whole of how it is
+    // reached.
     address: text('address'),
     // Why the last session with this peer did not happen (§8.6). Replication that has quietly
     // stopped working is the failure the trip depends on seeing.
     lastError: text('last_error'),
     wantsOriginals: integer('wants_originals').notNull().default(1),
   },
-  (t) => [primaryKey({ columns: [t.libraryId, t.peerId] })],
+  (t) => [primaryKey({ columns: [t.libraryId, t.peerId] }), check('replication_peers_kind', oneOf(t.kind, PEER_KINDS))],
 );
 
 // A materialisation that found its target occupied (§7.7): the entry is skipped, never overwritten

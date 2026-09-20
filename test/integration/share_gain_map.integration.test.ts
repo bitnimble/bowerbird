@@ -8,6 +8,7 @@ import { rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Library } from '../../src/schemas/libraries';
 import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
+import { localOriginals } from '../../src/services/blobs/originals_for_testing';
 import { ExportService } from '../../src/services/processing/exports/export_service';
 import { ProcessingService } from '../../src/services/processing/pipeline/processing_service';
 import { _for_testing_deltaEToPreview } from '../../src/services/processing/rawshim/rawshim_for_testing';
@@ -60,7 +61,7 @@ async function shared(lib: Library): Promise<{ rendition: string; jpeg: Uint8Arr
   const service = processing();
   const rendition = getRenditionPath(lib, PHOTO, 'full', lib.rendition_hdr);
   await service.renderOne(FIXTURE, PHOTO, lib, 'full', lib.rendition_hdr);
-  const jpeg = await new ExportService({} as never, service).shareable(PHOTO, rendition, lib.rendition_hdr);
+  const jpeg = await new ExportService({} as never, service, localOriginals()).shareable(PHOTO, rendition, lib.rendition_hdr);
   return { rendition, jpeg };
 }
 

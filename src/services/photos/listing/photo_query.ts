@@ -94,8 +94,14 @@ const COMPOSITE_KIND = `CASE WHEN json_extract(photos.recipe, '$.kind') IN ('pan
 // cameras' pictures carry as well as a render does, where a *frame's* is an edit no JPEG of that
 // frame has in it (`renditions::sourceFor`).
 export function summaryColumns(): string {
-  return `photos.id, photos.library_id, photos.shoot_id, ${COMPOSITE_KIND}, ${PATH_OF} AS file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, ${TILE_BUILT_AT}, ${RENDITIONS_BUILT_AT}, photos.viewer_rendition, photos.triage, photos.rating, photos.is_missing, photos.is_deleted, ${hiddenIs('photos.', true)} AS is_hidden, photos.stack_id, EXISTS (SELECT 1 FROM photo_edits e WHERE e.photo_id = photos.id) AS is_edited, ${INPUTS_EDITED('photos.')} AS frames_edited`;
+  return `photos.id, photos.library_id, photos.shoot_id, ${COMPOSITE_KIND}, ${PATH_OF} AS file_path, photos.width, photos.height, photos.date_taken, photos.date_added, photos.date_updated, ${TILE_BUILT_AT}, ${RENDITIONS_BUILT_AT}, photos.viewer_rendition, photos.triage, photos.rating, photos.is_missing, ${IS_OFFLOADED} AS is_offloaded, photos.is_deleted, ${hiddenIs('photos.', true)} AS is_hidden, photos.stack_id, EXISTS (SELECT 1 FROM photo_edits e WHERE e.photo_id = photos.id) AS is_edited, ${INPUTS_EDITED('photos.')} AS frames_edited`;
 }
+
+// Whether the original is on a backup rather than on this device (docs/replication.md §14.5), which
+// is what separates the two halves of `is_missing`: a file nobody can find, and one this device
+// gave back on purpose and can fetch again.
+const IS_OFFLOADED = `(photos.is_missing = 1 AND EXISTS (
+    SELECT 1 FROM backup_locations b WHERE b.library_id = photos.library_id AND b.photo_id = photos.id))`;
 
 // How wide a stack counts in a listing (§19.5.2).
 //
@@ -230,6 +236,7 @@ export function detailColumns(): string {
     ${owesRendition(FULL_VARIANT_OF_LIBRARY, 'photos.id')} AS needs_renditions,
     photos.processing_error,
     photos.latitude, photos.longitude, photos.rating, photos.triage, photos.is_missing,
+    ${IS_OFFLOADED} AS is_offloaded,
     photos.is_deleted, ${hiddenIs('photos.', true)} AS is_hidden,
     photos.notes, photos.file_size, photos.iso, photos.shutter_speed, photos.aperture,
     photos.focal_length, photos.camera_make, photos.camera_model, photos.lens_model, photos.rendition_source, photos.viewer_rendition,
@@ -261,6 +268,7 @@ export interface SummaryRow {
   triage: string | null;
   rating: number;
   is_missing: number;
+  is_offloaded: number;
   is_deleted: number;
   is_hidden: number;
 }
@@ -322,6 +330,7 @@ export function toSummary(row: SummaryRow, ordering: Ordering): UnresolvedSummar
     triage: toTriage(row.triage),
     rating: row.rating,
     is_missing: row.is_missing === 1,
+    is_offloaded: row.is_offloaded === 1,
     is_deleted: row.is_deleted === 1,
     is_hidden: row.is_hidden === 1,
     date_updated: row.date_updated,
@@ -391,6 +400,7 @@ export function toDetail(row: DetailRow, albumIds: string[]): UnresolvedDetail {
     rating: row.rating,
     triage: toTriage(row.triage),
     is_missing: row.is_missing === 1,
+    is_offloaded: row.is_offloaded === 1,
     is_deleted: row.is_deleted === 1,
     is_hidden: row.is_hidden === 1,
     notes: row.notes,

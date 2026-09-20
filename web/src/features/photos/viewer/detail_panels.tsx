@@ -282,7 +282,8 @@ export const RawPanel = observer(function RawPanel({ photoId, defaultOpen, style
           pending(
             (p) =>
               `${
-                p.is_missing ? PhotoDetailStrings.stateMissing()
+                p.is_offloaded ? PhotoDetailStrings.stateOnBackup()
+                : p.is_missing ? PhotoDetailStrings.stateMissing()
                 : p.is_deleted ? PhotoDetailStrings.stateBinned()
                 : PhotoDetailStrings.stateOk()
               }${stageLabel(p)}`,

@@ -18,7 +18,9 @@ import { StackMembership } from '../../stacks/stack_membership';
 import { peerId } from '../../replication/stamps';
 import { BlobLocations } from '../blob_locations';
 import { stagePath, stagedSize, stagingDir } from '../blob_store';
-import { TransferService, type PeerTransport } from '../transfer_service';
+import { BackupLocations } from '../../backup/backup_locations';
+import type { PeerTransport } from '../peer';
+import { TransferService } from '../transfer_service';
 
 // Two real replicas in one process: real temp directories, real files, and the
 // blob endpoints answering each other through Hono's request(), which is the
@@ -82,7 +84,16 @@ function makePeer(name: string): Peer {
   };
   const built: string[] = [];
   const build = (ids: string[]): void => void built.push(...ids);
-  const transfers = new TransferService(db, photoPaths, photoMetadata, libraries, locations, transport, build);
+  const transfers = new TransferService(
+    db,
+    photoPaths,
+    photoMetadata,
+    libraries,
+    locations,
+    new BackupLocations(db),
+    transport,
+    build,
+  );
   const api = new BlobsApi(photoPaths, photoMetadata, photoProcessing, libraries, locations, transfers, build);
   applyErrorHandler(api.routes);
   const id = peerId(db);
@@ -486,10 +497,19 @@ describe('queue durability', () => {
     const item = a.transfers.list(LIB)[0]!;
     a.db.query("UPDATE blob_transfers SET state = 'active' WHERE id = ?").run(item.id);
 
-    const restarted = new TransferService(a.db, a.photoPaths, a.photoMetadata, a.libraries, a.locations, {
-      canReach: (peer) => net.has(peer),
-      request: (peer, reqPath, init) => Promise.resolve(net.get(peer)!.request(reqPath, init)),
-    });
+    const restarted = new TransferService(
+      a.db,
+      a.photoPaths,
+      a.photoMetadata,
+      a.libraries,
+      a.locations,
+      new BackupLocations(a.db),
+      {
+        canReach: (peer: string) => net.has(peer),
+        request: (peer: string, reqPath: string, init?: RequestInit) =>
+          Promise.resolve(net.get(peer)!.request(reqPath, init)),
+      },
+    );
     expect(restarted.get(item.id).state).toBe('queued');
     await restarted.drain();
     expect(restarted.get(item.id).state).toBe('done');

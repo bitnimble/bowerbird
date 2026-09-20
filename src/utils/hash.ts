@@ -19,3 +19,21 @@ export function computeFileHash(filePath: string, metadata: FileMetadata): strin
 
   return createHash('sha1').update(input).digest('hex');
 }
+
+/**
+ * SHA-256 of a file's bytes, streamed: the `content_hash` of docs/replication.md §7.1.
+ *
+ * Here rather than beside the transfers that mostly use it because the one deletion of an original
+ * this app makes proves its own case with it (`deletions.ts`), and that module answers to nothing
+ * in `services/`.
+ */
+export async function contentHash(filePath: string): Promise<string> {
+  const hasher = new Bun.CryptoHasher('sha256');
+  const reader = Bun.file(filePath).stream().getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    hasher.update(value);
+  }
+  return hasher.digest('hex');
+}

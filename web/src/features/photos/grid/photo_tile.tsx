@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { ChevronLeft, ChevronUp, EyeOff, Layers } from 'lucide-react';
+import { ChevronLeft, ChevronUp, EyeOff, Layers, Snowflake } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -322,9 +322,20 @@ export const PhotoTile = observer(function PhotoTile({
           />
 
           <div {...stylex.props(tile.badges)}>
-            {photo.is_missing && (
-              <span {...stylex.props(tile.badge, tile.missing)}>{PhotoDetailStrings.stateMissing()}</span>
-            )}
+            {/* A photograph with no local copy has not gone - the RAW comes back when something
+                needs it (§14.5) - so the snowflake, never the word that says the opposite. */}
+            {photo.is_offloaded ?
+              <span
+                {...stylex.props(tile.badge, tile.onBackup)}
+                aria-label={PhotoDetailStrings.stateOnBackup()}
+                title={PhotoDetailStrings.stateOnBackupHint()}
+              >
+                <Snowflake size={BADGE_ICON} />
+              </span>
+            : photo.is_missing && (
+                <span {...stylex.props(tile.badge, tile.missing)}>{PhotoDetailStrings.stateMissing()}</span>
+              )
+            }
             {photo.is_deleted && (
               <span {...stylex.props(tile.badge, tile.deleted)}>{PhotoDetailStrings.stateBinned()}</span>
             )}

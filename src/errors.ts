@@ -16,6 +16,10 @@ export type ErrorCode =
   // tolerates, so nothing may be stamped until the system time is fixed (§2.2 of
   // docs/replication.md).
   | 'CLOCK_SKEW'
+  // The thing asked for is somewhere this device cannot read at the moment - an original on a
+  // backup drive nobody has plugged in (§14.4). Not NOT_FOUND: the file exists, and the answer
+  // changes when the drive does, so a client says "plug it in" rather than "it is gone".
+  | 'UNAVAILABLE'
   | 'INTERNAL_ERROR';
 
 const STATUS: Record<ErrorCode, ContentfulStatusCode> = {
@@ -26,6 +30,7 @@ const STATUS: Record<ErrorCode, ContentfulStatusCode> = {
   IO_ERROR: 500,
   SYNC_IN_PROGRESS: 409,
   CLOCK_SKEW: 500,
+  UNAVAILABLE: 503,
   INTERNAL_ERROR: 500,
 };
 

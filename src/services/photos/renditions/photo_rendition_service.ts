@@ -3,7 +3,8 @@ import { AppError } from '../../../errors';
 import type { Library } from '../../../schemas/libraries';
 import type { Job } from '../../../schemas/jobs';
 import { deleteGeneratedFile } from '../../../utils/deletions';
-import { getDataPath, getRenditionPath, originalPathOf } from '../../../utils/paths';
+import { getDataPath, getRenditionPath } from '../../../utils/paths';
+import type { Originals } from '../../blobs/originals';
 import { isComposite } from '../../../schemas/recipes';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import { renditionCurrent, type RenditionFetchService } from '../../blobs/rendition_fetch_service';
@@ -24,6 +25,7 @@ export class PhotoRenditionService {
     private readonly photoProcessing: PhotoProcessingRepository,
     private readonly libraries: LibrariesRepository,
     private readonly processing: ProcessingService,
+    private readonly originals: Originals,
     private readonly extract: (filePath: string) => Promise<FileMetadata> = extractMetadata,
     private readonly fetchThrough: RenditionFetchService | null,
   ) {}
@@ -54,8 +56,11 @@ export class PhotoRenditionService {
   
         // A synthesised row has no header to re-read: what a recipe composes takes its metadata
         // from the sources, so the way to refresh one is to compose it again.
-        const filePath = originalPathOf(library, photo);
-        if (filePath == null || !existsSync(filePath)) continue;
+        //
+        // Whatever is here, and nothing fetched: this walks a selection, and a header re-read is
+        // not worth pulling a library back off a drive one file at a time.
+        const filePath = this.originals.here(library, photo);
+        if (filePath == null) continue;
         try {
           const metadata = await this.extract(filePath);
           this.photoMetadata.updateMetadata(photoId, {
@@ -106,8 +111,11 @@ export class PhotoRenditionService {
       if (!force && !this.stale(photo.id, rendition, hdr) && existsSync(getRenditionPath(library, photo.id, rendition, hdr))) {
         return null;
       }
-      const raw = originalPathOf(library, photo);
-      if (raw == null || !existsSync(raw)) return null;
+      // Here only: the answer is whether *this* device can hand a client a job to render, and a
+      // fetch started under it would leave the browser waiting on a drive with nothing said.
+      // `buildRendition`, which the caller falls back to, is where an offloaded original comes
+      // back.
+      if (this.originals.here(library, photo) == null) return null;
       return this.processing.renditionCommand(photo.id, library, rendition, hdr, force);
     }
   /** Encodes and files the picture a client rendered of {@link renditionJob}'s job. */
@@ -147,8 +155,9 @@ export class PhotoRenditionService {
       // being there. Built instead it would be a render of the RAW filed under the one name that
       // promises it is not one.
       if (rendition === 'embedded' && !isComposite(photo.recipe)) {
-        const raw = originalPathOf(library, photo);
-        if (raw == null || !existsSync(raw)) throw new AppError('NOT_FOUND', `nothing on this device can build ${photo.id}`);
+        if ((await this.originals.open(library, photo)) == null) {
+          throw new AppError('NOT_FOUND', `nothing on this device can build ${photo.id}`);
+        }
         return;
       }
   
@@ -162,6 +171,9 @@ export class PhotoRenditionService {
       // The rebuild's delete is in here rather than shared with the file path below, which must not
       // reach one until after the peer fall-back has had its go.
       if (isComposite(photo.recipe)) {
+        // Every frame back on this disk before the merge is asked for: the renderer takes paths,
+        // and one frame offloaded would otherwise be a decode failure rather than a picture.
+        await this.originals.openAll(library, photo);
         if (rebuild) await deleteGeneratedFile(getDataPath(library), output);
         const startedAt = Date.now();
         // False where a frame has gone: the recipe is still true and the picture may be makeable
@@ -174,8 +186,10 @@ export class PhotoRenditionService {
         return;
       }
   
-      const raw = originalPathOf(library, photo);
-      if (raw == null || !existsSync(raw)) {
+      // Fetched back from the backup if this device has given its copy up (§14.4), which is what
+      // makes an offloaded photograph open at all - slowly, once, and then as any other does.
+      const raw = await this.originals.open(library, photo);
+      if (raw == null) {
         // No original to build from: a peer's built copy is the §7.9 fall-back, cached at
         // exactly the path this build would have written. Reached before any delete, so a
         // device that cannot rebuild still holds what it had: deleting first and asking a

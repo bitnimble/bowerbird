@@ -38,11 +38,17 @@ import { StacksRepository } from './services/stacks/stacks_repository';
 import { StackMembership } from './services/stacks/stack_membership';
 import { BlobsApi } from './api/blobs/blobs_api';
 import { ReplicationApi } from './api/replication/replication_api';
+import { BackupApi } from './api/backup/backup_api';
 import { BlobLocations } from './services/blobs/blob_locations';
+import { Originals } from './services/blobs/originals';
 import { TransferService } from './services/blobs/transfer_service';
 import { RenditionFetchService } from './services/blobs/rendition_fetch_service';
+import { BackupLocations } from './services/backup/backup_locations';
+import { Cull } from './services/backup/cull';
+import { Mirror } from './services/backup/mirror';
+import { PassivePeers } from './services/backup/passive_peers';
 import { extractMetadata } from './services/processing/analysis/metadata';
-import { PairedPeers } from './services/replication/peer_transport';
+import { PairedPeers, Peers } from './services/replication/peer_transport';
 import type { Library } from './schemas/libraries';
 import { PathSegment, route } from './schemas/route';
 import { forgetOrphanedLibraries } from './services/replication/gc';
@@ -125,6 +131,40 @@ const stacksRepo = new StacksRepository(db);
 const syncLocksRepo = new SyncLocksRepository(db);
 const photoEditsRepo = new PhotoEditsRepository(db);
 
+// Moving the originals themselves (§7). The queue is durable, so a restart takes
+// up whatever a kill interrupted rather than losing it.
+const blobLocations = new BlobLocations(db);
+const backupLocations = new BackupLocations(db);
+// Both kinds of peer behind one transport, so the transfer queue never learns which it is talking
+// to (§14.1): a device over HTTP, a backup folder off its mount.
+const passivePeers = new PassivePeers(db, librariesRepo, photoPathsRepo, photoMetadataRepo, backupLocations);
+const peers = new Peers(passivePeers, new PairedPeers(db));
+// An original that lands is a tile and a rendition owed, and asking for them here
+// is what makes a badged placeholder heal into a picture without anyone rescanning
+// (§7.8). Not awaited: it is minutes of GPU work behind a transfer that has
+// finished.
+//
+// Late-bound like the composite resolver below, and for the same reason the other way round: the
+// pipeline is built on the originals, which are built on this queue, so what the queue holds has
+// to be a call at the moment a transfer lands rather than a value at construction.
+const buildArrived = (photoIds: string[]): void => {
+  void processingService.processUnprocessed({ photoIds }).catch((err: unknown) => {
+    log.warn('could not build renditions for an original that arrived', { err: String(err) });
+  });
+};
+const transferService = new TransferService(
+  db,
+  photoPathsRepo,
+  photoMetadataRepo,
+  librariesRepo,
+  blobLocations,
+  backupLocations,
+  peers,
+  buildArrived,
+);
+// The one way to a photograph's bytes, and the only thing that knows they might not be on this
+// disk (§14.4).
+const originals = new Originals(db, photoPathsRepo, transferService, backupLocations);
 // The composite resolver is set once `CompositesService` exists, which is built on this one: the
 // queue asks it for a recipe with its frames resolved, and until then finds no composites.
 const processingService: ProcessingService = new ProcessingService(
@@ -142,17 +182,13 @@ const eventsApi = new EventsApi(processingService);
 const replicationChanged = (libraryId: string): void => eventsApi.announce('replication', { library_id: libraryId });
 
 const librariesService = new LibrariesService(librariesRepo, photoScanRepo, photoPathsRepo);
-// Moving the originals themselves (§7). The queue is durable, so a restart takes
-// up whatever a kill interrupted rather than losing it.
-const blobLocations = new BlobLocations(db);
-const pairedPeers = new PairedPeers(db);
 const renditionFetch = new RenditionFetchService(
   db,
   photoPathsRepo,
   photoProcessingRepo,
   librariesRepo,
   blobLocations,
-  pairedPeers,
+  peers,
 );
 const photoRenditionService = new PhotoRenditionService(
   photoPathsRepo,
@@ -161,6 +197,7 @@ const photoRenditionService = new PhotoRenditionService(
   photoProcessingRepo,
   librariesRepo,
   processingService,
+  originals,
   extractMetadata,
   renditionFetch,
 );
@@ -220,24 +257,16 @@ const replicationRunner = new ReplicationRunner(
   replicationChanged,
 );
 const replicationService = new ReplicationService(db, blobLocations, Date.now, rebuildEdited, replicationChanged);
-// An original that lands is a tile and a rendition owed, and asking for them here
-// is what makes a badged placeholder heal into a picture without anyone rescanning
-// (§7.8). Not awaited: it is minutes of GPU work behind a transfer that has
-// finished.
-const buildArrived = (photoIds: string[]): void => {
-  void processingService.processUnprocessed({ photoIds }).catch((err: unknown) => {
-    log.warn('could not build renditions for an original that arrived', { err: String(err) });
+const mirror = new Mirror(db, librariesRepo, backupLocations, transferService, new Cull(db, transferService));
+// Every import is a scan, so this is what covers "back up what just arrived" as well as what a
+// rename or a bin move owes the mirror (§14.3). The periodic pass is the backstop.
+scanService.onSettled((libraryId, changed) => {
+  if (!changed) return;
+  void mirror.run(libraryId).catch((err: unknown) => {
+    log.warn('a backup pass failed after a scan', { library: libraryId, err: String(err) });
   });
-};
-const transferService = new TransferService(
-  db,
-  photoPathsRepo,
-  photoMetadataRepo,
-  librariesRepo,
-  blobLocations,
-  pairedPeers,
-  buildArrived,
-);
+});
+mirror.start();
 const blobsApi = new BlobsApi(
   photoPathsRepo,
   photoMetadataRepo,
@@ -293,16 +322,24 @@ const compositesService: CompositesService = new CompositesService(
   renditionsRepo,
   processingService,
   photoEditsRepo,
+  originals,
 );
 compositesService.onProgress((progress) => eventsApi.announce('composite', progress));
 const compositesApi = new CompositesApi(compositesService, photoReadService);
 const assembliesApi = new AssembliesApi(compositesService);
-const exportService = new ExportService(photoRenditionService, processingService, compositesService);
+const exportService = new ExportService(photoRenditionService, processingService, originals, compositesService);
 // The service itself rather than an arrow forwarding its arguments. TypeScript accepts a
 // function that declares *fewer* parameters than the type it satisfies, so an arrow here silently
 // drops whatever the route learns to send next - which is how the loupe's `levels` and
 // `scenePeak` reached this line and went no further, leaving every tile measuring its own.
-const imageApi = new ImageApi(photoReadService, photoRenditionService, renditionFetch, exportService, processingService);
+const imageApi = new ImageApi(
+  photoReadService,
+  photoRenditionService,
+  renditionFetch,
+  originals,
+  exportService,
+  processingService,
+);
 const exportApi = new ExportApi(
   exportService,
   new ExportHistoryService(db, photoRenditionService, photoEditsRepo, settingsRepo),
@@ -397,6 +434,7 @@ app.route(route(PathSegment.api(), PathSegment.albums()), albumsApi.routes);
 app.route(route(PathSegment.api(), PathSegment.stacks()), stacksApi.routes);
 app.route(route(PathSegment.api(), PathSegment.composites()), compositesApi.routes);
 app.route(route(PathSegment.api(), PathSegment.assemblies()), assembliesApi.routes);
+app.route(route(PathSegment.api(), PathSegment.backup()), new BackupApi(mirror).routes);
 app.route(
   route(PathSegment.api(), PathSegment.replication()),
   new ReplicationApi(replicationService, replicationRunner, (libraryId) => transferService.cancelIncoming(libraryId))
@@ -412,7 +450,7 @@ app.route(route(PathSegment.image()), imageApi.routes);
 // Which AVIF quality to ship at: a diagnostic, same reasoning as the HDR check.
 app.route(
   route(PathSegment.qualityCheck()),
-  new QualityCheckApi(photoReadService, photoRenditionService, librariesService, settingsRepo).routes,
+  new QualityCheckApi(photoReadService, photoRenditionService, librariesService, settingsRepo, originals).routes,
 );
 
 // The web client, where a build of it sits beside this server (the container).

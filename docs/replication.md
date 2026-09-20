@@ -4,10 +4,16 @@ Multi-client support for one library: several installs of Bowerbird (a hosted se
 macbook, later a desktop or a phone) each holding a **replica** of the same library, working
 fully offline, and converging deterministically when any two of them talk.
 
-Replication is the protocol name. In product copy, a library syncs between devices; a scan
-reads its files into the catalogue (§9 of DESIGN.md). Code keeps the protocol under
-`replication_*`, while `ScanService` owns the disk scan. Settings offers "Scan library" for
-the disk and "Sync now" under Synced devices for the network.
+§14 is the other half, and the half most people will use: a **passive peer**, which is a folder on
+a drive or a share that originals are copied to one way, with no Bowerbird on the other side. It
+shares everything below the catalogue with the peers above - the transfer queue, the hashes, the
+staging - and it is what lets a laptop hold a ceiling's worth of its library and reach the rest.
+
+Replication is the protocol name. In product copy, a library syncs between devices and is backed
+up to a folder; a scan reads its files into the catalogue (§9 of DESIGN.md). Code keeps the
+protocol under `replication_*`, while `ScanService` owns the disk scan. Settings offers "Scan
+library" for the disk, "Sync now" under Synced devices for the network, and "Back up now" under
+Backup for the folder.
 
 ## 1. Goals and non-goals
 
@@ -25,7 +31,11 @@ Goals:
   move **manually only**, with one exception: opening a photo whose original is remote fetches
   and keeps it (§7.5).
 - Per-peer storage policy for originals: the server keeps everything, a laptop keeps what it
-  imported plus what it fetched. The catalogue always replicates in full on every peer.
+  imported plus what it fetched, and a laptop with a backup folder keeps what fits the ceiling it
+  was given (§14.5). The catalogue always replicates in full on every peer.
+- **A peer that is only a folder** (§14): a drive or a share holding every original, one way, with
+  nothing running on the other side. What makes the ceiling above safe, and what a person who
+  never pairs a second device gets out of this design.
 
 Non-goals (v1):
 
@@ -39,9 +49,10 @@ Non-goals (v1):
   library (§9), never merged with one. Possibly in scope much later, leaning on a dedup tool;
   nothing below may *preclude* it, but nothing builds it.
 - Readonly libraries. Replication requires rw and refuses otherwise.
-- Deleting files on other peers. Nothing in Bowerbird deletes a RAW today (bin is a move,
-  library removal is DB-rows-only), so replication propagates catalogue-row tombstones and
-  never a file deletion. If purge ships later it rides the same tombstone machinery.
+- Deleting files on other peers. Replication propagates catalogue-row tombstones and never a
+  file deletion: bin is a move and library removal is DB-rows-only, and the two places a RAW is
+  unlinked (§7.6, §14.5) are each one device giving up its own copy on evidence it holds
+  another. If purge ships later it rides the same tombstone machinery.
 - Deduplicating the same RAW imported independently on two peers. Two imports are two photos; a
   future dedup tool is the answer, not the merge engine.
 - **The phone peer**, in the sense of a build and a UI shaped for one. What made it impossible -
@@ -49,16 +60,20 @@ Non-goals (v1):
   never thumbnail - is answered by rendition fetch-through (§7.9), and a device that holds no
   RAWs at all is now a setting rather than a special case (§7.10). What is left is a phone
   client, and that is its own project.
-- Automatic eviction. The only v1 eviction is the manual "remove local copy" action (§7.6),
-  which requires live verification. Policy-driven eviction comes later, on the same rule.
+- Evicting against another *device* on a policy. Between peers the only eviction is the manual
+  "remove local copy" action (§7.6), which requires live verification at the moment it deletes.
+  A ceiling that gives copies back on its own exists only against a backup folder (§14.5), where
+  this device can read both copies itself rather than take a peer's word for one.
 - **Authentication.** Deployment requirement instead (§11.1): the server is reachable only over
   a trusted network (tailscale/VPN/LAN). An auth layer is a future project.
 - Multi-user. Every peer is the same person; per-peer identity exists for clocks, blob
   locations, and lifecycle, not authorship.
 
 Accepted risk, named: anything that can reach the server on the trusted network, including a
-buggy peer, can rewrite catalogue state through perfectly legitimate operations. Files are safe
-(nothing deletes them), payloads are validated (§11.2), stamps are bounded (§2.2), and the
+buggy peer, can rewrite catalogue state through perfectly legitimate operations. No message from
+a peer deletes a file; the two places an original is unlinked are actions taken here, and each
+reads its own evidence first - a peer's live possession check for §7.6, and both copies' bytes,
+hashed here, for §14.5. Payloads are validated (§11.2), stamps are bounded (§2.2), and the
 server's rolling DB backups (§8.2, DESIGN.md §4.9) are the recovery story for the rest.
 
 ## 2. Peers, identity, clocks
@@ -1160,3 +1175,154 @@ Milestones 2–3 are testable entirely server↔server; the macbook story lands 
   restored is what travels (§8.2). The other half of the choice - "no, take what the peers
   have" - is not offered, and getting it means restoring and then letting a peer's copy win,
   which nothing helps you do.
+
+## 14. Passive peers: backing originals up to a folder
+
+A drive, a NAS share, a directory somewhere else on this machine. One way, no catalogue, nobody
+running Bowerbird on the other side - and with it, the thing a laptop actually wants: every
+original safe somewhere else, and only the recent ones taking up the laptop's disk.
+
+### 14.1 A peer is either active or passive
+
+`replication_peers.kind`. An **active** peer is everything §2-§13 is about: a device that merges a
+catalogue, answers for its own disk, and dials or is dialled. A **passive** peer is a directory,
+and its `address` is that directory's path.
+
+Every query that walks peers to do catalogue work is active-only - `reachablePeers`, `pairedPeers`,
+`assertPaired` - because a folder has no session to open, no vector to compare and no request to
+make. What it does share is everything below the catalogue: **the transfer queue, the staging, the
+content hashes and the materialisation are one implementation for both kinds**. `PassivePeers`
+answers the blob protocol (`GET /<photo>/stage`, `PUT` it, `POST /<photo>/commit`,
+`GET /<photo>/original`, `GET /<photo>/hash`) against the mount, `Peers` routes each request to
+whichever transport the peer id belongs to, and `TransferService` never learns which it is talking
+to. A second copy of that loop is the thing worth refusing here: it would be free to verify a
+little less carefully than the first, on the path where a wrong answer deletes an original.
+
+The folder carries **a marker**, `.bowerbird-backup.json`, naming the library it is the backup of.
+Read before anything is written into it, and for one reason: an unmounted share is an empty
+directory that reads as a backup with nothing in it yet, so without the marker the first pass after
+a reboot would write the whole library onto the machine's own disk and report success. A folder
+whose marker names another library is refused, which is also what stops two libraries mirroring
+into one tree. A backup carried to another machine keeps its marker, so re-pairing it there adopts
+the peer id it already had rather than minting a second one and re-sending everything.
+
+A backup folder may not be inside its library, or hold it. The scan walks everything under the
+root, so a mirror there is imported as a second copy of every photograph - which is then backed up
+in turn.
+
+### 14.2 What it holds is this device's reading of it, not a claim
+
+`backup_locations` is `blob_locations`' opposite number and a **local** table: photo, peer, the
+path the copy was last written to, its hash, its size, and when this device last saw it.
+
+Not the replicated table, deliberately. A location row is a fact a peer asserts about itself, and a
+directory asserts nothing; every row here is this device's own reading of a mount only it can see.
+Replicated, it would tell another device that a peer it cannot reach holds the photograph, offer a
+fetch nobody can serve, and count towards a sole-holder check that peer can never retract (§8.4).
+
+`rel_path` is where the copy actually is rather than where the catalogue now says the photograph
+belongs. The two disagree from the moment a photo is binned or a shoot renamed until a pass replays
+the move, and finding the file again is what needs the old one.
+
+### 14.3 A pass: follow, copy, cull
+
+`Mirror.run` is one pass over one library, and runs after any scan that changed something (which
+covers every import), every fifteen minutes, and when somebody presses the button. In that order,
+and the order is load-bearing:
+
+1. **Follow the moves.** Every copy whose `rel_path` is not the photograph's current path is
+   renamed on the mount. That includes a bin move and a restore: the Bin is a folder inside the
+   library, so mirroring the tree mirrors the binning for free.
+2. **Look again at the copies gone longest unchecked** - five hundred of them, oldest first, so a
+   library is covered a couple of times a day without a pass that never ends. A row saying a file
+   was copied in March is evidence about March, and a drive somebody tidied says nothing until
+   something looks. Existence and size, not a hash: reading every byte of a library on a timer is
+   not a check, it is a job. A copy that is not there is **forgotten**, which puts the photograph
+   back among what the folder is owed and copies it again.
+3. **Copy what is owed**, which is every photograph this device holds that the folder has no
+   current copy of: never copied, hash no longer the one the catalogue records, or size moved.
+4. **Cull to the ceiling** (§14.5), once the queue has drained - what may be given back is what the
+   folder holds *now*, and half of it is still in flight until then.
+
+**Nothing here ever deletes from the backup.** A photograph removed from the library leaves its
+copy on the drive, which is what a backup is for; a file somebody takes off the drive by hand is
+forgotten from `backup_locations` and copied again by the next pass. The only deletions on the
+mount are part-copied files in its staging directory that no queued transfer is waiting to finish.
+
+**Pairing a folder asks it what it already holds.** A copy sitting at a photograph's path counts
+once its bytes hash to what the catalogue records for that photograph - never off the name alone,
+which would record a backup of whatever somebody happened to leave there and let the cull read it
+as permission to delete the only other copy. The same read is what makes unpairing reversible: the
+photographs a ceiling has already given back have no local bytes and are owed nothing, so
+re-pairing the drive is the only thing that can find them, and it does.
+
+Nothing overwrites, either. A name already taken by something that is not this photograph is
+skipped and reported, as §7.7 has it.
+
+### 14.4 An original is reached through one module
+
+`Originals` (`services/blobs/originals.ts`) is the only way to a photograph's bytes. `here` answers
+what is on this disk; `open` fetches it back from the folder first when it is not, and records the
+access; `openAll` does the same for a composite's frames.
+
+Everything that decodes, exports, measures or hands over a RAW goes through it - the rendition
+build, the image routes, the embedded JPEG, the download, the quality page - and gets a path back.
+That is the point: the decoders, the render pipeline and the routes were written against a path and
+still are, and the one thing that knows a photograph's bytes might be on a drive is this class.
+A fetch is a whole-file copy over whatever the mount is, and the queue takes pulls before pushes so
+that opening one photograph does not wait out a backup pass of ten thousand.
+
+**The fetch is at the top of a flow, not inside it.** The prepare route, the export and the
+composite service ask for every file the work is about to open before they start, so the renderers
+below them still take a path and decode it. A merge opens each frame several times over, and `open`
+on a file that is already here is a stat.
+
+**A folder that is not there is `UNAVAILABLE`, not `NOT_FOUND`.** The file exists, the answer
+changes when the drive does, and what the reader is told is which folder to connect.
+
+A caller that would rather do without than wait uses `here`: a metadata refresh over a selection, a
+grid tile repairing itself, the detail view's "is it here". Fetching a RAW per row would turn a
+stat into an hour.
+
+### 14.5 The cull, and the one deletion
+
+Per library, `replication_libraries.local_budget_bytes`, null for no ceiling. Over it, local copies
+are given back **least recently wanted first**: `photos.last_accessed_at`, which `Originals` writes
+on every open, and which the viewer's own route writes when it serves a `full` or a `max` - looking
+at a photograph is wanting it. A photograph nothing has ever opened falls back to when it was
+added, so a first cull gives back the oldest imports rather than treating a whole library as
+equally cold. A photograph fetched back is, by the same rule, the most recently wanted thing in the
+library, so the next cull takes something else.
+
+Each copy goes through the same eviction the manual action does (§7.6), and there the two kinds of
+peer part: a device is **asked**, because only it can say what it holds at that moment and its yes
+is a promise it keeps by refusing to evict its own copy at the same time; a folder is **read**,
+because it promises nothing.
+
+So `deleteBackedUpOriginal` (`utils/deletions.ts`, the only module allowed to remove anything)
+hashes both files itself, at the moment of the unlink, and refuses unless all three agree: the
+backup's bytes, this device's bytes, and the hash the catalogue recorded. Reading the local copy as
+well as the backup's is the half that is easy to argue away and the one that matters most - a copy
+that has rotted here does not hash to the recorded value, and deleting it because "the backup has a
+good copy" is only correct if the backup's copy is of *this* file, which the recorded hash is the
+whole of the evidence for. Two passes over two files per photograph, on an action that runs when a
+disk is full and never in a hot path.
+
+What is left behind is `is_missing` with a `backup_locations` row, which is `is_offloaded` on the
+wire: a snowflake on the tile, the state line in the detail panel, and a count in the backup panel.
+Everything still works - the renditions are here, the photograph sorts, rates, culls and shows -
+and anything that needs the RAW fetches it, slowly, once.
+
+### 14.6 What is not built here
+
+- **Reading a region off the mount.** A fetch brings the whole file back, so the first loupe tile
+  over an offloaded photograph costs the whole RAW where a local one costs a partial unpack -
+  which is the region decode the rawler fork exists for (DESIGN §2). Ranged reads against the
+  folder are the upgrade, and they want an IO seam that reaches through the FFI rather than a path
+  handed to a decoder.
+- **More than one folder per library.** The schema is keyed for it (`backup_locations` carries a
+  peer id, and the peer table is the same one devices use); the service takes the first.
+- **Backing the catalogue up to the same folder.** `maintenance/backup_service.ts` snapshots the
+  catalogue where it always did (§4.9); the two are the same word and not yet the same action.
+- **A bulk "remove local copies" against a folder.** The route exists - eviction takes any peer id
+  - and no screen offers it; the ceiling is how copies are given back today.

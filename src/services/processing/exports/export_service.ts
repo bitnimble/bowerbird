@@ -5,7 +5,7 @@ import { AppError } from '../../../errors';
 import { EXPORT_FORMATS, exportFilename, honoured, type ExportOptions } from '../../../schemas/export';
 import { soleInputOf } from '../../../schemas/recipes';
 import { deleteScratchDirectory } from '../../../utils/deletions';
-import { originalPathOf } from '../../../utils/paths';
+import type { Originals } from '../../blobs/originals';
 import type { CompositesService } from '../../composites/composites_service';
 import type { PhotoRenditionService } from '../../photos/renditions/photo_rendition_service';
 import type { ProcessingService } from '../pipeline/processing_service';
@@ -49,10 +49,12 @@ export class ExportService {
   constructor(
     private readonly photoRenditions: PhotoRenditionService,
     private readonly processing: ProcessingService,
+    /** The way to a photograph's bytes, which may be on a backup rather than here (§14.4). */
+    private readonly originals: Originals,
     /**
      * Which panorama a photograph is a frame of, where the catalogue knows about panoramas at
-     * all. Optional so the tests that are about formats and quality build one of these with two
-     * arguments, as they did before a panorama could be exported.
+     * all. Optional so the tests that are about formats and quality build one of these without
+     * one, as they did before a panorama could be exported.
      */
     private readonly panoramas?: CompositesService,
   ) {}
@@ -83,7 +85,11 @@ export class ExportService {
       throw new AppError('VALIDATION_ERROR', `this build cannot write ${options.format} yet`);
     }
     const { photo, library } = this.photoRenditions.locate(photoId);
-    const original = originalPathOf(library, photo);
+    // Fetched back from a backup where this device has given its copy up (§14.4). Before the
+    // panorama below as well as for the ordinary arm: what `renderable` answers is whether the
+    // frames are on this disk, and an export is worth the wait for them.
+    await this.originals.openAll(library, photo);
+    const original = this.originals.here(library, photo);
     // A panorama exports the picture it composes, framed as its row is: the crop the align found
     // is on that row's document, so it reaches this the way a reader's own crop does. Named
     // through a renderer rather than a branch below, so the gain map's second arm and the scratch

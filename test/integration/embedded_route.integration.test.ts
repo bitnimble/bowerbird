@@ -7,6 +7,7 @@
 import { expect, test } from 'bun:test';
 import { Hono } from 'hono';
 import { ImageApi } from '../../src/api/image/image_api';
+import { localOriginals } from '../../src/services/blobs/originals_for_testing';
 
 const FIXTURES = `${import.meta.dir}/../fixtures`;
 
@@ -28,7 +29,8 @@ function serving(edit: { rotate: number } = { rotate: 0 }): Hono {
       photoRead as unknown as ConstructorParameters<typeof ImageApi>[0],
       photoRenditions as unknown as ConstructorParameters<typeof ImageApi>[1],
       null,
-      {} as ConstructorParameters<typeof ImageApi>[3],
+      localOriginals(),
+      {} as ConstructorParameters<typeof ImageApi>[4],
     ).routes,
   );
   return app;

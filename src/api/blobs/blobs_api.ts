@@ -24,13 +24,8 @@ import { containsPath, getRenditionPath, originalPathOf } from '../../utils/path
 import type { BlobLocations } from '../../services/blobs/blob_locations';
 import { renditionCurrent } from '../../services/blobs/rendition_fetch_service';
 import { RENDITION_CONTENT_TYPE, isRendition, renditionVariant } from '../../services/processing/renditions/renditions';
-import {
-  appendToStage,
-  contentHash,
-  stagedSize,
-  stagePath,
-  stagingDir,
-} from '../../services/blobs/blob_store';
+import { appendToStage, stagedSize, stagePath, stagingDir } from '../../services/blobs/blob_store';
+import { contentHash } from '../../utils/hash';
 import { acceptVerifiedBlob, type TransferService } from '../../services/blobs/transfer_service';
 import { deleteStagedBlob } from '../../utils/deletions';
 import { respond } from '../respond';

@@ -7,7 +7,8 @@ import { EditDocSchema } from '../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../schemas/prepare_develop';
 import { isComposite, soleInputOf } from '../../schemas/recipes';
 import { PathSegment, route } from '../../schemas/route';
-import { getDataPath, getRenditionPath, originalPathOf } from '../../utils/paths';
+import { getDataPath, getRenditionPath } from '../../utils/paths';
+import type { Originals } from '../../services/blobs/originals';
 import { originalMediaType } from '../../utils/scan';
 import { readEmbeddedJpeg } from '../../services/processing/rawshim/raw_decoder';
 import {
@@ -30,7 +31,9 @@ import type { Missing, Shown } from '../../services/processing/workers/prepare_p
 // A BasicPhoto, not a PhotoDetail: serving bytes needs an id, a library and a
 // file path, and asking for the detail payload put a second query and a stat per
 // rendition on every rendition in the grid (§8.2 `locate`).
-type PathFor = (library: Library, photo: BasicPhoto) => string | null;
+// Awaited, because one of them is "the RAW, wherever it is" and that may be a fetch off a backup
+// drive before there is a path to read (docs/replication.md §14.4).
+type PathFor = (library: Library, photo: BasicPhoto) => string | null | Promise<string | null>;
 
 const JPEG_QUALITY = 92;
 
@@ -178,6 +181,8 @@ export class ImageApi {
      * original, and an omission is that behaviour arrived at by accident.
      */
     private readonly fetchThrough: RenditionFetchService | null,
+    /** The way to a photograph's bytes, wherever they are (§14.4). */
+    private readonly originals: Originals,
     /** What re-encodes a rendition for a share sheet, which is an export by another name. */
     private readonly exports: ExportService,
     /**
@@ -217,6 +222,10 @@ export class ImageApi {
       // is fetched and cached first, so the read below is an ordinary local one
       // (docs/replication.md §7.9).
       await this.fetchThrough?.ensureCurrent(photoId, rendition);
+      // Looking at a photograph is wanting it, and the cull works in that order (§14.5). The two
+      // the viewer draws and not the grid tile: scrolling past a thumbnail is not using the photo,
+      // and a page of a hundred would be a hundred writes.
+      if (rendition === 'full' || rendition === 'max') this.originals.touch(photoId);
       this.photoRenditions.rebuildIfStale(photoId);
       return this.serve(c, RENDITION_CONTENT_TYPE, (lib, each) =>
         getRenditionPath(lib, each.id, rendition, lib.rendition_hdr),
@@ -318,7 +327,11 @@ export class ImageApi {
     }
     // Refused here rather than resolved, so the reason names the photograph: `locate` is what
     // says whether this id is one at all.
-    this.photoRenditions.locate(photoId);
+    const { photo, library } = this.photoRenditions.locate(photoId);
+    // What tells a composite this device cannot compose apart from an ordinary photograph is
+    // whether the frames are on this disk, so a photograph given up to a backup is fetched
+    // before the prepare asks (§14.4).
+    await this.originals.openAll(library, photo);
 
     const framed = await this.pictures.preparePicture(photoId, shownIn(c), missingIn(c), developIn(c));
     return new Response(framed, {
@@ -364,9 +377,9 @@ export class ImageApi {
   // The camera's own JPEG, lifted out of the RAW and tagged for display. No
   // demosaic and nothing cached on disk: extraction is a header read plus a copy,
   // which is cheaper than the disk a fourth derivative per photo would cost.
-  private serveEmbedded(photo: BasicPhoto, library: Library, c: Context): Response {
+  private async serveEmbedded(photo: BasicPhoto, library: Library, c: Context): Promise<Response> {
     const photoId = photo.id;
-    const originalPath = originalPathOf(library, photo);
+    const originalPath = await this.originals.open(library, photo);
     if (originalPath == null) throw new AppError('NOT_FOUND', `this photograph has no file to lift a JPEG out of: ${photoId}`);
     // The RAW, not the JPEG inside it: these bytes are part of that file, so its
     // stat moves exactly when they do.
@@ -450,7 +463,7 @@ export class ImageApi {
       return this.serve(
         c,
         (photo) => originalMediaType(soleInputOf(photo.recipe) ?? ''),
-        (lib, photo) => originalPathOf(lib, photo),
+        (lib, photo) => this.originals.open(lib, photo),
         (photo) => soleInputOf(photo.recipe)?.split('/').pop() ?? photo.id,
       );
     }
@@ -462,7 +475,7 @@ export class ImageApi {
     const stem = (soleInputOf(photo.recipe)?.split('/').pop() ?? photo.id).replace(/\.[^.]+$/, '');
 
     if (form === 'embedded') {
-      const original = originalPathOf(library, photo);
+      const original = await this.originals.open(library, photo);
       const jpeg = original == null ? null : readEmbeddedJpeg(original, this.photoRead.editOrientation(photoId));
       if (jpeg == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG: ${photoId}`);
       return download(new Uint8Array(jpeg), 'image/jpeg', `${stem}-embedded.jpg`);
@@ -505,7 +518,7 @@ export class ImageApi {
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const { photo, library } = this.photoRenditions.locate(photoId);
 
-    const target = pathFor(library, photo);
+    const target = await pathFor(library, photo);
     // Null rather than absent: a row composed out of others has no original, so this is not a
     // file that has gone missing and no rebuild will produce one.
     if (target == null) throw new AppError('NOT_FOUND', `${photoId} has no file of its own`);

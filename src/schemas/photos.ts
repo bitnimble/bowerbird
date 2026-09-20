@@ -28,6 +28,10 @@ export const PhotoSummarySchema = z.object({
   triage: TriageSchema,
   rating: z.number().int().min(0).max(5),
   is_missing: z.boolean(),
+  // Missing on purpose: the original is on a backup folder and this device gave its copy back
+  // (§14.5). Everything still works - the renditions are here - and anything that needs the RAW
+  // fetches it, which is slower and is what the badge on the tile says.
+  is_offloaded: z.boolean(),
   is_deleted: z.boolean(),
   // Put away: left out of a listing unless it asks for the hidden, and out of every queue (§12.4).
   // True for a photograph whose own flag is set *or* whose shoot is hidden, so a row says what it is

@@ -5,6 +5,7 @@ import { Hono } from 'hono';
 import { PathSegment, route } from '../../../schemas/route';
 import { dataPathForLibraryId } from '../../../utils/paths';
 import { applyErrorHandler } from '../../error_handler';
+import { localOriginals } from '../../../services/blobs/originals_for_testing';
 import { ImageApi } from '../image_api';
 
 /**
@@ -43,7 +44,8 @@ function serving(renditionHdr: boolean): { app: Hono; asked: Asked[] } {
       {} as ConstructorParameters<typeof ImageApi>[0],
       photos as unknown as ConstructorParameters<typeof ImageApi>[1],
       null,
-      exports as unknown as ConstructorParameters<typeof ImageApi>[3],
+      localOriginals(),
+      exports as unknown as ConstructorParameters<typeof ImageApi>[4],
     ).routes,
   );
   applyErrorHandler(app);

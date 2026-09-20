@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Library } from '../../../schemas/libraries';
-import { appendToStage, contentHash, materialise, occupant, stagePath, stagedSize } from '../blob_store';
+import { contentHash } from '../../../utils/hash';
+import { appendToStage, materialise, occupant, stagePath, stagedSize } from '../blob_store';
 
 function withRoot(run: (root: string) => Promise<void> | void) {
   return async () => {

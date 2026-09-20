@@ -291,6 +291,8 @@ lower case except at the start of a string.
 | fetch | Copying an original from another device to this one | pull, download (for device transfers) |
 | send | Copying an original from this device to another | push, upload |
 | scan | Bowerbird reading a library's folders for added, moved, changed, or removed files | sync, index, refresh, reconcile |
+| backup | A folder, drive, or share every original is copied to | mirror, vault, archive, passive peer |
+| storage limit | What a library's originals may take up on this device before the oldest local copies go | quota, budget, cap |
 
 ## Checklist
 

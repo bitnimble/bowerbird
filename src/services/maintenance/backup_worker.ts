@@ -99,6 +99,9 @@ if (typeof self !== 'undefined') {
       self.postMessage(await run(event.data));
     } catch (error) {
       self.postMessage({ error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      // Bun exits a worker with no message listener; thread exit releases libSQL's locks.
+      self.onmessage = null;
     }
   };
 }

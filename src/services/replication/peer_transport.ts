@@ -1,7 +1,8 @@
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { PathSegment, route } from '../../schemas/route';
-import type { PeerTransport } from '../blobs/transfer_service';
+import type { PassivePeers } from '../backup/passive_peers';
+import type { PeerTransport } from '../blobs/peer';
 
 // Reaching a peer, for the parts of the app that move bytes rather than rows.
 //
@@ -45,6 +46,29 @@ export class PairedPeers implements PeerTransport {
     const deadline = AbortSignal.timeout(PEER_RESPONSE_TIMEOUT_MS);
     const signal = init?.signal == null ? deadline : AbortSignal.any([init.signal, deadline]);
     return fetch(`${address.replace(/\/+$/, '')}${route(PathSegment.api(), PathSegment.blobs())}${path}`, { ...init, signal });
+  }
+}
+
+/**
+ * Both kinds of peer behind one transport, so the transfer queue never asks which it is talking to.
+ *
+ * A passive peer is a folder and an active one is a device (§14.1), and the difference is entirely
+ * in how the bytes are reached: the queue, the hash check, the staging and the materialisation are
+ * the same, which is the point of routing here rather than branching there.
+ */
+export class Peers implements PeerTransport {
+  constructor(
+    private readonly passive: PassivePeers,
+    private readonly active: PeerTransport,
+  ) {}
+
+  canReach(peerId: string): boolean {
+    return this.passive.handles(peerId) ? this.passive.canReach(peerId) : this.active.canReach(peerId);
+  }
+
+  request(peerId: string, path: string, init?: RequestInit): Promise<Response> {
+    const transport = this.passive.handles(peerId) ? this.passive : this.active;
+    return transport.request(peerId, path, init);
   }
 }
 

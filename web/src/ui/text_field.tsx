@@ -57,6 +57,7 @@ export function TextField({
   max,
   step,
   suffix,
+  describedBy,
   style,
   inputStyle,
 }: {
@@ -75,6 +76,8 @@ export function TextField({
   max?: number;
   step?: number;
   suffix?: string;
+  /** The id of text saying what this field does, for a reader who only hears the label. */
+  describedBy?: string;
   /** On the bed around the input. */
   style?: stylex.StyleXStyles;
   inputStyle?: stylex.StyleXStyles;
@@ -98,6 +101,7 @@ export function TextField({
         step={step}
         value={value}
         aria-label={suffix == null ? label : `${label} (${suffix})`}
+        aria-describedby={describedBy}
         placeholder={placeholder}
         autoFocus={autoFocus}
         disabled={disabled}

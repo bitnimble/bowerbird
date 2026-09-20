@@ -6,6 +6,7 @@ import type { StoredRecipe } from '../../../schemas/recipes';
 import { PathSegment, route } from '../../../schemas/route';
 import { dataPathForLibraryId } from '../../../utils/paths';
 import { applyErrorHandler } from '../../error_handler';
+import { localOriginals } from '../../../services/blobs/originals_for_testing';
 import { ImageApi } from '../image_api';
 
 /**
@@ -32,7 +33,8 @@ function serving(recipe: StoredRecipe): Hono {
       {} as ConstructorParameters<typeof ImageApi>[0],
       photos as unknown as ConstructorParameters<typeof ImageApi>[1],
       null,
-      {} as ConstructorParameters<typeof ImageApi>[3],
+      localOriginals(),
+      {} as ConstructorParameters<typeof ImageApi>[4],
     ).routes,
   );
   applyErrorHandler(app);

@@ -7,6 +7,7 @@ import type { PhotoDetail } from '../../../../schemas/photos';
 import { fileRecipe, type Recipe } from '../../../../schemas/recipes';
 import type { ViewerRendition } from '../../../../schemas/settings';
 import type { AlbumsRepository } from '../../../albums/albums_repository';
+import { localOriginals } from '../../../blobs/originals_for_testing';
 import type { LibrariesRepository } from '../../../libraries/libraries_repository';
 import type { ProcessingService } from '../../../processing/pipeline/processing_service';
 import type { Job } from '../../../../schemas/jobs';
@@ -82,6 +83,7 @@ function build(over: {
     photoProcessing,
     libraries,
     processing,
+    localOriginals(),
     undefined,
     null,
   );
@@ -179,6 +181,9 @@ describe('PhotoRenditionService.rebuildIfStale', () => {
   });
 });
 
+/** Lets the awaits before a render run, without letting the render itself finish. */
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
 describe('PhotoRenditionService.buildRendition', () => {
   it('shares one render between the requests that arrive while it runs', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-build-'));
@@ -194,6 +199,9 @@ describe('PhotoRenditionService.buildRendition', () => {
       });
 
       const both = Promise.all([service.buildRendition('p1', 'full'), service.buildRendition('p1', 'full')]);
+      // The render is reached through an await - the original is asked for first, and it may not
+      // be on this disk (§14.4) - so the call has not happened in the tick that started it.
+      await settle();
       expect(processing.renderOne).toHaveBeenCalledTimes(1);
       pending.forEach((resolve) => resolve());
       await both;
@@ -201,6 +209,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       // And the next one renders again: the guard is for the overlap, not a cache.
       // Nothing was written here, so there is no file to stop it.
       const again = service.buildRendition('p1', 'full');
+      await settle();
       expect(processing.renderOne).toHaveBeenCalledTimes(2);
       pending.forEach((resolve) => resolve());
       await again;

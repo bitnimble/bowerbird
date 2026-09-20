@@ -20,7 +20,9 @@ import { registerPeer } from '../../replication/pairing';
 import { peerId } from '../../replication/stamps';
 import { BlobLocations } from '../blob_locations';
 import { RenditionFetchService, renditionCurrent } from '../rendition_fetch_service';
-import { TransferService, type PeerTransport } from '../transfer_service';
+import { BackupLocations } from '../../backup/backup_locations';
+import type { PeerTransport } from '../peer';
+import { TransferService } from '../transfer_service';
 
 // A device holding the catalogue but not the originals, serving pictures from a
 // peer's built renditions (§7.9). Two replicas in one process, answering each
@@ -85,7 +87,15 @@ function makePeer(name: string): Peer {
       return Promise.resolve(routes.request(reqPath, init));
     },
   };
-  const transfers = new TransferService(db, photoPaths, photoMetadata, libraries, locations, transport);
+  const transfers = new TransferService(
+    db,
+    photoPaths,
+    photoMetadata,
+    libraries,
+    locations,
+    new BackupLocations(db),
+    transport,
+  );
   const api = new BlobsApi(photoPaths, photoMetadata, photoProcessing, libraries, locations, transfers);
   applyErrorHandler(api.routes);
   const id = peerId(db);

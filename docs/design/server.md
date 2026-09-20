@@ -8,7 +8,7 @@ section the index in `DESIGN.md` maps §N to.
 
 ## 8. Services
 
-**Deletion never touches folders on disk.** Deleting any entity (library, shoot, album) removes only DB records; it never deletes or moves files or directories. Photo files stay exactly where they are on disk. (The one *deletion* operation that *does* move a file is soft-deleting a *photo*, §12, which relocates the RAW into a Bin; shoot photo add/remove/rename also move files, §8.5, but those are not deletions.) This keeps deletes cheap and non-destructive, and means a re-sync after a mistaken delete re-imports the photos rather than losing them.
+**Deletion never touches folders on disk.** Deleting any entity (library, shoot, album) removes only DB records; it never deletes or moves files or directories. Photo files stay exactly where they are on disk. (The one *deletion* operation that *does* move a file is soft-deleting a *photo*, §12, which relocates the RAW into a Bin; shoot photo add/remove/rename also move files, §8.5, but those are not deletions.) This keeps deletes cheap and non-destructive, and means a re-sync after a mistaken delete re-imports the photos rather than losing them. The two places an original does leave this disk are neither of them a delete: removing a local copy a device holds (docs/replication.md §7.6) and the ceiling that does the same against a backup folder (§14.5), both of which prove another copy exists at the moment they unlink.
 
 ### 8.1 Libraries Service (`libraries_service.ts`)
 

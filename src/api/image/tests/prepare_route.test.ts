@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { AppError } from '../../../errors';
 import { PathSegment, route } from '../../../schemas/route';
 import { applyErrorHandler } from '../../error_handler';
+import { localOriginals } from '../../../services/blobs/originals_for_testing';
 import { ImageApi } from '../image_api';
 
 // What the route does with a picture, and what it does instead of one.
@@ -33,7 +34,10 @@ function serving(
   const photos = {
     locate: (photoId: string) => {
       if (photoId === 'gone') throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
-      return { library: { id: 'lib' }, photo: { file_path: 'a.arw' } };
+      return {
+        library: { id: 'lib', root_path: '/nowhere' },
+        photo: { file_path: 'a.arw', recipe: { kind: 'file', path: 'a.arw' } },
+      };
     },
   };
   const app = new Hono();
@@ -43,7 +47,8 @@ function serving(
       {} as ConstructorParameters<typeof ImageApi>[0],
       photos as unknown as ConstructorParameters<typeof ImageApi>[1],
       null,
-      {} as ConstructorParameters<typeof ImageApi>[3],
+      localOriginals(),
+      {} as ConstructorParameters<typeof ImageApi>[4],
       pictures,
     ).routes,
   );

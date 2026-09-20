@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import { AppError } from '../../src/errors';
 import { applyErrorHandler } from '../../src/api/error_handler';
 import { ImageApi } from '../../src/api/image/image_api';
+import { localOriginals } from '../../src/services/blobs/originals_for_testing';
 import type { Library } from '../../src/schemas/libraries';
 import { fileRecipe } from '../../src/schemas/recipes';
 import type { BasicPhoto } from '../../src/services/photos/paths/photo_paths_repository';
@@ -54,7 +55,13 @@ function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) 
   // every case in this file wait on LibRaw to assert something about HTTP.
   app.route(
     '/image',
-    new ImageApi({} as ConstructorParameters<typeof ImageApi>[0], photos, null, {} as ConstructorParameters<typeof ImageApi>[3]).routes,
+    new ImageApi(
+      {} as ConstructorParameters<typeof ImageApi>[0],
+      photos,
+      null,
+      localOriginals(),
+      {} as ConstructorParameters<typeof ImageApi>[4],
+    ).routes,
   );
   applyErrorHandler(app);
   return app;

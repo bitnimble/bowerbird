@@ -290,6 +290,11 @@ export const SyncOriginalsRequestSchema = z.object({ sync_originals: z.boolean()
 export const SyncOriginalsResponseSchema = z.object({ cancelled: z.number().int() });
 export type SyncOriginalsResponse = z.infer<typeof SyncOriginalsResponseSchema>;
 
+// What the other side of a pairing is (docs/replication.md §14.1): a device running Bowerbird, or
+// a folder on a drive or a share that holds originals and answers nothing.
+export const PeerKindSchema = z.enum(['active', 'passive']);
+export type PeerKind = z.infer<typeof PeerKindSchema>;
+
 export const PairedPeerSchema = z.object({
   peer_id: PeerIdSchema,
   name: z.string(),

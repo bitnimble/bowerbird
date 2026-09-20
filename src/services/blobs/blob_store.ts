@@ -25,18 +25,6 @@ export function stagedSize(stageFile: string): number {
   return statSync(stageFile, { throwIfNoEntry: false })?.size ?? 0;
 }
 
-/** SHA-256 of the file's bytes, streamed: the `content_hash` of §7.1. */
-export async function contentHash(filePath: string): Promise<string> {
-  const hasher = new Bun.CryptoHasher('sha256');
-  const reader = Bun.file(filePath).stream().getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    hasher.update(value);
-  }
-  return hasher.digest('hex');
-}
-
 /**
  * Appends a body to a staged blob, returning the staged size afterwards.
  *

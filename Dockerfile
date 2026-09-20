@@ -138,7 +138,7 @@ RUN bun run scripts/get-slangc.ts
 
 # What the tests and the maintainer's scripts need and the app does not
 # (`docker-compose.dev.yml`): ffprobe, to read back what an encode produced with a
-# decoder that is not ours, and the pair `scripts/hdr-demo-assets.ts` drives to build the
+# decoder that is not ours, and the pair `scripts/demo-assets.ts` drives to build the
 # HDR demo page's assets. ~200MB of ffmpeg for it, which is exactly why it is not in
 # `base`.
 #

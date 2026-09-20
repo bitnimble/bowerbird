@@ -19,6 +19,40 @@ export const blobLocations = sqliteTable(
   (t) => [primaryKey({ columns: [t.libraryId, t.photoId, t.peerId] })],
 );
 
+// What a passive peer holds, and where (docs/replication.md §14.2). The same question
+// `blob_locations` answers for an active peer, in a table of its own and for one reason: a location
+// row is a fact a peer asserts about itself, and a directory asserts nothing. These rows are this
+// device's reading of a mount it can see, so they never replicate - another device told "the drive
+// holds it" could neither reach it nor retract the claim.
+//
+// `rel_path` is where the copy was last put rather than where the catalogue now says it belongs:
+// the two disagree from the moment a photo is binned or a shoot renamed until the backup pass
+// replays the move, and finding the file again is what needs the old one. `size` and `content_hash`
+// are what a pass checks a copy against without reading every byte of the mount.
+export const backupLocations = sqliteTable(
+  'backup_locations',
+  {
+    libraryId: text('library_id')
+      .notNull()
+      .references(() => libraries.id, { onDelete: 'cascade' }),
+    photoId: text('photo_id')
+      .notNull()
+      .references(() => photos.id, { onDelete: 'cascade' }),
+    peerId: text('peer_id').notNull(),
+    relPath: text('rel_path').notNull(),
+    contentHash: text('content_hash').notNull(),
+    size: integer('size').notNull(),
+    // When this device last saw the copy, which the scrub reads oldest first (§14.3). Written by
+    // the copy that made it and by every later check of it, so it means "known good at", not
+    // "copied at" - a backup nobody has looked at in a month is the thing worth looking at.
+    verifiedAt: text('verified_at').notNull(),
+  },
+  // Photo before peer, which is the other way round from `blob_locations`: what a grid page asks
+  // is whether *this photograph* is on a backup, once per row, and a key that leads with the peer
+  // answers it by walking every row the library has.
+  (t) => [primaryKey({ columns: [t.libraryId, t.photoId, t.peerId] })],
+);
+
 export const BLOB_TRANSFER_DIRECTIONS = ['push', 'pull'] as const;
 export const BLOB_TRANSFER_STATES = [
   'queued',

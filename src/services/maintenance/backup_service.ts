@@ -14,6 +14,12 @@ const TEARDOWN_MS = 5000;
 
 const log = new Logger('backup');
 
+type WorkerState =
+  | { kind: 'working' }
+  | { kind: 'reported'; outcome: BackupOutcome }
+  | { kind: 'stopping'; error: Error }
+  | { kind: 'settled' };
+
 // The whole filename, extension included, so `photos.db` and `photos.sqlite` are
 // told apart rather than both answering to `photos`.
 function backupBase(dbPath: string): string {
@@ -232,26 +238,26 @@ export class BackupService {
       const worker = new Worker(
         this.workerUrl ?? workerEntry('backup_worker', new URL('./backup_worker.ts', import.meta.url)),
       );
-      let settled = false;
-      // `close` fires when the thread has actually gone, which is what this waits for: a libSQL
-      // connection is released as its thread unwinds rather than when `terminate()` resolves, and
-      // until it has, the catalogue is still open from in here - so the owner's `close()` cannot
-      // leave WAL mode, and the next restore is refused (`driver.ts`).
-      //
-      // Bounded, because waiting forever on a thread that will not die is the latch this method is
-      // shaped to avoid: a teardown that never reports leaves the backup no worse off, where a hung
-      // promise stops every later one.
-      const gone = new Promise<void>((done) => {
-        worker.addEventListener('close', () => done());
-        setTimeout(done, TEARDOWN_MS).unref?.();
-      });
-      const finish = (outcome: () => void): void => {
-        if (settled) return;
-        settled = true;
+      const teardownMs = Math.min(TEARDOWN_MS, this.deadlineMs);
+      let state: WorkerState = { kind: 'working' };
+      let teardown: ReturnType<typeof setTimeout> | null = null;
+      let deadline: ReturnType<typeof setTimeout>;
+
+      const settle = (outcome: () => void): void => {
+        if (state.kind === 'settled') return;
+        state = { kind: 'settled' };
         clearTimeout(deadline);
-        void Promise.resolve(worker.terminate())
-          .then(() => gone)
-          .then(outcome, outcome);
+        if (teardown != null) clearTimeout(teardown);
+        outcome();
+      };
+
+      const stop = (error: Error): void => {
+        if (state.kind === 'stopping' || state.kind === 'settled') return;
+        state = { kind: 'stopping', error };
+        clearTimeout(deadline);
+        if (teardown != null) clearTimeout(teardown);
+        teardown = setTimeout(() => settle(() => reject(error)), teardownMs);
+        worker.terminate();
       };
 
       // Not a performance bound - a snapshot of a huge catalogue is allowed to take
@@ -260,23 +266,34 @@ export class BackupService {
       // the promise never settles, and the in-flight flag latches for the life of the
       // process - every later backup silently skipped by a schedule that still logs
       // as healthy.
-      const deadline = setTimeout(
-        () => finish(() => reject(new Error(`the backup worker did not finish within ${this.deadlineMs}ms`))),
+      deadline = setTimeout(
+        () => stop(new Error(`the backup worker did not finish within ${this.deadlineMs}ms`)),
         this.deadlineMs,
       );
 
       worker.onmessage = (event: MessageEvent<BackupOutcome>) => {
-        const outcome = event.data;
-        finish(() => ('error' in outcome ? reject(new Error(outcome.error)) : resolve(outcome.bytes)));
+        if (state.kind !== 'working') return;
+        state = { kind: 'reported', outcome: event.data };
+        clearTimeout(deadline);
+        teardown = setTimeout(
+          () => stop(new Error(`the backup worker did not exit within ${teardownMs}ms`)),
+          teardownMs,
+        );
       };
-      // Bun kills the thread after this fires, so there is no worker left to report
-      // through the message channel.
       worker.onerror = (event: ErrorEvent) => {
-        finish(() => reject(new Error(`backup worker crashed: ${event.message}`)));
+        stop(new Error(`backup worker crashed: ${event.message}`));
       };
-      // A thread that ends without answering either way.
       worker.addEventListener('close', () => {
-        finish(() => reject(new Error('the backup worker exited without reporting')));
+        const closed = state;
+        if (closed.kind === 'reported') {
+          settle(() =>
+            'error' in closed.outcome ? reject(new Error(closed.outcome.error)) : resolve(closed.outcome.bytes),
+          );
+        } else if (closed.kind === 'stopping') {
+          settle(() => reject(closed.error));
+        } else if (closed.kind === 'working') {
+          settle(() => reject(new Error('the backup worker exited without reporting')));
+        }
       });
       worker.postMessage({ dbPath: this.dbPath, outPath } satisfies BackupJob);
     });

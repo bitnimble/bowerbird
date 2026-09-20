@@ -7,6 +7,7 @@ import { useLibrariesStore, usePresenters, useScanStore } from '../../app/stores
 import { libraryLabel } from '../libraries/library_label';
 import { PhotoDetailStrings } from '../photos/viewer/photo_detail_page.strings';
 import { RENDITION_SOURCES } from '../photos/renditions';
+import { BackupPanel } from '../backup/backup_panel';
 import { SyncedDevicesPanel } from '../replication/synced_devices_panel';
 import { ScanStrip } from '../scan/scan_strip';
 import { Button } from '../../ui/button';
@@ -115,6 +116,7 @@ export const LibraryList = observer(function LibraryList(): JSX.Element {
               <RenderStagesPanel library={library} />
               <StackSettings library={library} />
               <SyncedDevicesPanel library={library} />
+              <BackupPanel library={library} />
             </Advanced>
             <LibraryJobs library={library} />
           </ListBody>

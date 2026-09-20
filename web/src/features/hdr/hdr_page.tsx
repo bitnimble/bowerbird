@@ -270,19 +270,6 @@ const styles = stylex.create({
 const TONES = { eye: styles.eye, sensor: styles.sensor, hdr: styles.hdr, sdr: styles.sdr };
 type Tone = keyof typeof TONES;
 
-// What HDR buys a photographer, argued with photographs rather than adjectives.
-//
-// Written for someone who shoots rather than someone who encodes: it may spend stops,
-// clipping and channels, and it may not spend PQ, transfer curves or nits. Nothing on
-// it is about this app either - a reader who has never heard of it should get the whole
-// argument - which is why the last section says what the pairs are without saying what
-// made them.
-//
-// Static: nothing here reads a store or the API. The pictures are files under
-// `web/public/hdr`, built by `scripts/demo-assets.ts` - one job per raw file with an
-// SDR target and an HDR one, at the shipped defaults - so each pair is one render
-// encoded twice rather than a demonstration graded to win.
-
 /**
  * How much of a scene each thing holds, in stops either side of white.
  *
@@ -448,10 +435,6 @@ interface Scene {
   body: string;
 }
 
-// From the losses every photographer has seen to the one nobody thinks about: white
-// detail, then a highlight nothing can hold, then a colour going white, then a colour
-// eight bits has no way to say at all. The slugs are `scripts/demo-assets.ts`'s,
-// which is where the raw files are named.
 const SCENES: Scene[] = [
   {
     slug: 'whites',

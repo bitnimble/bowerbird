@@ -1,6 +1,6 @@
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
-import type { AllPeersResponse, PairedPeer } from '../../schemas/replication';
+import type { AllPeersResponse, PairedPeer, PeerKind } from '../../schemas/replication';
 import type { BlobLocations } from '../blobs/blob_locations';
 import { forgetPeer } from './gc';
 import { stamp } from './stamps';
@@ -90,14 +90,15 @@ export function registerPeer(
   peerId: string,
   name: string,
   address?: string,
+  kind: PeerKind = 'active',
 ): void {
   db.query(
-    `INSERT INTO replication_peers (library_id, peer_id, name, paired_at, address) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT (library_id, peer_id) DO UPDATE SET name = excluded.name,
+    `INSERT INTO replication_peers (library_id, peer_id, name, paired_at, address, kind) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (library_id, peer_id) DO UPDATE SET name = excluded.name, kind = excluded.kind,
        -- Kept when the new row carries none, so a peer dialling in does not erase
        -- the address we reach it on.
        address = COALESCE(excluded.address, replication_peers.address)`,
-  ).run(libraryId, peerId, name, new Date().toISOString(), address ?? null);
+  ).run(libraryId, peerId, name, new Date().toISOString(), address ?? null, kind);
 }
 
 /** Whether this device keeps the RAW files of a library it replicates (§7.10). */
@@ -138,12 +139,18 @@ export function peerAddress(db: Database, libraryId: string, peerId: string): st
   return row?.address ?? null;
 }
 
-/** Every peer of this library that can be dialled, which is what a sync run walks. */
+/**
+ * Every peer of this library that can be dialled, which is what a sync run walks.
+ *
+ * Active only: what a session merges is a catalogue, and a backup folder has none (§14.1). Its
+ * address is a directory, so a run that took it would dial a path.
+ */
 export function reachablePeers(db: Database, libraryId: string): { peerId: string; address: string }[] {
   return (
     db
       .query(
-        'SELECT peer_id, address FROM replication_peers WHERE library_id = ? AND address IS NOT NULL ORDER BY paired_at',
+        `SELECT peer_id, address FROM replication_peers
+          WHERE library_id = ? AND address IS NOT NULL AND kind = 'active' ORDER BY paired_at`,
       )
       .all(libraryId) as { peer_id: string; address: string }[]
   ).map((row) => ({ peerId: row.peer_id, address: row.address }));
@@ -151,19 +158,22 @@ export function reachablePeers(db: Database, libraryId: string): { peerId: strin
 
 /** Refuses a request from a peer this library was never paired with (§6.5, §11.2). */
 export function assertPaired(db: Database, libraryId: string, peerId: string): void {
+  // A passive peer never asks for anything - it is a directory - so a request arriving under one's
+  // id is not a peer of this library however the row reads.
   const paired = db
-    .query('SELECT 1 FROM replication_peers WHERE library_id = ? AND peer_id = ?')
+    .query("SELECT 1 FROM replication_peers WHERE library_id = ? AND peer_id = ? AND kind = 'active'")
     .get(libraryId, peerId);
   if (paired == null) {
     throw new AppError('NOT_FOUND', `peer ${peerId} is not paired with library ${libraryId}`);
   }
 }
 
+/** The devices this library syncs with. A backup folder is not one of them: it is `backupsOf`. */
 export function pairedPeers(db: Database, libraryId: string): PairedPeer[] {
   const rows = db
     .query(
       `SELECT peer_id, name, paired_at, last_replicated_at, last_error, wants_originals FROM replication_peers
-        WHERE library_id = ? ORDER BY paired_at, peer_id`,
+        WHERE library_id = ? AND kind = 'active' ORDER BY paired_at, peer_id`,
     )
     .all(libraryId) as (Omit<PairedPeer, 'wants_originals'> & { wants_originals: number })[];
   return rows.map((row) => ({ ...row, wants_originals: row.wants_originals !== 0 }));

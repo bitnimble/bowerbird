@@ -14,9 +14,10 @@ import type { PhotoProcessingRepository } from '../photos/renditions/photo_proce
 import { renditionVariant, type Rendition } from '../processing/renditions/renditions';
 import { pairedPeers } from '../replication/pairing';
 import type { BlobLocations } from './blob_locations';
-import { appendToStage, contentHash } from './blob_store';
+import { contentHash } from '../../utils/hash';
+import { appendToStage } from './blob_store';
 import { RenditionCache } from './rendition_cache';
-import type { PeerTransport } from './transfer_service';
+import type { PeerTransport } from './peer';
 
 // Renditions from a peer (docs/replication.md §7.9): a device holding the
 // catalogue but not the original serves tiles and renditions anyway, by fetching

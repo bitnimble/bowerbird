@@ -5,6 +5,7 @@ import path from 'node:path';
 import { AppError } from '../errors';
 import type { BlobVerifyResponse } from '../schemas/blobs';
 import type { Library } from '../schemas/libraries';
+import { contentHash } from './hash';
 import { containsPath, getBinPath } from './paths';
 import { findOriginalsAnywhere, isStrayOriginal } from './scan';
 
@@ -173,6 +174,47 @@ export async function deleteEvictedOriginal(
   }
   if (recordedHash == null || !confirmation.held || confirmation.content_hash !== recordedHash) {
     throw new AppError('CONFLICT', `refusing to evict ${target}: no live confirmation of another verified copy`);
+  }
+  await unlink(target);
+}
+
+/**
+ * The other deliberate deletion of an original: the cull giving a local copy back to a backup
+ * folder (docs/replication.md §14.5).
+ *
+ * Its own function rather than an argument to the one above, because the safety argument is a
+ * different one. A peer is *asked* whether it holds the bytes, and its yes is a promise it keeps
+ * by refusing to evict its own copy at the same moment; a folder promises nothing and answers
+ * nothing, so nobody is standing behind the backup's copy but this device. So this reads both
+ * files, now, and refuses unless all three agree: the backup's bytes, this device's bytes, and the
+ * hash the catalogue recorded for the photograph.
+ *
+ * Reading the local copy as well as the backup's is the half that is easy to argue away, and it is
+ * the one that matters most. A copy that has rotted on this disk hashes to something the recorded
+ * value does not match - and deleting it "because the backup has a good copy" would be correct
+ * only if the backup's copy were of *this* file, which is exactly what the recorded hash is the
+ * evidence for. Both reads cost a pass over two files per photograph, on an action that runs when
+ * a disk is full and never in a hot path.
+ */
+export async function deleteBackedUpOriginal(
+  rootPath: string,
+  target: string,
+  backupCopy: string,
+  recordedHash: string,
+): Promise<void> {
+  if (!containsPath(rootPath, target)) {
+    throw new AppError('IO_ERROR', `refusing to give up ${target}: outside the library root`);
+  }
+  if (!existsSync(backupCopy)) {
+    throw new AppError('CONFLICT', `refusing to give up ${target}: the backup has no copy at ${backupCopy}`);
+  }
+  const onBackup = await contentHash(backupCopy);
+  if (onBackup !== recordedHash) {
+    throw new AppError('CONFLICT', `refusing to give up ${target}: the backup's copy hashes ${onBackup}`);
+  }
+  const here = await contentHash(target);
+  if (here !== recordedHash) {
+    throw new AppError('CONFLICT', `refusing to give up ${target}: this copy hashes ${here}, not ${recordedHash}`);
   }
   await unlink(target);
 }

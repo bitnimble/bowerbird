@@ -554,6 +554,11 @@ export const tile = stylex.create({
     paddingBlock: '3px',
     paddingInline: '3px',
   },
+  onBackup: {
+    color: color.glass,
+    paddingBlock: '3px',
+    paddingInline: '3px',
+  },
   // A mark, not a control: the click has to reach the frame under it.
   stack: {
     pointerEvents: 'none',

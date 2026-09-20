@@ -3,12 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  deleteBackedUpOriginal,
   deleteDataDirectory,
   deleteDraft,
   deleteGeneratedFile,
   deleteUpdateStaging,
   unlinkMovedFile,
 } from '../deletions';
+import { contentHash } from '../hash';
 
 function withTmp(run: (root: string) => Promise<void> | void): () => Promise<void> {
   return async () => {
@@ -150,6 +152,83 @@ describe('deleteDataDirectory', () => {
       writeFileSync(path.join(data, 'renditions', 'grid', 'a.arw'), 'raw');
       await expect(deleteDataDirectory(data)).rejects.toThrow(/still holds 1 original/);
       expect(existsSync(path.join(data, 'renditions', 'grid', 'a.arw'))).toBe(true);
+    }),
+  );
+});
+
+describe('deleteBackedUpOriginal', () => {
+  // Every arm of this one: it is the only place an original a reader still has is removed on
+  // purpose, and each check exists because the copy it trusts can be wrong in a different way.
+  async function shaped(root: string, local: string, onBackup: string): Promise<{ raw: string; copy: string }> {
+    const raw = path.join(root, 'library', 'a.arw');
+    const copy = path.join(root, 'backup', 'a.arw');
+    mkdirSync(path.dirname(raw), { recursive: true });
+    mkdirSync(path.dirname(copy), { recursive: true });
+    writeFileSync(raw, local);
+    writeFileSync(copy, onBackup);
+    return { raw, copy };
+  }
+
+  it(
+    'gives up the local copy once both files hash what the catalogue recorded',
+    withTmp(async (root) => {
+      const { raw, copy } = await shaped(root, 'RAW', 'RAW');
+
+      await deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, await contentHash(copy));
+
+      expect(existsSync(raw)).toBe(false);
+      expect(existsSync(copy)).toBe(true);
+    }),
+  );
+
+  it(
+    'refuses when the backup holds nothing at the path it was told',
+    withTmp(async (root) => {
+      const { raw, copy } = await shaped(root, 'RAW', 'RAW');
+      const hash = await contentHash(copy);
+      rmSync(copy);
+
+      await expect(deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash)).rejects.toThrow(/no copy/);
+      expect(existsSync(raw)).toBe(true);
+    }),
+  );
+
+  it(
+    'refuses when the copy on the backup has rotted under the record of it',
+    withTmp(async (root) => {
+      const { raw, copy } = await shaped(root, 'RAW', 'RAW');
+      const hash = await contentHash(copy);
+      writeFileSync(copy, 'half a RAW');
+
+      await expect(deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, hash)).rejects.toThrow(/hashes/);
+      expect(existsSync(raw)).toBe(true);
+    }),
+  );
+
+  // The one an ordering mistake would produce: the file here has been edited or replaced since the
+  // hash was taken, so the backup's copy is a *different* photograph's bytes and giving this one
+  // up would lose the only copy of what is actually on this disk.
+  it(
+    'refuses when the local copy is no longer the one that was backed up',
+    withTmp(async (root) => {
+      const { raw, copy } = await shaped(root, 'RAW two', 'RAW');
+
+      await expect(
+        deleteBackedUpOriginal(path.join(root, 'library'), raw, copy, await contentHash(copy)),
+      ).rejects.toThrow(/this copy hashes/);
+      expect(existsSync(raw)).toBe(true);
+    }),
+  );
+
+  it(
+    'refuses a target outside the library it was given',
+    withTmp(async (root) => {
+      const { raw, copy } = await shaped(root, 'RAW', 'RAW');
+
+      await expect(
+        deleteBackedUpOriginal(path.join(root, 'elsewhere'), raw, copy, await contentHash(copy)),
+      ).rejects.toThrow(/outside the library root/);
+      expect(existsSync(raw)).toBe(true);
     }),
   );
 });

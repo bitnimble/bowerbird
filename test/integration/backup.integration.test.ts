@@ -866,6 +866,44 @@ function stubWorker(body: string): string {
   return `file://${file}`;
 }
 
+test('a successful backup waits for its worker to exit', async () => {
+  const exited = path.join(dir, 'worker-exited');
+  const service = new BackupService(dbPath, {
+    workerUrl: stubWorker(`
+      import { writeFileSync } from 'node:fs';
+      self.onmessage = (event) => {
+        writeFileSync(event.data.outPath, 'snapshot');
+        self.postMessage({ bytes: 8 });
+        setTimeout(() => {
+          writeFileSync(${JSON.stringify(exited)}, 'done');
+          process.exit(0);
+        }, 50);
+      };
+    `),
+  });
+
+  await service.backup(7);
+
+  expect(existsSync(exited)).toBe(true);
+});
+
+test('a worker that reports but does not exit is a failure', async () => {
+  const service = new BackupService(dbPath, {
+    workerUrl: stubWorker(`
+      import { writeFileSync } from 'node:fs';
+      self.onmessage = (event) => {
+        writeFileSync(event.data.outPath, 'snapshot');
+        self.postMessage({ bytes: 8 });
+        setInterval(() => {}, 1000);
+      };
+    `),
+    deadlineMs: 200,
+  });
+
+  await expect(service.backup(7)).rejects.toThrow(/did not exit within/);
+  expect(await listBackups(dbPath)).toEqual([]);
+});
+
 test('a worker that exits without reporting is a failure, not silence', async () => {
   addLibrary(LIB, 'holiday');
   const service = new BackupService(dbPath, {

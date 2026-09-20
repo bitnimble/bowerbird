@@ -15,6 +15,8 @@ import { StacksStore } from '../features/photos/grid/stacks_store';
 import { ViewerStore } from '../features/photos/viewer/viewer_store';
 import { ReplicationPresenter } from '../features/replication/replication_presenter';
 import { ReplicationStore } from '../features/replication/replication_store';
+import { BackupPresenter } from '../features/backup/backup_presenter';
+import { BackupStore } from '../features/backup/backup_store';
 import { ShootsPresenter } from '../features/shoots/shoots_presenter';
 import { ShootsStore } from '../features/shoots/shoots_store';
 import { StackTriagePresenter } from '../features/photos/stack_triage/stack_triage_presenter';
@@ -43,6 +45,7 @@ const ShootsStoreContext = createContext<ShootsStore | null>(null);
 const AlbumsStoreContext = createContext<AlbumsStore | null>(null);
 const ScanStoreContext = createContext<ScanStore | null>(null);
 const ReplicationStoreContext = createContext<ReplicationStore | null>(null);
+const BackupStoreContext = createContext<BackupStore | null>(null);
 const ToastsStoreContext = createContext<ToastsStore | null>(null);
 const AppSettingsStoreContext = createContext<AppSettingsStore | null>(null);
 const DeviceSettingsStoreContext = createContext<DeviceSettingsStore | null>(null);
@@ -59,6 +62,7 @@ interface Presenters {
   albums: AlbumsPresenter;
   scan: ScanPresenter;
   replication: ReplicationPresenter;
+  backup: BackupPresenter;
   toasts: ToastsPresenter;
   appSettings: AppSettingsPresenter;
   deviceSettings: DeviceSettingsPresenter;
@@ -91,6 +95,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     albums: new AlbumsStore(),
     scan: new ScanStore(),
     replication: new ReplicationStore(),
+    backup: new BackupStore(),
     toasts: new ToastsStore(),
     appSettings: appSettingsStore,
     deviceSettings: new DeviceSettingsStore(),
@@ -153,6 +158,8 @@ function build(): { stores: Stores; presenters: Presenters } {
     albums,
     scan: new ScanPresenter(stores.scan, photos, libraries),
     replication,
+    // The grid says which photographs have no local copy, so a pass that removes one reloads it.
+    backup: new BackupPresenter(stores.backup, photos, toasts),
     toasts,
     appSettings,
     deviceSettings,
@@ -176,6 +183,7 @@ interface Stores {
   albums: AlbumsStore;
   scan: ScanStore;
   replication: ReplicationStore;
+  backup: BackupStore;
   toasts: ToastsStore;
   appSettings: AppSettingsStore;
   deviceSettings: DeviceSettingsStore;
@@ -207,7 +215,9 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                   <ExportHistoryStoreContext.Provider value={stores.exportHistory}>
                                     <UpdatesStoreContext.Provider value={stores.updates}>
                                       <SidebarStoreContext.Provider value={stores.sidebar}>
-                                        {children}
+                                        <BackupStoreContext.Provider value={stores.backup}>
+                                          {children}
+                                        </BackupStoreContext.Provider>
                                       </SidebarStoreContext.Provider>
                                     </UpdatesStoreContext.Provider>
                                   </ExportHistoryStoreContext.Provider>
@@ -244,6 +254,7 @@ export const useAlbumsStore = (): AlbumsStore => required(useContext(AlbumsStore
 export const useScanStore = (): ScanStore => required(useContext(ScanStoreContext), 'ScanStore');
 export const useReplicationStore = (): ReplicationStore =>
   required(useContext(ReplicationStoreContext), 'ReplicationStore');
+export const useBackupStore = (): BackupStore => required(useContext(BackupStoreContext), 'BackupStore');
 export const useToastsStore = (): ToastsStore => required(useContext(ToastsStoreContext), 'ToastsStore');
 export const useAppSettingsStore = (): AppSettingsStore => required(useContext(AppSettingsStoreContext), 'AppSettingsStore');
 export const useDeviceSettingsStore = (): DeviceSettingsStore =>

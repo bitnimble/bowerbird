@@ -7,7 +7,7 @@ import { dustSettings } from '../../schemas/dust_settings';
 import { adjustOf } from '../../schemas/edit_adjust';
 import { neutralEdits } from '../../schemas/photo_edits';
 import { PathSegment, route } from '../../schemas/route';
-import { originalPathOf } from '../../utils/paths';
+import type { Originals } from '../../services/blobs/originals';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
@@ -42,6 +42,7 @@ export class QualityCheckApi {
     private readonly photoRenditions: PhotoRenditionService,
     private readonly libraries: LibrariesService,
     private readonly settings: SettingsRepository,
+    private readonly originals: Originals,
   ) {
     const app = new Hono();
 
@@ -64,7 +65,7 @@ export class QualityCheckApi {
 
       // This page decodes a RAW to compare encoder settings, so a row composed out of several
       // of them is not something it can be pointed at.
-      const rawFilePath = originalPathOf(library, photo);
+      const rawFilePath = await this.originals.open(library, photo);
       if (rawFilePath == null) throw new AppError('VALIDATION_ERROR', `${photo.id} has no file to decode`);
 
       const file = path.join(CACHE, `${photo.id}-${quality}.avif`);

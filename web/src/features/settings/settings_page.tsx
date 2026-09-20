@@ -506,7 +506,7 @@ function tabFromPath(name: string | undefined): Tab {
 
 export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   const store = useLibrariesStore();
-  const { libraries, appSettings } = usePresenters();
+  const { libraries, appSettings, backup } = usePresenters();
   const [adding, setAdding] = useState(false);
   const [joining, setJoining] = useState(false);
   const navigate = useNavigate();
@@ -515,7 +515,10 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   useEffect(() => {
     void libraries.load();
     void appSettings.load();
-  }, [libraries, appSettings]);
+    // Only here: a backup folder is read and set on this page, and every other page's answer to
+    // "is this photo on the backup" is on the photograph's own row.
+    void backup.load();
+  }, [libraries, appSettings, backup]);
 
   return (
     <Page>

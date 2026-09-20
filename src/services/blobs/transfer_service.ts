@@ -19,14 +19,19 @@ import { newId } from '../../schemas/id';
 import type { Library } from '../../schemas/libraries';
 import { soleInputOf } from '../../schemas/recipes';
 import { PathSegment, route } from '../../schemas/route';
-import { deleteEvictedOriginal, deleteStagedBlob } from '../../utils/deletions';
+import { deleteBackedUpOriginal, deleteEvictedOriginal, deleteStagedBlob } from '../../utils/deletions';
+import { contentHash } from '../../utils/hash';
 import { originalPathOf } from '../../utils/paths';
+import type { BackupLocations } from '../backup/backup_locations';
+import { backupPath, mirrorReady } from '../backup/backup_root';
+import { passivePeerOf } from '../backup/passive_peers';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotoMetadataRepository } from '../photos/metadata/photo_metadata_repository';
 import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_paths_repository';
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import type { BlobLocations } from './blob_locations';
-import { appendToStage, contentHash, materialise, stagePath, stagedSize, stagingDir } from './blob_store';
+import type { PeerTransport } from './peer';
+import { appendToStage, materialise, stagePath, stagedSize, stagingDir } from './blob_store';
 import { unsettled } from '../replication/materialise';
 import { isEvicting, whileEvicting } from './evicting';
 
@@ -50,19 +55,6 @@ function originalToTransfer(library: Library, photo: BasicPhoto): string {
     throw new AppError('VALIDATION_ERROR', `${photo.id} is composed rather than imported, so it has no original to transfer`);
   }
   return abs;
-}
-
-/** How a paired peer is reached; implemented by the transport (src/api/replication). */
-export interface PeerTransport {
-  request(peerId: string, path: string, init?: RequestInit): Promise<Response>;
-  /**
-   * Whether this device has any way to dial that peer at all.
-   *
-   * Asked before a holder is chosen, because half of them cannot be: a peer that
-   * joined the library through somebody else replicates its `blob_locations` rows
-   * here and keeps its address to itself (§6.4).
-   */
-  canReach(peerId: string): boolean;
 }
 
 const PUSH_CHUNK = 8 * 1024 * 1024;
@@ -130,6 +122,8 @@ export class TransferService {
    * the alternative is a column and a migration to carry it.
    */
   private readonly anyHolderWillDo = new Set<string>();
+  /** Who is waiting on one entry rather than on the queue (see {@link settled}). */
+  private readonly waiting = new Map<string, ((item: Transfer) => void)[]>();
 
   constructor(
     private readonly db: Database,
@@ -137,6 +131,7 @@ export class TransferService {
     private readonly photoMetadata: PhotoMetadataRepository,
     private readonly libraries: LibrariesRepository,
     private readonly locations: BlobLocations,
+    private readonly backups: BackupLocations,
     private readonly transport: PeerTransport,
     /** What an arriving original owes the pipeline (§7.8). */
     private readonly build: (photoIds: string[]) => void = () => {},
@@ -194,6 +189,19 @@ export class TransferService {
     return this.enqueue(libraryId, peer, 'push', lacking);
   }
 
+  /**
+   * Queues originals for a peer that works out for itself what it is owed (§14.3).
+   *
+   * The backup pass reads a table of its own rather than `blob_locations` - a folder holds no
+   * opinion about what it has - so it arrives here with the list already computed, where a push to
+   * a device arrives with a scope and has the diff taken for it.
+   */
+  queuePush(libraryId: string, peer: string, photoIds: readonly string[]): number {
+    const queued = this.enqueue(libraryId, peer, 'push', photoIds);
+    this.kick();
+    return queued;
+  }
+
   /** The same diff the other way: fetch what `peer` holds that this replica lacks. */
   async pullDiff(libraryId: string, peer: string, scope: BlobScope): Promise<number> {
     const library = this.library(libraryId);
@@ -209,12 +217,17 @@ export class TransferService {
    * §7.5: opening a photo whose original is remote streams it from a holder and
    * keeps it. Null when the original is already local. Cancellable through the
    * queue entry it returns.
+   *
+   * @param from the one holder to take it from, which is what reading an offloaded original does
+   * (§14.4): its copy is on a drive this device can see, and a device on the network that also has
+   * it must not be pulled from instead. Absent is the person's own ask, which takes whichever
+   * holder answers and moves on to the next when one fails.
    */
-  fetchOriginal(photoId: string): Transfer | null {
+  fetchOriginal(photoId: string, from?: string): Transfer | null {
     const photo = this.photo(photoId);
     const library = this.library(photo.library_id);
     if (existsSync(originalToTransfer(library, photo))) return null;
-    const holders = this.otherHolders(library.id, photoId);
+    const holders = from == null ? this.otherHolders(library.id, photoId) : [from];
     if (holders.length === 0) throw new AppError('NOT_FOUND', `no peer is recorded as holding ${photoId}`);
     const peer = this.dialable(holders)[0];
     if (peer == null) {
@@ -226,13 +239,23 @@ export class TransferService {
     }
     this.enqueue(library.id, peer, 'pull', [photoId]);
     const queued = this.byKey(library.id, photoId, peer, 'pull');
-    if (queued != null) this.anyHolderWillDo.add(queued.id);
+    if (queued != null && from == null) this.anyHolderWillDo.add(queued.id);
     this.kick();
     return queued;
   }
 
+  /**
+   * Everywhere but here the original is, which is the set a fetch chooses from.
+   *
+   * Devices and backup folders together, and deliberately in that order: a device on the network
+   * usually answers faster than a drive somebody has to have plugged in, and `dialable` takes the
+   * first that can be reached at all.
+   */
   private otherHolders(libraryId: string, photoId: string): string[] {
-    return this.locations.holders(libraryId, photoId).filter((peer) => peer !== this.locations.selfId());
+    return [
+      ...this.locations.holders(libraryId, photoId).filter((peer) => peer !== this.locations.selfId()),
+      ...this.backups.holders(libraryId, photoId),
+    ];
   }
 
   /**
@@ -294,6 +317,9 @@ export class TransferService {
     if (item.state !== 'queued' && item.state !== 'active') return;
     this.db.query("UPDATE blob_transfers SET state = 'paused' WHERE id = ?").run(id);
     this.aborts.get(id)?.abort();
+    // A paused entry is one nothing will finish, so whoever was waiting on the picture is told
+    // now rather than left holding a request until somebody resumes it.
+    this.wake(id);
   }
 
   resume(id: string): void {
@@ -308,6 +334,7 @@ export class TransferService {
     if (item.state === 'done') return;
     this.db.query("UPDATE blob_transfers SET state = 'cancelled' WHERE id = ?").run(id);
     this.aborts.get(id)?.abort();
+    this.wake(id);
     if (item.direction === 'pull') {
       const library = this.library(item.library_id);
       const stage = stagePath(library, item.photo_id);
@@ -344,6 +371,26 @@ export class TransferService {
     return cancelled;
   }
 
+  /** Drops what is still queued for one peer, for a backup folder somebody has unpaired (§14.1). */
+  async cancelFor(libraryId: string, peerId: string): Promise<number> {
+    const pending = this.db
+      .query(
+        `SELECT id FROM blob_transfers
+          WHERE library_id = ? AND peer_id = ? AND state IN ('queued', 'active', 'paused')`,
+      )
+      .all(libraryId, peerId) as { id: string }[];
+    let cancelled = 0;
+    for (const item of pending) {
+      try {
+        await this.cancel(item.id);
+        cancelled += 1;
+      } catch (err) {
+        log.warn('could not cancel a transfer', { transfer: item.id, err: String(err) });
+      }
+    }
+    return cancelled;
+  }
+
   /** Starts the queue without waiting on it; enqueue paths and startup call this. */
   kick(): void {
     void this.drain().catch((error: unknown) => log.error('transfer queue stopped', { err: String(error) }));
@@ -357,10 +404,39 @@ export class TransferService {
     return this.draining;
   }
 
+  /**
+   * Waits for one queue entry to reach a state it will not leave by itself.
+   *
+   * What opening an offloaded photograph waits on (§14.4). Per entry rather than on the drain,
+   * which only settles when the queue has emptied: a read of one photograph must not wait out a
+   * backup pass of ten thousand.
+   */
+  settled(id: string): Promise<Transfer> {
+    const item = this.get(id);
+    if (item.state !== 'queued' && item.state !== 'active') return Promise.resolve(item);
+    return new Promise((resolve) => {
+      this.waiting.set(id, [...(this.waiting.get(id) ?? []), resolve]);
+    });
+  }
+
+  private wake(id: string): void {
+    const waiters = this.waiting.get(id);
+    if (waiters == null) return;
+    this.waiting.delete(id);
+    const item = this.get(id);
+    for (const resolve of waiters) resolve(item);
+  }
+
   private async processQueued(): Promise<void> {
     for (;;) {
+      // Pulls first, whatever the order they were asked in: a pull is somebody waiting for a
+      // picture and a push is housekeeping, so a fetch-on-open queued behind a backup pass of the
+      // whole library would otherwise wait out the library.
       const item = this.db
-        .query(`SELECT ${COLUMNS} FROM blob_transfers WHERE state = 'queued' ORDER BY queued_at, id LIMIT 1`)
+        .query(
+          `SELECT ${COLUMNS} FROM blob_transfers WHERE state = 'queued'
+            ORDER BY direction = 'push', queued_at, id LIMIT 1`,
+        )
         .get() as Transfer | null;
       if (item == null) return;
       await this.run(item);
@@ -392,6 +468,80 @@ export class TransferService {
   /** Whether the file at this photograph's path may not be its own (§7.4, §7.7). */
   isUnsettled(libraryId: string, photoId: string): boolean {
     return unsettled(this.db, libraryId).some((entry) => entry.photoId === photoId);
+  }
+
+  /**
+   * The copy leaving this disk, once everything about the photograph has been checked but the
+   * other copy.
+   *
+   * The two arms are two different safety arguments and neither can be made from the other. A
+   * device is asked, because only it can say what it holds *now* and its answer is a promise it
+   * is keeping by refusing to evict at the same moment (§7.6). A backup is read, because a folder
+   * promises nothing and cannot be asked - so this device hashes both copies itself, here, where
+   * the deletion happens (§14.5).
+   */
+  private async removeLocalCopy(
+    photo: BasicPhoto,
+    library: Library,
+    at: string,
+    abs: string,
+    recorded: string,
+    peer: string,
+  ): Promise<string | null> {
+    const backup = passivePeerOf(this.db, peer);
+    if (backup != null) {
+      const entry = this.backups.entry(library.id, backup.peerId, photo.id);
+      if (entry == null) return 'the backup holds no copy of this photo';
+      if (!mirrorReady(backup.root, library.id)) return `the backup folder is not there: ${backup.root}`;
+      return await this.refusable(() =>
+        libraryMutex.run(library.id, async () => {
+          await deleteBackedUpOriginal(library.root_path, abs, backupPath(backup.root, entry.rel_path), recorded);
+          this.retire(library.id, photo.id, at);
+        }),
+      );
+    }
+
+    let confirmation: BlobVerifyResponse;
+    try {
+      const res = await this.transport.request(peer, route(photo.id, PathSegment.verify()));
+      if (!res.ok) return `peer answered ${res.status} to the possession check`;
+      confirmation = BlobVerifyResponseSchema.parse(await res.json());
+    } catch (error) {
+      return `peer could not be reached for a live possession check: ${String(error)}`;
+    }
+    if (!confirmation.held || confirmation.content_hash !== recorded) {
+      return 'peer could not verify possession of a matching copy';
+    }
+    return await this.refusable(() =>
+      libraryMutex.run(library.id, async () => {
+        await deleteEvictedOriginal(library.root_path, abs, confirmation, recorded);
+        this.retire(library.id, photo.id, at);
+      }),
+    );
+  }
+
+  /**
+   * The deletion's own refusal, reported as one.
+   *
+   * Every check above is made again inside `utils/deletions.ts`, against the files rather than
+   * against the rows, and a copy that fails one there is a photograph that keeps its original -
+   * which is the answer `evict` promises per photograph. Thrown instead, one refused copy ends the
+   * whole batch, and a cull that meets a half-written backup stops rather than stepping over it.
+   */
+  private async refusable(remove: () => Promise<void>): Promise<string | null> {
+    try {
+      await remove();
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  // What the catalogue records about an original that has just left this disk. Both halves
+  // together or neither: a retracted row with the flag unset advertises a fetch nobody can serve.
+  private retire(libraryId: string, photoId: string, at: string): void {
+    this.locations.retract(libraryId, photoId);
+    this.photoMetadata.setMissing(photoId, at);
   }
 
   private async evictOne(photoId: string, peer: string): Promise<string | null> {
@@ -426,24 +576,7 @@ export class TransferService {
       // would free: what it costs this device is its renditions, which the cache sweeps.
       if (at == null || abs == null) return 'this photograph is composed rather than imported, so it has no original to evict';
       if (!existsSync(abs)) return 'the original is not on this device';
-
-      let confirmation: BlobVerifyResponse;
-      try {
-        const res = await this.transport.request(peer, route(photoId, PathSegment.verify()));
-        if (!res.ok) return `peer answered ${res.status} to the possession check`;
-        confirmation = BlobVerifyResponseSchema.parse(await res.json());
-      } catch (error) {
-        return `peer could not be reached for a live possession check: ${String(error)}`;
-      }
-      if (!confirmation.held || confirmation.content_hash !== recorded) {
-        return 'peer could not verify possession of a matching copy';
-      }
-      await libraryMutex.run(library.id, async () => {
-        await deleteEvictedOriginal(library.root_path, abs, confirmation, recorded);
-        this.locations.retract(library.id, photoId);
-        this.photoMetadata.setMissing(photoId, at);
-      });
-      return null;
+      return await this.removeLocalCopy(photo, library, at, abs, recorded, peer);
     });
     return refusal === 'busy' ? 'this device is already removing its copy' : refusal;
   }
@@ -507,6 +640,7 @@ export class TransferService {
     } finally {
       this.aborts.delete(item.id);
       this.anyHolderWillDo.delete(item.id);
+      this.wake(item.id);
     }
   }
 
