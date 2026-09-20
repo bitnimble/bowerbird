@@ -1,0 +1,161 @@
+// A comment that names a file which no longer exists is a comment that was true when it was
+// written, and is now a wrong turn for whoever follows it. This branch deleted a lot - a wasm
+// editor, a worker, a daemon, a blocking FFI entry point, a dylib-bundling step - and the
+// references to them were found one at a time, by reading, several rounds apart.
+//
+// Reading is what this replaces. A path in backticks is the one part of a comment that can be
+// checked mechanically, and in practice it is the anchor: a stale explanation almost always
+// names the thing it is stale about.
+//
+// The prose counts too: `DESIGN.md`, `THIRD_PARTY.md` and the notes describe the system as it
+// is, so a path in one of them is the same claim about the tree that a comment beside code
+// makes. `ARCHIVE` below is what is exempt and why.
+import { describe, expect, test } from 'bun:test';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { extname, join, relative } from 'node:path';
+
+const ROOT = join(import.meta.dir, '..', '..');
+
+const SOURCE = [
+  'src',
+  'web/src',
+  'web/e2e',
+  'e2e-tauri',
+  'scripts',
+  'native/rawshim/src',
+  'native/rawshim/examples',
+  'src-tauri/src',
+  'docs',
+];
+/** The prose that sits at the root rather than in a directory of its own. */
+const SOURCE_FILES = ['DESIGN.md', 'THIRD_PARTY.md'];
+const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.rs', '.wgsl', '.md']);
+
+// Prose that names a path for a reason other than describing this tree.
+//
+// The first three argue for a decision already taken and say so at the top, so the paths in them
+// are what that argument was about. The specs and plans are the other direction: a design doc written
+// before the work names the files it proposes to add, and a proposal that was reshaped on the way
+// in leaves a name behind that was never a file - `2026-07-29-photo-stacks-design.md` asks for a
+// `rawshim_pixels.ts` that the finished work did not need. Neither kind is stale; both would
+// report here.
+const ARCHIVE = [
+  'docs/raw-edit-gpu.md',
+  'docs/client-side-editing-plan.md',
+  'docs/tauri-cef-evaluation.md',
+  'docs/superpowers/specs/',
+  'docs/superpowers/plans/',
+];
+const SKIP = new Set(['node_modules', 'target', 'dist', '.git']);
+
+// What a named file can be. Anything else in backticks is a symbol, a command or prose.
+const NAMED = new Set([
+  '.ts', '.tsx', '.rs', '.wgsl', '.md', '.json', '.toml', '.html', '.css', '.sh', '.yml',
+]);
+
+function walk(dir: string, out: string[] = []): string[] {
+  // Dirents rather than a stat each: a tauri android build leaves symlinks into an
+  // NDK that need not be there, and stat follows them and throws.
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP.has(entry.name)) continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) walk(path, out);
+    else out.push(path);
+  }
+  return out;
+}
+
+/** Every file in the repo, by name alone, because a comment rarely spells the whole path. */
+const everyFile = new Set<string>();
+const everyPath = new Set<string>();
+for (const dir of ['src', 'web', 'e2e-tauri', 'scripts', 'native', 'src-tauri', 'docs', 'test', 'slang', '.github', '.cargo']) {
+  for (const path of walk(join(ROOT, dir))) {
+    everyPath.add(relative(ROOT, path));
+    everyFile.add(path.slice(path.lastIndexOf('/') + 1));
+  }
+}
+for (const top of readdirSync(ROOT)) {
+  if (!SKIP.has(top) && statSync(join(ROOT, top)).isFile()) {
+    everyPath.add(top);
+    everyFile.add(top);
+  }
+}
+
+// Files the app writes rather than files the repo holds, which a comment may name for the
+// same reasons and which no checkout will ever contain.
+const AT_RUNTIME = new Set(['config.json', 'release.yml']);
+
+function named(token: string): boolean {
+  // Not a path of ours: somebody else's tree, a URL, a glob, a sentence.
+  if (token.startsWith('/') || token.startsWith('~') || token.includes('://')) return false;
+  if (/[\s*?<>|]/.test(token)) return false;
+  if (token.startsWith('node_modules/') || AT_RUNTIME.has(token)) return false;
+  return NAMED.has(extname(token));
+}
+
+function exists(token: string): boolean {
+  const path = token.replace(/^\.\//, '');
+  if (everyPath.has(path)) return true;
+  if (existsSync(join(ROOT, 'node_modules', 'typescript', 'lib', path))) return true;
+  // A comment usually says `rawshim_job.ts`, or a partial path from wherever the reader is
+  // assumed to be standing. Either resolves by name; the point is that the file is still
+  // there under that name, not that the comment spelled its whole path.
+  return everyFile.has(path.slice(path.lastIndexOf('/') + 1));
+}
+
+describe('a comment naming a file', () => {
+  test('names one that exists', () => {
+    const dangling: string[] = [];
+    const files = SOURCE.flatMap((dir) => walk(join(ROOT, dir)))
+      .concat(SOURCE_FILES.map((name) => join(ROOT, name)));
+    for (const path of files) {
+      if (!SOURCE_EXTENSIONS.has(extname(path))) continue;
+      const from = relative(ROOT, path);
+      if (ARCHIVE.some((it) => from.startsWith(it))) continue;
+      const source = readFileSync(path, 'utf8');
+      for (const match of source.matchAll(/`([^`\n]+)`/g)) {
+        const token = match[1] ?? '';
+        if (!named(token) || exists(token)) continue;
+        dangling.push(`${from} names ${token}`);
+      }
+    }
+    expect(dangling).toEqual([]);
+  });
+});
+
+// The same rule one level down. A Rust comment that says `wasm::Editor::grade_from` is what
+// this owes its answer to is describing a module that was deleted, and the reader cannot
+// tell that from the comment - it reads exactly like a live cross-reference.
+//
+// The last segment rather than the whole path, because a comment abbreviates the route and
+// not the name. Anything genuinely there is written down somewhere: its own definition, a
+// call, or a `use`.
+const RUST_PATH = /^[a-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+$/;
+
+describe('a Rust comment naming a path', () => {
+  test('names one that is written down somewhere', () => {
+    const rust = walk(join(ROOT, 'native', 'rawshim'))
+      .concat(walk(join(ROOT, 'src-tauri', 'src')))
+      .filter((path) => extname(path) === '.rs');
+    const source = new Map(rust.map((path) => [path, readFileSync(path, 'utf8')]));
+    // Comments stripped, so a name that appears only in prose does not vouch for itself,
+    // which is the whole failure being looked for. From wherever `//` starts rather than
+    // only from the start of a line: a trailing comment is still a comment, and one on the
+    // same line as code was the way a dead name went on proving it was alive.
+    const code = [...source.values()]
+      .map((text) => text.replaceAll(/\/\/.*$/gm, '').replaceAll(/^\s*\*.*$/gm, ''))
+      .join('\n');
+
+    const dangling: string[] = [];
+    for (const [path, text] of source) {
+      for (const match of text.matchAll(/`([^`\n]+)`/g)) {
+        const token = match[1] ?? '';
+        if (!RUST_PATH.test(token)) continue;
+        const leaf = token.slice(token.lastIndexOf(':') + 1);
+        if (code.includes(leaf)) continue;
+        dangling.push(`${relative(ROOT, path)} names ${token}`);
+      }
+    }
+    expect(dangling).toEqual([]);
+  });
+});

@@ -1,0 +1,6 @@
+shrink
+moments_of
+window_mean
+coefficients
+window_mean
+apply_guided

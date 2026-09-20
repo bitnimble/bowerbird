@@ -1,0 +1,561 @@
+# Bowerbird design: The web client
+
+A chapter of [`DESIGN.md`](../../DESIGN.md). The chapters are numbered as one document, so
+`DESIGN §N` anywhere in the repo, and a `§N` cited here that is not below, both mean the
+section the index in `DESIGN.md` maps §N to.
+
+---
+
+## 18. Web Client (`web/`)
+
+A separate Vite + React app with its own `package.json`, dev server and build. It is a pure API consumer: it holds no photo logic of its own and talks to the server over HTTP.
+
+Every request it makes is same-origin. The web server proxies `/api` and `/image` (and the API's own `/quality-check` page) through to the API, so the browser never needs a route to the API host, only the web server is exposed, and the API stays internal. `VITE_API_URL`, or `VITE_API_PORT` for the common case of another port on the same host, tells the proxy where to send them; nothing in the bundle carries an API address. The API still carries CORS (§15) for other consumers, but the web client no longer relies on it. `VITE_ALLOWED_HOSTS` (comma-separated) lists the domains the dev server will answer to when it is served over one.
+
+### 18.1 Stack
+
+| Concern | Choice |
+|---|---|
+| Build / dev server | Vite 5 (random port, bound to `0.0.0.0`) |
+| UI | React 18 |
+| State | MobX 6 with standard (TC39) decorators |
+| Routing | React Router 6 |
+| Components | Base UI (unstyled primitives), wrapped once in `src/ui/`, a module per control plus the types and metrics they share |
+| Icons | lucide-react |
+| Calendar | react-day-picker, restyled through its CSS variables |
+| E2E | Playwright, driving the real API and a temp library |
+
+Every control on screen comes from `src/ui/`, one module per control with no barrel, and each variant list is short on purpose: four button variants, four text roles, two heading levels. Uniformity is enforced in code rather than by discipline; every interactive element in the app carries the same `.ui-btn` class - `Button`, the segmented filter chips, `Select`, `TextField`, the menu triggers - so height, type size and icon size cannot drift between a filter and a toolbar button. A new fifth colour or a fifth text style should mean rethinking the screen, not adding a variant.
+
+The one deliberate exception: a link styled as a button is not routed through Base UI's `Button`, which would relabel the anchor `role="button"` and cost it the link role and open-in-new-tab. `Button` clones the passed element instead.
+
+Standard decorators (`@observable accessor x`), not `experimentalDecorators`: MobX wires them up without a `makeObservable` call. They must be lowered before Rollup sees them, so `esbuild.target` and `build.target` are pinned to `es2022` in `vite.config.ts`; at `esnext` esbuild passes the `accessor` keyword straight through and the production build fails to parse.
+
+Request and response types are `import type`-ed directly from `src/schemas/*` (the server's Zod schemas). The client therefore cannot drift from the API, and because the imports are type-only they are erased at build time, so no server code or Zod runtime reaches the bundle.
+
+### 18.2 Layer split
+
+Strict three layers per feature folder, no barrel files:
+
+- **Stores** (`*_store.ts`) hold observables and computeds only, one per domain: libraries, photos, shoots, albums, sync. There is no aggregate root store; each is provided through its own React context.
+- **Presenters** (`*_presenter.ts`) are the only writers. Every mutation, reaction and in-flight `AbortController` lives here. Cross-domain work goes presenter-to-presenter: `PhotosPresenter` bulk actions call `ShootsPresenter.addPhotos` / `AlbumsPresenter.addPhotos` rather than writing a sibling's store.
+- **Components** read stores and bind presenter methods to callbacks.
+
+MobX strict mode is on, so a mutation attempted outside an action warns in the console: the single-writer rule is enforced at runtime, not just by convention.
+
+### 18.3 Screens
+
+`/settings` (add / remove libraries, per-library name, renditions and sync, and the app's own settings), `/libraries/:id` (grid, filters, selection, bulk actions), `/libraries/:id/shoots` (tree + create), `/libraries/:id/bin`, `/libraries/:id/no-shoot`, `/shoots/:id`, `/albums`, `/albums/:id`, and the viewer and triage session nested under whichever of those grids they were opened from: `<collection>/photos/:id` and `<collection>/stacks/:id/triage`, where `<collection>` is `/libraries/:id`, `/libraries/:id/bin`, `/libraries/:id/no-shoot`, `/shoots/:id` or `/albums/:id`.
+
+**The viewer is nested rather than flat** because a photograph is in a shoot or an album as much as it is in a library, and one `/photos/:id` cannot say which of them the reader is in. Held only in the store, that fact did not survive a reload: a photo opened from a shoot came back as a photo in the library, so the way out was the wrong grid and prev/next stepped through the wrong run. Triage is nested for the same reason - a session ends by returning to a photograph. `collectionPath` builds these paths and `sourceOfPath` reads them back. Bare `/photos/:id` and `/stacks/:id/triage` remain as deep links, and fall back to the photo's own library.
+
+Every registered library is listed permanently in the sidebar, with its sections - Photos, Shoots, Bin - always under it, so any section of any library is one click from anywhere. There is no "choose a library" screen: adding one is a setup step that belongs in Settings, not a gate you pass through on each visit. Syncing lives in Settings for the same reason: it is maintenance on the library, and the gallery is for looking at photos. Settings and the shortcut sheet sit together at the foot of the sidebar, apart from the catalogue links, because they are about the app rather than the photographs.
+
+**The sidebar's Shoots and Albums rows open into the collections themselves** (`SidebarStore`, `SidebarPresenter`), a shoot nesting under its parent shoot the way the Shoots page nests it under its parent folder. A library stands open and everything under it starts shut, so the reader who wants none of this sees exactly the sidebar they had; the set that is remembered is what *differs* from that, which is why a library nobody has touched is open without being in it. A section is read when it is first opened, and a library whose shoots are never asked for costs no request - except that the Shoots page hands over whatever it has just read, so a rename reaches the sidebar without a second fetch.
+
+**A parent row is sticky.** Mirroring gives a library a shoot per folder (§4.3), so the sidebar is routinely longer than the window, and a reader a thousand shoots down should not have to scroll back to the top to close the thing they are lost in. That is what fixes the sidebar's tree to a row pitch: a parent sticks at its depth times that pitch, with no measuring, and the rows are full-bleed and indented from the inside because a stuck row paints only its own box - any gutter beside it is a strip the rows below scroll up through. One guide rule per ancestor is painted on the row's own background, a repeat of the indent step standing against each ancestor's icon column; consecutive rows abut, so what each draws for itself stacks into a continuous line.
+
+**The chevron takes the count's place under the pointer.** At rest a section states how much is in it, which is the thing worth reading; the affordance to close it appears where the pointer already is. A coarse pointer has no arrival for it to replace anything on, so there the two sit side by side at a finger's size, and a row with nothing to open leaves the chevron's column empty so the counts down a tree still line up.
+
+**The sidebar's width is a drag on its edge**, remembered like its collapsed state, and offered only to a fine pointer: a finger has the whole drawer to pull instead. The handle sits on the shell rather than inside the sidebar, which scrolls.
+
+Adding a library is one button and a dialog, holding everything the library needs before it exists: the folder, a name, and the ordering its gallery starts in. The folder is walked with a picker over `/api/browse` as well as typed, because the path is read on the server, which may not be the machine the page is open on, so a path that exists in this browser's world is not necessarily one the server can open.
+
+Adding a library also decides how much of the folder tree it is (§4.1). That belongs in the dialog rather than in Settings afterwards, because the answer changes what the first sync imports, and a library that has already spent an hour building renditions for a folder of decade-old rejects has answered the question the expensive way. It remains editable per library in Settings.
+
+**"Read-only mode"** is a checkbox in the same dialog, ticked and disabled when the listing reports the folder is not writable (§4.1). Ticking it hides the bin-name field - and takes it out of the submit guard too, which otherwise leaves Add disabled for ever. A `READ_ONLY` from the create re-ticks the box rather than surfacing a bare error, since `access` can be wrong. In Settings the same flag is per library, beside a **bin folder name** field that renames the folder on disk (§4.1) and is disabled, with the reason, for a read-only library. The Bin page reads its line off the library: photographs moved into `<bin_name>`, or left exactly where they were when there is no bin. Restore stays visible but disabled for a photograph inside a read-only library's bin, and *Add to shoot* is not offered at all - an album is the thing to reach for.
+
+Adding a shoot is **not** a dialog with a folder picker, for the reason such a picker would exist: a shoot is a folder, and the Shoots page is a view of the folders themselves (§18.3.4), so the folder is chosen by pointing at it rather than by re-walking the tree inside a modal. What survives as a dialog is the part a folder cannot answer - a name for a folder that does not exist yet, and the shoot's own ordering.
+
+The rest of Settings is ordered by how often a decision is made rather than by which subsystem owns it. What a library builds and how photos open sit at the top; the encoder sizes, qualities, HDR grade and server knobs are numbers tuned once, so they live in one collapsed **Advanced settings** disclosure. The HDR settings are disabled, with the reason as their tooltip, while no library builds HDR renditions: nothing reads them until one does.
+
+There is no title bar. It only ever restated the library the sidebar already highlights, and the vertical space is worth more to the photographs.
+
+**On a phone the sidebar is a drawer, and a rightward drag anywhere opens it** (`useDrawerSwipe`), a leftward one closing it again. Anywhere rather than an edge strip: a horizontal drag means nothing else on a grid or a list, and a 20px strip is a target in its own right, which is what a gesture is meant to save you from. Bound to the window rather than to an element, because it starts over whatever happens to be there and no page should have to know the shell has a drawer; passive throughout, so a page handling the same pointers keeps handling them.
+
+**The drag is the animation.** How far the drawer is out is `--drawer` on the shell, 0 shut and 1 open, and the sidebar is `translateX(calc((var(--drawer) - 1) * 100%))` with the scrim's opacity on the same number. The gesture writes it **inline, per frame, straight to the element**: it changes every frame of a drag, and a re-render of the whole shell to carry it is a price the photographs would pay. React is told twice, when the drag claims the gesture and where it ended up. Letting go *removes* the inline value, which hands the resting place back to the `.shell--drawer` rule and is what starts the 180ms ease - there is no separate "animate now" path. Past halfway settles open, short of it goes back.
+
+That is also why the sidebar is **mounted throughout on a phone** rather than conditionally: a swipe has to have something to pull in, and something to push back out. Off screen it is `visibility: hidden`, which keeps it out of the tab order and out of the way of a tap while still leaving the slide something to animate; the visibility falls only once the slide is over (`transition: visibility 0s 180ms`) and comes back with no delay at all. Specs therefore ask whether the sidebar is *visible*, not whether it is present.
+
+**Touch events, not pointer events**, which is the whole reason it works over the photographs. A scroller takes the touch the moment it reads the gesture as a scroll, and taking it means `pointercancel` and no further `pointermove` - so a pointer-based version sees the finger land and never sees it travel, on every page that scrolls. It worked on Settings and nowhere that mattered. Touches keep arriving throughout, and the listeners stay passive, so the scroll the browser decided on still happens.
+
+Two more things bound it. It fires on the **move that crosses the threshold** rather than on the release: a drawer should come with the finger, and a lifted touch reports no position at all. And while the drawer is shut it is refused over anything that already means something dragged sideways - a `.stage`, which steps photographs and pans, and a `.ui-slider`, whose track carries a value. Asked of the element rather than of the route, so a page that grows either later needs no change here. Dropping the edge zone is what made that exemption load-bearing rather than a nicety: without it every step back through the photographs would pull the drawer over the one it landed on, which `mobile.spec.ts` now asserts against directly.
+
+**A finger is not a cursor, and one block of tokens says so.** Every control takes its height and type size from `--control-h` and `--control-text` with no per-component override, so `@media (pointer: coarse)` raising those two to 44px and 16px is the whole of the change for the ordinary chrome. 44px is the number the crop grips already name as the smallest thing a finger reliably lands on; 16px is also what stops iOS Safari zooming the page in when a field takes focus, which it does not zoom back out of.
+
+What the tokens cannot reach is anything carrying its own metrics, and each of those is a rule of its own: the sidebar's rows (links, not buttons), the calendar's day cells, the sheet's rating stars, the edit panel's per-slider reset. The grid tile's rating and verdict go the other way and are simply **not drawn** under a finger - seven targets laid over the photograph they judge, where a thumb big enough to hit one covers the thing it is deciding about, so a cull on a phone is made in the photo view instead.
+
+### 18.3.1 Gallery controls
+
+Five named views (Active, Untriaged, Picks, Rejects, All) answer the questions asked constantly and cost one click. **Everything rarer is behind one button**: the checkbox set that sends `match=any` - so ticking several means "any of these" rather than an empty intersection - together with the filename search and the calendar range. A sort and a rendition-size slider complete the row, both of them an icon wide.
+
+**Hidden is one more tick in that set**, unioning with the rest under `match=any` like any of them (§12.4): ticked with Picks it is a grid holding the put-away and the picks together. It has only the ticked form, hiding being the default the others are read against, and the photographs it brings in wear the struck-through eye on their tiles so a reader can tell which half of a mixed grid they are looking at.
+
+**Hide and Unhide are both offered at once in the bulk bar**, rather than one row pointing whichever way the grid is. A mixed grid means a mixed selection, so a row that guessed a direction from the filters would be the wrong one for half of what was chosen - and a selection is runs of positions (§18.3.3), reaching rows this client has never held, so there is nothing to guess from either. The viewer's is the one that points: it is one photograph, and its own `is_hidden` says which way.
+
+Either way what was acted on leaves the view it was chosen in, so the collection is re-read rather than the rows patched, exactly as binning does - and the open photograph's detail is re-read alongside it, which binning does not need to do: hiding is offered *in* the viewer, so a stale detail leaves that row saying "Hide" for a photograph already hidden, with the detail cache holding sixty-four of them. The count in the toast is the server's, a selection being able to name positions that no longer hold a photograph.
+
+**A popover, not a menu.** A menu focuses the first tabbable element it contains and reads printable keys as typeahead, which a search box in one cannot survive: the box takes the focus the items need, and typing into it moves the selection instead (§18.5 records the same trap costing a slider). So the panel is a `PopoverButton` and its options are real checkboxes rather than menu items.
+
+**The bodies and the lenses open beside the panel, not in it.** A library shot over years runs to dozens of either, and a panel that tall pushes the calendar under it off the screen - so each is a row that opens a list on hover, as a submenu does, and the row wears the count of what is ticked inside it so a narrowed list says so while it is shut. The options are the collection's own, from `POST /api/photos/models` (§13.2), which answers with the *pairings* rather than two lists: a lens that was never on a ticked body is greyed, because that pair lists nothing. It carries the view's own filters and not the reader's chips - the Bin offers the bodies it holds and the gallery the ones it holds - so the lists cannot offer a tick that empties the grid, and cannot shrink as they are ticked into a row that could no longer be un-ticked.
+
+Where they no longer meet - the last body a ticked lens was ever on is unticked - the list the reader did not touch gives way, rather than the grid going empty. Only then: a body that adds nothing under the ticked lenses is still a question they asked, and unticking it for them is a decision made off screen.
+
+**The calendar says where the photographs are before it is asked.** `POST /api/photos/days` answers with every day the collection holds one on and how many, under the view's own filters exactly as the model lists are (§13.2), and each such day wears a dot whose size and opacity scale with the count. The scale is logarithmic: a four-hundred frame burst day against a linear one flattens every ordinary five-frame day to nothing. The calendar also opens on the *last* of those days rather than on this month, since a library whose newest photograph is from 2024 otherwise costs the reader a year of month arrows before it shows them anything.
+
+**The button carries a count, and the working set does not count.** `PhotosStore.activeFilterCount` is how many *questions* are being asked - the verdict set, the rating, each flag, the date range, the search, and each model list, one apiece rather than one per ticked box, since "picks and unrated" is a single narrowing. Active is untriaged + picked, which is where the gallery opens rather than something a reader chose, so it scores zero and the badge stays off until they narrow past it.
+
+**Reset all filters** sits alone at the foot of the panel, against the far edge and away from every tick above it, and puts the collection back to what it opens at - the working set, or nothing at all in a view that is already a slice (`openingFilters`). It is the one control there that widens rather than narrows, so the badge it clears is the whole of what it does. Disabled while the badge is off, there being nothing to put back. What clears the date range alone is an icon beside the calendar's month arrows, where it reads as part of the calendar rather than as a second Reset a row above the real one.
+
+There is no "default order" entry: the sort always shows the concrete ordering in effect.
+
+**What narrows the collection stays in the row; how it is drawn goes behind the ⋯.** A filter is a question worth a press to see the answer to, where the view mode and the tile size are settled once and left alone - so the row is the presets, the filter panel, the sort and the count, and the overflow holds Select all / Select visible, the mode switch, the zoom, Show filenames, Show triage badges, Show rating badges and Expand all stacks. The last four are checkboxes rather than rows that fire once, being statements about what the grid *is* rather than actions on it (§19.5.4); a ticked box's mark trails its label so that the row's icon sits in the same column as the actions' and nothing shifts sideways as it is toggled. It is the same `OverflowMenu` the viewer's bar uses, and the ⋯ lies flat along a row of controls and stands upright on a phone, both glyphs drawn and the width picking one - a media query read in JS would re-render the bar on every frame of a resize to answer a question only CSS asks.
+
+A phone keeps two presets, Active and Untriaged, and reaches the other three through the panel: five chips and a filter button do not fit a 390px row, and the reader who wants Rejects on a phone is already in the panel.
+
+Anything in a menu that is a control rather than a row must be `focusable={false}` (`Slider`, `SegmentedControl`). Base UI focuses the first tabbable element a popup contains, so a track or a group there takes the focus the items need and no arrow key ever gets past it.
+
+**The sort belongs to the collection, and there is exactly one copy of it.** It lives in `libraries.ordering` / `shoots.ordering` / `albums.ordering`, which every list read already falls back to. So the client sends no `ordering` at all: it asks for a page, and the response states the ordering it was built in (`PhotoListResponse.ordering`), which is what the control renders from. Sorting a gallery `PATCH`es the collection and re-reads, rather than setting a local value and hoping the write landed.
+
+That is why the store starts at `null` rather than at a default: a value invented client-side would be a second answer to a question the collection already answers, and the two diverge the moment either moves - which is what a per-browser sort did. Opening the same shoot on a phone found it sorted differently to the desktop, and the rendition queue, which is built server-side in the collection's order (§10.2), could not follow a preference it was unable to see. The control renders once the first page has landed; there is no frame in which it shows a guess.
+
+The bin, the missing view and the photographs in no shoot sort by their library's ordering, since they are slices of it rather than collections owning one.
+
+Presets are named points in the same space as the checkbox set, so selecting one shows its constituents already ticked there rather than leaving the panel looking untouched.
+
+Three view modes share the same tiles: **grid** crops nothing but gives every photo a uniform cell so rows line up, **masonry** lets each keep its own shape in rows that read across before they read down (flex lines grown from each photo's stored aspect, so no DOM measurement, and no column that a paged list would have to fill to the bottom), **list** trades density for filename and date. **Masonry is the default**: a photograph's shape is part of what it is, and a uniform cell is a decision to hide that until the reader asks for it.
+
+**The zoom slider is a column count, not a tile width**, running from as many tiles as the window holds down to a single photo filling it. A width in pixels is a different control on every screen and the range cannot be written to suit them all: at a 120-1600px range a monitor spent the whole track between eleven columns and two, and a phone reached its single column a sixth of the way along with five sixths of the track drawing the same picture. The store holds `tileSize` in pixels still - it is what the layout and the masonry packing run on, and what is persisted - and `PhotosStore.zoom` is that read back as the step the reader is standing on, `PhotosPresenter.setZoom` the way back. Every step is a distinct grid at every width, which is `tileWidthForColumns` returning a fractional width: rounded to whole pixels the far end of a wide window collapses, 79 and 80 across being the same integer tile at 5120px. The floor is a 60px tile, and under 120px a tile has no room in its foot for the rating and the verdict, so they are not drawn (`PhotosStore.showsMarks`) rather than laid across the neighbouring tile.
+
+**The verdict and the rating are drawn on a tile by default and can be taken off it** (Show triage badges, Show rating badges). Both on because a cull is made of those two decisions and a tile showing neither cannot be judged from; both optional because a reader who has finished judging is looking at photographs, and every mark is something drawn over one. What a narrow tile does is a separate question and stays arithmetic (`showsMarks`, `MARKS_MIN_TILE`): a mark wider than the cell it sits in is drawn over its neighbour whether or not it was asked for.
+
+Filter, tile size, view mode and the menu toggles (**Show filenames**, **Show triage badges**, **Show rating badges**, **Expand all stacks**) are remembered per collection in `localStorage`: those are about the machine you are sitting at, and a tile size chosen for a 32" display is wrong on a phone. The sort is not among them, for the reason above. The filename search and the date range are not remembered either, being questions asked in the moment rather than preferences.
+
+Rating and verdict sit on every tile, always visible and clickable, because a cull is mostly those two decisions and routing them through the detail view is what turns a ten-minute pass into an hour. Clicking the verdict a photo already has, or the star it already sits on, clears it.
+
+A verdict or rating can move a photo out of the slice being viewed, so a change re-reads the collection (§18.3.2) when a triage or rating filter is active. Filtering locally instead would mean a second copy of the server's filter logic, free to drift.
+
+**A click opens; a tick box selects.** Walking a collection is what a grid is mostly for, so the frame belongs to navigation: a plain click opens the photo view. Choosing photographs is a mode entered deliberately, through a tick box in the top-left corner of whichever tile the pointer is over - drawn always where the pointer is a finger, since a phone has no hover to reveal it with and this grid has no long-press. Once anything is chosen the grid is picking rather than browsing, so a plain left click on the frame toggles instead of opening. Only that gesture: `Enter`, the middle click and the context menu still open a photograph, and none of them is how a selection is built. That is the trade a tick box per tile buys: the gesture used once per photo costs one click, and the gesture used forty times in a row costs one click each after the first. Cmd-click and shift-click reach a selection without going for the box, as they do in a file manager. A **stack** is the exception in both directions: its tile opens its band on the first click and goes on doing so mid-selection, because it stands for the whole stack rather than for a photo to open, and its box is what picks the row (§19.6).
+
+Hovering a tile lifts it a little out of the bed - a hairline of bone at 22% round the picture and a 7% wash over it - which is what says the frame is a target at all, now that clicking it goes somewhere.
+
+**The frame is a real link**, so the context menu and the middle click open a photograph in a tab of its own. Its left click is still the grid's, though, and every case takes the click: a cmd-click here is the selection gesture rather than the browser's new-tab one, and the router is driven from inside the handler. A **stack**'s tile is the exception, being a button - it stands for the whole stack rather than for a photograph, so there is no address for it to point at.
+
+**The cursor and the selection are two things, with two rings.** They cannot be one once a click stops selecting: an arrow key that selected what it landed on would raise the bulk bar and flip what a click does, halfway through browsing a shoot. So an arrow key moves the cursor and chooses nothing, `Space` toggles what the cursor is on, and the cull keys act on the cursor.
+
+**Both rings are drawn**, in the palette's two roles: **house blue** (`--satin`) for what is chosen, **sea-glass** (`--glass`) for where the keyboard is, and a chosen tile draws the selection's ring alone rather than stacking the two.
+
+**Only the keyboard draws the cursor** (`PhotosStore.showsCursor`). A click moves it too - the cull keys have to act on whatever was last touched, whichever hand touched it - but the ring is a statement about where the keyboard is, and one a click leaves behind outlives the gesture that made it, marking a photograph nobody is about to act on. So a click puts the ring away and **every grid key draws it**, not only the ones that move it: a verdict, a rating or a bin firing on a tile nothing marks is an action whose target the reader cannot see, which is worse than the stray ring. `Escape` is the one exception, being how they say they are done with both - it drops the selection and the ring together, and with neither on screen it belongs to whatever else is listening for it. The tick box follows the same rule through `:focus-visible` rather than `:focus-within`, so a box the pointer left focused does not stay drawn on a tile the pointer has left.
+
+**A control the reader has tabbed to keeps its own keys.** `Space` is how a tick box is ticked and `Enter` is how a tile's frame opens, so the grid's bindings for those two stand down whenever the focus is on a button or a link inside it - the frame included, whose own click handler is what drives the router. Taking them anyway meant `Space` toggling whatever the cursor happened to be on rather than the box under the focus ring, and `Enter` on a tile following its `href` as a whole page load.
+
+One rule afterwards keeps the two rings honest: an action that has consumed a selection leaves **nothing chosen and the cursor where it was**, clamped to the end of what is left - so a cull that bins the photo it is on carries on from the row that took its place rather than leaving `Del` pointed past the end. A collection whose positions now hold something else (a filter change) drops the positions on their own: until the next block lands they may name a row this collection does not have.
+
+No band colour is allowed to be either of these (§19.6), and a ring's weight and corner are one token each (`--ring`, `--radius`) shared with the ring on an open stack's tile and the outline round that stack's band - three parts of one thing, drawn three ways until they were pulled together. A tile carries the same corner as the ring on it, so the ring follows its edge. And a tile whose stack is open draws neither of these: the band colour is the only thing pairing a tile with the rows it opened (§19.6), so a ring over the top of it would break the pair.
+
+`Enter` opens the photo the cursor is on, and it has to `preventDefault`, since the frame under the cursor is a button and its own click would otherwise fire behind the navigation. It is the one cull key that is *not* global: every other button, link, menu item and dialog owns its own `Enter`. So that it is not dead for a reader who arrived by clicking the sidebar link, **an arrow key hands the focus to the scroller** - arrowing the cursor is the reader taking the grid over, and the tab order should follow them there.
+
+**Shift-click extends from the anchor**, which is the last photo toggled on its own, falling back to the keyboard cursor when nothing has been - arrowing to a photo and shift-clicking another is the same gesture as in a file manager, and a first shift-click has nothing else to reach for. Extending moves the cursor itself rather than leaving that to the caller, which would have to know to focus *after* extending: with focus as the fallback anchor, focusing first makes every range start and end on the photo just clicked.
+
+The bulk action bar **floats over the foot of the viewport**, and is drawn only while something is selected. Out of the flow, so its arrival costs the grid no height and moves nothing under the pointer between one click and the next; the scroller pads for it while it is up, so the last row's own verdict and stars are never left underneath it. At the foot rather than the head because it is what the reader looks at after choosing, and it follows the viewport rather than the grid, so it is reachable however far down the collection they are. Its actions include rebuilding renditions for the selection from either source (§10.3).
+
+Its own row holds the two things a cull does constantly: **marking** photographs and **filing** them. The marks are the tile's own pair - the verdict and the rating, over the whole selection, since routing a burst's verdict through the tiles one at a time is what the bar is here to save - and the filing is where the selection is added (**Add to shoot**, **Add to album**) and what it is removed from (**Remove from …**, **Remove from stack**, **Remove local copy**, §7.6). Everything else sits behind a `⋯` overflow, reached deliberately: **Stack**, **Unstack**, **Merge photos**, **Rebuild thumbnails**, **Refresh metadata** and **Move to Bin**.
+
+**The Bin's bar is a different bar.** Binned photographs are outside the shoot and album queries, and a verdict on something already thrown out decides nothing, so neither the marks nor the filing nor the overflow are drawn there: the row is **Restore to original location** and nothing else.
+
+A mark is the one action that does *not* consume the selection. Rating a burst and then picking it is one pass, and unlike the rest a mark takes nothing away, so the selection cannot be left describing photographs that are no longer there. What it can do is move them out of the slice being viewed, which is what the re-read afterwards is for - and that re-expresses the selection against the new listing (§19.5.4).
+
+Stack and Unstack come and go rather than grey out, because they are not "this action, once you have a selection" but statements about what the selection *is*: photographs to fuse, or a stack in it to take apart. A selection holding both a loose frame and a stack row is offered both.
+
+**Unstack is about the selection, not about one stack.** It resolves to photographs server-side, as every bulk action does (§18.3.3), and every stack any of them is in comes apart: a client holding positions can name a stack's row without ever being told its id, and a selection reaching rows it never held names stacks it cannot see at all. What the client decides is only whether to *offer* it, which it answers from the rows it is holding - every stack the reader can see is one of those.
+
+**Nothing in it greys out for want of a selection**, since the bar exists only when there is something to act on. One control still can, for a reason of its own: Restore is refused where the library is read-only and the photograph was binned before the flip, and it says why in its title rather than vanishing from the one page it is the point of. The shoot and album menus close on select of their own accord - as one-shot actions rather than boxes to tick, they should anyway, and left open the popup's backdrop swallowed every click after. The count and Clear are always in it: a bar on screen means there is a number to say.
+
+Selected state is announced on the frame's own accessible name ("selected, photo …") rather than by `aria-selected`, which a `listitem` cannot carry - and the tiles hold buttons of their own (rating, verdict), so the grid cannot be the `listbox` whose `option`s could.
+
+Rebuilt renditions change behind a URL that does not, so the client appends a version to image URLs once a rebuild has happened in the session. The server's `ETag` covers a fresh page load; this covers an image already decoded in the current one.
+
+### 18.3.2 One scroll over the whole collection
+
+There are no pages. A gallery is a single scroll the length of the collection, and the client holds only what is near the viewport: a library of two hundred thousand photos scrolls as one list, in a page that mounts a few dozen tiles and caches a few thousand rows.
+
+**Rows are held sparsely, by position.** `PhotosStore.rows` is a `Map` from a photo's index in the collection to its row, filled a **block** of 100 at a time - the same 100 one list request covers. The presenter asks for the blocks the viewport (and the photo the viewer is on) needs, and drops the least recently needed once more than 24 are held. A position whose row has been dropped, or is still in flight, keeps its cell as an empty tile rather than letting the ones after it close the gap, so nothing shifts under the reader when the block lands.
+
+Everything is therefore expressed in absolute indices: the keyboard cursor, shift-click ranges, the viewer's prev/next. A row only knows its own id, so the store keeps one `indexById` to answer the other direction.
+
+**Nothing measures the DOM to decide what to render.** The scroller writes width and height into the store from a `ResizeObserver` and its scroll position from its own handler, and every layout question is a computed over those, which is what keeps §18.2's rule against layout reads in hot paths. That `scrollTop` is the one read left in the grid's hot path, because no event carries the scroll position; it is taken in the handler, where the scroll has already been committed so nothing is invalidated and no layout is forced, and written straight to the store everything else reads from.
+
+Masonry is the exception, twice, and both times because its packing is a function of the photographs' shapes rather than of a row model: a block reports the height it laid out to (below), and a tile whose band is joined to it reports where the line put it (§19.6). Both are read in a `ResizeObserver` callback, where layout is already settled, and both are per-block or per-line rather than per-tile.
+
+**A scroll re-renders per row crossed, not per scroll event.** Which rows are on screen changes only when the viewport crosses a row boundary, so `visibleSpan` is its own `computed.struct`: comparing the *value* rather than its inputs means the sections, the tiles and the blocks to fetch are invalidated per row crossed rather than per event. What moves in between is the native scroll, not React - the mounted windows are placed against the anchor (below), which does not move on an ordinary scroll, so their transforms are unchanged for the whole run of frames between one row and the next. Chromium and Firefox both dispatch at most one scroll event per animation frame (measured), so per-event and per-frame are the same thing in practice, and the figures below hold either way.
+
+Three honest limits on that. The span's two edges cross their boundaries at different offsets unless the viewport is an exact multiple of the row pitch, so the real figure at a normal window height is **two** renders per row rather than one. A frame that covers more than a row renders anyway: measured in grid mode on a 100k-photo library at 823px of viewport, a 480px/s scroll renders 6 times in 60 frames and a 1200px/s scroll 14 times, but a 7200px/s fling renders 54 and a 12000px/s one all 60. Masonry is far cheaper (a block pitch is 3,400px, so 0-5 renders across the same range) and list far dearer (65px rows: 14 and 37). And the scrollbar re-renders on every event by design, since drawing the position is its whole job - it is two elements, kept out of `GridScroller` precisely so the thumb moving does not take the mounted tiles with it.
+
+So this is a slow-and-medium-scroll property; at the top of a fling it buys nothing, and what carries those frames is that the work per render is bounded by the viewport rather than by the collection.
+
+**Grid and list are arithmetic; masonry has to be laid out.** Uniform rows need only a column count and a row height, so those two modes need no measurement and no estimate at any size. Both numbers are handed to CSS, through `--cols` and `--row-h`, rather than each side working them out: a track size the two disagreed on drifts a little on every row, and a hundred thousand photos is enough rows for a little to become a lot.
+
+Masonry packs its lines from each photo's own shape, which is unknowable for a photo the client has never fetched. So it renders one block at a time - each block the flex container the whole grid would otherwise be - and each block reports the height it settled at through a `ResizeObserver`, which delivers that height in the entry rather than forcing a layout to read it. Blocks not yet laid out are estimated from the average of those that have been, and when a block above the viewport turns out taller than its estimate the difference is handed back to the scroll, so correcting a guess never slides the photos being looked at.
+
+**A height is dropped by a measurement that contradicts it, never by the resize that provoked one.** The heights are kept against the width they were laid out at (`PhotosStore.measuredWidth`), and the first block to report at a different one drops the lot. Clearing them where the scroller learns its own new width cannot work: both boxes arrive in a single observer batch, the blocks ahead of the scroller in it, so the clear landed on the measurement that had just come in at the new width - and a block the resize left exactly as tall reports nothing further, leaving a hundred-photo estimate describing a collection of two.
+
+Two costs there, both deliberate: a masonry line breaks at every block boundary, so the right edge is ragged once every hundred photos; and a partly-visible block mounts whole, which is a few hundred tiles rather than a few dozen. The alternative is holding every photo's dimensions for the whole collection, which is the one thing this design exists to avoid.
+
+**A browser will not scroll as far as a collection can reach**, and it truncates silently: Chromium clamps at 33,554,428px and Firefox at roughly half that, with everything past the clamp simply unreachable. That is not a millionth-photo problem - the grid at its highest zoom is one column of thousand-pixel rows, which runs out at **thirty thousand photos**, and list mode at half a million.
+
+So the scroller is not a picture of the collection at all. It is a **rail** of `RAIL_HEIGHT` = 100,000px whatever the collection's length, and `ScrollRailStore.anchor` says which content pixel the rail's origin is: the reader's position is `anchor + top`, exactly, with nothing scaled. The rail is a store and a presenter of its own, one axis and one writer apiece, because the viewer's filmstrip scrolls the same collection across (§18.5). A wheel notch therefore covers the same distance at photo 400,000 as at photo 4, and no browser's scroll ceiling is something the grid has to have an opinion about. A collection shorter than the rail *is* the rail, the anchor is pinned at 0, and none of this machinery engages.
+
+**The anchor is what absorbs a correction, not the scroller.** Everything the grid does to keep the reader's place - a band opening above them, a masonry block measuring taller than its estimate, the cursor jumping out of the window - moves the rail's `anchor`, which is store state, rather than moving the scroller, which fights whatever it is doing. Only what the anchor cannot absorb reaches `top`. This matters because writing `scrollTop` mid-fling cancels the fling on macOS: the rail is put back to its middle **only** when the reader comes within two viewports of one of its ends, which at an 823px viewport is 116 viewports of travel apart, and that distance is what buys the smooth scroll.
+
+**The rail's `top` is the single truth for the scroller's position**, in both directions: the scroll handler samples into it, and everything that moves the reader writes it and lets the view put the element there. Nothing returns a position for a caller to remember to write, which is what made `replaceBands` - a re-read with no path back to the view at all - unable to correct anything.
+
+Two writers put the element where `top` says, and both are needed. A **reaction** catches the change in the same animation frame as the anchor change it belongs with, so a correction is never visible as a jump; it runs before React has committed the rail's new height, so a position legal against the collection as it now is can still be clamped by the element as it still is. A **layout effect** after each commit finishes that job, and is the only thing that can: a `scrollTop` write the browser clamps to where the element already sits fires no scroll event, so nothing else would ever correct the store, and the grid would draw a screenful the scroller is not looking at until the reader scrolled by hand. It is also what puts a freshly mounted scroller where the store already is, for a collection that empties and refills without passing through `resetRows`. A reaction rather than an effect for the first, because `top` changes on every scroll event and observing it in a render would re-render the grid on every one.
+
+The scroll position is read in the handler rather than deferred to the next frame - cheap there, because a scroll event is dispatched after the scroll is committed, so nothing is invalidated and no layout is forced. Deferred, the store sat up to a frame behind the element, and a correction landing in that window was measured from where the reader had been.
+
+A correction is measured from the anchor as it stood **before** the thing that displaced the reader, because every caller shrinks the collection as it displaces them: read afterwards, `rail.anchor` has already been clamped down by a smaller `anchorLimit` and the shift counts that clamp a second time. Note that a collection shorter than the rail has no anchor travel at all, so there every correction moves the scroller - which in a maximised 1512-wide window, whose grid is about 1275px across once the sidebar and the padding are taken, is a library under 2,915 photos in grid mode, or 1,538 in list. This reduces scroller-fighting rather than eliminating it.
+
+`rail.anchor` clamps `rawAnchor` to a collection that may have shrunk under it, but the stored value has to come down with it rather than merely being read past. Binning most of a library shortens the collection and undoing the bin lengthens it again, and a raw anchor left where it was springs the reader back to a position they were clamped out of a moment before, from an undo they expected to put things back. So the anchor settles onto its own limit whenever that limit moves.
+
+Two costs. **Home and End** have to be handled rather than left to the scroller, which would send them to the ends of the rail - a hundred thousand pixels somewhere mid-collection - so End advanced the reader by a rail's worth and stopped. Page Up/Down are relative and need nothing. And **the scrollbar**: the native thumb now describes the rail rather than the collection, so it is hidden and the grid draws its own from `rail.progress` and `rail.fraction` - a `role="scrollbar"` whose `aria-valuetext` names the photo the progress works out to (not `visible.from`, which is the first *mounted* index and so two overscan rows or a whole masonry block early).
+
+It is an **overlay**, floating over the grid's right edge rather than sitting beside it in the flow. Not for looks: the scroller's width drives the column count and every row's height, so a bar that took a gutter changed the very content height that decides whether a bar is needed - which at one collection size oscillated.
+
+The bar floats in a **24px gutter** the scroller keeps as `padding-right`, and the thumb is that whole width, so its pointer target meets WCAG 2.5.8 without reaching over anything. The gutter is the one part of this that costs the grid width, and it buys the only arrangement that is all three of: a 24px target, no tile control ever covered, and no feedback loop. A bar in the flow changed the scroller's width, and so the column count, and so the content height that decides whether a bar is needed. An overlay narrow enough to cover nothing gave a 6px target. An overlay 24px wide covered the select box and the outer two rating stars of whichever tile it floated over - and which photo that was changed silently as the reader scrolled, on a grid whose whole purpose is rating and picking. Widening on hover only moved the problem: hover cannot express "within 6px of the edge", because the widened track is what keeps itself hovered, so the 6-24px band became a dead zone that a press *dragged the scroll* from.
+
+Only the thumb takes pointer events. The track spans the grid's full height, and events there would swallow a click, a wheel notch or a touch pan anywhere down that edge - so a press on the track scrolls nothing, which is the one remaining cost, along with a wheel notch over the thumb needing to be forwarded by hand because the bar has no scrollable ancestor of its own.
+
+The scroller itself stays a real scroller, which is what keeps trackpad inertia, rubber-banding, Page Up/Down, find-in-page and a screen reader's own scrolling working without any of it being reimplemented. `overflow-anchor: none` on the rail, because the browser's own scroll anchoring otherwise adjusts `scrollTop` to hold a row still and fights every anchor write.
+
+**What a screen reader is told does not depend on what is mounted.** The scroller is a labelled `list` and a tab stop of its own - it holds content no other tab stop reaches, so Page Up/Down, Home and End would otherwise have nothing to act on - and every tile carries `aria-setsize` and `aria-posinset` against the *collection*, not against the few dozen tiles in the DOM: a reader is told "photo 40,051 of 100,000" rather than "photo 4 of 30". The rail and the window between them are `presentation`, so the items stay the list's own children, and a position still waiting on its block is `aria-busy` rather than absent.
+
+**A mutation re-reads rather than patching positions.** Binning, restoring, a move into a shoot, a verdict under a triage filter - all of them change which photo sits at which index, so they abandon the requests in flight, forget which blocks are held, and ask again for what is on screen. The rows stay up while that lands: `merge` writes the server's fields into the row object already being rendered wherever the same photo is still at the same position, which is what keeps a bin, an undo or a sync poll from blanking the grid.
+
+The keyboard cursor is the exception to all that clearing. A filter is a narrower view of the same photographs and a cull works through them by keyboard, so switching to Rejects keeps the cursor and lets the next block clamp it into range; only opening a different collection takes it away.
+
+**The view follows the cursor whenever the layout moves under it, not only when the cursor moves.** A zoom, a mode change and a resize all re-lay the grid out around a cursor that has not moved, and the verdict keys go on acting on it wherever it has landed - so without this a zoom leaves the reader rating a photograph off screen. In masonry the store can only go as far as the cursor's *block*, since the packing is not arithmetic; inside one, the focused tile is the only thing that knows where it ended up, so it scrolls itself the last of the way.
+
+### 18.3.3 Selection is runs of positions
+
+The selection is not bounded by what is loaded. `SelectionRanges` holds it as sorted, non-overlapping, non-touching runs of positions - `{start, end}` pairs - so **selecting a library of two hundred thousand photos is one pair of numbers**, not two hundred thousand entries. Runs that come to touch coalesce, or a range built a photo at a time would fragment into one entry each and never recover. A scattered pick degrades to a run per photo, which is the worst case and no worse than the set of ids it replaces.
+
+Positions rather than ids, because positions are the only thing a client holding a window of the collection has for the rest of it (§18.3.2). The value is immutable and the store holds it by reference, so a selection change is one notification rather than one per photo. Every mounted tile re-renders on it, which is affordable precisely because what is mounted is now bounded by the viewport rather than by the collection.
+
+**Select all** is therefore offered whatever the library's size, beside **Select visible** for the narrower gesture of acting on the run currently on screen. The bulk bar says "all 1200 selected" rather than the bare count when the selection is the whole collection: at five figures the number alone does not tell you whether you got everything.
+
+Both sit in the **header's overflow menu**, not the bulk bar. They are how a selection is *made*, and the bar is not on screen until one has been (§18.3.1) - a control that appears only after it has been used is a control nobody finds. The bar itself holds only what the selection *becomes*.
+
+"Visible" is the one question the store cannot answer, so it is the one place the grid measures. What the store knows is what is *mounted*, which is deliberately more: two overscan rows either side of the viewport, and in masonry a whole hundred-photo block, whose tiles are packed from their own shapes and have no arithmetic position to test at all. Read off the DOM on a click, "Select visible" acted on up to a hundred photographs the reader could not see. It is a click, so the forced layout costs nothing, and §18.2's rule stands everywhere it is about: nothing in a render, a reaction or a scroll frame measures anything.
+
+**No ids are ever read back to act on it.** A bulk request carries the selection itself - the collection, the filters, the runs - and the server resolves the ids off the same filtered, collection-ordered listing the grid was built from (`PhotoTargetSchema`, §14). Beside the runs it carries `members`: photographs the reader picked out of an open stack, which a collapsed listing gives no position to number them by (§19.6.1). They are the one thing named by id going *in*, bounded like any id list, and the server takes the union of the two - a run naming a stack's row already resolves to every member of it, so nothing is acted on twice. A selection needs at least one of the two, and a members-only selection is as legitimate as a runs-only one. So binning a hundred thousand photos is one small request, and nothing is fetched to *make* a selection at all. The one path still named by id is the undo of a bin: the delete answers with what it took, because the selection it came from resolves to different photographs once those have left the collection.
+
+#### Positions move, so the selection is rebased rather than dropped
+
+A scan inserting rows under an open gallery renumbers everything after the insertion point, and the selection, the keyboard cursor and the shift-click anchor are all positions. Dropping them on every poll tick would mean a library could not be indexed and culled at the same time, which is exactly when a photographer is doing both.
+
+So each re-read is diffed. The client snapshots where every row it can name sat, re-reads the blocks on screen **plus the blocks the selection covers that it still holds**, and compares: a photo that moved gives one sample, and consecutive samples that moved by the same amount collapse into one step. `rebase` then maps each selected run through those steps.
+
+That falls out exactly right in both directions. An insertion steps the shift **up**, which splits a run so the photo that appeared inside it is not selected - three selected and one inserted after the first leaves `{1} ∪ {3,4}`, not a run of four. A removal steps it **down**, which drops the photo that went and closes the run over the gap.
+
+**It only speaks for what it re-read.** The domain is the blocks the client both held rows for and read back; outside it, positions are dropped from the selection rather than carried by the nearest observed shift. There is no honest alternative: a selected photo sitting *below* every sample may not have moved at all, and a gap between two re-read blocks hides an unknown number of arrivals, so either guess quietly renames photographs the reader chose. Losing part of a selection is visible on screen; acting on the wrong photographs is not. A block whose request failed is not part of the domain either - its old rows are still sitting where they were, and reading them would report a move of zero that never happened.
+
+Three things escape that rule, all because they need no samples. A selection that was the *whole* collection stays the whole collection: "everything" is the one selection whose meaning is not a position. When nothing observed moved at all - every sample at shift zero, which is what a poll finding no new photos looks like - the selection is returned untouched rather than narrowed to the domain. And a re-read with **nothing to compare** leaves it alone as well: no row this client could name going in, or no block it both held and read back, means it observed no photograph at all, which is not the same thing as finding that nothing recognisable came back. That distinction was free while a non-empty selection implied held rows; it stopped being free when the collapse became something the reader can switch off under themselves (§19.5.4), which leaves the rows cleared and the selection carried across for a round trip - and a sync poll landing in that gap wiped it.
+
+**Re-reads are serialised.** Two of them overlap routinely, a sync poll ticking while a verdict is being set, and each would rebase against a snapshot the other had already moved - applying the same shift twice and walking the selection off its photographs by exactly the number of rows inserted.
+
+Opening a different collection, changing the filter or changing the sort still clears it outright: those are different listings, not the same one renumbered.
+
+### 18.3.4 The Shoots page
+
+The page shows **the library's folders**, with the shoots among them, rather than only the shoots. An empty Shoots list beside a library full of subfolders was the catalogue lying by omission: the photos had imported, the folders were right there on disk, and nothing on screen said so or offered to do anything about it. A folder that is not a shoot is drawn greyed, and every folder row carries a `+` menu, so the page answers "what have I got" and "make that a shoot" in the same place.
+
+A permanent **Library root** row sits at the top, undeletable, naming the library. It is where the `+` menu goes for a top-level shoot.
+
+**The photographs no shoot has claimed lead the list**, as a row of their own reading `Not in any shoot (N photos)` - italic and dimmed like an untracked folder, since it is not a shoot and not a folder either. It carries no `+` menu and no subtitle, its name being the whole of what it has to say, and it is there only while there are such photographs: a row reading zero opens onto nothing. It opens onto exactly those photographs at `/libraries/:id/no-shoot`, which is the library plus a `no_shoot` filter rather than a collection of its own, exactly as the Bin and the missing view are: a photograph belongs to at most one shoot, so "in none of them" is a predicate over the library, and being a filter is what carries it through every question a grid asks - a page, a count, a selection's positions (§18.3.3). Between it and the root row, the page is the direct answer to the case that started all this - one photo at the root and one in a subfolder reads as two rows with a count each, rather than as an empty page.
+
+Three views, because a folder tree and a list of shoots are both legitimate readings of the same thing:
+
+| View | Rows | Subtitle |
+|---|---|---|
+| **Flat** | Shoots only, unnested | the full `folder_path` |
+| **Tree (simple)** | Shoots only, nested under the nearest ancestor **shoot** | the path from that ancestor, so folders skipped on the way are named there |
+| **Tree (full)** | Every folder, shoots and untracked alike | the folder's own name, and only when the shoot's label differs from it |
+
+Tree (simple) is what a photographer wants from a deep tree: a shoot buried at `2024/Q3/September/Smith` under nothing else tracked appears as one row, with `2024/Q3/September/` in its subtitle rather than as four rows of scaffolding. Tree (full) is the file manager's answer, with the untracked rows - pass-through folders, and those set aside as plain - in it.
+
+**A hidden shoot is off the page entirely, and the page's own ⋯ offers it back** (§12.4). `Show hidden shoots` is a checkbox there rather than an action - a statement about what the page is drawn with, like the grid's own ticks - and it is remembered in local storage beside the reading, since which shoots a reader wants to see is about the machine they are sitting at rather than about the catalogue. Shown, a hidden shoot is drawn where it belongs, at its own depth and opening onto its own page, with its thumbnail and its label greyed and `Hidden ·` leading its subtitle: dimming alone is what an untracked folder and an empty shoot already look like, and only one of the three is undone by a menu item. The ⋯ on the row itself is left at full strength, being the way back.
+
+The offer is unconditional, whether or not anything is hidden: it is the only thing in that menu, and a ⋯ that opens onto nothing is worse than a tick that reveals nothing.
+
+**The filtering is the server's, and the toggle is a re-read.** Neither `/api/libraries/:id/shoots` nor `/api/libraries/:id/folders` sends a hidden shoot unless the request asks (§13.1, §13.3), so `showHidden` decides what is *requested* rather than lifting a filter over rows already in hand - `setShowHidden` writes the setting and reloads. Both readings take the same flag in one `load`, because they answer halves of one tree: the folders come off the disk, where nothing says a folder has been put away, so a hidden shoot's folders have to be dropped alongside the shoot or Tree (full) draws them back as unclaimed rows offering to adopt the shoot already on them.
+
+**Which leaves the store with nothing to filter**, and that is the point: a sidebar, a "move to shoot" menu and a tree all get the shoots the reader is working with, and no consumer has to remember a filter that nothing would fail without. What the store does keep is `resolved`, shoots it learned one at a time - because "which shoot is this" is a different question from "which shoots am I working with", and only the second hides. A reader can stand on a hidden shoot: its own page names it, and so does a photograph reached through the Hidden chip. `ShootsPresenter.ensure` fetches one by id and `byId` merges it under the listing, which wins where both hold a shoot, being the fresher.
+
+**The hierarchy is derived on the client**, from the shoots' `folder_path`s and from `/api/libraries/:id/folders`, which is the library's whole folder tree in one answer. The shoots' paths alone would leave the folders holding no photos invisible, and fetching those a level at a time as rows are expanded means a row is drawn with a chevron before anyone knows whether it has anything under it - a chevron that then disappears under the click that was meant to open it. What a folder contains has to be known when it is drawn, so it is known for all of them at once.
+
+**There is a keyboard cursor**, for the reason virtualising the list created: a row scrolled out of the window is unmounted, so anything focused inside it fell to the document body and the next Tab restarted at the top of the page. The cursor is a value in the store, so it survives that, and where the scroll has to go to show it is computed from the row's index rather than from its element - which may never have been mounted, so there is nothing to call `scrollIntoView` on.
+
+It is keyed by **folder path, not by row index**, which is where it differs from the grid's (§18.3.2). Rows here are renumbered by every expand, collapse and view change, so an index would point at a different folder afterwards; the grid keys on an index because a position is all a sparse collection has. The cursor therefore follows its folder across a view change, and simply reports no row when the folder stops being listed.
+
+`↑`/`↓` walk the list, `→`/`←` open and close a folder (stepping out to the nearest ancestor *that is a row*, since the reading may skip the folder in between), `Home`/`End` reach the ends. A menu or a rename field that has focus keeps the arrows, which is the widget doing its job.
+
+**The cursor moves on a pointer, never on focus.** Focus arrives at a row for reasons that are not the reader choosing it: tabbing forward after a scroll has unmounted the row they were in lands on whichever row happens to be mounted, and moving the cursor there would throw away the place they were keeping. Clicking is a choice, so that moves it.
+
+**A row that unmounts under the focus hands it back to the list.** Removing a focused element drops focus on the document body, and the next Tab then restarts at the top of the page - which is the whole complaint virtualising the list created. The row's layout-effect cleanup is the last moment it is still in the document to be asked whether it holds the focus, so that is where the scroller takes it back. Deliberately without scrolling: yanking the list back to the cursor while the reader is scrolling away from it would be worse than what it fixes. Exactly one row is in the tab order at a time - the cursor - so while it is on screen, tabbing into the list lands on it.
+
+**Anything that removes rows settles the cursor** onto the row that took its place, held at the index rather than reset to the top: a collapse, a delete, a sync tick. The cursor is only ever set to something that is actually a row, so it always has a ring, always puts a row in the tab order, and never sends the next arrow key somewhere the reader did not come from.
+
+**The rows scroll virtually**, on the same `visibleRows` the gallery uses (§18.3.2). Mirroring is what makes that necessary: a library with a shoot per folder has as many rows here as it has folders, and every rename re-reads and re-renders the list. The rows are uniform, so this is the easy half of what the gallery does - one row height, no blocks to fetch, no masonry to measure, and short enough that it needs none of the rail the gallery scrolls over. The **Library root** row sits outside the scroller, so the thing the page is anchored on never scrolls away. `aria-posinset` and `aria-setsize` count against the whole tree rather than the few rows mounted, as they do in the grid.
+
+The `+` menu on a row is where shoots come from:
+
+- **Add as shoot** (untracked rows only) adopts the folder as it stands, photos and all (§8.5).
+- **Create shoot in subfolder** (every folder row) opens a dialog for a name and an ordering, and makes the folder.
+
+Deleting a shoot asks what happens to the photographs rather than assuming, since one answer is reversible and the other is not: keep them in the library, or remove them from it. The second states plainly that the files stay on disk, that ratings and verdicts go, and how many photos it is about to be true of.
+
+**That number comes from the server**, and the irreversible button waits for it. What `remove` takes is every row under the folder, which is not the set the page can see: a photo in a subfolder kept `plain` belongs to no shoot and is counted by nobody, and binned photos are excluded from every count on screen - yet both are deleted. A count derived on the client from `photo_count` was smaller than the truth in exactly the cases that matter.
+
+### 18.3.5 The merge page
+
+`/photos/merge/:jobId` for a fresh analysis and `/photos/:photoId/merge` for re-picking a finished assembly,
+both registered under **every collection prefix** exactly as `stacks/:stackId/triage` is (`app/app.tsx`),
+plus the bare fallbacks beside them - a merge started from any grid has to have somewhere for Cancel to go
+back to.
+
+**Opening the page never starts work.** The bulk bar's *Take best parts* posts the frames
+(`POST /api/composites/assembly`), which starts the analysis and answers a job id at once, and only then
+navigates. The page reads that job (`GET /api/composites/assembly/jobs/:jobId`) every quarter second
+for its progress figure until it is ready, failed or cancelled; a reload reads the same job again. The
+server holds the last few finished jobs in memory, so a job it no longer holds - a restart - is an error
+on the page rather than a second analysis. **Cancel** posts `.../jobs/:jobId/cancel`, which lets the
+analysis go at its next boundary (§3.9); leaving the page stops the reading and leaves the job to finish.
+
+Modelled on the stack triage page (§20.5): a **store** (`MergeStore`) holding only observables and
+computeds - the recipe, the picks, which tile and swatch are hovered or open - and a **presenter**
+(`MergePresenter`) as the only writer, owning the in-flight `AbortController`, the session that survives a
+reload, the history behind undo and redo, and the compositor. The page component constructs both and passes
+them down, as `photo_detail_page.tsx` does with the editor's stores and `RawEditPresenter`.
+
+**It wears the viewer's own shape**: the editor's bar (`detail__nav`) over a `stage` that takes the rest of
+the page, with the picture fitted into it rather than sized to itself. That is not only consistency - the
+letterbox around a fitted picture is the room a tile's flyout has to sit clear of the tile in, and a stage
+the size of its own canvas leaves none.
+
+**The reader makes every tile, by clicking.** The analysis hands back no tiles, only the seam field, so the
+page opens as the base frame under a crosshair. A click on the picture seeds a small square tile there
+(`seedAround`, a hundredth of the long edge) on the base and opens its popup, which solves every frame's
+growth of it at once (`assembly_labelling::stamped` holds the square to its pick and lets the seam solve grow it
+out to the cheapest seam around what moved). **Only grown pieces are ever drawn** - as SVG paths over one
+canvas at the analysis scale, stroked at low opacity with no fill, filled white at 8% on hover, hit-tested by
+the browser rather than by anything here reading pixels - and a pick not yet solved leaves the picture as it
+stands rather than showing the square. A piece opens the tile it grew from. A seed whose popup closes with
+nothing picked is dropped again. `[` and `]` step between tiles for a reader who would rather not hunt for
+an outline a few points across on a phone.
+
+**Remove objects** is a toggle in the bar (`toggleRemoving`) that changes what the next click seeds: a tile
+that takes the ground (`Takes::Ground`) rather than the subject. A subject tile reads each frame where the
+thing under the click went, so a person who moved is taken as they stand there; a ground tile reads each
+frame in place, so what it offers is whatever stands there instead - a frame where the thing has walked out
+of the spot. A tile's take is part of the recipe and of what its solve is cached under.
+
+The canvas takes **the viewer's own zoom and pan** (`useZoomPan`, §18.5), the canvas and the SVG overlay
+under one transform so an outline stays on the pixels it is about at every scale: half of native on a 24MP
+frame is not enough to answer "are the eyes open", which is the question the page exists for.
+
+The popup is a small spinner until every frame's growth of the tile is solved or refused - a swatch before
+then would show only the seed - and then one swatch per frame, **in capture order always** - a swatch that
+stays in the same place is what a reader flicking between two of them needs. Each swatch is a crop of that
+source's own analysis-scale layer - the same picture the canvas is already drawn from - clipped to the tile
+as that frame grows it (the largest growth another frame found where its own was refused, the tile itself
+where every one was) and shifted into a fixed box, named by the frame's file. Hovering a swatch
+composites it into the main canvas in place; clicking picks it and closes the popup - both draw through the
+one masked pipeline (§21.1.2), so a hover and a pick look identical on screen and differ only in whether the
+choice survives the pointer leaving. A press anywhere off it closes it and does nothing else: the click that
+press ends neither opens the piece under it nor seeds the picture.
+
+The popup is a **flyout on the tile**, not a panel in a corner, and the one thing it may never do is cover
+the tile it belongs to - a reader comparing frames is looking at that patch of picture. So it sits clear of
+the largest outline any frame grew the tile to: below its lowest point by preference, then above its highest, then either side, and
+failing all four wherever on the stage the outline does not reach - taking the **furthest** such spot rather
+than the nearest, a flyout pressed up against a tile reading as covering it. A tile is a concave blob, so
+missing its bounding box is not the same as missing the tile. Its place is arithmetic over the outline, the
+view's transform and the observed stage (`flyoutAt`, `stagePointOf`), so it follows a pan and a zoom with
+nothing measured off the page.
+
+A seeded tile carries no scores, the identity warp and exposure, and every frame in its disturbed set. Seeds
+are a painter's stack in the order they were made, and the session keeps them across a reload.
+
+**The base frame** is the source every pixel outside every tile is drawn from, and it is whatever the
+analysis (or, reopening, the recipe) chose. Every seed starts on it and nothing is auto-picked.
+**Undo** and **Redo** are the editor's own controls over the sequence of picks. **Cancel** drops the session
+and leaves; **Save** writes the photograph (§10.1).
+
+**Reopening a finished assembly** - **Edit merge** on one, in the viewer (offered for any composite,
+panorama included - which kind of recipe it is is this page's own question, answered by the server refusing
+by name if it is not an assembly) - returns to this same page in the same state, loading the recipe's own
+tiles, picks and base rather than re-running the analysis; Save there updates the row's recipe in
+place instead of inserting a second photograph. A source deleted or binned since stops this: the page opens
+read-only and says so.
+
+`1`-`9` pick a swatch and close the popup; the arrows move between swatches and `Enter` settles on the one
+being previewed, which is the keyboard's version of the flick between two frames a hover is for; `Esc`
+closes without picking. `[` and `]` step between tiles, wrapping. On a coarse pointer, where a swatch has no
+hover, the same button **press-and-holds** to preview, **releases** to cancel, and **taps** to commit.
+
+### 18.4 Culling
+
+Rating a shoot is the daily job, so it must not require opening each frame. The grid holds a keyboard cursor of its own, which is what every key below acts on (§18.3.1), and binds:
+
+| Key | Action |
+|---|---|
+| `← → ↑ ↓` | Move the cursor |
+| `0`–`5` | Set rating |
+| `Z` | Undecided |
+| `C` | Pick (again to clear) |
+| `X` | Reject (again to clear) |
+| `Del` | Move to Bin |
+| `Space` | Toggle the cursor's photo in the selection |
+| `Enter` | Open the photo, or the stack's band |
+| `F` | Fullscreen, in the photo view |
+| `+` / `−` | Zoom in a stop / back to fitted, in the photo view |
+| `I` / `O` | The camera's JPEG / the render, in the photo view (§10.1) |
+| `Esc` | Clear the selection, or leave the photo for the collection it was opened from (§18.5) |
+| `?` | Shortcut overlay |
+
+`Z`, `X` and `C` are deliberately adjacent, in that order left to right, matching the Undecided / Reject / Pick order of the control: the left hand rests on them while the right drives the arrows. Each button shows its key, so the shortcut is learned from the control rather than from a help sheet. They work in the photo view as well as the grid, because that is where a close look leads to a verdict. `X` for reject also matches the convention photographers already have from Lightroom. Both keys toggle, so the same key that sets a verdict clears it.
+
+Rejecting is not deleting. A reject stays in the catalogue and leaves the default "Active" view (untriaged + picked), which is what makes it useful during a pass; binning is the separate, undoable action on `Del`.
+
+### 18.5 The photo view
+
+The metadata panels sit beside a portrait frame and beneath a landscape one, so the image always gets the axis it needs. The page is a flex column filling the viewport and the stage takes every pixel the chrome is not already using. The stage supports fit/zoom (click or tap, the slider in the bar's menu, the wheel, or a two-finger pinch), drag-to-pan while zoomed, and a fullscreen mode whose only chrome is a bar that fades in on pointer movement.
+
+**The viewer's bar holds the zoom readout; the range that drives it and fullscreen are in the bar's menu.** A control drawn on the frame covers the corner it is over, which is a corner of the thing being judged, and a bar that has to hold the way out, the verdict and the menu on one line has no width for a stepper it can put under a heading instead. The stage draws the readout into a slot the page passes down (`toolsInto`) and the slider into a second one inside the popup (`zoomInto`, null whenever the menu is shut), and hands the page the element to put fullscreen (`fullscreenRef`), fullscreen being this stage's own rather than the document's. A stage given no slot draws the pair over the photograph instead, which is what stack triage's split mode needs, since two stages side by side have no single bar to share; the editor keeps its own stepper in the bar, having no menu section to put a range in. Portals rather than lifted state: the readout changes on every frame of a wheel zoom and the scale on every frame of a slider drag, so handing either upwards would redraw the page at that rate, where this leaves the per-frame work inside the stage that was already doing it.
+
+**Nothing in the popup may take focus.** Base UI's menu focuses the first tabbable element it contains, so a slider there swallows the focus the items need and leaves every action in the popup unreachable by keyboard - the track and the Fit button are therefore `tabIndex={-1}` (`Slider`'s `focusable`), and `+` / `−` on the stage are the keyboard's way to the same scales.
+
+**What a finger can do, the bar does not offer.** On a coarse pointer (`useIsTouch`) the bar carries no step buttons and no zoom stepper: the frame is dragged aside to step, tapped to step the zoom, and pinched for the scales between, so each would be a target spending width on a gesture already made over the picture. A drag pans rather than steps while the frame is zoomed, which is a tap away from fitted and so not a case worth a control of its own. The readout stays, being the only thing that says whether this is 1:1. The gesture itself is `zoom_pan.ts` and so is the editor's too: a pinch is the two pointer ids it began between, scaled from the spread they started at and pinned about their midpoint, ending when either of *those* two lifts - a third finger is not a reason to re-measure, and the pair left behind by one of three lifting is a different distance that would snap the picture.
+
+**A tap or a click steps three stops - fitted, twice fitted, then the frame's own pixels - and the menu's slider runs the whole way from fitted to the ceiling.** The readout, and the slider's own scale, are in native terms: 100% means one image pixel per CSS pixel, not "the size it opened at", because the question a cull asks of a render is whether it holds up at 1:1 and a percentage of the fitted size cannot answer it. The stops are sorted rather than listed, since a render smaller than the stage is already past 1:1 when fitted. **The ceiling is 200% of the frame's own pixels** (`maxScaleFor`), which is where a rendition stops having anything left to show and the second doubling is for reading what a grade did rather than for more picture; twice fitted is its floor, for the frame so much smaller than the stage that 200% of it is still smaller than the box, which taken at face value would leave a picture that cannot be zoomed at all. The fitted scale needs the viewport's size, which is observed rather than measured on demand: the readout renders on every frame of a wheel zoom, and a `getBoundingClientRect` there is a layout read in the hottest path the stage has.
+
+**A back gesture leaves the viewer, rather than walking back through the photographs swiped past to get there** (`useStep`). On a coarse pointer a step *replaces* the entry it came from, so the whole run occupies the one entry the collection pushed and a back gesture lands on the grid. A desktop Back is a button rather than the only way out, so there a step keeps pushing and Back walks one photograph at a time. Jumping the run instead - reading how deep a press landed from react-router's `history.state.idx` and traversing the rest - cannot avoid rendering the entry it landed on first, which on a phone is the swiped-past run flashing by before the grid appears; there is no such frame to render when the entries were never written.
+
+The stage has no border or backdrop. A photo's aspect almost never matches the space it is given, so a framed, filled stage always showed dead margin on one axis and read as bars around the image; without the box there is nothing for the photo to fail to fill.
+
+**The panels are laid out before the data that fills them arrives, so the stage is never resized under a photo it has already painted.** The strip under a landscape frame is a grid track the stage is sized against, so a panel that is absent while the detail is in flight and present a moment later moves the photo: it painted full-size and then shrank. Every panel therefore renders from the route, with the fields the detail answers standing at `loading` until it lands; the verdict and rating come from the loaded summary, which already carries them, so they are right from the first frame and hittable throughout. Reserving a fixed strip instead is dead margin under every photo whose panels are shorter than it, which is most of them.
+
+The one thing that still has to be waited for is **which edge the panels take**, so the stage prepares a frame while that is unknown but does not show it (`hold`). The shape decides, and the loaded summary carries it, so the wait is real only on a deep link into a photo with no collection loaded. That never showed until the stage started warming the next photo: a preloaded frame decodes the instant it is asked for, well before the detail request returns, so it painted and then jumped.
+
+**A filmstrip along the foot is the gallery's own grid at a column count of one** (`PhotoStrip`, `StripViewStore`). Not a widget of its own over the viewer's run: the run is a window of fifty (§19.5.3), and what a strip is *for* is seeking to a photograph ten thousand frames away. So it is the whole collection, virtualised on the same rail, drawn with the same tiles - which is what makes a verdict, a rating, a selection and opening a stack work in it without any of them existing twice.
+
+What that consolidation cost, and what it bought:
+
+- **The rail is a store of its own** (`ScrollRailStore`, `ScrollRailPresenter`), holding one axis and not saying which: `top`, the anchor, the recentring at the walls, the progress. The gallery scrolls it down and the strip scrolls it across. Two copies of that arithmetic is two chances to get the one hard thing wrong, and the two views cannot share *one* rail either - a strip left 4,000 cells along would land the gallery there in the wrong units, on the way back from the viewer.
+- **The band arithmetic already took a column count** (`bands.ts`), so a strip is those same functions asked a one-column question: an open stack inserts its members into the run after the tile they belong to, and `sectionsIn` turns a span of display cells into the runs and bands to draw for either view.
+- **What is on screen in either view is what the collection holds rows for.** `neededBlocks` is what *keeps* a block as much as what fetches one, so the strip's span is reported into it (`stripSpan`) or its rows would be evicted as fast as they arrived.
+- The tiles need to know which of the two they are in exactly once (`InStrip`): masonry's own bookkeeping - the box a tile reports for its band, the cursor scrolled into view - is an answer about the gallery's layout, and reported from a strip it describes a grid nobody is looking at.
+
+**Which edge it takes is the trade the panels are placed by, priced for a strip and answered first** (`stripEdge`): a portrait frame on a wide screen has width to spare and no height, so the strip runs down the side there and along the foot otherwise. Priced for a strip because a hundred pixels of thickness buys its way under a frame that a 320px column or a 34vh fold could not fit beneath, so the two routinely part company - the panels down the side, the strip along the foot beneath them. First because **the strip spans the whole frame on whichever edge it takes** and the panels lay out in what it leaves, which is how the two are nested on the page: so opening the panels never moves the strip, and only the outer of the two can relocate the inner. That is the whole of what the axis costs - `visibleRows` counts rows of a pitch, and the pitch is a cell's width one way round and its height the other - and the rail is left alone through the swap, because it is in cells and a cell is a cell either way.
+
+Off by default and remembered, as the metadata column is, and outside the box the stage and panels share. Both edges are decided from the frame and from constants - the column's width, the fold's cap, the strip's own thickness - rather than from what either currently measures: a decision taken against a measurement made under the other answer is a layout that oscillates, and one taken against what is on screen is one that depends on the order the reader opened things in (`viewer_edges.ts`). The photograph on the stage is ringed in the strip (`tile--open`), which is the only thing saying where the reader is in a row a hundred thousand cells long. The verdict and the rating are **not** drawn in a strip cell: it is short by construction, and two thumbs and five dots under each takes the room the picture is there to have - both are a press away in the bar above, on the photograph the strip is for. How thick the strip is drawn is the reader's, on a slider remembered across visits. **The strip is a surface of its own**, deeper than the page, and the slider sits on a line of its own inside it rather than over a corner of a photograph: the cells are pictures, a control on one is in the way of the thing it sizes, and a control floating over a frame is where the *stage's* zoom lives - which is the one thing this must not be mistaken for. A wheel over the strip scrolls it whichever way it runs, since Firefox leaves a vertical notch over a horizontal scroller to do nothing at all. Not on a phone, where the photograph is the page, and not in the editor, where stepping away mid-grade is not something to leave one press from.
+
+**The drawn scrollbar is the strip's too** (`GridScrollbar`, given a rail and an axis), and it is what makes a strip over a hundred thousand photographs worth having: the native bar describes the *rail*, which is a few hundred cells, so a drag along it reaches a fraction of a library and says nothing true about where the reader is. The drawn one is a fraction of the collection, in either direction, off the same `progress` the gallery's reads.
+
+Clicking and scrolling zoom **about the pointer**, not the centre: with `transform-origin` at the centre and `d = pointer - centre`, the offset that pins the point under the cursor is `d - (next/current) * (d - offset)`. Scale and pan are a single piece of state, because that formula needs the current offset to compute the next one; doing it by calling `setOffset` from inside a `setScale` updater made the maths run about twice over (React re-invokes updaters; a side effect in one is a bug regardless), landing the photo at roughly double the intended offset. The layout read happens in the handler and the resulting `DOMRect` is passed in, so the updater itself stays pure.
+
+The image is absolutely positioned inside the stage. As a normal grid item its intrinsic height sized the grid row, so `height: 100%` resolved against the photo rather than the viewport and tall frames were cropped instead of fitted.
+
+Panning is clamped so the photo cannot be dragged away from the viewport edge. The limit is derived from the `object-fit: contain` geometry (the fit scale times the zoom), not from the natural size, and it is re-applied when zooming out too, since shrinking the image shrinks the legal offset.
+
+Which frame the stage draws is keyed off the route rather than the loaded detail, and it stays hidden until that frame decodes. The store deliberately keeps the previous detail while the next loads (so the sidebar does not collapse), which otherwise means the stage paints the frame *before* the one the URL asks for.
+
+**`open` is the photo the view is on; `lastDetailId` is the one a detail last arrived for.** They disagree for the length of a fetch, deliberately, and the two questions are different: everything about *where the reader is* - the neighbours the arrow keys offer (`detailIndex`), which library's default applies, whether a response that has just resolved is still wanted - reads `open`, while the panels read what has landed.
+
+`open` is a union, `{ id, status: 'loading' | 'ready' } | { id, status: 'missing', error }`, rather than a detail plus a pair of flags. Every state that cannot happen is then unspellable, which is what the flags kept getting wrong: "nothing loaded and nothing in flight" was indistinguishable from "no such photo", so the first render of every step reported the photo as missing; and "missing" read its message out of the store's shared error slot, which a failed *list* fetch also writes. The reason a read failed now travels with the read that failed.
+
+Nothing reads a detail without naming the photo it wants (`detailFor(photoId)`). Six places had to make that comparison by hand and two of them didn't, which is how a stale response came to overwrite the open photo: a detail fetch is not ordered against the one before it, so every write after an `await` also checks `isCurrent` first.
+
+**A detail and a develop document are read once per photograph and kept** (`details`, `editDocs`, oldest evicted past `REMEMBERED_PHOTOS`). A cull flips between two frames far more often than it walks forward, and a read per open made the gesture the viewer is built around the slowest one: three round trips a step, on a photograph whose picture was already on screen. Everything that rewrites a detail assigns into the held object rather than replacing it - the patch behind a star, the stamp a rebuild announces - so a hit is the answer a read would have given. The one writer that cannot be seen from here is the editor, which saves through its own store, so leaving it drops that photograph's document (`forgetEdits`).
+
+**The previous photo's frame is held for up to 100ms after a step** (`STALE_FRAME_MS`), rather than cleared on the route change. That is for a photograph the run was not holding - a jump from the grid, a rendition that has to be built - where the frame genuinely has to decode, and dropping the old one first turns that into a blink of stage background. The cap is what keeps it honest: the panels beside the stage already describe the photo in the URL, so a frame held past its decode is the wrong picture rather than a smooth step, and a rendition that has to be *built* would otherwise leave it up for the length of the build.
+
+That hold is only reachable because **the detail page does not tear itself down between photos**. Rendering "Photo not found" whenever no detail matches the route and nothing is in flight describes exactly the state of the render that first sees a new id - the fetch starts in the effect *after* it - so every step would unmount the whole page, stage included, for a frame. The page believes a photo missing only when the read for *that* photo came back empty (`open.status`, above), and `openDetail` marks the read as started synchronously, ahead of the settings load rather than behind it.
+
+**Both neighbours are pictures of the viewer's stage**, mounted and decoded beside the one on screen and held on their own compositor layer - which is stack triage's flip (§20.4) doing the viewer's stepping. A step is then the opacity change that flip already is: no element to mount, nothing to ask the server for, and no decode, because the raster the browser built is the one that gets revealed. Backwards and forwards, because a cull steps both ways.
+
+Warming a cache cannot do this on its own: bytes and a correctly-sized raster within reach still leave the step painting a newly mounted element, which revalidates and decodes again. The picture the stage is already holding is the one thing that does not.
+
+**Mounted only once something is up on the stage**, so they never compete for the connection with the frame the reader is waiting on: an element mounted is an element asking. Anything painted, rather than the picture being asked for - gated on the latter, a step to a photograph that has to arrive unmounts both neighbours for the length of that arrival and mounts them again after, which is a fetch and a decode per step for files the page was holding.
+
+**Only at the rendition the server resolved for it** (`shown_rendition`, below): a reader set to the camera's JPEG never pays for a render they will not see, and a rendition still being built is a 404 until something builds it.
+
+**And at every one of those this photograph has been read at, not only the one on screen.** Which neighbour URLs those are moves with the rendition, so holding one set means every swap unmounts a pair and mounts the other - holding a file and then dropping the element holding it, which is holding nothing. It costs most in the case the neighbours exist for: comparing two renditions and then stepping on, where the frame arrived at had been fetched already and is fetched again.
+
+**Which rendition the viewer shows needs no round trip of its own** (`PhotosStore.frameOf`). The server resolves it - the setting, the library, whether the photo is edited, and for `best_available` alone what is actually on disk - and returns it as `shown_rendition` on every row and detail (§13.6), so the answer is already on hand by the time anything is fetched at all: the same read that lists a photo, or the neighbours the stage reaches for, carries it. Resolving it in the browser instead meant deriving it from the detail, which a reader set to the camera's JPEG in a library that renders got the render first from - fetched, decoded and painted, lens distortion and all - and swapped out the moment the detail landed, paying for both files on every step. It is also what lets a neighbour be loaded exactly as if the reader had opened the viewer on it directly: one function asked of any id, not a client-side copy of the server's policy.
+
+**The answer is optimistic on purpose, and the 404 is what makes that safe.** What a library serves is a promise about every photograph in it, not a stat of one, so a photo mid-import is named at the render it is about to have - and if that file is not there yet, the fetch for it comes back 404 once and that 404 is what starts the build (`stage_bitmaps.decodeFrame` reports it, `ensureBuilt` and `ImageApi` answer it). A stat-gated answer would route around exactly that, leaving the photograph silently on the camera's JPEG, which never 404s and so never heals. What the setting asked for beyond the promise is `rendition_to_build`, built once by `openDetail` and never blocking the first paint. `resolveShownRendition` records which parts of this are promise and which are stat; this is why.
+
+**The page is a layout and seven observers, not one.** The nav, the frame, and each panel read only what they show - the notes box holds its own draft, the triage panel reads the verdict and rating off the row, the camera panel reads the camera fields, the rendition panel is the only one that hears a frame decode. As one component they all re-rendered on anything any of them watched: a keystroke in the notes box redrew the stage, and a star redrew the camera settings.
+
+Splitting the components is only half of it, because **a held detail is deep-observed and written into rather than replaced** (`details`). A fresh object notifies everyone reading any part of it, which is what `reconcile` already avoids for grid rows; `patch` therefore assigns the changed fields into the detail the panels are holding, minus `renditions` and `album_ids` - a patch cannot change those, but they arrive as new objects every time and would read as a change to the two components that watch them. A rating click now re-renders the triage panel and nothing else.
+
+A "Rendition details" panel reports what is actually being displayed (its source, pixel dimensions, format, colour space and encode quality) separately from the original RAW's size and dimensions, because the two are easy to confuse and only one of them is what you are judging sharpness on.
+
+Every metadata panel shows its two most important rows and hides the rest behind a same-size toggle, so each costs the same three lines however much a camera recorded. Download (RAW or JPEG), the rebuild actions and Bin live in the page header beside the prev/next controls, which keeps every action on the photo in one place rather than buried at the bottom of a panel column.
+
+Landing straight on `/photos/:id` would leave prev/next dead: the neighbours come from the loaded collection, and a deep link has none. So opening the detail with no collection loaded opens the photo's library as well.
+
+**The way out is the grid the reader came in by**, on the button and on `Esc` alike: a photo opened from a shoot, an album or the Bin returns there rather than to the whole library, and the button is named for where it goes. `PhotosStore.source` answers it while the tab lives - opening a photo does not change which collection is loaded - but a reload has no store to read, so the collection is in the route the viewer is nested under (§18.3) and the detail page opens it alongside the photo. A bare `/photos/:id` still inherits the library it loads behind itself.
+
+**And it returns to the photo, not to the top.** Two things had to change for that. The grid page opens its collection on mount, which for the collection the reader never left is now a re-read in place rather than a reset: the rows, the scroll position and the open bands are all still describing the same listing, and dropping them landed a reader a thousand photos into a gallery back at its first row. Then leaving the viewer puts the keyboard cursor on the photo that was on screen, which the grid already scrolls to (`focusContentTop`) - so a reader who stepped forward a thousand frames comes back to the thousandth. Only the cursor moves: someone who selected a set and opened one of them with `Enter` has not asked for that set to be cut down to wherever they stepped to.
+
+Destructive actions split by reversibility. Binning is undoable, so it just happens and reports with an undo toast wired to `POST /api/photos/restore`. Deleting a library, shoot or album is not undoable, so each asks first via a native `confirm()` that names the specific consequence (removing a library keeps the RAW files but destroys every rating, note, pick and membership).
+
+### 18.6 Renditions and the sync strip
+
+Renditions are generated asynchronously, so a tile's first request can 404 while processing is still writing the file, and nothing in the page can know when that changes. **The server says so**: `ProcessingService` announces each photo whose renditions it has just written, and `GET /api/events` streams those announcements to every connected client as `event: rendition` (`EventsApi`).
+
+**The version is a column, and it travels on the row.** `photos.tile_built_at` and `photos.renditions_built_at` each mean "when was this file last written", which is exactly what a URL has to name - and *only* that: whether a file is stale is asked of `built_from` beside them, which names the develop settings each stored variant was rendered from, because a wall clock written on the peer that built it cannot be held against an edit timed on the peer that made it (docs/replication.md §7.9). Both are on `PhotoSummary`, so every view that renders a photo is already holding them. Appending it is the only thing that makes a rebuilt file visible to an `<img>` that has already decoded the old one (§13.5). Remounting the element is not an alternative: three fresh `<img>`s with the same `src` produce one network request between them, because the browser hands the later ones the copy already in its in-memory resource cache without revalidating. The URL itself has to differ.
+
+Everything else follows from it being the server's value rather than something a client made up. It is there on the first render, so there is no plain-URL window to be stale in. It survives a reload, so revisiting a catalogue still revalidates rather than re-downloading. Two browsers agree. And the neighbours the viewer holds are painted at the URL they were held at, because both readings come off the same row - which is the invariant a client-side version could not hold, since whatever held it was keyed by the view rather than by the photo.
+
+**The announcement carries the new value**, not just the fact of a change, so learning about a rebuild costs nothing beyond the event: `PhotosPresenter.renditionsRebuilt` writes it into the row already on screen, and mobx notifies the one tile whose field moved. Nothing is re-fetched to find out what the version became.
+
+Per photo rather than per rendition because a reprocess rewrites or drops all of them together (`dropStaleRenditions`), so a rendition-level version would be three copies of one fact.
+
+**Stamping the row and announcing it are the same act, and both happen wherever a rendition is written.** There are three such places. The import's rendition pass, at the end of which `markDone` already stamped the row (`markProcessed`). The import's *tile* pass, which is the point of splitting the two (§10.2): the tile is on disk a second and a half before its render, and a grid already on screen should fill at that pace rather than the render's, so the tile announces itself and stamps the row to match (`tileWritten`). And `runOneOff`, which serves the viewer's on-demand build (`POST /photos/:id/renditions/:r`, including the force rebuild that deliberately rewrites a file behind an unchanged URL) and the grid tile repaired on a detail read (§13.2); that path wrote files without touching the row at all, so it stamps one too.
+
+The stamp is what makes each of those announceable rather than merely true: a client builds its URLs out of these columns (§13.5), so telling it about a file the row does not know about yet would have the next list read walk that URL back to the copy the browser already holds.
+
+**One stamp per stage, not one per photo.** A photo announces twice during an import of a rendering library, and the two announcements move different URLs: the tile pass moves `tile_built_at` and with it the gallery's, the rendition pass moves `renditions_built_at` and with it the viewer's. Shared, the second announcement moved the tile's URL too - and a moved URL is a different cache key rather than something to revalidate, so every tile on the page was downloaded again in full (~15KB each) for bytes that had not changed. Which stamp a URL reads is the rendition it is asking for: `grid` from the tile's, `full` and `max` from the renditions'. The camera's JPEG reads neither, being unversioned (§13.5).
+
+**Being told is the only path.** Nothing polls behind the announcement. A tile that 404s stays blank until it is announced, rebuilt from the bulk bar, or the page is reloaded - a missed announcement therefore costs a reload, and that is the cheaper failure: the backoff this replaced (`RETRY_DELAYS_MS`, shared with the viewer) meant that a library whose tiles all 404 - one wrong path, one cleared data directory - re-requested every tile on screen for as long as the page was open, and turned a bug into a load test against the same 404.
+
+Which puts the whole weight on the announcement being *acted* on, and the stage had one way of dropping it. A frame whose decode fails is unmounted, so the element the promotion effect reaches through a ref becomes null; the rebuilt version then arrives, the effect runs against nothing and returns, and clearing the failure remounts the element without changing any of that effect's other dependencies. Nothing asked the new bytes to decode. They were fetched - 200, in milliseconds - and the viewer sat on them for the life of the page, which is the one outcome the announcement exists to prevent. `failed` is a dependency of that effect for this reason.
+
+The version is told rather than guessed, and that is the whole point. What it replaced was a pair of global flags: `reloadToken`, bumped on every completed list fetch, so the grid re-requested *all* of its renditions whenever anything refetched the list and re-rendered every tile to do it, at a poll a second for the length of an import, which is exactly when the grid is largest and the least of it has changed. The other was `rebuiltAt`, a session timestamp that made every *subsequent* photo in the viewer miss the browser cache once because one photo had been rebuilt.
+
+The stream carries an `id:` per event and keeps the last few hundred in a ring buffer, so a browser reconnecting after a blip replays what it missed through `Last-Event-ID` rather than losing it. An id from a previous run of the server (one at or beyond the current counter) replays nothing rather than the whole buffer; a restart mid-import is therefore a gap in the announcements, and a reload is what closes it. A heartbeat every 20s keeps the connection from being idled out (`idleTimeout`, §index.ts), and waits on the disconnect as well as the timer, so a departed client is dropped at once rather than at the next beat.
+
+The sync status bar renders one cell per item the run's current phase is counting through, filling as it climbs: the files while the scan is reading them, then the photos queued for rendition building (§9.6). One bar for two phases rather than one per phase, because they are consecutive and only ever one is live; which one it is names itself in the label, so an import reads `processing · 1204/50000 files · 2.5 files/s · eta 5h` and then `rendition · 32/50000 renditions`. The tallies beside it (added, moved, missing) are what the *scan* concluded, so they are shown only once it has. It stops polling as soon as the library reports idle, and while a run is in flight the row's Sync button becomes Stop (§9.10) - starting a second one is not on offer anyway, so the slot is worth more as the control that ends the first.
+
+**The poll runs alongside the triggering request, not after it.** `POST /sync` only answers once the scan has finished, which on a library's first import is minutes of opening and hashing every file - and for the whole of it the run is already under way and the status endpoint has been reporting it. Awaiting the request first meant a freshly added library sat at "0 photos, never synced" with the button still offering a sync that was already running, and then jumped to a moving progress bar minutes later, which reads as the click having done nothing and the catalogue having refreshed itself. Until that request answers, an `idle` status report is a run the server has not started recording yet rather than the truth, so it neither paints the strip idle nor stops the poll.
+
+A finished run also re-reads the **library list**, which is where the row's photo count and "synced 3m ago" come from; nothing else re-reads it while the settings page stays open, so a sync completed under the user's eyes would otherwise leave both saying what they said before it started.
+
+**The poll re-reads the grid for rows, not for renditions.** It does so while the *scan* is inserting them and once more on the tick that finds the run finished - not through the processing phase, which is the long one. By then the row set is settled and each rendition announces itself, so a list request per second would answer with the rows the grid already has, filtered and counted over the whole library to say so.
+
+**A refetch that returns the same rows changes nothing observable.** `merge` writes the server's fields into the row objects already on screen rather than replacing them (§18.3.2); a fresh object invalidates that tile's observable, so during a sync the whole grid would re-render once a second for rows that had not moved. In the same spirit the emptiness checks test `total` before `loading`, so a populated grid short-circuits away its dependency on a flag that toggles for every block a scroll asks for.
+
+### 18.7 Running and testing
+
+```bash
+cd web && bun install
+bun run dev                       # Vite on a random port, which it prints; --port pins it
+bun run test:e2e                  # Playwright; starts its own API + Vite on random ports
+```
+
+Every service picks a free port at random rather than a fixed one, so several checkouts (parallel worktrees, an agent per branch) can each run a dev server and an E2E suite without fighting over `:3000`. Each prints the port it got, and takes an override when one has to be pinned: `-p <port>` for the API, `--port <port>` for Vite. The dev server's proxy still has to be told where the API is, so a dev session either pins the API with `-p 3000` or passes the port it was given as `VITE_API_URL`.
+
+`bun run test:e2e` builds a throwaway library under `$TMPDIR/bowerbird-e2e-<checkout hash>` from the ARW fixture and drives the real stack, so it needs `librawshim.so` built. The path is keyed by checkout so two worktrees testing at once do not wipe each other's fixture, and stable across runs of one checkout so the copies are overwritten rather than piling up. `VITE_API_URL` points the dev server's proxy at a non-default API origin.

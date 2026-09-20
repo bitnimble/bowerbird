@@ -1,0 +1,61 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "Bowerbird desktop shell"
+edition = "2021"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c" }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The shell proxies for the hosted server, so it needs a client. `rustls` rather than the
+# system TLS so a bundled build carries its own and does not want OpenSSL on the box.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# The event stream's reconnect backoff. Already in the tree - `tauri` runs on it - and named
+# here only because `tauri::async_runtime` re-exports the channel and lock types but not the
+# timer. `Response::chunk` is not feature-gated, so reading the stream itself needs nothing.
+tokio = { version = "1", features = ["time", "sync", "macros"] }
+# Starting the app, so that the app can be replaced while it is not running (DESIGN §23.3).
+# `main.rs` is the supervisor before it is the app; the container's PID 1 is this crate's
+# own binary, so the two hosts share one implementation of what a version is.
+launcher = { path = "../native/launcher" }
+
+# The folder an export is written into (§10.5.1), asked for in the reader's own file manager.
+# `tauri-plugin-dialog` is what would normally provide this and cannot: it depends on `tauri`
+# from crates.io where this build takes it from git, which cargo does not unify - two `tauri`
+# crates, and every `AppHandle` the wrong type. So the crate the plugin wraps, directly.
+#
+# The predicate is what tauri's own `desktop` cfg expands to, and `export.rs` gates on that
+# cfg - the two have to keep agreeing, because rfd has no backend for Android and does not
+# compile there. The portal rather than GTK on Linux, since the CEF build carries no GTK.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+
+# `default-features = false` is load-bearing. Nothing emits a compile_error when both
+# runtimes are on: build.rs would report `cef` (so the build takes the CEF manifest and
+# rpath) while `Builder::default()` still resolves to `Builder<Wry>`, because
+# `#[default_runtime(crate::Wry, wry)]` keeps defaulting the generic to Wry whenever the
+# `wry` feature is present. A silently mismatched build.
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", default-features = false, features = [
+  "cef",
+] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = [] }
+
+[profile.release]
+# The symbol table is 9MB of the Windows binary and 3MB of the macOS one, for builds
+# nothing debugs remotely.
+strip = "symbols"
+# Cargo's release defaults are `lto = false` and `codegen-units = 16`, which is per-crate
+# optimisation and sixteen independent units inside each one, and a shipped build has no
+# reason to leave either there.
+lto = "fat"
+codegen-units = 1

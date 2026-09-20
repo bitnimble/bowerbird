@@ -1,0 +1,326 @@
+name: release
+
+# A tag is a release; the button is a container image and nothing else. A cold build is
+# three Rust release stages on four operating systems against 2,000 Actions minutes a
+# month, and each commit built would leave its own digest behind in a registry billed by
+# the byte.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Read, for every job but the one that cuts the release. `publish` widens it for itself:
+# a build job that can write to the repository is a build job that can rewrite a tag.
+permissions:
+  contents: read
+
+env:
+  # Empty for a manual run, which is what `publish` keys "there is no release to cut" off.
+  TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+
+jobs:
+  # The container, and the payload an installed one replaces itself with. Both come out
+  # of the same image, which is the point: what a running container updates to is exactly
+  # what a fresh `docker pull` would have given it.
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # `rawler` is a path dependency on native/vendor/dnglab, so a checkout without
+      # the submodule is a cargo build that fails on a directory that is not there.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # A runner has ~14GB free and the Rust stage peaks near 3. The toolchains this
+      # image does not use are what the margin comes out of.
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /opt/hostedtoolcache
+          df -h /
+
+      - uses: oven-sh/setup-bun@v2
+      - name: Stamp the version the tag names
+        if: env.TAG != ''
+        run: bun run scripts/set-version.ts "$TAG"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Also where the image's OCI labels come from - `source`, `description` and
+      # `licenses`, off this repository. The Dockerfile writes none of them, so this is what
+      # attaches the GHCR package to the repo and gives it its README and visibility.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # `latest` needs no line: the default flavour attaches it to whichever
+          # semver tag is highest. A manual run matches no semver and so publishes
+          # only its commit, which is what a build off a branch should be.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          # amd64 only, and the entrypoint is why: the image ships three rawshim
+          # builds picked between by x86 instruction set, and the Rust stage names
+          # those levels. An arm64 build has no target-cpu to give it.
+          platforms: linux/amd64
+          push: true
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Taken out of the image rather than assembled beside it, so the tarball and the
+      # image cannot be built from different trees - which is the one way an in-place
+      # update could land a container on something `docker pull` would never produce.
+      - name: Take the payload out of the image
+        if: env.TAG != ''
+        run: |
+          set -eu
+          mkdir -p dist/docker-x86_64
+          image=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)
+          # `load: true` above is what normally puts it in the daemon, and whether buildx
+          # can load and push in one invocation depends on its driver and its version - so
+          # this asks rather than assumes, and fetches what was just pushed if it has to.
+          docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
+          id=$(docker create "$image")
+          docker cp "$id:/app/payload" ./payload
+          docker rm "$id"
+          tar -czf dist/docker-x86_64/bowerbird-payload-docker-x86_64.tar.gz -C ./payload .
+
+      - uses: actions/upload-artifact@v4
+        if: env.TAG != ''
+        with:
+          name: dist-docker-x86_64
+          path: dist/
+
+  desktop:
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      # One platform's toolchain failing should not cost the other three their build.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runs-on: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage
+          - platform: macos-aarch64
+            runs-on: macos-14
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - platform: macos-x86_64
+            runs-on: macos-13
+            target: x86_64-apple-darwin
+            bundles: dmg
+          # **Shell only, and lensfun is why.** The server's half of `rawshim` links
+          # lensfun, the pinned libavif and the pinned libjxl, none of which has a
+          # buildable MSVC story worth the week it would cost - so this build carries no
+          # local server and points at a hosted one (`transport.ts`). Everything the
+          # editor does is the browser's GPU and needs none of them.
+          - platform: windows-x86_64
+            runs-on: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            shell_only: true
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }},wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native/rawshim
+            src-tauri
+            native/launcher
+
+      # What `base` installs in the Dockerfile, for the same reasons. The webkit and
+      # appindicator packages are Tauri's own bundling dependencies rather than this
+      # app's - the Linux build runs on CEF (`src-tauri/Cargo.toml`).
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            liblensfun-dev libaom-dev libdav1d-dev libsharpyuv-dev cmake \
+            libhwy-dev libbrotli-dev liblcms2-dev libclang-dev build-essential \
+            libgtk-3-dev librsvg2-dev patchelf desktop-file-utils fuse3 libfuse2
+
+      - name: macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install lensfun aom dav1d cmake highway brotli little-cms2 webp
+
+      # Two installs, because `web` is its own package with its own lockfile: vite, React
+      # and the plugins are only in that one, and `tauri build` runs the web build.
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: web
+
+      # The pinned compiler and the pinned codecs, fetched through the same scripts a
+      # development machine runs so the version is stated once (`scripts/pinned.ts`).
+      # slangc on every platform, because the shaders are what every picture is; libavif
+      # and libjxl only where a server is being built.
+      - run: bun run get:slangc
+      - name: The pinned image codecs
+        if: ${{ !matrix.shell_only }}
+        run: |
+          bun run get:libavif
+          bun run get:libjxl
+
+      - name: Stamp the version the tag names
+        run: bun run scripts/set-version.ts "${{ github.ref_name }}"
+        shell: bash
+
+      # The editor's decoder, which the web build imports by path - so it has to exist
+      # before vite resolves anything. Through bun rather than `cargo install wasm-pack`,
+      # which builds it from source and costs minutes for a tool that publishes a binary.
+      - run: bun x wasm-pack@0.13.1 build native/rawshim --target web --out-dir pkg --no-opt -- --no-default-features
+      - run: bun run scripts/hash-pkg.ts
+
+      # The server the app carries, and the pixel library behind it. Skipped where the
+      # platform cannot build the server's half at all.
+      - name: The bundled server
+        if: ${{ !matrix.shell_only }}
+        run: |
+          bun run scripts/cargo.ts build --release --manifest-path native/rawshim/Cargo.toml --target ${{ matrix.target }}
+          bun run scripts/build-sidecar.ts --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Build the app
+        run: bun x @tauri-apps/cli build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        shell: bash
+
+      - name: Assemble the payload and collect the installer
+        run: |
+          set -eu
+          bun run scripts/build-payload.ts --target ${{ matrix.target }} --out dist ${{ matrix.shell_only && '--shell-only' || '' }}
+          find src-tauri/target/${{ matrix.target }}/release/bundle -type f \
+            \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*-setup.exe' \) \
+            -exec cp {} dist/${{ matrix.platform }}/ \;
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist/
+
+  # Shell only by construction rather than by choice: `rawshim` without `renditions`
+  # links no C at all, and lensfun has no prebuilt Android build anywhere.
+  android:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/rawshim,src-tauri
+
+      - run: sdkmanager --install "ndk;27.2.12479018"
+      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: web
+      - run: bun run get:slangc
+      - run: bun run scripts/set-version.ts "${{ github.ref_name }}"
+      # Pinned, and through bun rather than `cargo install`, which builds it from source
+      # and costs minutes for a tool that publishes a binary.
+      - run: bun x wasm-pack@0.13.1 build native/rawshim --target web --out-dir pkg --no-opt -- --no-default-features
+      - run: bun run scripts/hash-pkg.ts
+      # `NDK_HOME` is left to the script, which takes the highest under `$ANDROID_HOME/ndk` -
+      # the one installed above, there being only one.
+      - run: bun run android:build
+
+      # Gradle leaves the release APK unsigned, and Android will not install one. With a
+      # keystore in the repository's secrets this signs it; without, the unsigned APK is
+      # published as it is, for somebody to sign themselves.
+      - name: Sign the APK
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -eu
+          mkdir -p dist/android-aarch64
+          apk=$(find src-tauri/gen/android -name '*release*.apk' | head -n1)
+          # The bare version, like every bundler-produced installer beside it: this is the
+          # one filename the build does not choose, so it is the one that can drift.
+          out="dist/android-aarch64/Bowerbird_${GITHUB_REF_NAME#v}.apk"
+          if [ -z "${KEYSTORE:-}" ]; then
+            echo "no ANDROID_KEYSTORE_BASE64 secret: publishing the unsigned APK"
+            cp "$apk" "$out"
+            exit 0
+          fi
+          echo "$KEYSTORE" | base64 -d > /tmp/release.jks
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort | tail -n1)
+          "$tools/apksigner" sign --ks /tmp/release.jks --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" --out "$out" "$apk"
+          rm -f /tmp/release.jks
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-android-aarch64
+          path: dist/
+
+  # One release, made once everything that could fail has. The manifest is written from
+  # the files that are about to be uploaded rather than from a list somebody maintains,
+  # so a platform whose build failed is simply absent from it - and an install of that
+  # platform is told there is nothing for it rather than handed a 404.
+  publish:
+    needs: [docker, desktop, android]
+    # A platform that failed to build should not hold the release back; what it must not
+    # do is appear in the manifest, which it cannot, having uploaded nothing.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      # The manifest writer reads the schemas, and the schemas are zod: without this it is
+      # a module resolution failure at the last step of a release that otherwise worked.
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+      # The repository, not the whole reference: the script pairs it with the version it
+      # already stripped the `v` off, which is the tag `docker/metadata-action` pushed.
+      - run: bun run scripts/write-release-manifest.ts --dist dist --tag "${{ github.ref_name }}" --image-repo "ghcr.io/${{ github.repository }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          # The description of this release is the changelog the app shows (DESIGN §23.1),
+          # so it is generated rather than left empty: an update nobody can read the
+          # reason for is an update nobody installs.
+          generate_release_notes: true
+          files: |
+            dist/release.yml
+            dist/*/*

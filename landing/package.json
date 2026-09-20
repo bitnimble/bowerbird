@@ -1,0 +1,25 @@
+{
+  "name": "bowerbird-landing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../scripts/vite.ts",
+    "build": "tsc --noEmit && bun run ../scripts/vite.ts build",
+    "preview": "bun run ../scripts/vite.ts preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stylexjs/stylex": "^0.19.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@stylexjs/unplugin": "^0.19.1",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.0"
+  }
+}

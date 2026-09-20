@@ -1,0 +1,41 @@
+{
+  "name": "bowerbird-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../scripts/vite.ts",
+    "build": "tsc --noEmit && bun run ../scripts/vite.ts build",
+    "preview": "bun run ../scripts/vite.ts preview",
+    "typecheck": "tsc --noEmit",
+    "test": "BUN_JSC_useFTLJIT=0 bun test src",
+    "test:e2e": "cd .. && bun run build:native && bun run build:wasm && cd web && playwright test"
+  },
+  "dependencies": {
+    "@base-ui-components/react": "^1.0.0-rc.0",
+    "@stylexjs/stylex": "^0.19.1",
+    "date-fns": "^4.4.0",
+    "lucide-react": "^1.27.0",
+    "mobx": "^6.13.0",
+    "mobx-react-lite": "^4.0.7",
+    "react": "^18.3.1",
+    "react-day-picker": "^10.0.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0",
+    "zod": "^4.0.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0",
+    "@stylexjs/unplugin": "^0.19.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/jsdom": "^30.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "@webgpu/types": "^0.1.71",
+    "jsdom": "^30.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.0"
+  }
+}

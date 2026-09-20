@@ -1,0 +1,1 @@
+ALTER TABLE `libraries` DROP COLUMN `mirror_shoots`;

@@ -1,0 +1,29 @@
+[package]
+name = "launcher"
+version = "0.1.0"
+edition = "2021"
+description = "Starting Bowerbird, so that Bowerbird itself can be replaced"
+
+[lib]
+name = "launcher"
+path = "src/lib.rs"
+
+# The container's PID 1. The desktop app links the library above instead: it supervises
+# itself, so that what the operating system starts is never what an update replaces.
+[[bin]]
+name = "bowerbird-launcher"
+path = "src/main.rs"
+
+# The one dependency, and only for two calls: `signal`, so a container's PID 1 passes
+# `docker stop` on to the app rather than discarding it (PID 1 has no default handler),
+# and `kill`, to send it. Everything else here is std.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+# A few hundred lines that spend their life waiting on a child, shipped inside every
+# bundle: its size is the only thing about it worth optimising.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"

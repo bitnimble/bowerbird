@@ -1,0 +1,11 @@
+{
+  // Its own, rather than a folder in the root config: these specs evaluate code inside the
+  // shell's webview, so they need `DOM` - and the server the root config covers must not be
+  // able to see it.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ESNext", "DOM"]
+  },
+  "include": ["."]
+}

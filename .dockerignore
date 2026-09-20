@@ -1,0 +1,38 @@
+# Anchored at the context root unless it starts with `**/`, which is why the two
+# node_modules trees and the several target dirs are written the wide way.
+**/node_modules
+.git
+.gitignore
+*.md
+Dockerfile
+.dockerignore
+.env
+.env.*
+bowerbird.db
+bowerbird.db-*
+bowerbird.db.*
+backups
+# Where a checkout's own run puts every generated file (DATA_DIR's default), plus
+# the pre-move layout that kept them under the library root.
+data
+**/.bowerbird
+coverage
+# Rust build artefacts, several GB of them per tree. The image builds the crate
+# itself, so a host-built `librawshim.so` sitting at the path the loader checks
+# first would shadow the image's own.
+**/target
+# Built by the image's own stages, from the version of the source the image has.
+# A host copy of either arrives ahead of the build that would produce it: the
+# `native` stage's `get-slangc.ts` finds a compiler and skips the fetch, and
+# `COPY web ./web` lands host-built assets on top of the ones vite just wrote.
+native/rawshim/.slangc
+native/rawshim/pkg
+web/dist
+web/test-results
+# Agent worktrees, a full checkout of this repo apiece.
+.claude
+.playwright-mcp
+# A local photo library and the RAW test fixtures: hundreds of MB the image has no
+# use for, and the integration tests do not run in it.
+.photos
+test/fixtures

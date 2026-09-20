@@ -1,0 +1,52 @@
+{
+  "$comment": "Project-specific Bash redirects consumed by the global hook at ~/.claude/hooks/redirect-bash-commands.py. Each entry tests every `commands` pattern (`Bash(...)`-style glob, mirrors permissions.deny syntax) against the proposed Bash command; the first match denies the tool call and surfaces `reason` back to the agent. See AGENTS.md §3 for why these scripts exist.",
+  "redirects": [
+    {
+      "commands": [
+        "Bash(bun x tsc *)",
+        "Bash(bunx vite *)",
+        "Bash(bunx stylelint *)",
+        "Bash(bunx tsc *)",
+        "Bash(bun tsc *)",
+        "Bash(tsc *)",
+        "Bash(bun test *)",
+        "Bash(bunx --bun vite *)"
+      ],
+      "reason": "Run the package.json scripts instead of the raw tools (TypeScript has no wrapper script): `bun run typecheck` (tsc --noEmit), `bun run test` (bun test; trailing args pass through, e.g. `bun run test src/editing/store.test.ts`), `bun run lint:design` (stylelint), or `bun run build` (lint:design + tsc + vite). See AGENTS.md §3."
+    },
+    {
+      "commands": ["Bash(gh *)"],
+      "reason": "Use the GitHub API via Fetch() instead of invoking gh directly"
+    },
+    {
+      "commands": [
+        "Bash(cat *)",
+        "Bash(sed *)",
+        "Bash(find *)",
+        "Bash(awk *)",
+        "Bash(curl *)"
+      ],
+      "reason": "Use the WebFetch(), Read(), Write(), Edit() and Find() tools instead of invoking curl, cat, sed, find or awk directly. (grep / rg / git grep ARE allowed now for text search -- but prefer Read / Find / LSP where they suffice; their command-executing flags like `rg --pre` / `git grep -O` are denied in settings.json. See AGENTS.md.)"
+    },
+    {
+      "commands": [
+        "Bash(cargo:*)",
+        "Bash(cargo)"
+      ],
+      "reason": "We have a blessed scripts/cargo.ts that you should use instead, which automatically cleans up superceded build files."
+    },
+    {
+      "commands": [
+        "Bash(bun dev *)",
+        "Bash(bun run dev *)",
+        "Bash(bun x playwright *)",
+        "Bash(bunx playwright *)"
+      ],
+      "reason": "Do not start the dev server as the user probably has their own dev server running, and it will fail to bind to the same port. If you need to test something in a browser, use `bun run e2e` to run E2E tests in Playwright instead."
+    },
+    {
+      "commands": ["Bash(npm *)", "Bash(npx *)", "Bash(node *)"],
+      "reason": "Use bun instead of node, npm, npx"
+    }
+  ]
+}

@@ -1,0 +1,219 @@
+// Geometry for the virtual grid: which photos are on screen, how tall the
+// scroll is, and where the rendered window sits inside it. Pure arithmetic over
+// numbers the store already holds, so nothing measures the DOM to decide what to
+// render (§18.3.2).
+
+// Mirrors `size.gridGap`, which the grid's own gap comes from. The gap between two
+// *cells*: a tile stands its ring off its photograph by `TILE_PAD`, so what the
+// reader sees between two photographs is this plus twice that.
+export const GRID_GAP = 2;
+
+// How far inside its cell a tile's photograph sits: the ring, and the room the ring
+// stands off the picture. Mirrors `size.tilePad`. It is what lets a band's ring
+// land on its outermost members without landing on a photograph (§19.6), and what
+// makes a selected tile's ring read as a frame rather than a crop.
+export const TILE_PAD = 4;
+
+// The height the list mode fixes every row to. A list row that could grow with its
+// contents would make the scroll's height a measurement rather than a sum.
+export const LIST_ROW_H = 62;
+
+// The grid mode gives every photo the same 3:2 cell.
+export const TILE_ASPECT = 3 / 2;
+
+// How much taller than the stack's own tile a line of its members may be drawn, in
+// masonry. Nothing else bounds one there - the band is a full-width flex line, so
+// two portrait frames alone on it stretch to the width of the grid - and a stack
+// several times the size of the collection around it reads as a different view
+// rather than as part of the one being worked through (§19.6).
+export const BAND_LINE_CAP = 1.3;
+
+// How many photos one list request covers, and the unit rows are cached and
+// evicted by. A hundred is a screenful at any zoom, so a scroll never waits on
+// more than one request, and it is small enough that dropping one costs little.
+export const BLOCK = 100;
+
+// How tall the scroller itself is, whatever the collection behind it (§18.3.2).
+//
+// Large enough that recentring is rare: the rail is only put back to its middle
+// once the reader is near an end of it (`atRailWall`), and that write cancels an
+// in-flight fling on macOS - so the distance between the walls is what buys the
+// smooth scroll. A hundred-odd viewports at a typical window height, sixty at a
+// very tall one.
+export const RAIL_HEIGHT = 100_000;
+
+// How close to an end of the rail the reader gets before it is recentred under
+// them, as a multiple of the viewport. Wide enough that the overscan is never
+// asked for rows outside the rail.
+const RAIL_MARGIN_VIEWPORTS = 2;
+
+import type { Span } from '../../../ui/virtual_rows';
+
+function clamp(value: number, max: number): number {
+  return Math.min(max, Math.max(0, value));
+}
+
+/** How tall the scroller is: the whole collection, until that exceeds the rail. */
+export function railHeight(contentHeight: number): number {
+  return clamp(contentHeight, RAIL_HEIGHT);
+}
+
+// How far the rail's origin can travel down the collection. Zero for a
+// collection shorter than the rail, which is what makes those a plain native
+// scroll with none of this machinery engaged.
+export function anchorLimit(contentHeight: number): number {
+  return Math.max(0, contentHeight - railHeight(contentHeight));
+}
+
+// Whether the reader has come close enough to an end of the rail that it has to
+// be moved under them. A rail that *is* the collection has no walls: its ends
+// are the collection's ends, and the reader is meant to reach them.
+export function atRailWall(railTop: number, contentHeight: number, viewportHeight: number): boolean {
+  if (anchorLimit(contentHeight) === 0) return false;
+  const margin = viewportHeight * RAIL_MARGIN_VIEWPORTS;
+  return railTop < margin || railTop > railHeight(contentHeight) - viewportHeight - margin;
+}
+
+/**
+ * The rail put back to its middle, with the anchor moved by exactly as much.
+ *
+ * `anchorTop + railTop` is where the reader is in the collection, and it is the
+ * same before and after: the rail moves and nothing on screen does.
+ */
+export function recentred(
+  anchorTop: number,
+  railTop: number,
+  contentHeight: number,
+  viewportHeight: number,
+): { anchorTop: number; railTop: number } {
+  const middle = Math.max(0, (railHeight(contentHeight) - viewportHeight) / 2);
+  const moved = clamp(anchorTop + railTop - middle, anchorLimit(contentHeight)) - anchorTop;
+  return { anchorTop: anchorTop + moved, railTop: railTop - moved };
+}
+
+// Mirrors `repeat(auto-fill, minmax(tile, 1fr))`. The grid is handed the count
+// rather than working it out itself: a number the two could
+// disagree on would put every row at the wrong height, and the error compounds
+// over ten thousand rows.
+export function gridColumns(width: number, tileSize: number): number {
+  if (width <= 0 || tileSize <= 0) return 1;
+  return Math.max(1, Math.floor((width + GRID_GAP) / (tileSize + GRID_GAP)));
+}
+
+// The far end of the zoom, and so what the column count is bounded by.
+export const MIN_TILE = 60;
+
+// The narrowest tile whose foot still holds the rating and the verdict: five dots, two
+// thumbs, the gaps between them and the foot's own padding come to this exactly. Under it
+// they are wider than the tile they belong to and are drawn across its neighbour.
+export const MARKS_MIN_TILE = 120;
+
+/** The tile width that packs exactly `columns` across, inverting `gridColumns`. */
+export function tileWidthForColumns(width: number, columns: number): number {
+  if (width <= 0 || columns <= 0) return MIN_TILE;
+  // Fractional, and a hair under the exact width. Rounded to whole pixels the far end of a
+  // wide window collapses - at 5120px the tiles for 79 and 80 across round to the same
+  // number - and left exact, `gridColumns` floors the last bit of the division either way.
+  return (width + GRID_GAP) / columns - GRID_GAP - 1e-6;
+}
+
+/** Row pitch: the cell's own height plus the gap beneath it. */
+export function gridRowHeight(width: number, columns: number): number {
+  if (width <= 0) return LIST_ROW_H + GRID_GAP;
+  const cell = (width - GRID_GAP * (columns - 1)) / columns;
+  // The 3:2 belongs to the *photograph*, not the cell: the cell is that plus the
+  // room the tile keeps around it, or every frame would carry a hairline bar.
+  return (cell - 2 * TILE_PAD) / TILE_ASPECT + 2 * TILE_PAD + GRID_GAP;
+}
+
+/**
+ * Cell pitch along the viewer's filmstrip: the same 3:2 cell the gallery gives a
+ * photograph, laid on its side - as tall as the strip, and as wide as that makes
+ * it - plus the gap after it.
+ *
+ * Uniform, like `gridRowHeight`'s, and for the same reason: the strip is one row
+ * of a collection that runs to a hundred thousand, so where a cell sits has to be
+ * a multiplication rather than a packing.
+ */
+export function stripCellWidth(height: number): number {
+  if (height <= 0) return MIN_TILE + GRID_GAP;
+  return (height - 2 * TILE_PAD) * TILE_ASPECT + 2 * TILE_PAD + GRID_GAP;
+}
+
+/**
+ * Which tiles begin a line of masonry, from the shapes alone.
+ *
+ * The wrap replayed rather than measured: a tile's hypothetical width is its flex
+ * basis plus the pad it holds around the photograph, `aspect * tileSize + 2 * TILE_PAD`
+ * - the basis sizes the picture, not the cell - and a line takes tiles until the
+ * next one no longer fits. Bands are not in it because a band is a full-width item
+ * and so never shares a line - it sits between one line and the next, and the tiles
+ * either side pack exactly as they would without it.
+ *
+ * What it buys is where a band goes: at the end of the line its stack's tile sits
+ * on rather than directly after that tile, which cut the line short and handed
+ * its free space to the tiles left on it - a stack opened at the start of a line
+ * was stretched across the whole grid, and its neighbours pushed below the band.
+ */
+export function masonryLineStarts(ratios: readonly number[], width: number, tileSize: number): Set<number> {
+  return new Set(lineStarts((i) => ratios[i]!, ratios.length, width, tileSize));
+}
+
+function* lineStarts(
+  ratioAt: (index: number) => number,
+  count: number,
+  width: number,
+  tileSize: number,
+): Generator<number> {
+  let line = 0;
+  for (let i = 0; i < count; i++) {
+    const basis = Math.max(1, ratioAt(i) * tileSize) + 2 * TILE_PAD;
+    if (line > 0 && line + GRID_GAP + basis > width) line = 0;
+    if (line === 0) yield i;
+    line += (line > 0 ? GRID_GAP : 0) + basis;
+  }
+}
+
+/**
+ * Where a masonry block ends, as an offset from its own first photo: the first
+ * line break at or after `minEnd`, or `count` where the collection runs out first -
+ * the one place a block may end mid-line, there being no line after it.
+ */
+export function masonryBlockEnd(
+  ratioAt: (index: number) => number,
+  count: number,
+  width: number,
+  tileSize: number,
+  minEnd: number,
+): number {
+  // At least one line, however far the block's start has drifted past `minEnd`: a
+  // block ending where it began would hand the next one no progress at all.
+  const wanted = Math.max(1, minEnd);
+  for (const start of lineStarts(ratioAt, count, width, tileSize)) {
+    if (start >= wanted) return start;
+  }
+  return count;
+}
+
+// Where each masonry block starts, plus where the last one ends. Masonry packs
+// lines from each photo's own shape, so a block's height is only known once it
+// has been laid out; the rest are estimated. That estimate is what lets the
+// scrollbar describe a collection the client has never held all of.
+export function blockTops(count: number, heights: ReadonlyMap<number, number>, estimate: number): number[] {
+  const tops = [0];
+  for (let block = 0; block < count; block++) tops.push(tops[block]! + (heights.get(block) ?? estimate) + GRID_GAP);
+  return tops;
+}
+
+// ponytail: linear from the top rather than a binary search. A hundred thousand
+// photos is a thousand blocks, walked at most once per scroll frame; bisect if a
+// library ever makes that show up in a profile.
+export function visibleBlocks(tops: readonly number[], scrollTop: number, viewportHeight: number): Span {
+  const count = Math.max(0, tops.length - 1);
+  if (count === 0) return { from: 0, to: 0 };
+  let from = 0;
+  while (from + 1 < count && tops[from + 1]! <= scrollTop) from++;
+  let to = from;
+  while (to < count && tops[to]! < scrollTop + viewportHeight) to++;
+  return { from, to: Math.max(from + 1, to) };
+}

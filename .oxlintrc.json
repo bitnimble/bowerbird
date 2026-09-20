@@ -1,0 +1,172 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "ignorePatterns": [
+    "node_modules",
+    "web/dist",
+    "landing/dist",
+    "native",
+    ".scratch-*.ts"
+  ],
+  "jsPlugins": ["./scripts/oxlint-plugin-strings.ts", "./scripts/oxlint-plugin-ids.ts"],
+  "rules": {
+    "no-console": "error",
+    "ids/no-uuid": "error",
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "node:fs",
+            "importNames": [
+              "rm",
+              "rmSync",
+              "rmdir",
+              "rmdirSync",
+              "unlink",
+              "unlinkSync"
+            ],
+            "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
+          },
+          {
+            "name": "node:fs/promises",
+            "importNames": [
+              "rm",
+              "rmdir",
+              "unlink"
+            ],
+            "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
+          },
+          {
+            "name": "fs",
+            "importNames": [
+              "rm",
+              "rmSync",
+              "rmdir",
+              "rmdirSync",
+              "unlink",
+              "unlinkSync"
+            ],
+            "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
+          },
+          {
+            "name": "fs/promises",
+            "importNames": [
+              "rm",
+              "rmdir",
+              "unlink"
+            ],
+            "message": "Deleting from disk goes through src/utils/deletions.ts, which proves the target is not an original first."
+          }
+        ],
+        "patterns": [
+          {
+            "group": [
+              "**/rawshim_for_testing",
+              "./rawshim_for_testing"
+            ],
+            "message": "Pixel work belongs in native/rawshim. Only commands and encoded files cross into TypeScript; rawshim_for_testing asks questions about samples on behalf of the tests that still live here; the rest of them are Rust fixture tests now. Nothing in src/ may reach it."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "src/utils/deletions.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": [
+        "src/logger.ts"
+      ],
+      "rules": {
+        "no-console": "off"
+      }
+    },
+    {
+      "files": [
+        "**/tests/**",
+        "**/*.test.ts",
+        "**/*.spec.ts",
+        "test/**",
+        "web/**"
+      ],
+      "rules": {
+        "no-restricted-imports": "off",
+        "no-console": "off"
+      }
+    },
+    {
+      "files": [
+        "scripts/**",
+        "landing/scripts/**"
+      ],
+      "rules": {
+        "no-restricted-imports": "off",
+        "no-console": "off"
+      }
+    },
+    {
+      "files": [
+        "web/src/**"
+      ],
+      "rules": {
+        "strings/no-jsx-text": "error",
+        "strings/no-literal-props": [
+          "error",
+          {
+            "restrictedProps": [
+              "aria-label",
+              "aria-valuetext",
+              "title",
+              "placeholder",
+              "alt",
+              "label",
+              "hint",
+              "emptyHint",
+              "deleteWarning",
+              "disabledReason"
+            ]
+          }
+        ],
+        "strings/no-literal-text": [
+          "error",
+          {
+            "properties": [
+              "label",
+              "emptyHint",
+              "title",
+              "placeholder",
+              "aria-label",
+              "deleteWarning",
+              "disabledReason"
+            ],
+            "calls": [
+              "confirm",
+              "show",
+              "showError",
+              "showUndoable"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "web/src/**/*.strings.ts",
+        "web/src/**/tests/**",
+        "web/src/**/*.test.ts",
+        "web/src/**/*.test.tsx"
+      ],
+      "rules": {
+        "strings/no-jsx-text": "off",
+        "strings/no-literal-props": "off",
+        "strings/no-literal-text": "off"
+      }
+    }
+  ]
+}

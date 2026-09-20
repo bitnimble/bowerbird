@@ -1,0 +1,14 @@
+{
+  // The tests run under Bun and so need its globals, which the library itself is
+  // kept away from. Separate rather than one config with both: `types: []` over
+  // there is what stops a Bun API reaching code that ships to a browser.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    // bun-types leans on Node's, and checking it here fails on names it expects to
+    // find in a config that has them. The rest of the repo skips lib checking too.
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src", "test"]
+}

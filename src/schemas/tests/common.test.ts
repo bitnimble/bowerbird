@@ -1,0 +1,39 @@
+import { describe, it, expect } from 'bun:test';
+import { SoftDeleteFilterSchema, PaginationSchema, OrderingSchema, PhotoIdListSchema } from '../common';
+import { newId } from '../id';
+
+const id = 'photo001';
+
+describe('SoftDeleteFilterSchema', () => {
+  it('parses the string "false" as false and defaults to false', () => {
+    expect(SoftDeleteFilterSchema.parse({ include_deleted: 'false' }).include_deleted).toBe(false);
+    expect(SoftDeleteFilterSchema.parse({ include_deleted: 'true' }).include_deleted).toBe(true);
+    expect(SoftDeleteFilterSchema.parse({}).include_deleted).toBe(false);
+  });
+});
+
+describe('PaginationSchema', () => {
+  it('coerces string query values and applies defaults/bounds', () => {
+    expect(PaginationSchema.parse({})).toEqual({ offset: 0, limit: 100 });
+    expect(PaginationSchema.parse({ offset: '20', limit: '50' })).toEqual({ offset: 20, limit: 50 });
+    expect(() => PaginationSchema.parse({ limit: '501' })).toThrow();
+    expect(() => PaginationSchema.parse({ limit: '0' })).toThrow();
+  });
+});
+
+describe('PhotoIdListSchema', () => {
+  it('requires 1-1000 valid ids', () => {
+    expect(PhotoIdListSchema.parse({ photo_ids: [newId()] }).photo_ids).toHaveLength(1);
+    expect(PhotoIdListSchema.parse({ photo_ids: [id] }).photo_ids).toEqual([id]);
+    expect(() => PhotoIdListSchema.parse({ photo_ids: [] })).toThrow();
+    expect(() => PhotoIdListSchema.parse({ photo_ids: ['not-an-id'] })).toThrow();
+    expect(() => PhotoIdListSchema.parse({ photo_ids: Array(1001).fill(id) })).toThrow();
+  });
+});
+
+describe('OrderingSchema', () => {
+  it('accepts the four orderings and rejects others', () => {
+    expect(OrderingSchema.parse('taken_desc')).toBe('taken_desc');
+    expect(() => OrderingSchema.parse('name_asc')).toThrow();
+  });
+});

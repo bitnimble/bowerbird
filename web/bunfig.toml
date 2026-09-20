@@ -1,0 +1,2 @@
+[test]
+preload = ["./src/test_stylex.ts"]

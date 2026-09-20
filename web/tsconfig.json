@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // ESNext.Float16 alone rather than ESNext: the chroma map is uploaded as half floats
+    // (`tick_pipeline.ts`), and nothing else here wants a type ahead of the target.
+    "lib": ["ES2022", "ESNext.Float16", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // @types/bun for the `bun:test` imports under src/**/tests; it resolves out
+    // of the repo root, which is where the test runner lives too.
+    "types": ["vite/client", "@types/bun", "@webgpu/types"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    // Matches the Vite alias: the package is consumed as source in this repo, since its
+    // published `dist` is a build artefact nothing here is required to have made.
+    "paths": {
+      "avif-hdr-video": ["../packages/avif-hdr-video/src/index.ts"]
+    },
+    // Standard (TC39) decorators, not experimentalDecorators: MobX 6.11+ wires
+    // `@observable accessor x` up on its own, so no makeObservable call is needed.
+    "useDefineForClassFields": true
+  },
+  "include": ["src"]
+}

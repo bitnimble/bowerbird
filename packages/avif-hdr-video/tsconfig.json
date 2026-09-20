@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // Nothing outside the browser, and this sits inside a repository whose other
+    // packages pull in Bun and Node globals. Empty rather than absent so a stray
+    // `Bun.file` or `process.env` in here fails to compile rather than shipping.
+    "types": [],
+    "outDir": "dist",
+    "declaration": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,163 @@
+export const SettingsStrings = {
+  resetSetting: (label: string) => `Reset ${label}`,
+
+  stop: () => 'Stop',
+  scanNow: () => 'Scan library',
+  remove: () => 'Remove',
+  removeLibraryWarning: (libraryName: string, photoCount: number) =>
+    `Remove "${libraryName}" from Bowerbird?\n\n` +
+    `Your ${photoCount} ${photoCount === 1 ? 'photo stays' : 'photos stay'} on disk. Ratings, notes, Picks, albums, and shoots can't be recovered.`,
+  libraryMeta: (rootPath: string, photoCount: number, scanned: string) =>
+    `${rootPath} · ${photoCount} ${photoCount === 1 ? 'photo' : 'photos'} · ${scanned}`,
+  neverScanned: () => 'never scanned',
+  scannedAt: (relative: string) => `scanned ${relative}`,
+  librarySettings: () => 'Library settings',
+  /** What a library is called, asked for here and when one is added. */
+  libraryName: () => 'Library name',
+
+  folders: () => 'Folders',
+  includeSubfolders: () => 'Include subfolders',
+  includeNonRaw: () => 'Import JPEG, PNG, HEIC, and AVIF too',
+  /** The flag and its one line, here and in the add-library dialog. */
+  readOnly: () => 'Read-only mode',
+  readOnlyHint: () => "Bowerbird doesn't change your photo files on disk.",
+
+  binFolderName: () => 'Bin folder name',
+  binNameHintNoBin: () => 'Bowerbird creates this folder when you turn off read-only mode.',
+  binNameHint: () => 'Renaming moves this folder on disk.',
+  binNameLocked: () => "Turn off read-only mode to rename the Bin folder.",
+
+  foldersSetAside: () => 'Folders set aside',
+  ruleExcluded: () => 'Excluded from this library',
+  ruleNotAShoot: () => 'Included, but not a shoot',
+
+  renditions: () => 'Renditions',
+  buildRenditionsFrom: () => 'Build renditions from',
+  renditionSourceHint: () => 'RAW renditions support full resolution and HDR.',
+  buildHdrRenditions: () => 'Build HDR renditions',
+  buildHdrRenditionsHint: () => 'Shows HDR in the photo viewer with SDR grid thumbnails',
+
+  stacks: () => 'Stacks',
+  autoStack: () => 'Group similar photos automatically',
+  autoStackHint: () => 'Regroups similar photos after the next scan',
+  autoStackSimilarity: () => 'Similarity threshold',
+  autoStackWindow: () => 'Similarity window',
+  autoStackWindowHint: () => 'Maximum time between frames to consider them similar',
+
+  libraryJobs: () => 'Library jobs',
+  jobBusy: () => 'A job is already running',
+  run: () => 'Run',
+  scanLibrary: () => 'Scan library',
+  scanLibraryHint: () => 'Finds files you added, moved, changed, or removed',
+  rebuildThumbnails: () => 'Rebuild all grid thumbnails',
+  rebuildRenditions: () => 'Rebuild all viewer renditions',
+  rebuildRenditionsHint: () => 'Use after changing rendition settings',
+  noRenditionsToRebuild: () => 'This library uses embedded JPEGs. No renditions to rebuild.',
+  // The job, not the setting above it, which is why this says nothing about scanning.
+  groupSimilarPhotos: () => 'Group similar photos into stacks',
+  groupSimilarPhotosHint: () => 'Regroups similar photos now',
+  autoStackOff: () => 'Automatic grouping is off for this library',
+
+  renditionModeLastUsed: () => 'Last used',
+  renditionModeLastUsedPerPhoto: () => 'Last used per photo',
+  renditionModeBestAvailable: () => 'Best available',
+  defaultRendition: () => 'Default viewer rendition',
+  hideSidebarInViewer: () => 'Hide sidebar automatically in photo viewer',
+
+  couldNotSaveSetting: () => "We couldn't save that setting. Try again.",
+  couldNotUseServerAddress: () => "We couldn't use that server address. Check it and try again.",
+  couldNotOpenAppDataFolder: () => "We couldn't open the app data folder. Try opening it in your file manager.",
+
+  logLevelDebug: () => 'debug',
+  logLevelInfo: () => 'info',
+  logLevelWarn: () => 'warn',
+  logLevelError: () => 'error',
+
+  groupThisApp: () => 'This app',
+  serverAddress: () => 'Bowerbird server',
+  serverAddressPlaceholder: () => 'http://bowerbird.local:3000',
+  connect: () => 'Connect',
+
+  groupProcessing: () => 'Processing',
+  matchEmbeddedJpeg: () => "Match the camera's colour",
+  matchEmbeddedJpegHint: () => "Matches renditions to embedded JPEGs more slowly",
+  renderOnThisDevice: () => 'Render on this device',
+  renderOnThisDeviceHint: () => "Builds photo viewer renditions on this device",
+
+  groupScanning: () => 'Scanning',
+  watchEnabled: () => 'Watch libraries for changes',
+  dailyFullScanAt: () => 'Daily full scan at',
+  dailyFullScanAtPlaceholder: () => '03:00',
+  dailyFullScanAtHint: () => 'Leave empty to turn it off.',
+
+  hdrOff: () => 'No library builds HDR renditions',
+
+  groupWorkers: () => 'Workers',
+  scanConcurrency: () => 'Scanning threads',
+  scanConcurrencyHint: () => 'More threads may help with network drives.',
+  processingConcurrency: () => 'Rendition threads',
+  processingConcurrencyHint: () => 'Each thread holds 1 RAW file in memory.',
+
+  groupHdr: () => 'HDR',
+  rawDefringe: () => 'Colour fringe removal',
+  rawDefringeHint: () => 'Removes purple and green rims from hard edges',
+  hdrReferenceWhite: () => 'HDR reference white',
+  hdrReferenceWhiteHint: () => 'How bright plain white is rendered',
+  hdrWhiteQuantile: () => 'HDR white threshold',
+  hdrWhiteQuantileHint: () => 'Lower renders brighter',
+  hdrPeakNits: () => 'HDR peak brightness',
+  hdrPeakNitsHint: () => 'Headroom above reference white',
+
+  groupResolution: () => 'Resolution',
+  gridRenditionSize: () => 'Grid thumbnail longest edge',
+  fullRenditionSize: () => 'Viewer rendition longest edge',
+  panoramaFullRenditionSize: () => 'Panorama rendition longest edge',
+  panoramaFullRenditionSizeHint: () => 'A panorama is several frames wide',
+
+  groupQuality: () => 'Quality',
+  gridRenditionQuality: () => 'Grid thumbnail quality',
+  fullRenditionQuality: () => 'Viewer rendition quality',
+  fullRenditionQualityHint: () => 'Below about 60, shadows visibly lose detail',
+  maxRenditionQuality: () => 'Full-resolution quality',
+
+  groupEncoding: () => 'Encoding',
+  sdrFullChroma: () => 'Always encode SDR in 4:4:4',
+  hdrFullChroma: () => 'Always encode HDR in 4:4:4',
+  hdrFullChromaHint: () => 'When off, Bowerbird uses 4:4:4 if colour loss would be visible.',
+  hdrPreset: () => 'HDR encoder speed',
+  hdrPresetHint: () => 'Faster makes larger files',
+
+  groupMaintenance: () => 'Maintenance',
+  watchDebounce: () => 'Scan delay after a change',
+  watchDebounceHint: () => 'Waits for files to finish copying before scanning',
+  watchPollInterval: () => 'Network library scan interval',
+  watchPollIntervalHint: () => 'Bowerbird checks network drives for changes at this interval.',
+  pruneEveryDays: () => 'Delete unused renditions every',
+  backupEveryDays: () => 'Back up the catalogue every',
+  /** One line under every schedule a zero disables. */
+  zeroTurnsItOff: () => '0 turns it off',
+  backupKeep: () => 'Backups to keep',
+  backupsOff: () => 'Backups are off',
+  exportHistoryLimit: () => 'Export history entries to keep',
+  exportHistoryLimitHint: () => 'Your exported files stay on disk.',
+  appDataFolder: () => 'App data folder',
+  openAppDataFolder: () => 'Open folder',
+
+  groupServer: () => 'Server',
+  logLevel: () => 'Log level',
+  corsOrigins: () => 'Allowed CORS origins',
+  corsOriginsPlaceholder: () => 'any origin on this host',
+  corsOriginsHint: () => 'Comma-separated, or * for any',
+  environmentNote: () => 'HOST, PORT and DB_PATH are set in the environment',
+
+  /** Names the page wherever it is met: this heading and the sidebar. */
+  settings: () => 'Settings',
+  settingsSections: () => 'Settings sections',
+  /** The set of libraries, named here and in the sidebar. */
+  libraries: () => 'Libraries',
+  noLibrariesYet: () => 'No libraries yet',
+  noLibrariesHint: () => 'Add a folder of RAW files to start your library.',
+  groupViewing: () => 'Viewing',
+  groupRendering: () => 'Rendering',
+  groupSystem: () => 'System',
+};

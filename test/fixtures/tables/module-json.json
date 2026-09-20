@@ -1,0 +1,24 @@
+{
+  "region": { "x": 12.5, "y": 34.25, "width": 640, "height": 480 },
+  "adjust": {
+    "contrast": 11,
+    "highlights": -22,
+    "shadows": 33,
+    "whites": -44,
+    "blacks": 55,
+    "vibrance": -66,
+    "saturation": 77,
+    "texture": -88,
+    "clarity": 99,
+    "dehaze": -12.5,
+    "temperature": 4800,
+    "tint": null,
+    "colourProfile": "none"
+  },
+  "geometry": {
+    "crop": [0.1, 0.2, 0.8, 0.9],
+    "angleDegrees": 6.5,
+    "rotate": 90,
+    "keystone": [1.01, 0.02, -0.03, 0.04, 1.05, -0.06, 0.07, -0.08]
+  }
+}

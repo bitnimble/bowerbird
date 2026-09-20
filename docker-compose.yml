@@ -1,0 +1,74 @@
+services:
+  bowerbird:
+    # No `build:` beside it: with one, a host that has not pulled yet builds three
+    # Rust release stages rather than fetching the image already waiting for it.
+    # Locally, `docker build -t ghcr.io/bitnimble/bowerbird:latest .`.
+    image: "ghcr.io/bitnimble/bowerbird:${BOWERBIRD_TAG:-latest}"
+    container_name: bowerbird
+    restart: unless-stopped
+    # The image already runs as uid 1000. Set this only where the host account that
+    # owns the photo library is not 1000, e.g. user: "1001:1001".
+    # user: "1000:1000"
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    # The GPU. The grade is a shader and the shaders are its only implementation, so
+    # every rendition runs through Vulkan - the image carries the drivers, and these two
+    # lines are what put the host's card behind them.
+    #
+    # **Getting this wrong is slow rather than broken, which is why it is worth getting
+    # right.** The image ships SwiftShader, so a container that cannot reach the card still
+    # renders - on a CPU rasteriser, at a fraction of the speed, saying nothing. Measured
+    # here: with both lines the container sees `AMD Radeon Graphics (RADV)`; drop
+    # `group_add` and the same container sees only the CPU rasteriser. The app names the
+    # adapter it found at startup for exactly this reason - a boot log saying `SwiftShader`
+    # on a machine with a GPU means these lines, not the driver.
+    #
+    # `devices` puts the host's render node in the container. `group_add` is what lets
+    # uid 1000 open it: `/dev/dri/renderD128` is `crw-rw---- root render`, and the
+    # container user is in no group of the host's. RENDER_GID is that group -
+    #   getent group render | cut -d: -f3
+    # 106 on Debian and Ubuntu, 44 or 104 elsewhere. It has to be the number; the name
+    # means nothing in the container, which has its own /etc/group.
+    #
+    # A host with no GPU deletes both lines and still works, on SwiftShader.
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-106}"
+    # One published port, answering both the web client and /api. Replication is
+    # what makes that a requirement rather than a convenience: a peer is dialled
+    # at the address a browser reaches it on (docs/replication.md §9.1), so the
+    # address one device tells another to dial has to serve both.
+    #
+    # Only what has to be known before the catalogue can be opened. Everything
+    # else is a setting on the app's Settings page, stored in the DB (§15).
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      TZ: "${TZ:-UTC}"
+      # The catalogue and the generated files, on the two volumes below. The
+      # rolling backups (§4.9) sit beside the catalogue in /config/backups, which
+      # is why they are on this volume and not the disposable one.
+      DB_PATH: /config/bowerbird.db
+      # Container-side and fixed. What varies is which host directory or volume
+      # is mounted here, which is DATA_VOLUME below: one name for both would have
+      # a reader setting DATA_VOLUME=/mnt/bulk believe they had set the app's.
+      DATA_DIR: /data
+    volumes:
+      # Your photo library. Create libraries via the API with a root_path under
+      # /photos (e.g. {"root_path": "/photos"}). Mounted read-write: sync moves
+      # files and the Bin lives in <root>/Bin. Add `:ro` for a read-only library.
+      # The host directory must be writable by the container user (uid 1000).
+      - "${PHOTOS_DIR:-./photos}:/photos"
+      - bowerbird-config:/config
+      # A named volume inherits /data's ownership from the image; a host path
+      # does not, and must be chowned to uid 1000 by whoever mounts it.
+      #
+      # An in-place update also unpacks into /data/updates, a few hundred megabytes a
+      # version and at most two kept (§23.3). On this volume rather than in the container's
+      # writable layer deliberately: that is what makes an update survive a recreate.
+      - "${DATA_VOLUME:-bowerbird-data}:/data"
+
+volumes:
+  bowerbird-config:
+  bowerbird-data:
