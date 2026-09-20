@@ -64,6 +64,7 @@ function library(root: string): Library {
   return { id: 'lib', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
+  render_skip_full: [], render_skip_max: [], render_timings: {},
   include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
 }
 function mockLibs(root: string): LibrariesRepository {

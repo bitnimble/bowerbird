@@ -15,6 +15,7 @@ export const PathSegment = {
   apply: segment('apply'),
   assemblies: segment('assemblies'),
   assembly: segment('assembly'),
+  benchmark: segment('benchmark'),
   bin: segment('bin'),
   blobs: segment('blobs'),
   browse: segment('browse'),

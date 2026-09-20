@@ -27,6 +27,7 @@ import {
   renditionVariants,
   sourceFor,
 } from '../renditions/renditions';
+import { readStages, withStagesOff } from '../renditions/render_stages';
 import { runProcessingPool } from '../workers/processing_pool';
 import { developed } from './developed';
 import { RenderService } from './render_service';
@@ -527,16 +528,22 @@ export class ProcessingService extends RenderService {
     });
     const photoId = pending.photo_id;
     const rawFilePath = path.join(pending.root_path, pending.recipe.path);
-    const common = {
-      kind: 'rendition',
-      photoId,
-      rawFilePath,
-      dataPath,
-      grade: this.targets.grade(),
-      matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
-      ...developed(pending.edits),
-      ...this.targets.render(),
-    } as const;
+    // The `full` skips, for both jobs below: the grid tile the renditions pass writes is a downscale
+    // of that job's own frame, so it is built with whatever the frame was, and the tile pass that
+    // precedes it lifts the camera's own JPEG and runs no stage this could turn off.
+    const common = withStagesOff(
+      {
+        kind: 'rendition' as const,
+        photoId,
+        rawFilePath,
+        dataPath,
+        grade: this.targets.grade(),
+        matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+        ...developed(pending.edits),
+        ...this.targets.render(),
+      },
+      readStages(pending.render_skip_full),
+    );
 
     // Only the passes this photo still owes. A run interrupted between them - a
     // crash, a restart, a library that went away and came back - resumes at the

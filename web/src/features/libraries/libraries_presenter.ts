@@ -1,12 +1,13 @@
 import { action, runInAction } from 'mobx';
 import { type Ordering, type RenditionSource } from '../../../../src/schemas/common';
 import { type CreateLibraryRequest, type FolderRule, type Library, type UpdateLibraryRequest } from '../../../../src/schemas/libraries';
+import { type OptionalStage, type RenderedRendition } from '../../../../src/schemas/render_stages';
 import { folderRulesApi } from '../../api/folder_rules';
 import { librariesApi } from '../../api/libraries';
 import { ApiError } from '../../api/request';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { LibrariesPresenterStrings } from './libraries_presenter.strings';
-import type { LibrariesStore } from './libraries_store';
+import { benchmarkKey, type LibrariesStore } from './libraries_store';
 
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : (err as Error).message;
@@ -74,6 +75,55 @@ export class LibrariesPresenter {
 
   async setRenditionHdr(libraryId: string, rendition_hdr: boolean): Promise<void> {
     await this.update(libraryId, { rendition_hdr });
+  }
+
+  /**
+   * Whether that rendition runs that stage. Not retroactive, like everything else in this panel:
+   * it decides what gets built next, and rebuilding a catalogue is a job you ask for.
+   *
+   * Stored as what is left *out*, so the row is empty for a library that has traded nothing away
+   * and a stage added in a later version arrives switched on.
+   */
+  async setRenderStage(
+    libraryId: string,
+    rendition: RenderedRendition,
+    stage: OptionalStage,
+    runs: boolean,
+  ): Promise<void> {
+    const library = this.store.byId.get(libraryId);
+    if (library == null) return;
+    const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
+    const next =
+      runs ? skipped.filter((off) => off !== stage)
+      : skipped.includes(stage) ? skipped
+      : [...skipped, stage];
+    await this.update(libraryId, rendition === 'full' ? { render_skip_full: next } : { render_skip_max: next });
+  }
+
+  /**
+   * Times this library's own render here, so the panel stops quoting one machine's estimates.
+   *
+   * Minutes on a `max`. The list is re-read afterwards because the answer is filed under the
+   * library, which is what the panel draws from.
+   */
+  async benchmarkRender(libraryId: string, rendition: RenderedRendition): Promise<void> {
+    if (this.store.isBenchmarking(libraryId, rendition)) return;
+    this.markBenchmarking(libraryId, rendition, true);
+    try {
+      await librariesApi.benchmarkRender(libraryId, rendition);
+      await this.load();
+    } catch (err) {
+      this.toasts.showError(LibrariesPresenterStrings.couldNotBenchmark(), message(err));
+    } finally {
+      this.markBenchmarking(libraryId, rendition, false);
+    }
+  }
+
+  @action.bound
+  private markBenchmarking(libraryId: string, rendition: RenderedRendition, running: boolean): void {
+    const key = benchmarkKey(libraryId, rendition);
+    if (running) this.store.benchmarking.add(key);
+    else this.store.benchmarking.delete(key);
   }
 
   // Automatic photo stacking (§19.4). None of the three is retroactive: they

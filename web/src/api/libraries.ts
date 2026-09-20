@@ -15,6 +15,7 @@ import {
   type UpdateLibraryRequest,
   UpdateLibraryRequestSchema,
 } from '../../../src/schemas/libraries';
+import { RenderTimingSchema, type RenderTiming, type RenderedRendition } from '../../../src/schemas/render_stages';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { NothingSchema, request } from './request';
 
@@ -60,6 +61,14 @@ export const librariesApi = {
       LibraryScanStatusSchema,
       'POST',
       route(PathSegment.api(), PathSegment.libraries(), id, PathSegment.jobs(), PathSegment.renditions()),
+    ),
+  // Times this library's own render, stage by stage. Several renders of one photograph, so it
+  // answers in seconds on a `full` and in tens of them on a `max`.
+  benchmarkRender: (id: string, rendition: RenderedRendition): Promise<RenderTiming> =>
+    request(
+      RenderTimingSchema,
+      'POST',
+      `${route(PathSegment.api(), PathSegment.libraries(), id, PathSegment.jobs(), PathSegment.benchmark())}?rendition=${rendition}`,
     ),
   // Re-forms the library's automatic stacks, answering with how many it now has.
   detectStacks: (id: string): Promise<{ stacks: number }> =>

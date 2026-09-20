@@ -35,7 +35,7 @@ describe('single-photo rendering', () => {
     const seen: { photoId: string; descriptor: Uint8Array }[] = [];
     service.onDescribed((photoId, descriptor) => seen.push({ photoId, descriptor }));
 
-    const library = { id: 'lib', root_path: root } as never;
+    const library = { id: 'lib', root_path: root, render_skip_full: [], render_skip_max: [] } as never;
     await service.renderOne('/lib/a.arw', 'p1', library, 'grid', false, 'embedded');
 
     expect(seen).toEqual([{ photoId: 'p1', descriptor: DESCRIPTOR }]);
@@ -58,7 +58,7 @@ describe('single-photo rendering', () => {
     const markCopyBuilt = jest.fn();
     const repo = { markTileBuilt, markRenditionsBuilt, markCopyBuilt } as unknown as PhotoProcessingRepository;
     const service = makeService(repo);
-    const library = { id: 'lib', root_path: root, data_path: null } as never;
+    const library = { id: 'lib', root_path: root, data_path: null, render_skip_full: [], render_skip_max: [] } as never;
     const announced: { stage: string; version: string }[] = [];
     service.onProcessed((_photoId, each) => announced.push(each));
 
@@ -95,6 +95,35 @@ describe('single-photo rendering', () => {
     // The same value both ways, or a client that re-reads the row lands on a URL it has
     // already decoded under.
     expect(markCopyBuilt.mock.calls[0]?.[1]).toBe(announced[0]!.version);
+  });
+
+
+  it('reads the rendition it is building its own stage list, not the other one', async () => {
+    // The two lists differ on purpose - `full` is what the viewer opens, `max` is what gets
+    // pixel-peeped - so a wiring that read `render_skip_full` for both, or that only ever applied
+    // `full`'s, would still build a rendition of the right size from the right file and show up
+    // only as a picture that has quietly lost a stage it was meant to keep.
+    const repo = { markTileBuilt: jest.fn(), markRenditionsBuilt: jest.fn(), markCopyBuilt: jest.fn() } as unknown as PhotoProcessingRepository;
+    const service = makeService(repo);
+    const library = {
+      id: 'lib',
+      root_path: root,
+      render_skip_full: ['sharpen'],
+      render_skip_max: ['match', 'denoise'],
+    } as never;
+
+    await service.renderOne('/lib/a.arw', 'p1', library, 'max', false);
+    const max = posted.at(-1)!;
+    expect(max.kind === 'rendition' && max.matchEmbeddedJpeg).toBe(false);
+    expect(max.kind === 'rendition' && max.denoiseLuminance).toBe(0);
+    // `full`'s stage, which this rendition never asked to lose.
+    expect(max.kind === 'rendition' && max.sharpen).toBeGreaterThan(0);
+
+    await service.renderOne('/lib/a.arw', 'p1', library, 'full', false);
+    const full = posted.at(-1)!;
+    expect(full.kind === 'rendition' && full.sharpen).toBe(0);
+    expect(full.kind === 'rendition' && full.matchEmbeddedJpeg).toBe(true);
+    expect(full.kind === 'rendition' && full.denoiseLuminance).not.toBe(0);
   });
 
 

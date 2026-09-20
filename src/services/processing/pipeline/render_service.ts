@@ -22,7 +22,10 @@ import type {
   RenditionSource,
   RenditionWritten,
 } from '../workers/processing_types';
+import type { RenderTiming, RenderedRendition } from '../../../schemas/render_stages';
+import type { RenderTimingsRepository } from '../renditions/render_timings_repository';
 import { RenderTargets } from './render_targets';
+import { RenderBenchmark } from './render_benchmark';
 import { CompositeRenderer } from './composite_renderer';
 import { PrepareRenderer } from './prepare_renderer';
 import { SinglePhotoRenderer } from './single_photo_renderer';
@@ -34,6 +37,7 @@ export abstract class RenderService {
   private readonly prepareRenderer: PrepareRenderer;
   private readonly singlePhoto: SinglePhotoRenderer;
   private readonly exports: ExportRenderer;
+  private readonly benchmark: RenderBenchmark;
   private readonly processed = new Set<(photoId: string, written: RenditionWritten) => void>();
   protected readonly described = new Set<(photoId: string, descriptor: Uint8Array) => void>();
 
@@ -64,6 +68,16 @@ export abstract class RenderService {
       },
     );
     this.exports = new ExportRenderer(settings, editsFor, this.targets, this.singlePhoto, this.composites);
+    this.benchmark = new RenderBenchmark(photoPaths, this.singlePhoto);
+  }
+
+  /** What this library's stages cost on this machine, measured now and filed in `into`. */
+  async benchmarkRender(
+    library: Library,
+    rendition: RenderedRendition,
+    into: RenderTimingsRepository,
+  ): Promise<RenderTiming> {
+    return this.benchmark.run(library, rendition, into);
   }
 
   protected abstract stageDone(

@@ -321,7 +321,7 @@ describe('the sizes a composite is framed to', () => {
       [],
       { version: 1 },
       kind,
-      { id: LIB, root_path: '/nowhere' } as never,
+      { id: LIB, root_path: '/nowhere', render_skip_full: [], render_skip_max: [] } as never,
       rendition,
       false,
       'embedded',

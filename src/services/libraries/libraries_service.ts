@@ -163,6 +163,8 @@ export class LibrariesService {
       auto_stack: request.auto_stack,
       include_subfolders: request.include_subfolders,
       include_non_raw: request.include_non_raw,
+      // Nothing has been timed on a library that does not exist yet.
+      render_timings: {},
       last_synced_at: null,
       photo_count: 0,
     };
@@ -250,6 +252,8 @@ export class LibrariesService {
     if (updates.ordering != null) this.repo.setOrdering(libraryId, updates.ordering);
     if (updates.rendition_source != null) this.repo.setRenditionSource(libraryId, updates.rendition_source);
     if (updates.rendition_hdr != null) this.repo.setRenditionHdr(libraryId, updates.rendition_hdr);
+    if (updates.render_skip_full != null) this.repo.setRenderSkip(libraryId, 'full', updates.render_skip_full);
+    if (updates.render_skip_max != null) this.repo.setRenderSkip(libraryId, 'max', updates.render_skip_max);
     if (updates.include_subfolders != null) this.repo.setIncludeSubfolders(libraryId, updates.include_subfolders);
     if (updates.include_non_raw != null) this.repo.setIncludeNonRaw(libraryId, updates.include_non_raw);
     if (updates.auto_stack != null) this.repo.setAutoStack(libraryId, updates.auto_stack);

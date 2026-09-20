@@ -37,6 +37,25 @@ export const SettingsStrings = {
   buildHdrRenditions: () => 'Build HDR renditions',
   buildHdrRenditionsHint: () => 'Shows HDR in the photo viewer with SDR grid thumbnails',
 
+  renderStages: () => 'Render stages',
+  renderStagesFor: () => 'Rendition to set stages for',
+  // The stages no render can leave out. The five that can are named by the control that already
+  // names them: the camera match and the fringe removal above, the sharpening and the dust in the
+  // edit panel (`render_stages_panel.tsx`).
+  stageRead: () => 'Read',
+  stageDenoise: () => 'Denoise',
+  // The one row naming what the stage does rather than what it is called: "demosaic" is the
+  // pipeline's word and not a photographer's.
+  stageDemosaic: () => 'Reconstruct colour',
+  stageGrade: () => 'Colour grade',
+  stageEncode: () => 'Encode',
+  stageCost: (ms: number) => `~${ms} ms`,
+  stagesEstimated: () => 'Estimated',
+  stagesMeasured: (relative: string) => `Measured ${relative}`,
+  measureStages: () => 'Measure',
+  measuringStages: () => 'Measuring…',
+  measureStagesBusy: () => 'A measurement is already running',
+
   stacks: () => 'Stacks',
   autoStack: () => 'Group similar photos automatically',
   autoStackHint: () => 'Regroups similar photos after the next scan',

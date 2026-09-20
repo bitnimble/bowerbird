@@ -55,6 +55,7 @@ describe('ProcessingService.processUnprocessed', () => {
       needs_renditions: 1,
       library_rendition_source: 'render',
       rendition_hdr: 0,
+      render_skip_full: '',
       // Unedited, which is what every test in this file is about: the photo grades as the
       // camera metered it. `edits` is exercised in `exposure` below.
       edits: null,
@@ -262,6 +263,31 @@ describe('ProcessingService.processUnprocessed', () => {
     posted.length = 0;
     await makeProcessingService(repo, settingsWith({ match_embedded_jpeg: false })).processUnprocessed({ libraryId: 'lib' });
     expect(posted.map((job) => job.kind === 'rendition' && job.matchEmbeddedJpeg)).toEqual([false, false]);
+  });
+
+  it('leaves out the stages the library has turned off, whatever the photograph asked for', async () => {
+    // The library's trade overrides the document: a frame somebody sharpened renders unsharpened
+    // into a library that has turned the sharpen off, which is the whole of what the setting is.
+    // Silent otherwise - the rendition still builds, at the right size, and only looks different.
+    const repo = {
+      listPendingProcessing: jest.fn(() => [
+        { ...pending('a'), render_skip_full: 'denoise,match,sharpen', edits: JSON.stringify({ sharpening: 70 }) },
+      ]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+
+    await makeProcessingService(repo, settingsWith({ match_embedded_jpeg: true })).processUnprocessed({ libraryId: 'lib' });
+
+    for (const job of posted) {
+      expect(job.kind === 'rendition' && job.matchEmbeddedJpeg).toBe(false);
+      expect(job.kind === 'rendition' && job.sharpen).toBe(0);
+      expect(job.kind === 'rendition' && job.denoiseLuminance).toBe(0);
+      expect(job.kind === 'rendition' && job.denoiseColour).toBe(0);
+      // Untouched, being a stage nobody turned off.
+      expect(job.kind === 'rendition' && job.defringe).toBe(1);
+    }
   });
 
   it('keeps the grid tile subsampled while the rendition beside it follows the setting', async () => {

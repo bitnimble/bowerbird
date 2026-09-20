@@ -8,6 +8,7 @@ import { applyErrorHandler } from './api/error_handler';
 import { LibrariesApi } from './api/libraries/libraries_api';
 import { assertNoDataDirectoryOverlap, LibrariesService } from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
+import { RenderTimingsRepository } from './services/processing/renditions/render_timings_repository';
 import { PhotosApi } from './api/photos/photos_api';
 import { PhotoCompositesRepository } from './services/photos/composites/photo_composites_repository';
 import { PhotoListingRepository } from './services/photos/listing/photo_listing_repository';
@@ -102,6 +103,7 @@ const db = createDatabase(config.dbPath);
 
 const settingsRepo = new SettingsRepository(db);
 const librariesRepo = new LibrariesRepository(db);
+const renderTimingsRepo = new RenderTimingsRepository(db);
 // After the repository exists, because it reads every library's root. `DATA_DIR`
 // is an environment variable, so a catalogue that was valid yesterday can be
 // started against a data directory that now swallows one of its roots (§6).
@@ -275,8 +277,14 @@ scanService.onSettled((libraryId, changed) => {
   }
 });
 
-const librariesApi = new LibrariesApi(librariesService, scanService, folderRulesRepo, shootsService, (libraryId) =>
-  stacksService.detect(libraryId),
+const librariesApi = new LibrariesApi(
+  librariesService,
+  scanService,
+  folderRulesRepo,
+  shootsService,
+  (libraryId) => stacksService.detect(libraryId),
+  (libraryId, rendition) =>
+    processingService.benchmarkRender(librariesService.get(libraryId), rendition, renderTimingsRepo),
 );
 const photosApi = new PhotosApi(photoReadService, photoMutationService, photoRenditionService, processingService);
 const albumsApi = new AlbumsApi(albumsService, photoReadService);

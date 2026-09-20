@@ -126,6 +126,7 @@ async function split(files: Corpus['files'], libraryId: string): Promise<{ scan:
     rendition_source: 'embedded',
     library_rendition_source: 'embedded',
     rendition_hdr: 0,
+    render_skip_full: '',
     edits: null,
     edits_stamp: null,
     inputs_edited: 0,

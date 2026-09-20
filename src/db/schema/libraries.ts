@@ -1,5 +1,6 @@
 import { check, integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { OrderingSchema, RENDITION_SOURCES } from '../../schemas/common';
+import { RENDERED_RENDITIONS } from '../../schemas/render_stages';
 import { oneOf } from './checks';
 
 export const libraries = sqliteTable(
@@ -36,6 +37,11 @@ export const libraries = sqliteTable(
     binDev: integer('bin_dev'),
     binIno: integer('bin_ino'),
     binBirthtime: real('bin_birthtime'),
+    // Which stages a `full` or a `max` render leaves out, comma-separated and empty for none
+    // (`schemas/render_stages.ts`). One column per rendition, because the query that carries
+    // these onto a pending row picks the one it needs by name.
+    renderSkipFull: text('render_skip_full').notNull().default(''),
+    renderSkipMax: text('render_skip_max').notNull().default(''),
     autoStack: integer('auto_stack').notNull().default(1),
     autoStackSimilarity: real('auto_stack_similarity').notNull().default(0.78),
     autoStackWindowSeconds: integer('auto_stack_window_seconds').notNull().default(60),
@@ -44,6 +50,32 @@ export const libraries = sqliteTable(
   (t) => [
     check('libraries_ordering', oneOf(t.ordering, OrderingSchema.options)),
     check('libraries_rendition_source', oneOf(t.renditionSource, RENDITION_SOURCES)),
+  ],
+);
+
+// What a render of this library's photographs was measured to cost here, stage by stage (§10.1).
+//
+// A table rather than a field on `libraries`, and emphatically not a blob in `settings`: it is
+// written by a benchmark that takes minutes, so two of them overlapping would otherwise be a
+// read-modify-write race over one shared value. Keyed on the pair, so each writes its own row and
+// neither can drop the other's. Not replicated - a measurement describes this machine's hardware,
+// and a peer's numbers would be someone else's - and cascaded away with the library, which a
+// settings blob would have leaked forever.
+export const renderTimings = sqliteTable(
+  'render_timings',
+  {
+    libraryId: text('library_id')
+      .notNull()
+      .references(() => libraries.id, { onDelete: 'cascade' }),
+    rendition: text('rendition').notNull(),
+    totalMs: real('total_ms').notNull(),
+    // `{ stage: ms }`, this row's own payload rather than anything queried across.
+    stagesMs: text('stages_ms').notNull(),
+    measuredAt: text('measured_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.libraryId, t.rendition] }),
+    check('render_timings_rendition', oneOf(t.rendition, RENDERED_RENDITIONS)),
   ],
 );
 

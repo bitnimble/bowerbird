@@ -5,6 +5,7 @@ import { getDataPath } from '../../../utils/paths';
 import { hasEmbeddedJpeg } from '../../../utils/scan';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import { renditionVariant, type Rendition } from '../renditions/renditions';
+import { renditionSkips, withStagesOff } from '../renditions/render_stages';
 import { openCompositeWorker, type CompositeWorker } from '../workers/composite_worker';
 import type { CompositeJob, CompositeJobSource, RenditionSource, RenditionWritten } from '../workers/processing_types';
 import { developed } from './developed';
@@ -266,21 +267,26 @@ export class CompositeRenderer {
     watched = false,
   ): Promise<void> {
     const dataPath = getDataPath(library);
-    await on.run({
-      kind: 'composite',
-      want: 'render',
-      photoId,
-      sources,
-      recipe,
-      dataPath,
-      reportProgress: watched,
-      targets: [this.targets.composedTarget(dataPath, photoId, recipe, kind, rendition, hdr, source)],
-      grade: this.targets.grade(),
-      // The composite's own document, which the merge wrote the align's framing into: a panorama
-      // is a photograph, so what frames it is the field that frames every other one.
-      ...developed(this.editsFor(photoId)?.doc ?? null),
-      ...this.targets.render(),
-    });
+    await on.run(
+      withStagesOff(
+        {
+          kind: 'composite',
+          want: 'render',
+          photoId,
+          sources,
+          recipe,
+          dataPath,
+          reportProgress: watched,
+          targets: [this.targets.composedTarget(dataPath, photoId, recipe, kind, rendition, hdr, source)],
+          grade: this.targets.grade(),
+          // The composite's own document, which the merge wrote the align's framing into: a panorama
+          // is a photograph, so what frames it is the field that frames every other one.
+          ...developed(this.editsFor(photoId)?.doc ?? null),
+          ...this.targets.render(),
+        },
+        renditionSkips(library, rendition),
+      ),
+    );
   }
 
 

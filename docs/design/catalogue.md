@@ -459,6 +459,9 @@ export const LibrarySchema = z.object({
   ordering: OrderingSchema,
   rendition_source: RenditionSourceSchema,
   rendition_hdr: z.boolean(),
+  render_skip_full: OptionalStagesSchema,      // stages left out of each render (§10.1)
+  render_skip_max: OptionalStagesSchema,
+  render_timings: RenderTimingsSchema,         // read-only: what a benchmark measured here
   include_subfolders: z.boolean(),
   include_non_raw: z.boolean(),
   last_synced_at: z.string().nullable(),
@@ -469,6 +472,7 @@ export const LibrarySchema = z.object({
 // partial update must not reset the others to their defaults.
 export const UpdateLibraryRequestSchema = LibrarySchema
   .pick({ ordering: true, rendition_source: true, rendition_hdr: true,
+          render_skip_full: true, render_skip_max: true,
           include_subfolders: true, include_non_raw: true })
   .extend({ name: z.string().trim().min(1) })
   .partial();

@@ -88,6 +88,25 @@ export class PhotoPathsRepository {
       const row = this.db.query(`SELECT ${BASIC_COLS} FROM photos WHERE id = ?`).get(id) as BasicPhoto | null;
       return row == null ? null : withRecipe(row);
     }
+  /**
+     * A photograph of this library to time a render against (`render_benchmark.ts`).
+     *
+     * One file rather than a composite, because what is being timed is the pipeline a rendition
+     * takes and a canvas is several of those with an assembly on top. The first by id rather than a
+     * sampled one, so running the benchmark twice measures the same photograph and the second answer
+     * is comparable with the first - a library of mixed bodies would otherwise report a different
+     * decode each time and read as noise.
+     */
+    firstFileIn(libraryId: string): BasicPhoto | null {
+      const row = this.db
+        .query(
+          `SELECT ${BASIC_COLS} FROM photos
+           WHERE library_id = ? AND is_deleted = 0 AND is_missing = 0 AND ${IS_A_FILE}
+           ORDER BY id LIMIT 1`,
+        )
+        .get(libraryId) as BasicPhoto | null;
+      return row == null ? null : withRecipe(row);
+    }
   /** Which library a stack is in, for the paths a panorama's own files sit under. */
     libraryOfStack(stackId: string): string | null {
       const row = this.db.query('SELECT library_id FROM stacks WHERE id = ?').get(stackId) as

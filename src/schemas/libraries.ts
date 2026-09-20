@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { OrderingSchema, RenditionSourceSchema, IdSchema } from './common';
+import { OptionalStagesSchema, RenderTimingsSchema } from './render_stages';
 
 // One folder name, not a path: it names the library's single bin, at its root,
 // and the rest of that bin's layout mirrors the folders photographs came from
@@ -54,6 +55,15 @@ export const LibrarySchema = z.object({
   // has and the embedded JPEG throws away.
   rendition_source: RenditionSourceSchema.default('render'),
   rendition_hdr: z.boolean().default(true),
+  // Which stages the two rendered renditions leave out (§10.1). Empty is every stage running,
+  // which is what a library gets until somebody trades one away for the time it costs. Per
+  // rendition because the two are looked at differently: `full` is what the viewer opens and
+  // `max` is what gets pixel-peeped. Not retroactive, like every setting in this panel.
+  render_skip_full: OptionalStagesSchema.default([]),
+  render_skip_max: OptionalStagesSchema.default([]),
+  // What those renders were measured to cost on this device, where a benchmark has run. Read
+  // rather than set: the panel shows estimates until it has one of these to show instead.
+  render_timings: RenderTimingsSchema.default({}),
   include_subfolders: z.boolean().default(true),
   // Whether JPEG, PNG, HEIC and AVIF are photographs here. Off by default: beside
   // a folder of RAWs they are usually the camera's own copies of frames the
@@ -90,6 +100,8 @@ export const LibrarySettingsSchema = LibrarySchema.pick({
   include_non_raw: true,
   rendition_source: true,
   rendition_hdr: true,
+  render_skip_full: true,
+  render_skip_max: true,
   auto_stack: true,
   auto_stack_similarity: true,
   auto_stack_window_seconds: true,
@@ -139,6 +151,8 @@ export const UpdateLibraryRequestSchema = z.object({
   ordering: OrderingSchema.optional(),
   rendition_source: RenditionSourceSchema.optional(),
   rendition_hdr: z.boolean().optional(),
+  render_skip_full: OptionalStagesSchema.optional(),
+  render_skip_max: OptionalStagesSchema.optional(),
   include_subfolders: z.boolean().optional(),
   include_non_raw: z.boolean().optional(),
   auto_stack: z.boolean().optional(),

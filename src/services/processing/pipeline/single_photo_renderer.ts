@@ -7,6 +7,8 @@ import { getDataPath } from '../../../utils/paths';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import { renditionVariant, type Rendition } from '../renditions/renditions';
+import { renditionSkips, withStagesOff } from '../renditions/render_stages';
+import type { OptionalStage } from '../../../schemas/render_stages';
 import { toCommand } from '../rawshim/worker_command';
 import { workerEntry } from '../../worker_entry';
 import type { CompositeWorker } from '../workers/composite_worker';
@@ -88,6 +90,32 @@ export class SinglePhotoRenderer {
 
 
 
+  /**
+   * The job a rendition of this photograph would run, with the stages to leave out named here
+   * rather than read off the library, and writing under `dataPath` rather than under the library.
+   *
+   * **Both overrides are what makes a benchmark a measurement rather than an edit.** What it times
+   * is one photograph rendered several ways, so it has to be able to ask for stages the library has
+   * turned off; and a temporary `dataPath` keeps the rendition it writes, and the analysis the
+   * render measures, off the photograph's own copies.
+   *
+   * **`remeasure`, and it is load-bearing rather than tidy.** A render handed the analysis on file
+   * skips the camera match, the noise fit and the levels - and the first round writes that file
+   * into the very directory the rest would read it from. Without this only the first round is cold
+   * and the camera match measures as costing nothing.
+   */
+  benchmarkJob(
+    rawFilePath: string,
+    photoId: string,
+    library: Library,
+    rendition: Rendition,
+    dataPath: string,
+    skip: readonly OptionalStage[],
+  ): RenditionJob {
+    return this.oneRendition(rawFilePath, photoId, library, rendition, library.rendition_hdr, 'render', true, skip, dataPath)
+      .job;
+  }
+
   private oneRendition(
     rawFilePath: string,
     photoId: string,
@@ -96,27 +124,32 @@ export class SinglePhotoRenderer {
     hdr: boolean,
     source: RenditionSource,
     remeasure: boolean,
+    skip: readonly OptionalStage[] = renditionSkips(library, rendition),
+    dataPath: string = getDataPath(library),
   ): { job: RenditionJob; builtFrom: string | null } {
     const edits = this.editsFor(photoId);
     return {
-      job: {
-        kind: 'rendition',
-        photoId,
-        rawFilePath,
-        dataPath: getDataPath(library),
-        targets: [this.targets.target(getDataPath(library), photoId, rendition, hdr, source)],
-        grade: this.targets.grade(),
-        remeasure,
-        // The on-demand rendition has to agree with the ones built at import, so it
-        // obeys the same settings. The fit is deterministic, so refitting here lands
-        // on the same transform rather than a second opinion.
-        matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
-        // And the same edits, for the same reason. This is the path a `max` export takes,
-        // so without it the one rendition a reader asks for by name is the one that ignores
-        // what they did to the picture.
-        ...developed(edits?.doc ?? null),
-        ...this.targets.render(),
-      },
+      job: withStagesOff(
+        {
+          kind: 'rendition',
+          photoId,
+          rawFilePath,
+          dataPath,
+          targets: [this.targets.target(dataPath, photoId, rendition, hdr, source)],
+          grade: this.targets.grade(),
+          remeasure,
+          // The on-demand rendition has to agree with the ones built at import, so it
+          // obeys the same settings. The fit is deterministic, so refitting here lands
+          // on the same transform rather than a second opinion.
+          matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+          // And the same edits, for the same reason. This is the path a `max` export takes,
+          // so without it the one rendition a reader asks for by name is the one that ignores
+          // what they did to the picture.
+          ...developed(edits?.doc ?? null),
+          ...this.targets.render(),
+        },
+        skip,
+      ),
       builtFrom: edits?.stamp ?? null,
     };
   }

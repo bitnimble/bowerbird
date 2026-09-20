@@ -13,6 +13,7 @@ import {
   SetFolderRuleRequestSchema,
   UpdateLibraryRequestSchema,
 } from '../../schemas/libraries';
+import { RenderTimingSchema, RenderedRenditionSchema, type RenderTiming, type RenderedRendition } from '../../schemas/render_stages';
 import { PathSegment, route } from '../../schemas/route';
 import { HiddenShootsQuerySchema } from '../../schemas/shoots';
 import { foldersUnder } from '../../utils/browse';
@@ -35,6 +36,7 @@ export class LibrariesApi {
     // the one thing here that is a question about shoots rather than about the library.
     private readonly shoots: ShootsService,
     private readonly detectStacks: (libraryId: string) => number,
+    private readonly benchmarkRender: (libraryId: string, rendition: RenderedRendition) => Promise<RenderTiming>,
   ) {
     const app = new Hono();
 
@@ -125,6 +127,16 @@ export class LibrariesApi {
     app.post(route(PathSegment.param('id'), PathSegment.jobs(), PathSegment.stacks()), (c) =>
       c.json(respond(DetectStacksResponseSchema, { stacks: this.detectStacks(this.service.get(c.req.param('id')).id) })),
     );
+
+    // Times one of this library's own photographs, stage by stage (§10.1). Several renders of one
+    // frame, which on a `max` is minutes - well past Bun's idle ceiling, so this asks for the whole
+    // of it as a first scan does.
+    app.post(route(PathSegment.param('id'), PathSegment.jobs(), PathSegment.benchmark()), async (c) => {
+      takeAsLongAsItTakes(c);
+      const library = this.service.get(c.req.param('id'));
+      const rendition = RenderedRenditionSchema.parse(c.req.query('rendition'));
+      return c.json(respond(RenderTimingSchema, await this.benchmarkRender(library.id, rendition)));
+    });
 
     app.get(route(PathSegment.param('id')), (c) => c.json(respond(LibrarySchema, this.service.get(c.req.param('id')))));
 

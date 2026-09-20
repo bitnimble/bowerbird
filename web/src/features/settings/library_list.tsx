@@ -20,6 +20,7 @@ import { Select } from '../../ui/select';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { color, font } from '../../ui/tokens.stylex';
+import { RenderStagesPanel } from './render_stages_panel';
 import { resetTo, SettingRow, settingStyles, showNumber } from './settings_controls';
 import { SettingsStrings } from './settings_page.strings';
 
@@ -111,6 +112,7 @@ export const LibraryList = observer(function LibraryList(): JSX.Element {
             <Advanced summary={SettingsStrings.librarySettings()}>
               <FolderSettings library={library} />
               <RenditionSettings library={library} />
+              <RenderStagesPanel library={library} />
               <StackSettings library={library} />
               <SyncedDevicesPanel library={library} />
             </Advanced>
