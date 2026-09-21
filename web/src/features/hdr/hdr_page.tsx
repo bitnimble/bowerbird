@@ -279,7 +279,7 @@ type Tone = keyof typeof TONES;
 // made them.
 //
 // Static: nothing here reads a store or the API. The pictures are files under
-// `web/public/hdr`, built by `scripts/hdr-demo-assets.ts` - one job per raw file with an
+// `web/public/hdr`, built by `scripts/demo-assets.ts` - one job per raw file with an
 // SDR target and an HDR one, at the shipped defaults - so each pair is one render
 // encoded twice rather than a demonstration graded to win.
 
@@ -450,7 +450,7 @@ interface Scene {
 
 // From the losses every photographer has seen to the one nobody thinks about: white
 // detail, then a highlight nothing can hold, then a colour going white, then a colour
-// eight bits has no way to say at all. The slugs are `scripts/hdr-demo-assets.ts`'s,
+// eight bits has no way to say at all. The slugs are `scripts/demo-assets.ts`'s,
 // which is where the raw files are named.
 const SCENES: Scene[] = [
   {
