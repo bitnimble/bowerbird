@@ -145,6 +145,7 @@ fn injected_falloff() -> (crate::fit::Profile, crate::hdr_fit::HdrMatch) {
         crate::fit::Geometry::Uncorrected,
         &target,
         None,
+        crate::hdr_fit::CameraMatch::LensAndColour,
     ))
     .expect("the fit finds something worth applying");
     assert!(fitted.gain.is_some(), "the injected frame must carry a gain");
@@ -189,7 +190,7 @@ fn tile_job(path: &str, tile: Option<[usize; 4]>, levels: Option<crate::tone::Le
     crate::job::Job {
         raw_file_path: path.to_string(),
         // A crop cannot fit one, and the point here is the coding rather than the colour.
-        match_embedded_jpeg: false,
+        camera_match: crate::hdr_fit::CameraMatch::None,
         half_size: false,
         scan: false,
         composite: None,
@@ -244,7 +245,7 @@ fn rendition(
 ) -> (Vec<u16>, usize, usize, crate::light::Light<crate::light::DisplayNits>) {
     let base = crate::job::Base::build(job, decode).expect("the frame");
     let scene = crate::tone::SceneGrade::new(
-        base.matched.as_ref().map(|m| &m.colour),
+        base.matched.as_ref().and_then(|m| m.colour.as_ref()),
         base.levels,
         job.grade.reference_white_nits,
         job.exposure,
@@ -1505,7 +1506,7 @@ mod loupe_tile {
 
     fn a_tile_is_the_rendition(path: &str) {
         let mut fitted = tile_job(path, None, None);
-        fitted.match_embedded_jpeg = true;
+        fitted.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
         let base = crate::job::Base::build(&fitted, 0).expect("the frame");
         let levels = *base.levels;
         let kept = crate::photo_analysis::encode(&base.analysis);
@@ -1555,7 +1556,7 @@ mod loupe_tile {
         for (what, edit) in edits {
             let built = |tile: Option<[usize; 4]>, levels: Option<crate::tone::Levels>| {
                 let mut job = tile_job(path, tile, levels);
-                job.match_embedded_jpeg = true;
+                job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
                 job.photo_analysis = Some(kept.clone());
                 edit(&mut job);
                 job
@@ -1652,7 +1653,7 @@ mod loupe_tile {
             sdr_full_chroma: false,
         };
         let mut job = tile_job(path, None, None);
-        job.match_embedded_jpeg = true;
+        job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
         job.geometry = geometry;
         job.sharpen = 1.0;
         job.defringe = 1.0;
@@ -1687,7 +1688,7 @@ mod loupe_tile {
         let pixel_geometry = job.pixel_geometry();
         let graded = |base: &crate::job::Base, cut: &crate::hdr::Cut| {
             let scene = crate::tone::SceneGrade::new(
-                base.matched.as_ref().map(|m| &m.colour),
+                base.matched.as_ref().and_then(|m| m.colour.as_ref()),
                 base.levels,
                 job.grade.reference_white_nits,
                 job.exposure,
@@ -1867,7 +1868,7 @@ mod loupe_tile {
         let path = sony();
         let path = path.to_str().unwrap();
         let mut fitted = tile_job(path, None, None);
-        fitted.match_embedded_jpeg = true;
+        fitted.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
         let base = crate::job::Base::build(&fitted, 0).expect("the frame");
         let levels = *base.levels;
         let kept = crate::photo_analysis::encode(&base.analysis);
@@ -1885,7 +1886,7 @@ mod loupe_tile {
         let built = |levels: Option<crate::tone::Levels>,
                      peak: Option<crate::light::Light<crate::light::DisplayNits>>| {
             let mut job = tile_job(path, Some([DARK.left, DARK.top, DARK.width, DARK.height]), levels);
-            job.match_embedded_jpeg = true;
+            job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
             job.photo_analysis = Some(from_raw.clone());
             job.scene_peak = peak;
             // The roll-off has to be compressing something for the peak to be readable in the
@@ -2123,6 +2124,34 @@ mod camera_match {
     use super::*;
     use crate::image::SPLINE_UNIT;
 
+    #[test]
+    fn lens_only_is_measured_and_completed_with_colour_through_the_same_geometry() {
+        use crate::hdr_fit::CameraMatch;
+        let path = sony();
+        let mut job = tile_job(path.to_str().unwrap(), None, None);
+        job.camera_match = CameraMatch::Lens;
+        let lens = crate::job::Base::build(&job, 3840).expect("lens render");
+        assert!(lens.matched.as_ref().expect("lens").colour.is_none());
+        let stored = crate::photo_analysis::encode(&lens.analysis);
+        drop(lens);
+        let kept = crate::photo_analysis::decode(&stored).expect("stored lens");
+        let known = &kept.from_raw.matched.as_ref().expect("lens").lens;
+        job.photo_analysis = Some(stored);
+        job.camera_match = CameraMatch::LensAndColour;
+        let full = crate::job::Base::build(&job, 3840).expect("colour render");
+        let matched = full.matched.as_ref().expect("match");
+        assert!(matched.colour.is_some());
+        assert_eq!(matched.lens.crop, known.crop);
+        assert_eq!(matched.lens.distortion, known.distortion);
+        assert_eq!(matched.lens.falloff, known.falloff);
+        assert!(full.analysis.adds_to(&kept));
+        job.photo_analysis = Some(crate::photo_analysis::encode(&full.analysis));
+        drop(full);
+        job.camera_match = CameraMatch::None;
+        let neutral = crate::job::Base::build(&job, 3840).expect("neutral render");
+        assert!(neutral.matched.is_none());
+    }
+
     /// The lens and the match, fitted the way a job fits them off the linear decode. Not
     /// cached: one of the assertions below is that fitting twice agrees, and a cache would
     /// answer it with the same object and prove nothing.
@@ -2136,6 +2165,7 @@ mod camera_match {
             &resident,
             0.9,
             geometry,
+            crate::hdr_fit::CameraMatch::LensAndColour,
         ))
         .expect("the fit finds something worth applying");
         (profile, matched)
@@ -2155,7 +2185,7 @@ mod camera_match {
         let job: crate::job::Job = serde_json::from_str(&format!(
             r#"{{
                 "rawFilePath": {:?},
-                "matchEmbeddedJpeg": true,
+                "cameraMatch": "lensAndColour",
                 "measure": true,
                 "denoiseLuminance": 0,
                 "denoiseColour": 0,
@@ -2196,7 +2226,7 @@ mod camera_match {
             serde_json::from_str(&format!(
                 r#"{{
                     "rawFilePath": {path:?},
-                    "matchEmbeddedJpeg": true,
+                    "cameraMatch": "lensAndColour",
                     "photoAnalysis": {analysis:?},
                     "denoiseLuminance": 0,
                     "denoiseColour": 0,
@@ -2512,9 +2542,9 @@ mod camera_match {
         // Recovering the coefficient is not the same as matching the frame, and the
         // fit is free to report either. This is the one that decides the picture.
         assert!(
-            matched.colour.delta_e < MAX_HELD_OUT_DELTA_E,
+            matched.colour.as_ref().expect("colour").delta_e < MAX_HELD_OUT_DELTA_E,
             "held-out deltaE {}",
-            matched.colour.delta_e,
+            matched.colour.as_ref().expect("colour").delta_e,
         );
         assert_eq!(matched.lens.falloff, Some(gain.coefficients()));
     }
@@ -2562,6 +2592,7 @@ mod camera_match {
             crate::fit::Geometry::Unstated,
             &target,
             None,
+            crate::hdr_fit::CameraMatch::LensAndColour,
         ))
         .expect("the fit finds something worth applying");
         assert_eq!(fitted.source, crate::fit::SOURCE_FITTED);
@@ -2621,7 +2652,7 @@ mod camera_match {
         assert_eq!(first.crop, second.crop);
         assert_eq!(first.source, second.source);
         assert_eq!(first.knots, second.knots);
-        let (a, b) = (&a.colour, &b.colour);
+        let (a, b) = (a.colour.as_ref().expect("colour"), b.colour.as_ref().expect("colour"));
         assert_eq!(a.delta_e, b.delta_e);
         assert_eq!(a.matrix, b.matrix);
         assert_eq!(a.curves, b.curves);
@@ -2765,6 +2796,7 @@ mod hdr_grade {
             &resident,
             QUANTILE,
             geometry,
+            crate::hdr_fit::CameraMatch::LensAndColour,
         ))
         .expect("the linear fit");
         let lens = profile.lens();
@@ -2790,6 +2822,7 @@ mod hdr_grade {
                 .expect("a match")
                 .0
                 .colour
+                .expect("colour")
                 .curves
         };
         assert_ne!(curves(Some((0.6, 0.0))), curves(None));
@@ -2811,14 +2844,15 @@ mod hdr_grade {
         let fitted = matched(&frame).expect("the HDR fit finds a match");
         // The same bound the SDR path applies to itself. Above it the transform is not
         // worth applying and the caller renders untransformed.
-        assert!(fitted.colour.delta_e < 6.0, "deltaE {}", fitted.colour.delta_e);
+        let colour = fitted.colour.expect("colour");
+        assert!(colour.delta_e < 6.0, "deltaE {}", colour.delta_e);
     }
 
     #[test]
     fn the_fitted_transform_is_monotone_so_a_gradient_cannot_posterise() {
         let frame = linear();
         let fitted = matched(&frame).expect("the HDR fit finds a match");
-        for curve in &fitted.colour.curves {
+        for curve in &fitted.colour.expect("colour").curves {
             for pair in curve.windows(2) {
                 assert!(pair[1] >= pair[0], "the curve dips: {} then {}", pair[0], pair[1]);
             }
@@ -2832,7 +2866,7 @@ mod hdr_grade {
     fn the_three_channels_leave_the_fit_domain_at_comparable_levels() {
         let frame = linear();
         let fitted = matched(&frame).expect("the HDR fit finds a match");
-        let ends: Vec<f64> = fitted.colour.curves.iter().map(|c| c[c.len() - 1]).collect();
+        let ends: Vec<f64> = fitted.colour.expect("colour").curves.iter().map(|c| c[c.len() - 1]).collect();
         let high = ends.iter().cloned().fold(f64::MIN, f64::max);
         let low = ends.iter().cloned().fold(f64::MAX, f64::min);
         assert!(high / low < 1.5, "the channels end {}x apart", high / low);
@@ -3026,7 +3060,7 @@ mod hdr_grade {
             // As the camera rendered it, and upright: this measures the resample, not anybody's
             // edit of it.
             let scene = crate::tone::SceneGrade::new(
-                m.map(|m| &m.colour),
+                m.and_then(|m| m.colour.as_ref()),
                 levels,
                 REFERENCE,
                 crate::light::Stops::measured(1.0),
@@ -3452,7 +3486,7 @@ mod fused_scan {
         serde_json::from_str(&format!(
             r#"{{
                 "rawFilePath": {:?},
-                "matchEmbeddedJpeg": false,
+                "cameraMatch": "none",
                 "scan": {scan},
                 "denoiseLuminance": 0,
                 "denoiseColour": 0,
@@ -3642,7 +3676,7 @@ mod tone_domain {
             crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE)
         };
         assert!(matched.is_some(), "{} must fit a match, or this measures nothing", path.display());
-        let colour = matched.as_ref().map(|m| &m.colour);
+        let colour = matched.as_ref().and_then(|m| m.colour.as_ref());
         let levels = crate::hdr::levels_of(gpu, &samples, frame.width, frame.height, QUANTILE)
             .expect("levels");
         let flat = graded(gpu, &samples, &frame, colour, levels, crate::gpu::Adjust::none());
@@ -3828,7 +3862,7 @@ mod tone_domain {
             let resident = frame.on_device(gpu).expect("the frame reaches the device");
             crate::fit_hdr_for(&resident, path.to_str().unwrap(), QUANTILE)
         };
-        let colour = matched.as_ref().map(|m| &m.colour);
+        let colour = matched.as_ref().and_then(|m| m.colour.as_ref());
         let levels =
             crate::hdr::levels_of(gpu, &samples, width, height, QUANTILE).expect("levels");
         let flat = graded(gpu, &samples, &frame, colour, levels, crate::gpu::Adjust::none());
@@ -3905,9 +3939,9 @@ mod tone_domain {
             };
             let levels = crate::hdr::levels_of(gpu, &samples, frame.width, frame.height, QUANTILE)
                 .expect("levels");
-            let rest = graded(gpu, &samples, &frame, matched.as_ref().map(|m| &m.colour), levels,
+            let rest = graded(gpu, &samples, &frame, matched.as_ref().and_then(|m| m.colour.as_ref()), levels,
                 crate::gpu::Adjust::none());
-            let cold = graded(gpu, &samples, &frame, matched.as_ref().map(|m| &m.colour), levels,
+            let cold = graded(gpu, &samples, &frame, matched.as_ref().and_then(|m| m.colour.as_ref()), levels,
                 crate::gpu::Adjust { temperature: Some(2000.0), ..crate::gpu::Adjust::none() });
 
             let mean = |out: &[u16], channel: usize| {

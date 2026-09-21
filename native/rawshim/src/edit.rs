@@ -100,6 +100,7 @@ pub struct PreparedHeader {
     pub floor: Option<crate::light::Light<crate::light::Level>>,
     pub grade: hdr::Grade,
     pub strengths: Strengths,
+    pub camera_match: crate::hdr_fit::CameraMatch,
     /// False where the file embeds no preview or the fit found too few pairs, in which
     /// case the client grades the neutral arm exactly as a rendition does.
     pub matched: bool,
@@ -143,8 +144,8 @@ pub struct PreparedHeader {
     /// what it *gained* over what it was handed, so presence means "this is new" and the page can
     /// store it without asking whether it already had it. A prepare
     /// ([`crate::picture::prepared`]) reports the whole of it: its client sent nothing and holds
-    /// nothing, and the camera match is in here - the grade's colour transform, which no other
-    /// field carries.
+    /// nothing. The fitted camera match is in here; `camera_match` says which part this prepared
+    /// picture applies without discarding a richer fit kept for later.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub photo_analysis: Option<Vec<u8>>,
     /// Where these samples sit in the picture, where they are a rectangle of a larger one.
@@ -398,6 +399,7 @@ pub async fn from_frame(
         // on this path is a future for that reason (`gpu::read_back`).
         let resident = frame.resident().ok_or("the decode is not on the device")?;
         let opening = crate::open::Opening {
+            camera_match: crate::hdr_fit::CameraMatch::LensAndColour,
             grade: request.grade,
             strengths,
             stored: &stored,
@@ -640,6 +642,7 @@ async fn payload(
         floor: prepared.levels.floor,
         grade: request.grade,
         strengths,
+        camera_match: crate::hdr_fit::CameraMatch::LensAndColour,
         matched: matched.is_some(),
         mosaic,
         as_shot,

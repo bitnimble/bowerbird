@@ -86,7 +86,7 @@ pub struct Target {
 #[serde(rename_all = "camelCase")]
 pub struct Job {
     pub raw_file_path: String,
-    pub match_embedded_jpeg: bool,
+    pub camera_match: crate::hdr_fit::CameraMatch,
     /// Collapse each Bayer quad into one output pixel instead of interpolating it.
     ///
     /// **Asked for rather than inferred.** The decode already halves on its own when the
@@ -649,7 +649,7 @@ async fn single(job: &Job, raw: Raw<'_>, size: u32, rendered: &[&Target]) -> Res
 /// to consult for (`open::Fitting`). A photograph with its match on file - which is nearly every
 /// one a rendition is asked of - reads that instead and never reaches either.
 fn fitting<'a>(job: &Job, raw: Raw<'a>) -> crate::open::Fitting<'a> {
-    if !job.match_embedded_jpeg {
+    if job.camera_match == crate::hdr_fit::CameraMatch::None {
         return crate::open::Fitting::None;
     }
     match raw {
@@ -721,6 +721,7 @@ impl Base {
         // camera match, and the levels - one implementation, so a rendition and the tab that
         // predicts it cannot measure the same photograph two ways.
         let opening = crate::open::Opening {
+            camera_match: job.camera_match,
             grade: job.grade,
             strengths: job.strengths(),
             stored: &stored,
@@ -922,7 +923,7 @@ impl Base {
             .defocus?
             .pair_for(strengths.defringe, drawn.long().raw())?;
         stored.from_raw.noise?;
-        if job.match_embedded_jpeg && stored.from_raw.matched.is_none() {
+        if job.camera_match.needs_fit(stored.from_raw.matched.as_ref()) {
             return None;
         }
         // **A window cannot look for particles**, deliberately: the gates read the frame's own
@@ -975,7 +976,7 @@ impl Base {
                 // `frame` below is the header's own dimensions, which are the sensor's.
                 sensor_long: None,
                 defocus: crate::base::Defringe::Take(defocus),
-                photo_analysis: job.photo_analysis.clone(),
+                photo_analysis: job.photo_analysis.as_deref().map(|analysis| with_camera_match(analysis, job.camera_match)),
                 // None throughout this file: a rendition is built by a host with libavif, which
                 // reads the field's picture where it stands.
                 scale,
@@ -1106,10 +1107,7 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
         // The particles travel in here too, and they are the photograph's rather than this
         // rectangle's, so a tile denied the analysis corrects no dust while the render beside it
         // does. Stripping the match keeps the reason above and leaves the rest.
-        photo_analysis: match job.match_embedded_jpeg {
-            true => job.photo_analysis.clone(),
-            false => job.photo_analysis.as_deref().map(without_the_match),
-        },
+        photo_analysis: job.photo_analysis.as_deref().map(|analysis| with_camera_match(analysis, job.camera_match)),
         // A loupe is showing the reader the export's own pixels, so it never halves.
         scale: crate::view::Scale::Full,
         repairs: job.repairs.clone(),
@@ -1132,15 +1130,12 @@ fn repaired(cut: &hdr::Cut, job: &Job) -> Result<(), String> {
     .map(drop)
 }
 
-/// The same analysis with the camera match taken out, for a caller that must not have one.
-///
-/// Re-encoded rather than edited in place: the sections are framed, so dropping one is decode,
-/// clear, encode - and anything this build cannot read is dropped with it, which is the same
-/// behaviour every other writer of this blob already has.
-#[cfg(feature = "renditions")]
-fn without_the_match(analysis: &[u8]) -> Vec<u8> {
+fn with_camera_match(analysis: &[u8], camera_match: crate::hdr_fit::CameraMatch) -> Vec<u8> {
+    if camera_match == crate::hdr_fit::CameraMatch::LensAndColour {
+        return analysis.to_vec();
+    }
     let mut stored = crate::photo_analysis::decode(analysis).unwrap_or_default();
-    stored.from_raw.matched = None;
+    stored.from_raw.matched = camera_match.apply(stored.from_raw.matched);
     crate::photo_analysis::encode(&stored)
 }
 
@@ -1420,7 +1415,7 @@ async fn render(
         ));
     }
     let scene = tone::SceneGrade::new(
-        matched.as_ref().map(|m| &m.colour),
+        matched.as_ref().and_then(|m| m.colour.as_ref()),
         levels,
         job.grade.reference_white_nits,
         job.exposure,
@@ -1468,7 +1463,9 @@ async fn render(
     // its scale. Both halves of the pair are gated, or the arm that is forbidden from filing a peak
     // would still be graded by one.
     let at_rest = job.exposure == Stops::ZERO && job.adjust == crate::gpu::Adjust::none();
-    let known_peak = match at_rest && describes_the_photograph {
+    // The cache key omits match mode, so neutral peaks must not reuse or replace matched peaks.
+    let keeps_peak = at_rest && describes_the_photograph && matched.as_ref().is_some_and(|m| m.colour.is_some());
+    let known_peak = match keeps_peak {
         true => stored
             .from_render
             .scene_peak
@@ -1569,7 +1566,7 @@ async fn render(
     //
     // And only from a base that measured *this* photograph: a composite of the cameras' own
     // pictures did not (`Base::describes_the_photograph`).
-    if known_peak.is_none() && at_rest && describes_the_photograph {
+    if known_peak.is_none() && keeps_peak {
         // Dropped first: it borrows `scene_peak`, and the readback wants the buffer to itself.
         drop(uploaded);
         let nits = Light::measured(f64::from(
@@ -1861,7 +1858,7 @@ mod tests {
         let job: Job = serde_json::from_str(
             r#"{
                 "rawFilePath": "",
-                "matchEmbeddedJpeg": true,
+                "cameraMatch": "lensAndColour",
                 "sharpen": 1,
                 "defringe": 1,
                 "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
@@ -1898,7 +1895,7 @@ mod tests {
         let job: Job = serde_json::from_str(
             r#"{
                 "rawFilePath": "/photos/a.arw",
-                "matchEmbeddedJpeg": true,
+                "cameraMatch": "lensAndColour",
                 "tile": [100, 200, 256, 256],
                 "noiseFit": {
                     "alpha": 0.0001502,

@@ -48,10 +48,10 @@ const STAGE_LABELS: Record<RenderStage, () => string> = {
   dust: RawEditPanelStrings.groupDustRemoval,
   denoise: SettingsStrings.stageDenoise,
   demosaic: SettingsStrings.stageDemosaic,
-  match: SettingsStrings.matchEmbeddedJpeg,
+  lens: SettingsStrings.stageLens,
+  colour: SettingsStrings.stageColour,
   defringe: SettingsStrings.rawDefringe,
   sharpen: RawEditPanelStrings.sharpening,
-  grade: SettingsStrings.stageGrade,
   encode: SettingsStrings.stageEncode,
 };
 
@@ -79,6 +79,7 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
   const ms = stageMs(rendition, measured);
   const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
   const busy = settings.isBenchmarking(rendition);
+  const cameraMatching = settings.settings?.match_embedded_jpeg !== false;
 
   return (
     <Panel title={SettingsStrings.renderStages()}>
@@ -97,7 +98,12 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
           key={stage}
           stage={stage}
           ms={ms[stage]}
-          runs={!isOptional(stage) || !skipped.includes(stage)}
+          disabledReason={
+            (stage === 'lens' || stage === 'colour') && !cameraMatching ? SettingsStrings.cameraMatchingOff()
+            : stage === 'colour' && skipped.includes('lens') ? SettingsStrings.colourNeedsLens()
+            : undefined
+          }
+          runs={(!['lens', 'colour'].includes(stage) || cameraMatching) && (!isOptional(stage) || !skipped.includes(stage))}
           onChange={
             isOptional(stage) ?
               (runs) => void libraries.setRenderStage(library.id, rendition, stage, runs)
@@ -133,16 +139,18 @@ function StageRow({
   stage,
   ms,
   runs,
+  disabledReason,
   onChange,
 }: {
   stage: RenderStage;
   ms: number;
   runs: boolean;
+  disabledReason?: string;
   onChange?: (runs: boolean) => void;
 }): JSX.Element {
   const label = STAGE_LABELS[stage]();
   return (
-    <SettingRow label={label}>
+    <SettingRow label={label} disabledReason={disabledReason}>
       <Text variant="muted">{SettingsStrings.stageCost(ms)}</Text>
       {onChange == null ?
         <span {...stylex.props(styles.noBox)} />
@@ -151,6 +159,7 @@ function StageRow({
           type="checkbox"
           aria-label={label}
           checked={runs}
+          disabled={disabledReason != null}
           onChange={(e) => onChange(e.currentTarget.checked)}
         />
       }

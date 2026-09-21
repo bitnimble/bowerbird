@@ -115,7 +115,7 @@ fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
     };
 
     let scene = rawshim::tone::SceneGrade::new(
-        matched.as_ref().map(|m| &m.colour),
+        matched.as_ref().and_then(|m| m.colour.as_ref()),
         levels,
         options.grade.reference_white_nits,
         rawshim::light::Stops::ZERO,

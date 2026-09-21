@@ -17,6 +17,26 @@ function objectsOfType(db: Database, type: 'table' | 'index' | 'trigger'): strin
 }
 
 describe('opening a catalogue', () => {
+  it('preserves disabled camera matching across the render-stage migration', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    db.exec('DELETE FROM __drizzle_migrations WHERE created_at > 1789700000000');
+    db.query('INSERT INTO libraries (id, root_path, name, render_skip_full, render_skip_max) VALUES (?, ?, ?, ?, ?)')
+      .run('stages', '/stages', 'Stages', 'dust,match,sharpen', 'denoise,match');
+    db.query('INSERT INTO libraries (id, root_path, name, render_skip_full) VALUES (?, ?, ?, ?)')
+      .run('exact', '/exact', 'Exact', 'mismatch');
+
+    runMigrations(db);
+
+    expect(db.query('SELECT render_skip_full, render_skip_max FROM libraries WHERE id = ?').get('stages')).toEqual({
+      render_skip_full: 'dust,lens,colour,sharpen', render_skip_max: 'denoise,lens,colour',
+    });
+    expect(db.query('SELECT render_skip_full, render_skip_max FROM libraries WHERE id = ?').get('exact')).toEqual({
+      render_skip_full: 'mismatch', render_skip_max: '',
+    });
+    db.close();
+  });
+
   it('brings up every table, index and trigger, and does it again without complaint', () => {
     const db = new Database(':memory:');
     runMigrations(db);

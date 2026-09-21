@@ -15,7 +15,7 @@ import type { CompositeJob, RenditionJob, RenditionTarget } from '../workers/pro
 export function toCommand(job: RenditionJob): Job {
   return {
     rawFilePath: job.rawFilePath,
-    matchEmbeddedJpeg: job.matchEmbeddedJpeg,
+    cameraMatch: job.cameraMatch,
     preserveSourceOrientation: job.preserveSourceOrientation,
     photoAnalysis: job.remeasure ? undefined : readPhotoAnalysis(job.dataPath, job.photoId),
     denoiseLuminance: job.denoiseLuminance,
@@ -74,7 +74,7 @@ export function toCompositeCommand(job: CompositeJob): Job {
   return {
     // The far side ignores it for a panorama and the struct wants a string.
     rawFilePath: job.sources[0]?.rawFilePath ?? '',
-    matchEmbeddedJpeg: false,
+    cameraMatch: job.cameraMatch,
     photoAnalysis: readPhotoAnalysis(job.dataPath, job.photoId),
     denoiseLuminance: job.denoiseLuminance,
     denoiseColour: job.denoiseColour,

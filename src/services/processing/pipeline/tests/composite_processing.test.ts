@@ -11,6 +11,8 @@ import type { SettingsRepository } from '../../../settings/settings_repository';
 import { ProcessingService } from '../processing_service';
 import { JOB_CANCELLED } from '../../rawshim/rawshim_job';
 import type { CompositeJob, RenditionJob, ProcessingResult } from '../../workers/processing_types';
+import { toCompositeCommand } from '../../rawshim/worker_command';
+import type { CameraMatch, OptionalStage } from '../../../../schemas/render_stages';
 
 const CRASH = 'crash-photo';
 // This file's own library id, because the data directory is keyed by one (§6)
@@ -250,6 +252,32 @@ describe('the composites a batch finds owed', () => {
   });
   if (ASSEMBLY.kind === 'file') throw new Error('the assembly fixture parsed as a file recipe');
 
+  it('assembly drafts obey the global and library camera-match settings', async () => {
+    if (ASSEMBLY.kind !== 'assembly') throw new Error('Expected an assembly recipe');
+    const cases = [
+      { enabled: false, skip: [] as OptionalStage[], wanted: 'none' as CameraMatch },
+      { enabled: true, skip: ['colour'] as OptionalStage[], wanted: 'lens' as CameraMatch },
+      { enabled: true, skip: ['lens'] as OptionalStage[], wanted: 'none' as CameraMatch },
+      { enabled: true, skip: [] as OptionalStage[], wanted: 'lensAndColour' as CameraMatch },
+    ];
+    for (const { enabled, skip, wanted } of cases) {
+      const service = new ProcessingService({} as PhotoProcessingRepository, NO_PATHS, NO_LISTING,
+        settingsWith({ match_embedded_jpeg: enabled }));
+      const library = { id: LIB, root_path: '/nowhere', rendition_hdr: true, render_skip_full: skip } as never;
+      const on = service.openComposite();
+      try {
+        await service.buildAssemblyLayer([], ASSEMBLY, 0, library, '/nowhere/layer.avif', on);
+        await service.buildAssemblyPreview([], ASSEMBLY, library, '/nowhere/preview.avif', on);
+        for (const job of posted.slice(-2)) {
+          if (job.kind !== 'composite') throw new Error('Expected a composite job');
+          expect(toCompositeCommand(job).cameraMatch).toBe(wanted);
+        }
+      } finally {
+        on.close();
+      }
+    }
+  });
+
   it('builds an assembly at the canvas its crop comes out of at a tile size', async () => {
     const markTileBuilt = jest.fn();
     const repo = {
@@ -303,6 +331,27 @@ describe('the composites a batch finds owed', () => {
  */
 describe('the sizes a composite is framed to', () => {
   usingMockWorker();
+
+  it('carries dependent camera stages through composite jobs and native commands', async () => {
+    const service = new ProcessingService({} as PhotoProcessingRepository, NO_PATHS, NO_LISTING, settingsWith({}));
+    const cases: [OptionalStage[], CameraMatch][] = [[[], 'lensAndColour'], [['colour'], 'lens'], [['lens'], 'none']];
+    for (const [skip, wanted] of cases) {
+      const on = service.openComposite();
+      try {
+        await service.buildCompositeRendition(
+          'panorama', [], { version: 1 }, 'panorama',
+          { id: LIB, root_path: '/nowhere', render_skip_full: skip, render_skip_max: [] } as never,
+          'full', true, 'render', on,
+        );
+        const job = posted.at(-1);
+        if (job?.kind !== 'composite') throw new Error('Expected a composite job');
+        expect(job.cameraMatch).toBe(wanted);
+        expect(toCompositeCommand(job).cameraMatch).toBe(wanted);
+      } finally {
+        on.close();
+      }
+    }
+  });
 
   async function sizeOf(
     rendition: 'grid' | 'full' | 'embedded',

@@ -64,7 +64,7 @@ export class ExportRenderer {
         targets: this.targets.exportTargets(outputPath, options, thumbnailPath),
         grade: this.targets.grade(),
         remeasure: false,
-        matchEmbeddedJpeg: settings.match_embedded_jpeg,
+        cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
         halfSize: options.halfSize,
         ...developed(edits?.doc ?? null),
         ...this.targets.render(),
@@ -116,7 +116,7 @@ export class ExportRenderer {
       ],
       grade: this.targets.grade(),
       remeasure: true,
-      matchEmbeddedJpeg: false,
+      cameraMatch: 'none',
       preserveSourceOrientation: true,
       ...developed(null),
       // The picture being read has been sharpened and denoised once already, and a base whose
@@ -150,6 +150,7 @@ export class ExportRenderer {
     const edits = options.includeEdits ? this.editsFor(photoId) : null;
     await this.composites.runComposite({
       kind: 'composite',
+      cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
       want: 'render',
       photoId,
       sources,

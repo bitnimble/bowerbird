@@ -765,7 +765,7 @@ mod tests {
         std::fs::write(&source_path, &source).expect("HDR source");
         let job: crate::job::Job = serde_json::from_value(serde_json::json!({
             "rawFilePath": source_path,
-            "matchEmbeddedJpeg": false,
+            "cameraMatch": "none",
             "preserveSourceOrientation": true,
             "sharpen": 0,
             "defringe": 0,

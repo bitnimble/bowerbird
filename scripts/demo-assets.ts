@@ -453,9 +453,9 @@ async function buildPanorama(): Promise<void> {
     photoId: `pano000${at}`,
     rawFilePath: rawFor(frame),
   }));
-  const job = {
+  const job: Omit<Job, 'targets'> = {
     rawFilePath: sources[0]!.rawFilePath,
-    matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
+    cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
     defringe: SETTINGS.raw_defringe,
     ...AS_METERED,
     grade: {
@@ -472,7 +472,7 @@ async function buildPanorama(): Promise<void> {
   // set aligned again, as `CompositesService.aligned` does it.
   for (const photoId of aligned.lensless) {
     const source = sources.find((each) => each.photoId === photoId)!;
-    const fit = runJob({ ...job, rawFilePath: source.rawFilePath, matchEmbeddedJpeg: true, measure: true, targets: [] });
+    const fit = runJob({ ...job, rawFilePath: source.rawFilePath, cameraMatch: 'lensAndColour', measure: true, targets: [] });
     if (fit.photoAnalysis == null) throw new Error(`nothing could fit the lens ${source.rawFilePath} was shot on`);
     source.photoAnalysis = Array.from(fit.photoAnalysis);
   }
@@ -522,7 +522,7 @@ async function buildDust(): Promise<void> {
     const out = join(LANDING_OUT, `${slug}.avif`);
     runJob({
       rawFilePath: raw,
-      matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
+      cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
       defringe: SETTINGS.raw_defringe,
       ...AS_METERED,
       dust,
@@ -544,7 +544,7 @@ async function buildDust(): Promise<void> {
 function renderSrgb(raw: string, outputPath: string, colourProfile: 'matched' | 'none', exposure = 0, size = LONG_EDGE): void {
   runJob({
     rawFilePath: raw,
-    matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
+    cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
     defringe: SETTINGS.raw_defringe,
     ...AS_METERED,
     exposure,
@@ -562,7 +562,7 @@ async function build(scene: string): Promise<void> {
   try {
     runJob({
       rawFilePath: rawFor(scene),
-      matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
+      cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',
       defringe: SETTINGS.raw_defringe,
       // The page shows the shipped look, so the frames carry no develop settings - the
       // denoise included, `AS_METERED` carrying the document's own defaults for it.

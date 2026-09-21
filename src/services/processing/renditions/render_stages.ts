@@ -1,5 +1,5 @@
 import type { Library } from '../../../schemas/libraries';
-import { OPTIONAL_STAGES, type OptionalStage } from '../../../schemas/render_stages';
+import { cameraMatchWithStages, normaliseStages, type CameraMatch, type OptionalStage } from '../../../schemas/render_stages';
 import type { Developed } from '../workers/processing_types';
 import type { Rendition } from './renditions';
 
@@ -24,33 +24,30 @@ export function renditionSkips(library: Library, rendition: Rendition): readonly
  * a stage was renamed is a photograph that never opens.
  */
 export function readStages(stored: string): OptionalStage[] {
-  const known = new Set<string>(OPTIONAL_STAGES);
-  return stored.split(',').filter((name): name is OptionalStage => known.has(name));
+  return normaliseStages(stored.split(','));
 }
 
 /** In the order `OPTIONAL_STAGES` names them, so two equal sets are one string. */
 export function writeStages(stages: readonly OptionalStage[]): string {
-  return OPTIONAL_STAGES.filter((stage) => stages.includes(stage)).join(',');
+  return normaliseStages(stages).join(',');
 }
 
 /**
  * The same job with those stages left out, overriding the photograph's own document: a frame
  * somebody sharpened renders unsharpened into a library that has traded the sharpen away (§10.1).
- *
- * **Every value below is one the renderer already refuses to act on** - `galosh::wanted`,
- * `image::Strengths`, `dust::Settings::wanted`, `match_embedded_jpeg` - so a stage that stopped
- * being gated there would leave a checkbox here doing nothing.
  */
-export function withStagesOff<T extends Developed & { matchEmbeddedJpeg?: boolean }>(
+export function withStagesOff<T extends Developed & { cameraMatch: CameraMatch }>(
   job: T,
   skip: readonly OptionalStage[],
-): T {
-  return { ...job, ...turnedDown(job, skip) };
+): Omit<T, 'cameraMatch'> & { cameraMatch: CameraMatch } {
+  return {
+    ...job,
+    ...turnedDown(job, skip),
+    cameraMatch: cameraMatchWithStages(job.cameraMatch, skip),
+  };
 }
 
-type TurnedDown = Partial<Pick<Developed, 'denoiseLuminance' | 'denoiseColour' | 'dust' | 'sharpen' | 'defringe'>> & {
-  matchEmbeddedJpeg?: boolean;
-};
+type TurnedDown = Partial<Pick<Developed, 'denoiseLuminance' | 'denoiseColour' | 'dust' | 'sharpen' | 'defringe'>>;
 
 function turnedDown(job: Developed, skip: readonly OptionalStage[]): TurnedDown {
   const off: TurnedDown = {};
@@ -63,8 +60,8 @@ function turnedDown(job: Developed, skip: readonly OptionalStage[]): TurnedDown 
         off.denoiseLuminance = 0;
         off.denoiseColour = 0;
         break;
-      case 'match':
-        off.matchEmbeddedJpeg = false;
+      case 'lens':
+      case 'colour':
         break;
       case 'defringe':
         off.defringe = 0;

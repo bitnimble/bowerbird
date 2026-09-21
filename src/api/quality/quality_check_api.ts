@@ -84,7 +84,7 @@ export class QualityCheckApi {
         const started = Bun.nanoseconds();
         runJob({
           rawFilePath,
-          matchEmbeddedJpeg: settings.match_embedded_jpeg,
+          cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
           // The photograph's own, which is the document's default: this page compares
           // quantizers against what the library actually ships, and a denoise named here
           // would be a strength no rendition of this photograph is ever taken at.

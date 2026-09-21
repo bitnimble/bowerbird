@@ -97,7 +97,7 @@ async function withTile(filePath: string, stage: TileStage): Promise<RawHeader> 
       // None of these reach an embedded tile: `job::run` lifts the camera's own JPEG and
       // returns before anything that would read them, and `scan` above is what makes that
       // unconditional - without it, a file with no preview would render, and render with these.
-      matchEmbeddedJpeg: false,
+      cameraMatch: 'none',
       denoiseLuminance: 0,
       denoiseColour: 0,
       denoiser: 'galosh',

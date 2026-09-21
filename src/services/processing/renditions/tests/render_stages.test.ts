@@ -12,7 +12,7 @@ import { RenderTimingsFile } from '../render_timings_file';
 
 const LIB = 'lib';
 
-const job = { ...AS_METERED, defringe: 1, matchEmbeddedJpeg: true };
+const job = { ...AS_METERED, defringe: 1, cameraMatch: 'lensAndColour' as const };
 
 describe('the stages a library leaves out of a render', () => {
   it('drops a name this build does not know, rather than refusing the render', () => {
@@ -24,13 +24,25 @@ describe('the stages a library leaves out of a render', () => {
     expect(writeStages(['sharpen', 'dust'])).toBe(writeStages(['dust', 'sharpen']));
   });
 
+  it('normalises dependent stages into one ordered set', () => {
+    expect(readStages('sharpen,lens,denoise,lens')).toEqual(['denoise', 'lens', 'colour', 'sharpen']);
+    expect(writeStages(['sharpen', 'lens', 'denoise'])).toBe('denoise,lens,colour,sharpen');
+  });
+
+  it('derives only valid camera matches without enabling a disabled match', () => {
+    expect(withStagesOff(job, ['colour']).cameraMatch).toBe('lens');
+    expect(withStagesOff(job, ['lens']).cameraMatch).toBe('none');
+    expect(withStagesOff({ ...job, cameraMatch: 'none' as const }, []).cameraMatch).toBe('none');
+    expect(withStagesOff({ ...job, cameraMatch: 'lens' as const }, []).cameraMatch).toBe('lens');
+  });
+
   // Each of these is a value the renderer already refuses to act on, so what the setting does is
   // turn one down rather than take a second path. A stage that stopped being gated on the far side
   // would leave the checkbox doing nothing, which is the failure this pins.
   it('turns each stage down to the value the renderer skips it at', () => {
     expect(withStagesOff(job, ['denoise'])).toMatchObject({ denoiseLuminance: 0, denoiseColour: 0 });
     expect(withStagesOff(job, ['dust']).dust.enabled).toBe(false);
-    expect(withStagesOff(job, ['match']).matchEmbeddedJpeg).toBe(false);
+    expect(withStagesOff(job, ['lens']).cameraMatch).toBe('none');
     expect(withStagesOff(job, ['defringe']).defringe).toBe(0);
     expect(withStagesOff(job, ['sharpen']).sharpen).toBe(0);
   });
@@ -42,8 +54,8 @@ describe('the stages a library leaves out of a render', () => {
   // The grid tile is the camera's own JPEG wherever there is one, and the render it falls back to
   // is cut from the `full` job's frame - so it has no list of its own to read.
   it('states stages for the two rendered renditions and for neither of the others', () => {
-    const library = { render_skip_full: ['match' as const], render_skip_max: ['sharpen' as const] } as never;
-    expect(renditionSkips(library, 'full')).toEqual(['match']);
+    const library = { render_skip_full: ['colour' as const], render_skip_max: ['sharpen' as const] } as never;
+    expect(renditionSkips(library, 'full')).toEqual(['colour']);
     expect(renditionSkips(library, 'max')).toEqual(['sharpen']);
     expect(renditionSkips(library, 'grid')).toEqual([]);
     expect(renditionSkips(library, 'embedded')).toEqual([]);
@@ -53,7 +65,7 @@ describe('the stages a library leaves out of a render', () => {
 describe('what a stage is said to cost', () => {
   const measured = {
     total: 800,
-    stages: { match: 400, denoise: 30 },
+    stages: { colour: 400, denoise: 30 },
     measured_at: '2026-01-01T00:00:00.000Z',
   };
 
@@ -65,7 +77,7 @@ describe('what a stage is said to cost', () => {
 
   it('prefers a measurement to an estimate, stage by stage rather than all or nothing', () => {
     const shown = stageMs('full', measured);
-    expect(shown.match).toBe(400);
+    expect(shown.colour).toBe(400);
     expect(shown.denoise).toBe(30);
     // Never measured, because only the optional stages are: the estimate stands for the rest
     // rather than the row reading zero.
@@ -82,7 +94,7 @@ describe('what a stage is said to cost', () => {
 // benchmark found came from: measured on half the reference sensor, a stage reads as twice what it
 // took. Without this, the same machine would quote a different cost per catalogue.
 describe('scaling a measurement to the reference sensor', () => {
-  const measured = { total: 800, stages: { match: 400, denoise: 30 }, measured_at: '2026-01-01T00:00:00.000Z' };
+  const measured = { total: 800, stages: { colour: 400, denoise: 30 }, measured_at: '2026-01-01T00:00:00.000Z' };
 
   it('leaves a frame that is already the reference sensor alone', () => {
     expect(scaledToReference(measured, REFERENCE_PIXELS)).toEqual(measured);
@@ -91,7 +103,7 @@ describe('scaling a measurement to the reference sensor', () => {
   it('carries the total and every stage together', () => {
     const scaled = scaledToReference(measured, REFERENCE_PIXELS / 2);
     expect(scaled.total).toBe(1600);
-    expect(scaled.stages.match).toBe(800);
+    expect(scaled.stages.colour).toBe(800);
     expect(scaled.stages.denoise).toBe(60);
     expect(scaled.measured_at).toBe(measured.measured_at);
   });
@@ -114,8 +126,8 @@ describe('the column the library holds them in', () => {
   });
 
   it('keeps the two renditions apart', () => {
-    libraries.setRenderSkip(LIB, 'max', ['denoise', 'match']);
-    expect(libraries.getById(LIB)?.render_skip_max).toEqual(['denoise', 'match']);
+    libraries.setRenderSkip(LIB, 'max', ['denoise', 'lens']);
+    expect(libraries.getById(LIB)?.render_skip_max).toEqual(['denoise', 'lens', 'colour']);
     expect(libraries.getById(LIB)?.render_skip_full).toEqual([]);
   });
 });
@@ -138,12 +150,12 @@ describe('the file the measurements are kept in', () => {
   // Merged with what is on disk rather than with anything read at the start: a benchmark takes
   // minutes, and the other rendition's may well land while it runs.
   it('files a measurement beside the other rendition rather than over it', () => {
-    file.put('full', { total: 800, stages: { match: 400 }, measured_at: '2026-01-01T00:00:00.000Z' });
+    file.put('full', { total: 800, stages: { colour: 400 }, measured_at: '2026-01-01T00:00:00.000Z' });
     file.put('max', { total: 3000, stages: { denoise: 90 }, measured_at: '2026-01-02T00:00:00.000Z' });
-    file.put('full', { total: 750, stages: { match: 380 }, measured_at: '2026-01-03T00:00:00.000Z' });
+    file.put('full', { total: 750, stages: { colour: 380 }, measured_at: '2026-01-03T00:00:00.000Z' });
 
     expect(file.read()).toEqual({
-      full: { total: 750, stages: { match: 380 }, measured_at: '2026-01-03T00:00:00.000Z' },
+      full: { total: 750, stages: { colour: 380 }, measured_at: '2026-01-03T00:00:00.000Z' },
       max: { total: 3000, stages: { denoise: 90 }, measured_at: '2026-01-02T00:00:00.000Z' },
     });
   });
@@ -153,6 +165,14 @@ describe('the file the measurements are kept in', () => {
   it('reads a file it cannot parse as nothing measured', () => {
     file.put('full', { total: 800, stages: {}, measured_at: '2026-01-01T00:00:00.000Z' });
     writeFileSync(join(scratch, 'nested', 'render_timings.json'), 'not json');
+    expect(file.read()).toEqual({});
+  });
+
+  it('discards measurements naming a stage this build does not recognise', () => {
+    file.put('full', { total: 800, stages: {}, measured_at: '2026-01-01T00:00:00.000Z' });
+    writeFileSync(join(scratch, 'nested', 'render_timings.json'), JSON.stringify({
+      full: { total: 800, stages: { match: 400, grade: 24 }, measured_at: '2026-01-01T00:00:00.000Z' },
+    }));
     expect(file.read()).toEqual({});
   });
 });

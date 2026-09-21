@@ -39,17 +39,17 @@ export const SettingsStrings = {
 
   renderStages: () => 'Render stages',
   renderStagesFor: () => 'Rendition to set stages for',
-  // The stages no render can leave out. The five that can are named by the control that already
-  // names them: the camera match and the fringe removal above, the sharpening and the dust in the
-  // edit panel (`render_stages_panel.tsx`).
   stageRead: () => 'Read',
   stageDenoise: () => 'Denoise',
   // The one row naming what the stage does rather than what it is called: "demosaic" is the
   // pipeline's word and not a photographer's.
   stageDemosaic: () => 'Reconstruct colour',
-  stageGrade: () => 'Colour grade',
+  stageLens: () => 'Match lens',
+  stageColour: () => 'Match camera colour',
+  cameraMatchingOff: () => 'Camera matching is off in Rendering settings',
+  colourNeedsLens: () => 'Turn on Match lens first',
   stageEncode: () => 'Encode',
-  stageCost: (ms: number) => `~${ms} ms`,
+  stageCost: (ms: number) => ms === 0 ? 'No measurable saving' : `~${ms} ms`,
   stagesEstimated: () => 'Estimated',
   stagesMeasured: (relative: string) => `Measured ${relative}`,
   measureStages: () => 'Measure',
@@ -98,8 +98,8 @@ export const SettingsStrings = {
   connect: () => 'Connect',
 
   groupProcessing: () => 'Processing',
-  matchEmbeddedJpeg: () => "Match the camera's colour",
-  matchEmbeddedJpegHint: () => "Matches renditions to embedded JPEGs more slowly",
+  matchEmbeddedJpeg: () => 'Match lens and camera colour',
+  matchEmbeddedJpegHint: () => 'Matches renditions to embedded JPEGs',
   renderOnThisDevice: () => 'Render on this device',
   renderOnThisDeviceHint: () => "Builds photo viewer renditions on this device",
 

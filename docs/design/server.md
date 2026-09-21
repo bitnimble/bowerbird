@@ -400,7 +400,7 @@ the bounds; the reasoning behind each number lives beside it there.
 | `log_level` | `info` | `debug`, `info`, `warn` or `error`; what the server logs (§14.3) |
 | `cors_origins` | `""` | Comma-separated origins allowed to call the API, or `*`. Empty means "any port on whatever host the request arrived at", so the client works on loopback and over the LAN without hardcoding an address, while an unrelated site on the internet is still refused. |
 | `processing_concurrency` | `4` | Number of worker threads for rendition generation |
-| `match_embedded_jpeg` | `true` | Give SDR renders the camera's own colour and lens correction, fitted per photo against the embedded JPEG; ~+2.4s on a 61MP frame (§10.8) |
+| `match_embedded_jpeg` | `true` | Match HDR and SDR renditions to the camera's lens correction and colour, fitted per photo against the embedded JPEG; per-library render stages may disable either (§10.8) |
 | `raw_defringe` | `1` | Ceiling on the measured focus difference between channels, which is what a colour fringe at a hard edge is. The amount is fitted per frame, so a frame with the channels in focus is left untouched at any setting (§10.8) |
 | `grid_rendition_size` | `800` | Longest edge in pixels for the grid rendition |
 | `grid_rendition_quality` | `80` | Perceived quality for the grid rendition, 0-100; higher is better (§10.1) |

@@ -7,6 +7,9 @@ import type { PhotoPathsRepository } from '../../../photos/paths/photo_paths_rep
 import type { PhotoProcessingRepository } from '../../../photos/renditions/photo_processing_repository';
 import { dataPathForLibraryId } from '../../../../utils/paths';
 import { ProcessingService } from '../processing_service';
+import { RenderTimingsFile } from '../../renditions/render_timings_file';
+import { REFERENCE_PIXELS } from '../../../../schemas/render_stages';
+import type { WorkerJob } from '../../workers/processing_types';
 import { DESCRIPTOR, LIB, MockWorker, REAL_WORKER, posted, settingsWith } from './processing_test_helpers';
 
 describe('single-photo rendering', () => {
@@ -21,6 +24,33 @@ describe('single-photo rendering', () => {
     globalThis.Worker = REAL_WORKER;
     rmSync(root, { recursive: true, force: true });
     rmSync(dataPathForLibraryId(LIB), { recursive: true, force: true });
+  });
+
+  it('benchmarks forced stage amounts and prices lens against the colour-free render', async () => {
+    let clock = 0;
+    class TimedWorker extends MockWorker {
+      override postMessage(job: WorkerJob): void {
+        clock += job.cameraMatch === 'none' ? 100 : job.cameraMatch === 'lens' ? 200 : 1000;
+        super.postMessage(job);
+      }
+    }
+    Object.assign(globalThis, { Worker: TimedWorker });
+    const now = jest.spyOn(performance, 'now').mockImplementation(() => clock);
+    try {
+      const service = new ProcessingService(
+        {} as PhotoProcessingRepository, {} as PhotoPathsRepository, {} as PhotoListingRepository,
+        settingsWith({ match_embedded_jpeg: false, raw_defringe: 0 }),
+      );
+      const timing = await service.benchmarkRender('full', new RenderTimingsFile(path.join(root, 'timings.json')));
+      const scale = REFERENCE_PIXELS / (6336 * 9504);
+      expect(timing.stages.lens).toBe(Math.round(100 * scale));
+      expect(timing.stages.colour).toBe(Math.round(800 * scale));
+      expect(posted[0]).toMatchObject({ cameraMatch: 'lensAndColour', denoiseLuminance: 20, denoiseColour: 30, defringe: 1 });
+      expect(posted.some((job) => job.denoiseLuminance === 0 && job.denoiseColour === 0)).toBe(true);
+      expect(posted.some((job) => job.defringe === 0)).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
   });
 
 
@@ -109,12 +139,12 @@ describe('single-photo rendering', () => {
       id: 'lib',
       root_path: root,
       render_skip_full: ['sharpen'],
-      render_skip_max: ['match', 'denoise'],
+      render_skip_max: ['colour', 'denoise'],
     } as never;
 
     await service.renderOne('/lib/a.arw', 'p1', library, 'max', false);
     const max = posted.at(-1)!;
-    expect(max.kind === 'rendition' && max.matchEmbeddedJpeg).toBe(false);
+    expect(max.kind === 'rendition' && max.cameraMatch).toBe('lens');
     expect(max.kind === 'rendition' && max.denoiseLuminance).toBe(0);
     // `full`'s stage, which this rendition never asked to lose.
     expect(max.kind === 'rendition' && max.sharpen).toBeGreaterThan(0);
@@ -122,7 +152,7 @@ describe('single-photo rendering', () => {
     await service.renderOne('/lib/a.arw', 'p1', library, 'full', false);
     const full = posted.at(-1)!;
     expect(full.kind === 'rendition' && full.sharpen).toBe(0);
-    expect(full.kind === 'rendition' && full.matchEmbeddedJpeg).toBe(true);
+    expect(full.kind === 'rendition' && full.cameraMatch).toBe('lensAndColour');
     expect(full.kind === 'rendition' && full.denoiseLuminance).not.toBe(0);
   });
 

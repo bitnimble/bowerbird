@@ -178,7 +178,7 @@ async function fused(files: Corpus['files'], libraryId: string): Promise<{ taken
             photoId,
             dataPath,
             job: {
-              matchEmbeddedJpeg: settings.match_embedded_jpeg,
+              cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
               defringe: settings.raw_defringe,
               ...AS_METERED,
               grade: {

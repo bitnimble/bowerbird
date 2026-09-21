@@ -100,11 +100,12 @@ export class PrepareRenderer {
       ? {
           kind: 'rendition',
           rawFilePath: original ?? '',
-          matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+          cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
           ...shared,
         }
       : {
           kind: 'composite',
+          cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
           want: 'render',
           sources: composite.sources,
           recipe: composite.recipe,

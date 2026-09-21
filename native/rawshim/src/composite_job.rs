@@ -589,6 +589,9 @@ fn union_match(
     files: &[crate::composite_tile::SourceFile<'_>],
     stacked: &crate::resident::Resident,
 ) -> Option<crate::hdr_fit::HdrMatch> {
+    if job.camera_match != crate::hdr_fit::CameraMatch::LensAndColour {
+        return None;
+    }
     const FITTED_ON: usize = 1024;
 
     // The camera's own pictures, stacked the same way: the fit reads the pair as one scene, and
@@ -782,8 +785,11 @@ pub(crate) fn base(
     // **The set's samples, once, for both measures that read them**, and not at all for an answer
     // already on file: this is a reduced decode of every source, so it is the expensive half of a
     // composite and the half a pan pays on every render and every open of it.
-    let stacked = match (from, filed) {
-        (crate::composite_tile::From::Original, None) => {
+    let needs_colour = job.camera_match == crate::hdr_fit::CameraMatch::LensAndColour
+        && files.iter().any(|file| !crate::decode_rendered::is_rendered(file.path))
+        && known.from_raw.matched.as_ref().and_then(|m| m.colour.as_ref()).is_none();
+    let stacked = match from {
+        crate::composite_tile::From::Original if filed.is_none() || needs_colour => {
             crate::base::device(gpu).and_then(|base| stacked_sources(gpu, base, job, &files))
         }
         _ => None,
@@ -791,7 +797,12 @@ pub(crate) fn base(
     let measured = match filed {
         Some(levels) => {
             crate::progress::advance();
-            Ok((Some(levels.anchored()), known.from_raw.matched.clone()))
+            let matched = if needs_colour {
+                stacked.as_ref().and_then(|stacked| union_match(gpu, job, &files, stacked))
+            } else {
+                known.from_raw.matched.clone()
+            };
+            Ok((Some(levels.anchored()), matched))
         }
         // The stack goes back below even where this failed, which is a source that would not
         // decode - and is exactly when the buffer would otherwise be dropped without the nudge
@@ -951,11 +962,12 @@ pub(crate) fn base(
     // Nothing at all on the camera arm, and that is what keeps the arms apart: its levels are what
     // the bodies printed white at rather than a quantile of this picture, so filing them under
     // this row would be read back by the next composite *of the photographs* as its own.
+    let matched = job.camera_match.apply(matched.or(fallback_match));
     let analysis = match from {
         crate::composite_tile::From::Camera => crate::photo_analysis::PhotoAnalysis::default(),
         crate::composite_tile::From::Original => crate::photo_analysis::PhotoAnalysis {
             from_raw: crate::photo_analysis::FromRaw {
-                matched: matched.clone().or_else(|| fallback_match.clone()),
+                matched: matched.clone(),
                 // The reference's: no single fit describes a blend.
                 noise: reference.from_raw.noise,
                 // A composite looks for no particles. Each source's own render corrected its own,
@@ -992,7 +1004,7 @@ pub(crate) fn base(
             photograph: crate::px::Size::exact(canvas_w, canvas_h),
             origin: crate::px::At::exact(window_left, window_top),
         }),
-        matched: matched.or(fallback_match),
+        matched,
         capture_sigma: analysis.from_raw.capture_sigma,
         analysis,
         // This row's, so the difference `run` reports is against what the composite was handed
@@ -1538,6 +1550,21 @@ mod tests {
             second.header.matched == first.header.matched,
             "and the same colour rendering"
         );
+        assert_eq!(second.header.camera_match, crate::hdr_fit::CameraMatch::LensAndColour);
+
+        let mut lens_only = job(&paths, recipe.clone(), "render");
+        lens_only.camera_match = crate::hdr_fit::CameraMatch::Lens;
+        let measured = crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
+        let mut richer = crate::photo_analysis::decode(measured.header.photo_analysis.as_deref().expect("analysis"))
+            .expect("stored analysis");
+        richer.from_raw.matched = Some(crate::photo_analysis::tests::a_match());
+        lens_only.photo_analysis = Some(crate::photo_analysis::encode(&richer));
+        let prepared = crate::picture::prepared(&lens_only, 1, None, &[]).expect("a lens-only picture");
+        assert_eq!(prepared.header.camera_match, crate::hdr_fit::CameraMatch::Lens);
+        assert!(crate::photo_analysis::decode(prepared.header.photo_analysis.as_deref().expect("analysis"))
+            .and_then(|analysis| analysis.from_raw.matched)
+            .and_then(|matched| matched.colour)
+            .is_some(), "the richer persisted analysis survives without becoming the active mode");
 
         // **And a set it was not measured over is measured again.** One gain doubled is twice the
         // light that frame contributes, so the canvas the filed levels and the filed match describe
@@ -1949,6 +1976,17 @@ mod tests {
             "the sources' own white is measured, and came back {}",
             ours.levels.white.raw(),
         );
+        for mode in [crate::hdr_fit::CameraMatch::Lens, crate::hdr_fit::CameraMatch::None] {
+            rendering.camera_match = mode;
+            let composite = rendering.composite.as_ref().expect("composite");
+            let Want::Render { recipe } = &composite.want else { panic!("render") };
+            let selected = base(
+                &rendering, &composite.sources, recipe, 256,
+                crate::composite_tile::From::Original, None, &[],
+            ).expect("selected camera stages");
+            assert_eq!(selected.matched.is_some(), mode == crate::hdr_fit::CameraMatch::Lens);
+            assert!(selected.matched.as_ref().and_then(|m| m.colour.as_ref()).is_none());
+        }
     }
 
     fn views(name: &str) -> Vec<String> {
@@ -1972,7 +2010,7 @@ mod tests {
         }
         serde_json::from_value(serde_json::json!({
             "rawFilePath": "",
-            "matchEmbeddedJpeg": false,
+            "cameraMatch": "lensAndColour",
             "denoiseLuminance": 0.0,
             "denoiseColour": 0.0,
             "sharpen": 0.0,

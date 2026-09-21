@@ -1,7 +1,7 @@
 import { action, runInAction } from 'mobx';
 import { type Ordering, type RenditionSource } from '../../../../src/schemas/common';
 import { type CreateLibraryRequest, type FolderRule, type Library, type UpdateLibraryRequest } from '../../../../src/schemas/libraries';
-import { type OptionalStage, type RenderedRendition } from '../../../../src/schemas/render_stages';
+import { setStage, type OptionalStage, type RenderedRendition } from '../../../../src/schemas/render_stages';
 import { folderRulesApi } from '../../api/folder_rules';
 import { librariesApi } from '../../api/libraries';
 import { ApiError } from '../../api/request';
@@ -93,10 +93,7 @@ export class LibrariesPresenter {
     const library = this.store.byId.get(libraryId);
     if (library == null) return;
     const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
-    const next =
-      runs ? skipped.filter((off) => off !== stage)
-      : skipped.includes(stage) ? skipped
-      : [...skipped, stage];
+    const next = setStage(skipped, stage, runs);
     await this.update(libraryId, rendition === 'full' ? { render_skip_full: next } : { render_skip_max: next });
   }
 

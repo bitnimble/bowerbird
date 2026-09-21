@@ -6,6 +6,7 @@ import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import { newId } from '../../schemas/id';
 import type { Library } from '../../schemas/libraries';
+import type { CameraMatch } from '../../schemas/render_stages';
 import {
   AnalysedSchema,
   MOST_SOURCES,
@@ -66,10 +67,11 @@ const PHASES = [
  * the geometry every layer is drawn in. A layer is one frame over the whole canvas, so the tiles
  * are not in it, and neither is a frame's edit, §3.0's planes taking no grade.
  */
-export function layerKeyOf(library: Library, recipe: AssemblyRecipe): string {
+export function layerKeyOf(library: Library, recipe: AssemblyRecipe, cameraMatch: CameraMatch): string {
   const of = {
     source: library.rendition_source,
     hdr: library.rendition_hdr,
+    cameraMatch,
     sources: recipe.sources,
     projection: recipe.projection,
     canvas: recipe.canvas,
@@ -344,7 +346,7 @@ export class CompositesService {
       if (!parsed.success) {
         throw new AppError('VALIDATION_ERROR', 'the analysis answered tiles this build cannot read');
       }
-      const seamVolume = layerKeyOf(library, parsed.data.recipe);
+      const seamVolume = layerKeyOf(library, parsed.data.recipe, this.processing.cameraMatchFor(library, 'full'));
       const volumePath = draftVolumePath(getDataPath(library), seamVolume);
       await mkdir(path.dirname(volumePath), { recursive: true });
       await rename(pendingVolume, volumePath);
@@ -385,7 +387,7 @@ export class CompositesService {
     progressed: (share: number) => void = () => undefined,
   ): Promise<string[]> {
     const sources = recipe.sources.map((source) => this.sourceOf(source.photoId, library));
-    const layerKey = layerKeyOf(library, recipe);
+    const layerKey = layerKeyOf(library, recipe, this.processing.cameraMatchFor(library, 'full'));
     const dataPath = getDataPath(library);
     const layers: string[] = [];
     for (let at = 0; at < sources.length; at++) {
@@ -460,7 +462,7 @@ export class CompositesService {
         recipe
       : await this.seamed(recipe, library);
     const dataPath = getDataPath(library);
-    const layerKey = layerKeyOf(library, ready);
+    const layerKey = layerKeyOf(library, ready, this.processing.cameraMatchFor(library, 'full'));
     const outputPath = draftPreviewPath(dataPath, layerKey, pictureKeyOf(ready));
     if (!existsSync(outputPath)) {
       await this.serially(async () => {

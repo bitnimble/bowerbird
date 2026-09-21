@@ -193,9 +193,9 @@ fn measure(path: &str) -> Option<Report> {
 
     let n = count.max(1) as f64;
     Some(Report {
-        delta_e: matched.colour.delta_e,
+        delta_e: matched.colour.as_ref()?.delta_e,
         rendered,
-        map: matched.colour.chroma.is_some(),
+        map: matched.colour.as_ref()?.chroma.is_some(),
         neutrals: count,
         drift_gr: gr / n,
         drift_br: br / n,

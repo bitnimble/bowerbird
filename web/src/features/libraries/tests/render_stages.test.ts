@@ -13,7 +13,7 @@ restoreApiAfterTests();
 
 const LIBRARY = {
   id: 'lib',
-  render_skip_full: ['match'],
+  render_skip_full: ['lens', 'colour'],
   render_skip_max: [],
 } as unknown as Library;
 
@@ -43,13 +43,19 @@ async function sent(
 
 test('unticking a stage adds it to that rendition alone', async () => {
   expect(await sent(LIBRARY, 'max', 'denoise', false)).toEqual({ render_skip_max: ['denoise'] });
-  expect(await sent(LIBRARY, 'full', 'denoise', false)).toEqual({ render_skip_full: ['match', 'denoise'] });
+  expect(await sent(LIBRARY, 'full', 'denoise', false)).toEqual({ render_skip_full: ['denoise', 'lens', 'colour'] });
 });
 
-test('ticking one takes it back out', async () => {
-  expect(await sent(LIBRARY, 'full', 'match', true)).toEqual({ render_skip_full: [] });
+test('ticking the lens leaves colour off until explicitly enabled', async () => {
+  expect(await sent(LIBRARY, 'full', 'lens', true)).toEqual({ render_skip_full: ['colour'] });
+  expect(await sent({ ...LIBRARY, render_skip_full: ['colour'] }, 'full', 'colour', true)).toEqual({ render_skip_full: [] });
 });
 
 test('unticking a stage that is already out sends the same list rather than two of it', async () => {
-  expect(await sent(LIBRARY, 'full', 'match', false)).toEqual({ render_skip_full: ['match'] });
+  expect(await sent(LIBRARY, 'full', 'lens', false)).toEqual({ render_skip_full: ['lens', 'colour'] });
+});
+
+test('disabling lens also disables colour and colour cannot enable it', async () => {
+  expect(await sent(LIBRARY, 'max', 'lens', false)).toEqual({ render_skip_max: ['lens', 'colour'] });
+  expect(await sent(LIBRARY, 'full', 'colour', true)).toEqual({ render_skip_full: ['lens', 'colour'] });
 });

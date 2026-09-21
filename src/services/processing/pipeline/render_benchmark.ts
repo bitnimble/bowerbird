@@ -70,9 +70,6 @@ export class RenderBenchmark {
       // working textures, which is a one-off nothing after it pays.
       await time([]);
 
-      // Every configuration once per round rather than every round of one configuration together,
-      // so a machine that gets busy halfway through slows all six alike instead of biasing
-      // whichever stage happened to be under measurement at the time.
       const fastest = new Map<OptionalStage | 'total', number>();
       for (let round = 0; round < ROUNDS; round += 1) {
         for (const stage of [undefined, ...OPTIONAL_STAGES] as const) {
@@ -87,7 +84,8 @@ export class RenderBenchmark {
       for (const stage of OPTIONAL_STAGES) {
         // Floored at zero: a stage that cost less than the spread across rounds can come out
         // negative, and a row reading "-3 ms" is worse than one reading nothing.
-        stages[stage] = Math.max(0, total - (fastest.get(stage) ?? total));
+        const baseline = stage === 'lens' ? fastest.get('colour') ?? total : total;
+        stages[stage] = Math.max(0, baseline - (fastest.get(stage) ?? baseline));
       }
       const timing = scaledToReference(
         { total, stages, measured_at: new Date().toISOString() },

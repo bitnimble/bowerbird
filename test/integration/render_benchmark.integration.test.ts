@@ -1,9 +1,3 @@
-// What a stage of a render costs here, measured by rendering the same photograph with it and
-// without it. Only the real pipeline can answer it, and only the real pipeline can say whether
-// turning a stage off still produces a file: every one of the five is a value the renderer is
-// supposed to already refuse to act on, and a gate that moved would show up as a render that
-// failed or as a saving of nothing.
-//   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -100,7 +94,7 @@ test('the sanitized shipped frame prices every optional stage without a library'
     // The camera match is the expensive one everywhere it has been measured, and the arm most
     // likely to go quiet: it is skipped outright when an analysis is on file, so a benchmark that
     // stopped rendering cold would report nothing for it while every other stage still read.
-    expect(timing.stages.match).toBeGreaterThan(0);
+    expect(timing.stages.colour).toBeGreaterThan(0);
 
     // Filed under the rendition, beside the one that was already there.
     const filed = into.read();

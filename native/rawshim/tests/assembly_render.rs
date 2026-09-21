@@ -1533,7 +1533,7 @@ fn a_recipe_whose_base_is_not_its_reference_carries_the_bases_own_match() {
         from_raw: rawshim::photo_analysis::FromRaw {
             matched: Some(rawshim::hdr_fit::HdrMatch {
                 lens: rawshim::fit::Lens::none(),
-                colour: rawshim::hdr_fit::HdrColour::identity(),
+                colour: Some(rawshim::hdr_fit::HdrColour::identity()),
             }),
             ..Default::default()
         },

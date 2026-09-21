@@ -220,7 +220,7 @@ impl Drawing {
             // reach is a fraction of the photograph, and a window told its own size would filter at
             // the wrong scale.
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
-            colour: self.matched.as_ref().map(|m| &m.colour),
+            colour: self.matched.as_ref().and_then(|m| m.colour.as_ref()),
             white: self.levels.white,
             source_level: self.levels.peak,
             floor: self.levels.floor,
@@ -870,7 +870,7 @@ impl HeldRaw {
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
             // Unfiltered by the profile: a tick grades either way over this upload, and the
             // matched arm reads what it builds from the match.
-            colour: opened.matched.as_ref().map(|m| &m.colour),
+            colour: opened.matched.as_ref().and_then(|m| m.colour.as_ref()),
             white: opened.levels.white,
             source_level: opened.levels.peak,
             floor: opened.levels.floor,
@@ -1170,7 +1170,7 @@ impl HeldRaw {
             // here that measured the buffer instead is the one asymmetry a reader of these three
             // would have to check the reachability of to trust.
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
-            colour: drawing.matched.as_ref().map(|m| &m.colour),
+            colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),
             white: drawing.levels.white,
             source_level: drawing.levels.peak,
             floor: drawing.levels.floor,
@@ -1299,9 +1299,9 @@ impl HeldRaw {
         self.mosaic = header.mosaic;
         self.fit = header.noise_fit;
         self.levels.set(Some(levels));
-        // **The colour transform rides in the analysis, which is the only thing carrying it.** The
-        // header says *whether* a match was fitted; the match itself - the curves the grade reads -
-        // is inside the blob, exactly where a loupe tile reads one from (`tile::grown`).
+        // **The fitted transform rides in the analysis; the header says which part is active.** A
+        // lens-only prepare keeps richer stored colour for a later full render without grading
+        // this picture through it.
         self.analysis.replace(header.photo_analysis.clone());
         self.defocus.set(Some(header.defocus));
         self.header = described;
@@ -1437,7 +1437,7 @@ impl HeldRaw {
         self.hold_drawing(crate::edit::Opened {
             frame,
             levels,
-            matched: stored.from_raw.matched.clone(),
+            matched: header.camera_match.apply(stored.from_raw.matched.clone()),
             as_shot: header.as_shot,
             header: crate::edit::PreparedHeader {
                 width: whole.0,
@@ -1863,7 +1863,7 @@ impl HeldRaw {
             width,
             height,
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
-            colour: adjust.colour(drawing.matched.as_ref().map(|m| &m.colour)),
+            colour: adjust.colour(drawing.matched.as_ref().and_then(|m| m.colour.as_ref())),
             white: drawing.levels.white,
             source_level: drawing.levels.peak,
             floor: drawing.levels.floor,

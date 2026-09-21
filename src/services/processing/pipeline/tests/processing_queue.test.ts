@@ -258,11 +258,11 @@ describe('ProcessingService.processUnprocessed', () => {
     // Two jobs per photo now - the grid tile, then the renditions - and the flag has
     // to reach both, since the tile can fall back to a render and needs the match too.
     await makeProcessingService(repo, settingsWith({ match_embedded_jpeg: true })).processUnprocessed({ libraryId: 'lib' });
-    expect(posted.map((job) => job.kind === 'rendition' && job.matchEmbeddedJpeg)).toEqual([true, true]);
+    expect(posted.map((job) => job.kind === 'rendition' && job.cameraMatch)).toEqual(['lensAndColour', 'lensAndColour']);
 
     posted.length = 0;
     await makeProcessingService(repo, settingsWith({ match_embedded_jpeg: false })).processUnprocessed({ libraryId: 'lib' });
-    expect(posted.map((job) => job.kind === 'rendition' && job.matchEmbeddedJpeg)).toEqual([false, false]);
+    expect(posted.map((job) => job.kind === 'rendition' && job.cameraMatch)).toEqual(['none', 'none']);
   });
 
   it('leaves out the stages the library has turned off, whatever the photograph asked for', async () => {
@@ -271,7 +271,7 @@ describe('ProcessingService.processUnprocessed', () => {
     // Silent otherwise - the rendition still builds, at the right size, and only looks different.
     const repo = {
       listPendingProcessing: jest.fn(() => [
-        { ...pending('a'), render_skip_full: 'denoise,match,sharpen', edits: JSON.stringify({ sharpening: 70 }) },
+        { ...pending('a'), render_skip_full: 'denoise,lens,colour,sharpen', edits: JSON.stringify({ sharpening: 70 }) },
       ]),
       markTileBuilt: jest.fn(),
       markRenditionsBuilt: jest.fn(),
@@ -281,7 +281,7 @@ describe('ProcessingService.processUnprocessed', () => {
     await makeProcessingService(repo, settingsWith({ match_embedded_jpeg: true })).processUnprocessed({ libraryId: 'lib' });
 
     for (const job of posted) {
-      expect(job.kind === 'rendition' && job.matchEmbeddedJpeg).toBe(false);
+      expect(job.kind === 'rendition' && job.cameraMatch).toBe('none');
       expect(job.kind === 'rendition' && job.sharpen).toBe(0);
       expect(job.kind === 'rendition' && job.denoiseLuminance).toBe(0);
       expect(job.kind === 'rendition' && job.denoiseColour).toBe(0);

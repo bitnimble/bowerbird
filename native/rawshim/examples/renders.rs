@@ -219,30 +219,29 @@ fn graded(
         levels.peak.raw(),
         (floor.max(1.0 / 65536.0) / levels.white.raw()).log2(),
     );
-    if let Some(m) = &matched {
-        let rows: Vec<String> = m
-            .colour
+    if let Some(colour) = matched.as_ref().and_then(|m| m.colour.as_ref()) {
+        let rows: Vec<String> = colour
             .matrix
             .iter()
             .map(|row| format!("[{}]", row.map(|v| format!("{v:+.3}")).join(" ")))
             .collect();
         eprintln!(
             "  match deltaE {:.2} ceiling {:.2} saturation {:.3} lattice {} matrix {}",
-            m.colour.delta_e,
-            m.colour.ceiling,
-            m.colour.saturation,
-            m.colour.chroma.is_some(),
+            colour.delta_e,
+            colour.ceiling,
+            colour.saturation,
+            colour.chroma.is_some(),
             rows.join(" "),
         );
         let bins: Vec<[f32; 4]> = (0..16)
             .map(|bin| {
-                let x = (m.colour.ceiling * f64::from(bin) / 255.0) as f32;
+                let x = (colour.ceiling * f64::from(bin) / 255.0) as f32;
                 [x, x, x, 0.0]
             })
             .collect();
         let toned = pollster::block_on(rawshim::hdr_fit::evaluated(
             gpu,
-            &m.colour,
+            colour,
             &bins,
             rawshim::hdr_fit::Stage::Tone,
         ))
@@ -254,13 +253,13 @@ fn graded(
         // 6% and says nothing about where a highlight lands, which is half of what a curve decides.
         let whole: Vec<[f32; 4]> = (0..=16)
             .map(|step| {
-                let x = (m.colour.ceiling * f64::from(step) / 16.0) as f32;
+                let x = (colour.ceiling * f64::from(step) / 16.0) as f32;
                 [x, x, x, 0.0]
             })
             .collect();
         let over = pollster::block_on(rawshim::hdr_fit::evaluated(
             gpu,
-            &m.colour,
+            colour,
             &whole,
             rawshim::hdr_fit::Stage::Tone,
         ))
@@ -269,7 +268,7 @@ fn graded(
             .iter()
             .enumerate()
             .map(|(step, v)| {
-                format!("{:.2}:{:.4}", m.colour.ceiling * step as f64 / 16.0, v[1])
+                format!("{:.2}:{:.4}", colour.ceiling * step as f64 / 16.0, v[1])
             })
             .collect();
         eprintln!("  curve whole {}", full.join(" "));
@@ -333,8 +332,8 @@ fn graded(
         hdr::Cut::from_base(prepared, lens, size, stages.sharpen, sigma)
     };
 
-    let colour = matched.as_ref().filter(|_| stages.matched).map(|m| {
-        let mut colour = m.colour.clone();
+    let colour = matched.as_ref().filter(|_| stages.matched).and_then(|m| m.colour.as_ref()).map(|colour| {
+        let mut colour = colour.clone();
         if !stages.lattice {
             colour.chroma = None;
         }

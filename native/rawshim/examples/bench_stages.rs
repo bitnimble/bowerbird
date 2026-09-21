@@ -153,7 +153,7 @@ fn staged(laps: &[(&'static str, String, f64)]) -> Vec<(String, f64)> {
 fn command(raw: &str, output: &str) -> rawshim::job::Job {
     let json = serde_json::json!({
         "rawFilePath": raw,
-        "matchEmbeddedJpeg": true,
+        "cameraMatch": "lensAndColour",
         "denoiseLuminance": 20.0,
         "denoiseColour": 30.0,
         // On, which is what `dustSettings(undefined)` asks for. Whether the search then runs is

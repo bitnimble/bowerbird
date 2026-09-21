@@ -590,6 +590,7 @@ describe('a picture prepared on the server', () => {
       peak: 13783,
       floor: 141,
       matched: true,
+      cameraMatch: 'lensAndColour',
       mosaic: true,
       defocus: [0, 0],
     } as unknown as PreparedHeader;
@@ -684,6 +685,7 @@ describe('the level a zoom is served at', () => {
         grade: GRADE,
         strengths: { sharpen: 40, defringe: 0.5 },
         matched: true,
+        cameraMatch: 'lensAndColour',
         mosaic: false,
         asShot: null,
         detail: [0, 0],

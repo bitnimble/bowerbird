@@ -549,7 +549,7 @@ pub fn fit_hdr_for(
     raw_path: &str,
     quantile: f64,
 ) -> Option<hdr_fit::HdrMatch> {
-    fit_hdr_measured(frame, raw_path, quantile).map(|(matched, _)| matched)
+    fit_hdr_measured(frame, raw_path, quantile, hdr_fit::CameraMatch::LensAndColour).map(|(matched, _)| matched)
 }
 
 /// `fit_hdr_for`, with the levels the match was fitted against - which `open::measure` would
@@ -559,11 +559,12 @@ pub fn fit_hdr_measured(
     frame: &resident::Resident,
     raw_path: &str,
     quantile: f64,
+    camera_match: hdr_fit::CameraMatch,
 ) -> Option<(hdr_fit::HdrMatch, tone::Levels)> {
     let gpu = gpu::device()?;
     guard("fit_hdr_for", None, || {
         let geometry = ffi::geometry_for(raw_path)?;
-        pollster::block_on(hdr::fit_all(gpu, raw_path, frame, quantile, geometry))
+        pollster::block_on(hdr::fit_all(gpu, raw_path, frame, quantile, geometry, camera_match))
             .map(|(_, matched, levels)| (matched, levels))
     })
 }
@@ -794,7 +795,7 @@ mod tests {
             let gpu = gpu::device().expect("the fit needs an adapter");
             let resident = frame.on_device(gpu).expect("the frame reaches the device");
             if let Some(fitted) = fit_hdr_for(&resident, &path, 0.995) {
-                let colour = &fitted.colour;
+                let colour = fitted.colour.as_ref().expect("a colour fit");
                 let numbers = colour.curves.iter().map(Vec::len).sum::<usize>()
                     + 9
                     + colour.chroma.as_ref().map_or(0, |map| map.nodes_flat().len())

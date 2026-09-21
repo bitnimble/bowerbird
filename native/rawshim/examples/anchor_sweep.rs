@@ -26,16 +26,17 @@ use rawshim::galosh::{Detail, Fit};
 /// church interior reads 0.55 where a healthy frame reads a few hundredths, and the difference is
 /// visible as flat milky shadows with no separation in them.
 fn toe(gpu: &'static rawshim::gpu::Gpu, matched: &rawshim::hdr_fit::HdrMatch) -> f64 {
+    let colour = matched.colour.as_ref().expect("colour");
     let bins: Vec<[f32; 4]> = [1.0f64, 15.0]
         .iter()
         .map(|at| {
-            let x = (matched.colour.ceiling * at / 255.0) as f32;
+            let x = (colour.ceiling * at / 255.0) as f32;
             [x, x, x, 0.0]
         })
         .collect();
     let Some(read) = pollster::block_on(rawshim::hdr_fit::evaluated(
         gpu,
-        &matched.colour,
+        colour,
         &bins,
         rawshim::hdr_fit::Stage::Tone,
     )) else {
@@ -73,13 +74,13 @@ fn main() {
 
         let fitted = |body: bool| {
             rawshim::tone::use_body_anchor(body);
-            rawshim::fit_hdr_measured(&resident, path, 0.9).map(|(matched, levels)| {
+            rawshim::fit_hdr_measured(&resident, path, 0.9, rawshim::hdr_fit::CameraMatch::LensAndColour).map(|(matched, levels)| {
                 (
-                    matched.colour.delta_e,
+                    matched.colour.as_ref().expect("colour").delta_e,
                     levels.white.raw(),
                     toe(gpu, &matched),
                     levels.peak.raw() / levels.white.raw().max(1.0),
-                    matched.colour.ceiling,
+                    matched.colour.as_ref().expect("colour").ceiling,
                 )
             })
         };

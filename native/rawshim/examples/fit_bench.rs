@@ -73,7 +73,7 @@ fn measure(path: &str) {
         };
         let began = std::time::Instant::now();
         let fitted =
-            pollster::block_on(hdr::fit_all(gpu, path, &resident, quantile, geometry));
+            pollster::block_on(hdr::fit_all(gpu, path, &resident, quantile, geometry, rawshim::hdr_fit::CameraMatch::LensAndColour));
         taken.push(began.elapsed().as_secs_f64() * 1000.0);
         last = fitted;
     }
@@ -101,16 +101,6 @@ fn measure(path: &str) {
                     knots.iter().map(|k| format!("{k:.4}")).collect::<Vec<_>>().join(" ")
                 }),
             );
-            let c = &matched.colour;
-            println!(
-                "    matched yes  deltaE {:.6}  saturation {:.6}  chroma {}",
-                c.delta_e,
-                c.saturation,
-                match c.chroma {
-                    Some(_) => "yes",
-                    None => "no",
-                },
-            );
             // The whole match as the sidecar would store it, hashed: the lattice is too large to
             // print, and this is the form every later render reads.
             let encoded = rawshim::photo_analysis::encode(&rawshim::photo_analysis::PhotoAnalysis {
@@ -123,24 +113,38 @@ fn measure(path: &str) {
             let mut hasher = std::hash::DefaultHasher::new();
             std::hash::Hash::hash(&encoded, &mut hasher);
             println!("    encoded {:016x}", std::hash::Hasher::finish(&hasher));
-            // The transform itself, so two runs are compared on what they fitted rather than on
-            // how long they took to fit it.
-            for (row, values) in c.matrix.iter().enumerate() {
-                println!(
-                    "    matrix[{row}]  {:.9}  {:.9}  {:.9}",
-                    values[0], values[1], values[2]
-                );
-            }
-            // One sample of each curve rather than all of them: enough that a curve which moved
-            // shows, short enough to read.
-            for (channel, curve) in c.curves.iter().enumerate() {
-                let at = |f: f64| curve[((curve.len() - 1) as f64 * f) as usize];
-                println!(
-                    "    curve[{channel}]   {:.9}  {:.9}  {:.9}",
-                    at(0.25),
-                    at(0.5),
-                    at(0.75)
-                );
+            match matched.colour.as_ref() {
+                Some(c) => {
+                    println!(
+                        "    matched yes  deltaE {:.6}  saturation {:.6}  chroma {}",
+                        c.delta_e,
+                        c.saturation,
+                        match c.chroma {
+                            Some(_) => "yes",
+                            None => "no",
+                        },
+                    );
+                    // The transform itself, so two runs are compared on what they fitted rather than on
+                    // how long they took to fit it.
+                    for (row, values) in c.matrix.iter().enumerate() {
+                        println!(
+                            "    matrix[{row}]  {:.9}  {:.9}  {:.9}",
+                            values[0], values[1], values[2]
+                        );
+                    }
+                    // One sample of each curve rather than all of them: enough that a curve which moved
+                    // shows, short enough to read.
+                    for (channel, curve) in c.curves.iter().enumerate() {
+                        let at = |f: f64| curve[((curve.len() - 1) as f64 * f) as usize];
+                        println!(
+                            "    curve[{channel}]   {:.9}  {:.9}  {:.9}",
+                            at(0.25),
+                            at(0.5),
+                            at(0.75)
+                        );
+                    }
+                }
+                None => println!("    matched lens only"),
             }
         }
     }

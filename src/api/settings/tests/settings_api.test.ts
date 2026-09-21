@@ -8,7 +8,7 @@ import type { RenderTimingsFile } from '../../../services/processing/renditions/
 import type { SettingsRepository } from '../../../services/settings/settings_repository';
 import { SettingsApi } from '../settings_api';
 
-const MEASURED: RenderTiming = { total: 800, stages: { match: 400 }, measured_at: '2026-01-01T00:00:00.000Z' };
+const MEASURED: RenderTiming = { total: 800, stages: { colour: 400 }, measured_at: '2026-01-01T00:00:00.000Z' };
 
 function buildApp(
   read: () => RenderTimings = () => ({}),

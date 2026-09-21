@@ -1,9 +1,11 @@
 import { AppError } from '../../../errors';
 import type { AssemblyRecipe } from '../../../schemas/assembly';
 import type { Library } from '../../../schemas/libraries';
+import { cameraMatchWithStages } from '../../../schemas/render_stages';
 import { getDataPath } from '../../../utils/paths';
 import { hasEmbeddedJpeg } from '../../../utils/scan';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
+import type { SettingsRepository } from '../../settings/settings_repository';
 import { renditionVariant, type Rendition } from '../renditions/renditions';
 import { renditionSkips, withStagesOff } from '../renditions/render_stages';
 import { openCompositeWorker, type CompositeWorker } from '../workers/composite_worker';
@@ -21,6 +23,7 @@ export class CompositeRenderer {
       photoId: string,
     ) => { kind: 'panorama' | 'assembly'; recipe: unknown; sources: CompositeJobSource[] } | null,
     private readonly targets: RenderTargets,
+    private readonly settings: SettingsRepository,
     private readonly announce: (photoId: string, written: RenditionWritten) => void,
   ) {}
 
@@ -44,6 +47,7 @@ export class CompositeRenderer {
   ): Promise<string> {
     const recipe = await on.run({
       kind: 'composite',
+      cameraMatch: 'lensAndColour',
       want: 'align',
       photoId: libraryId,
       sources,
@@ -75,6 +79,7 @@ export class CompositeRenderer {
   ): Promise<string> {
     const analysed = await on.run({
       kind: 'composite',
+      cameraMatch: 'lensAndColour',
       want: 'analyse',
       photoId: libraryId,
       sources,
@@ -110,6 +115,7 @@ export class CompositeRenderer {
     this.seaming ??= this.openComposite();
     const solved = await this.seaming.run({
       kind: 'composite',
+      cameraMatch: 'lensAndColour',
       want: 'seams',
       photoId: '',
       sources: [],
@@ -150,8 +156,13 @@ export class CompositeRenderer {
     on: CompositeWorker,
   ): Promise<void> {
     const dataPath = getDataPath(library);
+    const cameraMatch = cameraMatchWithStages(
+      this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
+      renditionSkips(library, 'full'),
+    );
     await on.run({
       kind: 'composite',
+      cameraMatch,
       want: 'render',
       // No row to key it by, as a prepare of a draft has none.
       photoId: '',
@@ -183,8 +194,13 @@ export class CompositeRenderer {
     on: CompositeWorker,
   ): Promise<void> {
     const dataPath = getDataPath(library);
+    const cameraMatch = cameraMatchWithStages(
+      this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
+      renditionSkips(library, 'full'),
+    );
     await on.run({
       kind: 'composite',
+      cameraMatch,
       want: 'render',
       // No row to key it by, as a draft has none.
       photoId: '',
@@ -271,6 +287,7 @@ export class CompositeRenderer {
       withStagesOff(
         {
           kind: 'composite',
+          cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
           want: 'render',
           photoId,
           sources,
@@ -283,7 +300,7 @@ export class CompositeRenderer {
           // is a photograph, so what frames it is the field that frames every other one.
           ...developed(this.editsFor(photoId)?.doc ?? null),
           ...this.targets.render(),
-        },
+        } satisfies CompositeJob,
         renditionSkips(library, rendition),
       ),
     );

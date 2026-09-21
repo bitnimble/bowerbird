@@ -156,7 +156,7 @@ impl Prepared {
         adjust: crate::gpu::Adjust,
     ) -> crate::tone::SceneGrade<'_> {
         crate::tone::SceneGrade::new(
-            self.matched.as_ref().map(|m| &m.colour),
+            self.matched.as_ref().and_then(|m| m.colour.as_ref()),
             self.levels,
             self.reference_nits,
             exposure,
@@ -881,7 +881,7 @@ mod tests {
             &crate::photo_analysis::PhotoAnalysis {
                 from_raw: crate::photo_analysis::FromRaw {
                     matched: Some(crate::hdr_fit::HdrMatch {
-                        colour: crate::hdr_fit::HdrColour::identity(),
+                        colour: Some(crate::hdr_fit::HdrColour::identity()),
                         lens: crate::fit::Lens::none(),
                     }),
                     ..Default::default()

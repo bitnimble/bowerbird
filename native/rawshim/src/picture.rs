@@ -149,6 +149,7 @@ pub fn prepared(
             floor: levels.floor,
             grade: job.grade,
             strengths: job.strengths(),
+            camera_match: job.camera_match,
             matched: matched.is_some(),
             // The mosaic stayed on this side whatever the picture was made of, so a new Detail
             // amount is a new prepare rather than a filter the client drags.

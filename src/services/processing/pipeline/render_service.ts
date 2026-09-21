@@ -13,6 +13,7 @@ import type { SettingsRepository } from '../../settings/settings_repository';
 import { encoderQuality } from '../analysis/quality';
 import type { TileEncoding } from '../analysis/metadata';
 import type { Rendition } from '../renditions/renditions';
+import { renditionSkips } from '../renditions/render_stages';
 import type { CompositeWorker } from '../workers/composite_worker';
 import type { Missing, Shown } from '../workers/prepare_pool';
 import type {
@@ -22,7 +23,7 @@ import type {
   RenditionSource,
   RenditionWritten,
 } from '../workers/processing_types';
-import type { RenderTiming, RenderedRendition } from '../../../schemas/render_stages';
+import { cameraMatchWithStages, type CameraMatch, type RenderTiming, type RenderedRendition } from '../../../schemas/render_stages';
 import type { RenderTimingsFile } from '../renditions/render_timings_file';
 import { RenderTargets } from './render_targets';
 import { RenderBenchmark } from './render_benchmark';
@@ -53,7 +54,7 @@ export abstract class RenderService {
     ) => { kind: 'panorama' | 'assembly'; recipe: unknown; sources: CompositeJobSource[] } | null,
   ) {
     this.targets = new RenderTargets(settings);
-    this.composites = new CompositeRenderer(photoProcessing, editsFor, compositeOf, this.targets, (photoId, written) =>
+    this.composites = new CompositeRenderer(photoProcessing, editsFor, compositeOf, this.targets, settings, (photoId, written) =>
       this.announce(photoId, written),
     );
     this.prepareRenderer = new PrepareRenderer(photoPaths, photoListing, settings, editsFor, libraryOf, compositeOf, this.targets);
@@ -74,6 +75,11 @@ export abstract class RenderService {
   /** What a render's stages cost on this machine, measured now and filed in `into`. */
   async benchmarkRender(rendition: RenderedRendition, into: RenderTimingsFile): Promise<RenderTiming> {
     return this.benchmark.run(rendition, into);
+  }
+
+  cameraMatchFor(library: Library, rendition: Rendition): CameraMatch {
+    const base = this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none';
+    return cameraMatchWithStages(base, renditionSkips(library, rendition));
   }
 
   protected abstract stageDone(

@@ -499,7 +499,7 @@ fn fitted_lens(path: &str) -> Option<Vec<u8>> {
     let resident = frame.as_ref().and_then(|frame| frame.on_device(gpu));
     let measured = resident
         .as_ref()
-        .and_then(|resident| rawshim::fit_hdr_measured(resident, path, WHITE_QUANTILE));
+        .and_then(|resident| rawshim::fit_hdr_measured(resident, path, WHITE_QUANTILE, rawshim::hdr_fit::CameraMatch::LensAndColour));
     let mut analysis = rawshim::photo_analysis::PhotoAnalysis::default();
     match measured {
         Some((matched, levels)) => {
@@ -514,7 +514,7 @@ fn fitted_lens(path: &str) -> Option<Vec<u8>> {
             println!("lens: {} matches nothing, so the identity", name_of(path));
             analysis.from_raw.matched = Some(rawshim::hdr_fit::HdrMatch {
                 lens: rawshim::fit::Lens::none(),
-                colour: rawshim::hdr_fit::HdrColour::identity(),
+                colour: None,
             });
         }
     }

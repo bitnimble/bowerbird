@@ -972,7 +972,85 @@ impl ChromaMap {
 pub struct HdrMatch {
     /// The geometry search's lens and falloff, as they were fitted (10.8.1).
     pub lens: crate::fit::Lens,
-    pub colour: HdrColour,
+    pub colour: Option<HdrColour>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CameraMatch {
+    None,
+    Lens,
+    LensAndColour,
+}
+
+impl CameraMatch {
+    pub fn needs_fit(self, matched: Option<&HdrMatch>) -> bool {
+        match self {
+            Self::None => false,
+            Self::Lens => matched.is_none(),
+            Self::LensAndColour => matched.and_then(|m| m.colour.as_ref()).is_none(),
+        }
+    }
+
+    pub fn apply(self, matched: Option<HdrMatch>) -> Option<HdrMatch> {
+        match self {
+            Self::None => None,
+            Self::Lens => matched.map(|m| HdrMatch { lens: m.lens, colour: None }),
+            Self::LensAndColour => matched,
+        }
+    }
+}
+
+#[cfg(test)]
+mod camera_match_tests {
+    use super::{CameraMatch, HdrMatch};
+
+    #[test]
+    fn camera_match_applies_only_the_requested_parts() {
+        let matched = crate::photo_analysis::tests::a_match();
+        assert!(CameraMatch::None.apply(Some(matched.clone())).is_none());
+        let lens = CameraMatch::Lens.apply(Some(matched.clone())).expect("lens");
+        assert_eq!(lens.lens.crop, matched.lens.crop);
+        assert!(lens.colour.is_none());
+        assert!(CameraMatch::LensAndColour.apply(Some(matched.clone())).expect("match").colour.is_some());
+        assert!(!CameraMatch::None.needs_fit(None));
+        assert!(CameraMatch::Lens.needs_fit(None));
+        assert!(!CameraMatch::Lens.needs_fit(Some(&lens)));
+        assert!(CameraMatch::LensAndColour.needs_fit(Some(&lens)));
+        assert!(!CameraMatch::LensAndColour.needs_fit(Some(&matched)));
+    }
+
+    #[test]
+    fn camera_match_protocol_refuses_colour_without_lens() {
+        for value in ["none", "lens", "lensAndColour"] {
+            assert!(serde_json::from_value::<CameraMatch>(serde_json::json!(value)).is_ok());
+        }
+        assert!(serde_json::from_str::<CameraMatch>(r#""colour""#).is_err());
+    }
+
+    #[test]
+    fn camera_match_lens_analysis_round_trips_and_gains_colour_without_losing_it() {
+        use crate::photo_analysis::{self, FromRaw, PhotoAnalysis};
+        let full = PhotoAnalysis {
+            from_raw: FromRaw { matched: Some(photo_analysis::tests::a_match()), ..Default::default() },
+            ..Default::default()
+        };
+        let lens = PhotoAnalysis {
+            from_raw: FromRaw {
+                matched: Some(HdrMatch { lens: full.from_raw.matched.as_ref().unwrap().lens.clone(), colour: None }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let decoded = photo_analysis::decode(&photo_analysis::encode(&lens)).expect("analysis");
+        let matched = decoded.from_raw.matched.expect("lens");
+        assert!(matched.colour.is_none());
+        assert_eq!(matched.lens.distortion.as_ref().unwrap().len(), 4);
+        assert!((matched.lens.crop - 1.0234).abs() < 1e-6);
+        assert!(full.adds_to(&lens));
+        assert!(!lens.adds_to(&full));
+        assert!(lens.filled_from(&full).from_raw.matched.expect("match").colour.is_some());
+    }
 }
 
 /// Interleaved RGB, linear, 1.0 = diffuse white.
@@ -5157,7 +5235,7 @@ pub async fn fit_linearised(
     // reads it: a pass of its own would be the whole plane back to the host and up again, between
     // two passes that both already have it.
     let fitted = fit_model_planes(gpu, plane, 1.0 / anchor.raw(), wide_jpeg, &lens).await?;
-    Some(HdrMatch { lens, colour: fitted.colour })
+    Some(HdrMatch { lens, colour: Some(fitted.colour) })
 }
 
 /// Everything `prepared_planes` built, in the place the stage after it reads it.
@@ -6599,7 +6677,7 @@ mod tests {
 
         // Read where the grade reads a blown sky: the shared gain scales the pixel so
         // its brightest channel sits at the top of the domain.
-        let out = through(&fitted.colour, Stage::Tone, &[[1.0, 1.0, 1.0, 0.0]])
+        let out = through(fitted.colour.as_ref().expect("colour"), Stage::Tone, &[[1.0, 1.0, 1.0, 0.0]])
             .expect("an adapter for the fit's search")[0];
         let (high, low) = (out[0].max(out[1]).max(out[2]), out[0].min(out[1]).min(out[2]));
         assert!(high / low - 1.0 < 0.01, "a neutral highlight came out {out:?}");
@@ -6620,7 +6698,7 @@ mod tests {
             ))
                 .expect("the chart is fittable");
 
-        let out = through(&fitted.colour, Stage::Tone, &[[1.2, 0.6, 0.3, 0.0]])
+        let out = through(fitted.colour.as_ref().expect("colour"), Stage::Tone, &[[1.2, 0.6, 0.3, 0.0]])
             .expect("an adapter for the fit's search")[0];
         assert!(out[0] > out[1] * 1.3, "the warm highlight went flat: {out:?}");
         assert!(out[1] > out[2] * 1.2, "the warm highlight went flat: {out:?}");
@@ -6740,7 +6818,7 @@ mod tests {
         // of this chart reached.
         let levels = [0.4, 0.5, 0.6];
         let samples: Vec<[f64; 4]> = levels.iter().map(|l| [*l, *l, *l, *l]).collect();
-        let outs = through(&fitted.colour, Stage::Full, &samples)
+        let outs = through(fitted.colour.as_ref().expect("colour"), Stage::Full, &samples)
             .expect("an adapter for the fit's search");
         for (level, out) in levels.iter().copied().zip(outs) {
             for c in 0..3 {

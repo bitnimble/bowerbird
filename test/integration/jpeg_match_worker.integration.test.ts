@@ -56,7 +56,7 @@ function runJob(job: RenditionJob): Promise<ProcessingResult> {
 }
 
 async function render(
-  matchEmbeddedJpeg: boolean,
+  matchCamera: boolean,
   name: string,
   render: { denoiseLuminance: number; denoiseColour: number; sharpen: number; defringe: number } = { denoiseLuminance: 0, denoiseColour: 0, sharpen: 0, defringe: 0 },
 ): Promise<string> {
@@ -68,7 +68,7 @@ async function render(
     dataPath: root,
     targets: [target(outputPath)],
     grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.9 },
-    matchEmbeddedJpeg,
+    cameraMatch: matchCamera ? 'lensAndColour' : 'none',
     dust: { enabled: false, sensitivity: 0.5, intensity: 1 },
     denoiser: 'galosh',
     repairs: [],
@@ -110,12 +110,6 @@ test(
 test(
   'the worker applies the denoise and the sharpen the job asks for',
   async () => {
-    // Same shape of test as the match above, and for the same reason. Both settings
-    // reach the worker through a `...this.render()` spread in `processing_service`,
-    // which is the pattern that dropped `matchEmbeddedJpeg` in silence once before -
-    // TypeScript does not excess-check a spread, so a renamed or unread settings key
-    // leaves the whole stage permanently off with every module test still green.
-    //
     // The assertion is only that the pixels moved. What the filters do to them is
     // measured in `image.rs` against constructed inputs, where it can be measured
     // properly; what cannot be checked there is whether anything calls them.

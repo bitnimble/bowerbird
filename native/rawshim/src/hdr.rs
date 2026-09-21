@@ -13,7 +13,7 @@
 // HDR (§10.7).
 
 use crate::hdr_args::{self, EncodeOptions};
-use crate::hdr_fit::{self, HdrMatch};
+use crate::hdr_fit::{self, CameraMatch, HdrMatch};
 use crate::image;
 use crate::tone;
 use serde::{Deserialize, Serialize};
@@ -105,7 +105,12 @@ pub async fn fit_match_from(
     preview: &crate::rgb::Rgb,
     lens: crate::fit::Lens,
 ) -> Option<(HdrMatch, tone::Levels)> {
-    let (tw, _) = hdr_fit::fitted_preview_size(preview.width, preview.height);
+    let (tw, th) = hdr_fit::fitted_preview_size(preview.width, preview.height);
+    let (width, height) = frame.size();
+    if width < tw || height < th {
+        return None;
+    }
+    let quantile = crate::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
     let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;
     let matched = hdr_fit::fit(gpu, &prepared.plane, prepared.levels.white, preview, lens).await?;
     Some((matched, prepared.levels))
@@ -152,7 +157,11 @@ pub async fn fit_all(
     frame: &crate::resident::Resident,
     quantile: f64,
     geometry: crate::fit::Geometry,
+    camera_match: CameraMatch,
 ) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
+    if camera_match == CameraMatch::None {
+        return None;
+    }
     // One decode, read by both halves: the geometry fit takes it below and the colour fit
     // takes it again for the plane.
     let mut lap = crate::clock::laps("  match ");
@@ -162,7 +171,7 @@ pub async fn fit_all(
     }
     let lateral = crate::ffi::recorded_lateral(raw_path);
     lap("preview decode");
-    fit_all_from_preview(gpu, frame, quantile, geometry, &preview, lateral).await
+    fit_all_from_preview(gpu, frame, quantile, geometry, &preview, lateral, camera_match).await
 }
 
 /// `fit_all` off a preview the caller decoded, with the levels the match was fitted against.
@@ -173,7 +182,11 @@ pub async fn fit_all_from_preview(
     geometry: crate::fit::Geometry,
     preview: &crate::rgb::Rgb,
     lateral: Option<[Vec<f64>; 2]>,
+    camera_match: CameraMatch,
 ) -> Option<(crate::fit::Profile, HdrMatch, tone::Levels)> {
+    if camera_match == CameraMatch::None {
+        return None;
+    }
     let mut lap = crate::clock::laps("  match ");
     let (tw, _) = hdr_fit::fitted_preview_size(preview.width, preview.height);
     // The body's own anchor where its rendering carries one, and the caller's quantile where it
@@ -198,8 +211,13 @@ pub async fn fit_all_from_preview(
     lap("geometry");
     crate::fit::with_lateral(gpu, &mut profile, &rendered, lateral).await;
     lap("lateral");
-    let matched =
-        hdr_fit::fit_linearised(gpu, &plane, levels.white, wide_jpeg, profile.lens()).await?;
+    if camera_match == CameraMatch::Lens {
+        let matched = HdrMatch { lens: profile.lens(), colour: None };
+        return Some((profile, matched, levels));
+    }
+    let matched = hdr_fit::fit_linearised(gpu, &plane, levels.white, wide_jpeg, profile.lens())
+        .await
+        .unwrap_or_else(|| HdrMatch { lens: profile.lens(), colour: None });
     lap("colour");
     Some((profile, matched, levels))
 }
@@ -408,7 +426,7 @@ fn neutral_scene<'a>(
     matched: Option<&'a HdrMatch>,
 ) -> tone::SceneGrade<'a> {
     tone::SceneGrade::new(
-        matched.map(|m| &m.colour),
+        matched.and_then(|m| m.colour.as_ref()),
         levels,
         options.grade.reference_white_nits,
         // Neutral is zero stops: a one here renders every pin and every debug harness a stop over

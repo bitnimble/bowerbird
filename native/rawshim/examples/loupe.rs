@@ -35,7 +35,7 @@ fn main() {
     let fit_started = std::time::Instant::now();
     let matched = rawshim::fit_hdr_for(&resident, raw, 0.9).expect("a fit");
     let fit_seconds = fit_started.elapsed().as_secs_f64();
-    let colour = &matched.colour;
+    let colour = matched.colour.as_ref().expect("colour");
     eprintln!(
         "fit: delta_e {:.3} ceiling {:.3} saturation {:.3} lattice {}",
         colour.delta_e,
@@ -68,6 +68,7 @@ fn main() {
         strengths: rawshim::image::Strengths { sharpen: 1.0, defringe: 1.0 },
         denoise_luminance: Some(40.0),
         denoise_colour: Some(40.0),
+        denoiser: rawshim::galosh::Denoiser::Galosh,
         dust: Default::default(),
         adjust: rawshim::gpu::Adjust::none(),
         levels: Some(levels),

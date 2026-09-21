@@ -374,7 +374,7 @@ export class ProcessingService extends RenderService {
         if (job.targets.some((target) => target.rendition === 'grid')) {
           this.stageDone(photo, result.photoId, 'tile', result.descriptor, {
             from: 'render',
-            matched: job.matchEmbeddedJpeg,
+            matched: job.cameraMatch !== 'none',
           });
         }
       },
@@ -538,7 +538,7 @@ export class ProcessingService extends RenderService {
         rawFilePath,
         dataPath,
         grade: this.targets.grade(),
-        matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+        cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
         ...developed(pending.edits),
         ...this.targets.render(),
       },

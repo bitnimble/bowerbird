@@ -849,7 +849,7 @@ pub(crate) mod tests {
         let mut analysis = crate::photo_analysis::PhotoAnalysis::default();
         analysis.from_raw.matched = Some(crate::hdr_fit::HdrMatch {
             lens: crate::fit::Lens::none(),
-            colour: crate::hdr_fit::HdrColour::identity(),
+            colour: None,
         });
         let stored = crate::photo_analysis::encode(&analysis);
 

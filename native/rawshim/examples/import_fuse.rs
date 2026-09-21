@@ -74,7 +74,7 @@ fn tile_job(raw: &str, out_path: &str, scan: bool) -> job::Job {
     serde_json::from_str(&format!(
         r#"{{
             "rawFilePath": {raw:?},
-            "matchEmbeddedJpeg": true,
+            "cameraMatch": "lensAndColour",
             "scan": {scan},
             "denoiseLuminance": 20,
             "denoiseColour": 30,

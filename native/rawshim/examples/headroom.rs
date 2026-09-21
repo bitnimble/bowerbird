@@ -99,14 +99,14 @@ fn main() {
 
     let resident = frame.on_device(gpu).expect("the frame on the device");
     let matched = rawshim::fit_hdr_for(&resident, &path, QUANTILE);
-    match &matched {
-        Some(m) => println!(
+    match matched.as_ref().and_then(|m| m.colour.as_ref()) {
+        Some(colour) => println!(
             "match deltaE {:.2}  ceiling {:.3}  anchor {:.3}  saturation {:.3}  lattice {}",
-            m.colour.delta_e,
-            m.colour.ceiling,
-            m.colour.anchor,
-            m.colour.saturation,
-            m.colour.chroma.is_some(),
+            colour.delta_e,
+            colour.ceiling,
+            colour.anchor,
+            colour.saturation,
+            colour.chroma.is_some(),
         ),
         None => println!("no match: the neutral arm renders this"),
     }
@@ -206,7 +206,7 @@ fn main() {
         }
     }
 
-    if let Some(m) = &matched {
+    if let Some(colour) = matched.as_ref().and_then(|matched| matched.colour.as_ref()) {
         println!("\nthe tone stage on a saturated highlight, by how far over white it sits:");
         let overs = [0.5, 0.9, 1.0, 2.0, 4.0, 8.0, 16.0];
         let scenes: Vec<[f64; 3]> = overs.iter().map(|over| [*over, over * 0.35, over * 0.6]).collect();
@@ -214,7 +214,7 @@ fn main() {
             scenes.iter().map(|s| [s[0] as f32, s[1] as f32, s[2] as f32, 0.0]).collect();
         let outs = pollster::block_on(rawshim::hdr_fit::evaluated(
             gpu,
-            &m.colour,
+            colour,
             &samples,
             rawshim::hdr_fit::Stage::Tone,
         ))

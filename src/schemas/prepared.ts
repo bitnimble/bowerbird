@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { JobGradeSchema, NoiseFitSchema } from './jobs';
+import { CameraMatchSchema } from './render_stages';
 
 const PairSchema = z.tuple([z.number(), z.number()]);
 
@@ -21,6 +22,7 @@ export const PreparedHeaderSchema = z.object({
   floor: z.number().nullable(),
   grade: JobGradeSchema,
   strengths: z.object({ sharpen: z.number(), defringe: z.number() }),
+  cameraMatch: CameraMatchSchema,
   matched: z.boolean(),
   /**
    * Whether this photograph has a sensor mosaic behind it.

@@ -50,6 +50,13 @@
       "when": 1789700000000,
       "tag": "0006_passive_peers",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789980000000,
+      "tag": "0007_camera_match_stages",
+      "breakpoints": true
     }
   ]
 }

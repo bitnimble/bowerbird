@@ -2,6 +2,7 @@ import { type ProcessingStage, RENDITION_SOURCES, type RenditionSource } from '.
 import type { DustSettings } from '../../../schemas/dust_settings';
 import type { CompositeWant, JobAdjust, JobGeometry } from '../../../schemas/jobs';
 import type { Denoiser, Repair } from '../../../schemas/photo_edits';
+import type { CameraMatch } from '../../../schemas/render_stages';
 import type { Rendition } from '../renditions/renditions';
 
 export type { RenditionSource };
@@ -106,15 +107,7 @@ export interface RenditionJob extends Developed {
   dataPath: string;
   targets: RenditionTarget[];
   grade: HdrGrade;
-  /**
-   * Fit the camera's own colour treatment and lens correction off the embedded
-   * JPEG and apply them to this job's SDR renders (DESIGN §10.8).
-   *
-   * On the job rather than the target because the fit is a property of the photo:
-   * one fit feeds every rendition in the job, so the grid and the full view cannot
-   * disagree about colour, and the expensive part happens once.
-   */
-  matchEmbeddedJpeg: boolean;
+  cameraMatch: CameraMatch;
   preserveSourceOrientation?: boolean;
   /**
    * Collapse each Bayer quad into one pixel rather than interpolating it (§10.5).
@@ -182,6 +175,7 @@ export type CompositeJob = CompositeJobBase & CompositeWant;
 
 interface CompositeJobBase extends Developed {
   kind: 'composite';
+  cameraMatch: CameraMatch;
   /** The composite being rendered, or the library being searched where there is no row yet. */
   photoId: string;
   sources: CompositeJobSource[];

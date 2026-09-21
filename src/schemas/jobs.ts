@@ -3,6 +3,7 @@ import { AssemblyRecipeSchema } from './assembly';
 import { RenditionSchema, RenditionSourceSchema } from './common';
 import type { DustSettings } from './dust_settings';
 import { ColourProfileSchema, DenoiserSchema, RepairSchema } from './photo_edits';
+import { CameraMatchSchema } from './render_stages';
 
 /** How a scene-linear decode is graded to display-referred (§10.7). */
 export const JobGradeSchema = z.object({
@@ -119,7 +120,7 @@ export const DustSettingsSchema = z.object({
 
 export const JobSchema = z.object({
   rawFilePath: z.string(),
-  matchEmbeddedJpeg: z.boolean(),
+  cameraMatch: CameraMatchSchema,
   preserveSourceOrientation: z.boolean().optional(),
   /**
    * What has already been measured about this photograph, where it has been kept.

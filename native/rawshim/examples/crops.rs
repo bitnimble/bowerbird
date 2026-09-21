@@ -41,15 +41,16 @@ fn main() {
         max_edge: 100_000.0,
     };
 
+    let colour = matched.colour.as_ref().expect("colour");
     eprintln!(
         "chroma map {} saturation {} deltaE {}",
-        matched.colour.chroma.is_some(),
-        matched.colour.saturation,
-        matched.colour.delta_e,
+        colour.chroma.is_some(),
+        colour.saturation,
+        colour.delta_e,
     );
     // What the fitted model does to a perfectly neutral input, at every level. Anything
     // other than zero here is the model tinting a grey, which is the cast by definition.
-    let no_map = rawshim::hdr_fit::HdrColour { chroma: None, ..matched.colour.clone() };
+    let no_map = rawshim::hdr_fit::HdrColour { chroma: None, ..colour.clone() };
     let levels = [0.02f32, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.9];
     let greys: Vec<[f32; 4]> = levels.iter().map(|l| [*l, *l, *l, 0.0]).collect();
     let through = |colour: &rawshim::hdr_fit::HdrColour| {
@@ -61,7 +62,7 @@ fn main() {
         ))
         .expect("the device evaluates the model")
     };
-    for ((level, full), bare) in levels.iter().zip(through(&matched.colour)).zip(through(&no_map)) {
+    for ((level, full), bare) in levels.iter().zip(through(colour)).zip(through(&no_map)) {
         let tint = |v: [f32; 4]| (f64::from(v[1] - v[0]) * 255.0, f64::from(v[2] - v[0]) * 255.0);
         let (fg, fb) = tint(full);
         let (bg, bb) = tint(bare);

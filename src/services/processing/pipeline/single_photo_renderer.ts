@@ -110,7 +110,7 @@ export class SinglePhotoRenderer {
       skip,
       dataPath,
     });
-    return { ...job, matchEmbeddedJpeg: !skip.includes('match') };
+    return withStagesOff({ ...job, cameraMatch: 'lensAndColour', denoiseLuminance: 20, denoiseColour: 30, defringe: 1 }, skip);
   }
 
   private oneRendition(
@@ -164,13 +164,13 @@ export class SinglePhotoRenderer {
           // The on-demand rendition has to agree with the ones built at import, so it
           // obeys the same settings. The fit is deterministic, so refitting here lands
           // on the same transform rather than a second opinion.
-          matchEmbeddedJpeg: this.settings.get().match_embedded_jpeg,
+          cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
           // And the same edits, for the same reason. This is the path a `max` export takes,
           // so without it the one rendition a reader asks for by name is the one that ignores
           // what they did to the picture.
           ...developed(edits?.doc ?? null),
           ...this.targets.render(),
-        },
+        } satisfies RenditionJob,
         skip,
       ),
       builtFrom: edits?.stamp ?? null,
@@ -216,7 +216,7 @@ export class SinglePhotoRenderer {
       targets: [],
       measure: true,
       grade: this.targets.grade(),
-      matchEmbeddedJpeg: true,
+      cameraMatch: 'lensAndColour',
       ...developed(null),
       ...this.targets.render(),
     };
@@ -277,7 +277,7 @@ export class SinglePhotoRenderer {
     if (tile != null) {
       this.photoProcessing.markTileBuilt(job.photoId, version, builtFrom, {
         from: tile.source,
-        matched: job.matchEmbeddedJpeg,
+        matched: job.cameraMatch !== 'none',
       });
       this.announce(job.photoId, { stage: 'tile', version });
     }

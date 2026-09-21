@@ -14,6 +14,7 @@
 //! what is measured, what is skipped because it was handed over - is the same code for both.
 
 use crate::resident::Resident;
+use crate::hdr_fit::CameraMatch;
 
 /// Where a camera match comes from, and whether one is wanted.
 ///
@@ -27,8 +28,6 @@ use crate::resident::Resident;
 /// Measured before it went: over 32 Canon frames lensfun is worth 0.049 luma levels of 65535
 /// against the fitted geometry, and the gap lives almost entirely in wide and superzoom glass.
 pub enum Fitting<'a> {
-    /// No match. The grade takes its neutral arm, which is what a job with `match_embedded_jpeg`
-    /// off is asking for.
     None,
     /// From the file's bytes, with the geometry fitted from the picture. The editor's.
     Preview(&'a [u8]),
@@ -50,6 +49,7 @@ pub struct Opening<'a> {
     /// What is already known about this photograph, so an open measures only what it must.
     pub stored: &'a crate::photo_analysis::PhotoAnalysis,
     pub fitting: Fitting<'a>,
+    pub camera_match: CameraMatch,
     /// The mosaic's own noise, as the decode fitted it. What bounds the defringe's per-channel
     /// estimate, which is a median over a demosaiced frame and so cannot tell texture from grain.
     pub noise: Option<crate::galosh::NoiseFit>,
@@ -103,7 +103,7 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
 
     // Only where a match is actually going to be fitted: a photograph that has one stored skips
     // this and lets the chain's own `prepare` correct, which costs no transfer at all.
-    let needs_fit = how.fitting.wanted() && stored.from_raw.matched.is_none();
+    let needs_fit = how.fitting.wanted() && how.camera_match.needs_fit(stored.from_raw.matched.as_ref());
     let defocus = match needs_fit {
         false => None,
         true => {
@@ -158,24 +158,21 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     let known_levels =
         stored.from_render.levels.and_then(|m| m.levels_at(how.grade.white_quantile));
 
-    // Fitted once, before anything is written: every rendition of one photograph has to get the
-    // same transform, and the render has to match the camera's JPEG the grid tile is made of, or a
-    // photograph changes appearance when it is opened.
-    // **A caller that asked for no match gets none, stored or not.** A kept match is an answer to
-    // "fit this photograph", and a job with `match_embedded_jpeg` off has not asked the question -
-    // so honouring one here would grade and *warp* through a transform the setting was turned off
-    // to avoid, and turning it off would do nothing at all.
     let (matched, fitted_levels) = match (&how.fitting, &stored.from_raw.matched) {
         (Fitting::None, _) => (None, None),
-        (_, Some(matched)) => (Some(matched.clone()), None),
+        _ if !needs_fit => (how.camera_match.apply(stored.from_raw.matched.clone()), None),
+        (fitting, Some(matched)) => {
+            complete_colour(fitting, frame, how.grade.white_quantile, matched).await
+                .map_or_else(|| (Some(matched.clone()), None), |(matched, levels)| (Some(matched), Some(levels)))
+        }
         (Fitting::Preview(bytes), None) => match crate::gpu::device() {
-            Some(gpu) => fit_from_preview(gpu, bytes, frame, how.grade.white_quantile).await,
+            Some(gpu) => fit_from_preview(gpu, bytes, frame, how.grade.white_quantile, how.camera_match).await,
             None => None,
         }
         .unzip(),
         #[cfg(feature = "renditions")]
         (Fitting::Profiled(path), None) => {
-            crate::fit_hdr_measured(frame, path, how.grade.white_quantile).unzip()
+            crate::fit_hdr_measured(frame, path, how.grade.white_quantile, how.camera_match).unzip()
         }
     };
     lap("camera match");
@@ -198,6 +195,22 @@ pub async fn measure(frame: &Resident, how: &Opening<'_>) -> Result<Measured, St
     Ok(Measured { matched, levels, defringe, blur })
 }
 
+async fn complete_colour(
+    fitting: &Fitting<'_>,
+    frame: &Resident,
+    quantile: f64,
+    matched: &crate::hdr_fit::HdrMatch,
+) -> Option<(crate::hdr_fit::HdrMatch, crate::tone::Levels)> {
+    let gpu = crate::gpu::device()?;
+    let preview = match fitting {
+        Fitting::None => return None,
+        Fitting::Preview(bytes) => crate::hdr::match_preview_from_bytes(bytes)?,
+        #[cfg(feature = "renditions")]
+        Fitting::Profiled(path) => crate::hdr::match_preview(path)?,
+    };
+    crate::hdr::fit_match_from(gpu, frame, quantile, &preview, matched.lens.clone()).await
+}
+
 /// The camera match off the file's own embedded preview, with the geometry fitted from the picture.
 ///
 /// Declining is not an error: `hdr::fit_all_from_preview` returns None for a file with no embedded
@@ -208,6 +221,7 @@ async fn fit_from_preview(
     raw: &[u8],
     frame: &Resident,
     quantile: f64,
+    camera_match: CameraMatch,
 ) -> Option<(crate::hdr_fit::HdrMatch, crate::tone::Levels)> {
     // A decode narrower than the preview cannot be paired against it: `fit_source::plane_size`
     // clamps its target to the frame's own width, so the two grids come out different sizes and
@@ -225,7 +239,7 @@ async fn fit_from_preview(
         (_, Some(knots)) => crate::fit::Geometry::Recorded(knots),
         (_, None) => crate::fit::Geometry::Unstated,
     };
-    crate::hdr::fit_all_from_preview(gpu, frame, quantile, geometry, &preview, recorded.lateral)
+    crate::hdr::fit_all_from_preview(gpu, frame, quantile, geometry, &preview, recorded.lateral, camera_match)
         .await
         .map(|(_, matched, levels)| (matched, levels))
 }

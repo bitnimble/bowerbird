@@ -633,7 +633,7 @@ describe('CompositesService.startAssembly', () => {
       expect(job.targets.map((target) => target.rendition)).toEqual(['full']);
     }
     // Under the key the files are named by, which the page fetches them from.
-    const key = layerKeyOf(libraries.getById(LIB)!, found.recipe);
+    const key = layerKeyOf(libraries.getById(LIB)!, found.recipe, 'lensAndColour');
     expect(layers).toEqual([`/image/drafts/${LIB}/${key}/0`, `/image/drafts/${LIB}/${key}/1`]);
     expect(existsSync(draftLayerPath(dataPathForLibraryId(LIB), key, 1))).toBe(true);
   });
@@ -655,9 +655,10 @@ describe('CompositesService.startAssembly', () => {
     const sample = AssemblyRecipeSchema.parse(JSON.parse(readFileSync(ASSEMBLY_SAMPLE, 'utf8')));
     const library = libraries.getById(LIB)!;
 
-    expect(layerKeyOf({ ...library, rendition_source: 'embedded' }, sample)).not.toBe(
-      layerKeyOf(library, sample),
+    expect(layerKeyOf({ ...library, rendition_source: 'embedded' }, sample, 'lensAndColour')).not.toBe(
+      layerKeyOf(library, sample, 'lensAndColour'),
     );
+    expect(layerKeyOf(library, sample, 'lens')).not.toBe(layerKeyOf(library, sample, 'lensAndColour'));
   });
 
   it('cancel stops a carve, and the job says it was cancelled rather than that it failed', async () => {
@@ -702,7 +703,7 @@ describe('CompositesService seams', () => {
   it('keeps the carve volume beside its layers, and names it on the recipe', async () => {
     const recipe = await carved();
 
-    expect(recipe.seamVolume).toBe(layerKeyOf(libraries.getById(LIB)!, recipe));
+    expect(recipe.seamVolume).toBe(layerKeyOf(libraries.getById(LIB)!, recipe, 'lensAndColour'));
     expect(existsSync(draftVolumePath(dataPathForLibraryId(LIB), recipe.seamVolume!))).toBe(true);
     const analyse = posted.find((job) => job.want === 'analyse');
     expect(analyse?.want === 'analyse' && existsSync(analyse.volumePath)).toBe(false);
@@ -774,7 +775,7 @@ describe('CompositesService seams', () => {
     expect(renders).toHaveLength(1);
     // The recipe as the page has it, tiles and seams and all: this is the picture Save writes.
     expect(renders[0]?.recipe).toMatchObject({ pick: [1, 0], seams: SOLVED });
-    const key = layerKeyOf(libraries.getById(LIB)!, asked);
+    const key = layerKeyOf(libraries.getById(LIB)!, asked, 'lensAndColour');
     expect(url.startsWith(`/image/drafts/${LIB}/${key}/preview-`)).toBe(true);
     expect(existsSync(renders[0]?.targets[0]?.outputPath ?? '')).toBe(true);
     // Nothing was solved for it: the page had already solved these seams and sent them.
