@@ -168,5 +168,6 @@ fn request() -> rawshim::edit::EditRequest {
         // would be measuring a filtered frame filtered again.
         denoise_luminance: Some(0.0),
         denoise_colour: Some(0.0),
+        denoiser: rawshim::galosh::Denoiser::Galosh,
     }
 }

@@ -136,6 +136,7 @@ fn request(photo_analysis: Option<Vec<u8>>) -> rawshim::edit::EditRequest {
         // the denoise is inside it now.
         denoise_luminance: Some(20.0),
         denoise_colour: Some(30.0),
+        denoiser: rawshim::galosh::Denoiser::Galosh,
     }
 }
 

@@ -68,6 +68,7 @@ fn main() {
         strengths: rawshim::image::Strengths { sharpen: 1.0, defringe: 1.0 },
         denoise_luminance: Some(40.0),
         denoise_colour: Some(40.0),
+        denoiser: rawshim::galosh::Denoiser::Galosh,
         dust: Default::default(),
         adjust: rawshim::gpu::Adjust::none(),
         levels: Some(levels),
