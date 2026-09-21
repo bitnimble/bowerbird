@@ -55,6 +55,7 @@ function shownIn(c: Context): Shown | undefined {
 const PrepareDevelopSchema = EditDocSchema.pick({
   luminanceNoise: true,
   colourNoise: true,
+  denoiser: true,
   sharpening: true,
   dustRemoval: true,
   dustSensitivity: true,

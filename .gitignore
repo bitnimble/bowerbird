@@ -192,6 +192,8 @@ native/rawshim/.libavif
 native/rawshim/.libjxl
 # `bun run get:swiftshader`, wanted only on a machine with no GPU.
 native/rawshim/.swiftshader
+# PMRID's published weights, unpacked by `bun run get:pmrid` for the prototype that reads them.
+native/rawshim/.pmrid
 
 # Throwaway analysis scripts. `.oxlintrc.json` already ignores the .ts ones;
 # this keeps them out of commits, which a squash otherwise sweeps them into.

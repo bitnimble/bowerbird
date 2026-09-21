@@ -70,6 +70,7 @@ async function render(
     grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.9 },
     matchEmbeddedJpeg,
     dust: { enabled: false, sensitivity: 0.5, intensity: 1 },
+    denoiser: 'galosh',
     repairs: [],
     // As metered: this measures what the camera match does, so a gain would be a second
     // variable in it.

@@ -1495,6 +1495,7 @@ dependencies = [
 name = "rawshim"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "bindgen",
  "bytemuck",
  "crc32fast",

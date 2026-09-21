@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { AssemblyRecipeSchema } from './assembly';
 import { RenditionSchema, RenditionSourceSchema } from './common';
 import type { DustSettings } from './dust_settings';
-import { ColourProfileSchema, RepairSchema } from './photo_edits';
+import { ColourProfileSchema, DenoiserSchema, RepairSchema } from './photo_edits';
 
 /** How a scene-linear decode is graded to display-referred (§10.7). */
 export const JobGradeSchema = z.object({
@@ -145,6 +145,7 @@ export const JobSchema = z.object({
    */
   denoiseLuminance: z.number().nullable(),
   denoiseColour: z.number().nullable(),
+  denoiser: DenoiserSchema.default('galosh'),
   /**
    * Collapse each Bayer quad into one pixel rather than interpolating it.
    *

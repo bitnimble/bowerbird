@@ -3,9 +3,11 @@ import init, {
   type HeldRaw,
   type InitOutput,
   holdPicture,
+  holdPmridWeights,
   holdRaw,
   renderRendition,
 } from '../../../../../native/rawshim/pkg/rawshim';
+import { pmridWeightsUrl } from '../../../../../native/rawshim/pkg/pmrid_weights';
 import { z } from 'zod';
 import { AnswerSchema, type Ask, AskSchema, type PrepareCrossing } from './local_open';
 import { cachedRecipes, PipelineWarmth } from '../stage/pipeline_warmth';
@@ -24,6 +26,7 @@ let held: Uint8Array | null = null;
  */
 let open: { held: HeldRaw; request: string } | null = null;
 let module: Promise<InitOutput> | null = null;
+let weights: Promise<void> | null = null;
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -100,10 +103,12 @@ async function answer(ask: Ask): Promise<{ value: unknown; transfer?: Transferab
       return { value: bytes == null ? null : [...bytes] };
     }
     case 'bandInto': {
+      await networkWeights(ask.mosaic.denoiser);
       const { enabled, sensitivity, intensity } = ask.mosaic.dust;
       await drawing().bandInto(
         ask.mosaic.luminance,
         ask.mosaic.colour,
+        ask.mosaic.denoiser,
         ask.mosaic.sharpen,
         enabled,
         sensitivity,
@@ -200,6 +205,7 @@ function drawing(): HeldRaw {
  * expensive half and does not depend on any of them.
  */
 async function prepared_at(request: string, mosaic: PrepareCrossing): Promise<string> {
+  await networkWeights(mosaic.denoiser);
   if (open != null && open.request !== request) {
     open.held.free();
     open = null;
@@ -209,12 +215,36 @@ async function prepared_at(request: string, mosaic: PrepareCrossing): Promise<st
   return open.held.prepare(
     mosaic.luminance,
     mosaic.colour,
+    mosaic.denoiser,
     mosaic.sharpen,
     enabled,
     sensitivity,
     intensity,
     mosaic.repairs,
   );
+}
+
+/**
+ * PMRID's weights, fetched once for the tab the first time a reader asks for that filter.
+ *
+ * **Four megabytes the module does not carry**, so they are cached under a name of their own and a
+ * reader who stays on GALOSH never asks for them. Awaited before the prepare that needs them
+ * rather than at startup: the module answers nothing until they are in, and an open on the other
+ * filter should not wait for a download it will not read.
+ */
+async function networkWeights(denoiser: PrepareCrossing['denoiser']): Promise<void> {
+  if (denoiser !== 'pmrid') return;
+  weights ??= fetch(pmridWeightsUrl)
+    .then(async (answer) => {
+      if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText}`);
+      holdPmridWeights(new Uint8Array(await answer.arrayBuffer()));
+    })
+    .catch((why: unknown) => {
+      // Cleared, or the tab is stuck on one failed fetch for the rest of its life.
+      weights = null;
+      throw why;
+    });
+  await weights;
 }
 
 /**

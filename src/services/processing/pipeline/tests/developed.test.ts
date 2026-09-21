@@ -9,6 +9,7 @@ describe('developed', () => {
     const job = developed(stored, {
       luminanceNoise: 30,
       colourNoise: null,
+      denoiser: 'galosh',
       sharpening: 80,
       dustRemoval: false,
       dustSensitivity: 25,

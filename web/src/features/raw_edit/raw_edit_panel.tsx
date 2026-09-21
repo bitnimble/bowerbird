@@ -14,7 +14,7 @@ import type { EditStore } from './edit/edit_store';
 import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, reading, type SliderSpec } from './edit_sliders';
 import type { RawEditPresenter } from './stage/raw_edit_presenter';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
-import type { ColourProfile } from '../../../../src/schemas/photo_edits';
+import type { ColourProfile, Denoiser } from '../../../../src/schemas/photo_edits';
 import type { SoftProof } from './edits';
 import { KeystonePanel } from './keystone/keystone_panel';
 import type { KeystoneStore } from './keystone/keystone_store';
@@ -27,6 +27,11 @@ import type { RepairStore } from './repair/repair_store';
 const COLOUR_PROFILES: Option<ColourProfile>[] = [
   { value: 'none', label: RawEditPanelStrings.colourProfileNone() },
   { value: 'matched', label: RawEditPanelStrings.colourProfileMatched() },
+];
+
+const DENOISERS: Option<Denoiser>[] = [
+  { value: 'galosh', label: RawEditPanelStrings.denoiserGalosh() },
+  { value: 'pmrid', label: RawEditPanelStrings.denoiserPmrid() },
 ];
 
 const SOFT_PROOFS: Option<SoftProof>[] = [
@@ -406,6 +411,31 @@ const ColourProfileChoice = observer(function ColourProfileChoice({
   );
 });
 
+const DenoiserChoice = observer(function DenoiserChoice({
+  edit,
+  presenter,
+}: {
+  edit: EditStore;
+  presenter: RawEditPresenter;
+}): JSX.Element {
+  return (
+    <div>
+      <div {...stylex.props(styles.head, styles.headAboveSelect)}>
+        <Text as="span" style={styles.name}>
+          {RawEditPanelStrings.denoiser()}
+        </Text>
+      </div>
+      <Select
+        style={styles.selectTrigger}
+        label={RawEditPanelStrings.denoiser()}
+        options={DENOISERS}
+        value={edit.doc?.denoiser ?? 'galosh'}
+        onChange={presenter.setDenoiser}
+      />
+    </div>
+  );
+});
+
 export const RawEditPanel = observer(function RawEditPanel({
   edit,
   stage,
@@ -481,6 +511,7 @@ export const RawEditPanel = observer(function RawEditPanel({
               nothing was measured off that mosaic, so the sliders would move and the picture would
               not (`StageStore.denoises`). */}
           <Group title={RawEditPanelStrings.groupDetail()} busy={stage.repreparing}>
+            {stage.mosaic && stage.denoises && <DenoiserChoice edit={edit} presenter={presenter} />}
             {DETAIL.filter(
               (spec) => (stage.mosaic && stage.denoises) || spec.key === 'sharpening',
             ).map((spec) => (

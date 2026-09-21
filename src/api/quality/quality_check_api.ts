@@ -89,6 +89,7 @@ export class QualityCheckApi {
           // would be a strength no rendition of this photograph is ever taken at.
           denoiseLuminance: null,
           denoiseColour: null,
+          denoiser: AS_METERED.denoiser,
           // Off, for the same reason: this page compares quantizers, and a correction that
           // removed a few discs from whichever photograph was chosen is a second variable.
           dust: dustSettings(undefined),

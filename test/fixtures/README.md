@@ -36,3 +36,17 @@ noise is most visible, deep saturated glass for the chroma arm, and real shadow.
 The other files are the project's own. `snapshots/` holds pictures the tests pin (`snapshot.rs`),
 each written by a test under `BOWERBIRD_WRITE_FIXTURES=1`; `tables/` holds the text that holds two
 hosts' copies of a rule together.
+
+## DSC05765.ARW
+
+One of those, and the one with something done to it. A Sony ILCE-7CR frame at **ISO 40000**, eight
+times the next fixture up and the only Bayer frame here with real noise in it - `DSCF8146.RAF` is
+the noisy one on the X-Trans side, and a fit measured off a mosaic sees the two patterns
+differently. A shoreline after sunset, metered two stops under: shadow over most of the frame, which
+is where a read noise measurement takes its population, with a street lamp and tail lights for
+clipped highlights.
+
+**Its Sony maker note blocks are zeroed**, every enciphered `0x90xx`-`0x94xx` tag but `0x9416`,
+which is the one the decoder reads for the lens id. Those blocks carry the body's internal serial
+number and its shutter count; nothing else in the file names anyone, and there is no GPS IFD. The
+decode is unchanged by it - same levels, same matrices, same sample sum.

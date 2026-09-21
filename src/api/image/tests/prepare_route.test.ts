@@ -92,6 +92,7 @@ describe('GET /image/:photoId/prepare', () => {
     const develop = {
       luminanceNoise: 30,
       colourNoise: null,
+      denoiser: 'pmrid',
       sharpening: 80,
       dustRemoval: false,
       dustSensitivity: 25,

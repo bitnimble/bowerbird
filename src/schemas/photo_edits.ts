@@ -29,6 +29,9 @@ export const WhiteBalanceModeSchema = z.string().default('As Shot');
 export const ColourProfileSchema = z.enum(['matched', 'none']);
 export type ColourProfile = z.infer<typeof ColourProfileSchema>;
 
+export const DenoiserSchema = z.enum(['galosh', 'pmrid']);
+export type Denoiser = z.infer<typeof DenoiserSchema>;
+
 // The document is one replicated cell re-parsed on every write, so a repair is bounded: the most
 // repairs times the most vertices, twice, is `MOST_VERTICES` of an assembly's recipe, which lives in
 // the same kind of cell.
@@ -118,6 +121,7 @@ export const EditDocSchema = z
     // which declines a clean frame outright.
     luminanceNoise: z.number().int().min(0).max(100).nullable().default(null),
     colourNoise: z.number().int().min(0).max(100).nullable().default(null),
+    denoiser: DenoiserSchema.default('galosh'),
 
     // The capture sharpening beside them, and a position rather than a strength for the same
     // reason: 50 is the deconvolution as computed and 100 twice its difference from the frame

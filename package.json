@@ -23,6 +23,7 @@
     "get:libavif": "bun run scripts/get-libavif.ts",
     "get:libjxl": "bun run scripts/get-libjxl.ts",
     "get:swiftshader": "bun run scripts/get-swiftshader.ts",
+    "get:pmrid": "bun run scripts/get-pmrid.ts",
     "build:web-shaders": "bun run scripts/build-web-shaders.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p e2e-tauri/tsconfig.json && tsc --noEmit -p landing/tsconfig.json",
     "build:native": "bun run scripts/cargo.ts build --profile quick --manifest-path native/rawshim/Cargo.toml",

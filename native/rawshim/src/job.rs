@@ -158,6 +158,10 @@ pub struct Job {
     pub denoise_luminance: Option<f64>,
     #[serde(default)]
     pub denoise_colour: Option<f64>,
+    /// Which filter those two positions drive. Absent is the one every rendition took before there
+    /// was a choice, so a library rendered before this reads the same.
+    #[serde(default)]
+    pub denoiser: crate::galosh::Denoiser,
     /// The dust panel's switch and two sliders, on the job for the same reason the pair above is:
     /// the correction is on the mosaic, inside the one decode every target is cut from.
     #[serde(default)]
@@ -267,6 +271,7 @@ impl Job {
         crate::galosh::Detail {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
+            denoiser: self.denoiser,
         }
     }
 
@@ -961,6 +966,7 @@ impl Base {
                 strengths: job.strengths(),
                 denoise_luminance: job.denoise_luminance,
                 denoise_colour: job.denoise_colour,
+                denoiser: job.denoiser,
                 dust: job.dust,
                 adjust: job.adjust,
                 levels: Some(levels),
@@ -1078,6 +1084,7 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
         strengths: job.strengths(),
         denoise_luminance: job.denoise_luminance,
         denoise_colour: job.denoise_colour,
+        denoiser: job.denoiser,
         dust: job.dust,
         adjust: job.adjust,
         levels: job.levels,

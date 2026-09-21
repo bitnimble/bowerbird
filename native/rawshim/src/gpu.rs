@@ -375,6 +375,26 @@ pub fn device() -> Option<&'static Gpu> {
 /// binds an eleventh is refused on the machine it was written on rather than on a Mac.
 pub const MOST_STORAGE_BUFFERS: u32 = 10;
 
+/// What this device asks for beyond the base, where the adapter has it and nothing where it does
+/// not.
+///
+/// Asked for rather than required: a shader that wants `f16` says so with `enable f16`, and one
+/// that does not is unaffected either way, so requesting it can only add. A device that refuses is
+/// a device with no adapter, which is a different failure entirely.
+///
+/// The other three are one thing: PMRID's 1x1 convolutions on the tensor cores ([`crate::pmrid`]).
+/// WGSL cannot spell a cooperative matrix, so that kernel is SPIR-V handed to the driver as it
+/// stands and dispatched with its shape in immediate data - and the whole arrangement is on *this*
+/// device rather than a second one, so the frame it filters never leaves the card. A browser offers
+/// none of the three, which is what makes the editor's arm the WGSL one.
+fn asked_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    adapter.features()
+        & (wgpu::Features::SHADER_F16
+            | wgpu::Features::EXPERIMENTAL_COOPERATIVE_MATRIX
+            | wgpu::Features::PASSTHROUGH_SHADERS
+            | wgpu::Features::IMMEDIATES)
+}
+
 /// The adapter's own limits, bar the storage buffers a stage binds ([`MOST_STORAGE_BUFFERS`]).
 fn limits_of(adapter: &wgpu::Adapter) -> wgpu::Limits {
     let offered = adapter.limits();
@@ -401,6 +421,7 @@ pub async fn page_device() -> Option<&'static Gpu> {
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("rawshim"),
             required_limits: limits_of(&adapter),
+            required_features: asked_features(&adapter),
             ..Default::default()
         })
         .await
@@ -590,6 +611,20 @@ impl Describing<'_> {
         self.0.create_shader_module(descriptor)
     }
 
+    /// # Safety
+    ///
+    /// Nothing checks the module: what it declares has to be what the pipeline layout it is built
+    /// with says, and a mismatch is undefined rather than refused. For the one kernel WGSL cannot
+    /// say ([`crate::pmrid`]'s cooperative matrices).
+    #[expect(unsafe_code)]
+    pub unsafe fn create_shader_module_passthrough(
+        &self,
+        descriptor: wgpu::ShaderModuleDescriptorPassthrough<'_>,
+    ) -> wgpu::ShaderModule {
+        // SAFETY: the caller's, and stated above.
+        unsafe { self.0.create_shader_module_passthrough(descriptor) }
+    }
+
     pub fn create_bind_group_layout(
         &self,
         descriptor: &wgpu::BindGroupLayoutDescriptor<'_>,
@@ -631,6 +666,10 @@ impl Describing<'_> {
 
     pub fn limits(&self) -> wgpu::Limits {
         self.0.limits()
+    }
+
+    pub fn features(&self) -> wgpu::Features {
+        self.0.features()
     }
 }
 
@@ -939,8 +978,18 @@ impl Gpu {
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("rawshim"),
                 required_limits: limits_of(&adapter),
+                required_features: asked_features(&adapter),
+                // The cooperative matrices are behind this and refused without it: wgpu calls a
+                // feature experimental while it is the backends rather than the driver it does not
+                // trust yet. Ours is one kernel on one backend, pinned against the WGSL arm that
+                // computes the same network.
+                #[expect(unsafe_code)]
+                // SAFETY: the token is a statement that the caller knows the feature is
+                // work in progress, which this comment is.
+                experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
                 ..Default::default()
             }))
+            .inspect_err(|refused| eprintln!("rawshim gpu: no device: {refused}"))
             .ok()?;
         // A validation error here is a bug in the shader or in what is bound to it, and
         // both are ours. Left to the default handler it would print and continue, and the

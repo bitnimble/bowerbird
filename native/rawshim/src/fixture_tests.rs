@@ -45,6 +45,17 @@ pub fn fuji_noisy() -> PathBuf {
     fixture("DSCF8146.RAF")
 }
 
+/// A Bayer frame at ISO 40000, eight times the sensitivity of any other fixture here.
+///
+/// `fuji_noisy` is the noisy one on the X-Trans side and the ISO ladder needs a Bayer frame above
+/// it, since the fit is measured off a mosaic and the two patterns sample it differently. Night at
+/// the shoreline, metered two stops under: most of the frame is shadow, which is where a read noise
+/// measurement has its population, and the street lamp and tail lights give it clipped highlights
+/// to go with them.
+pub fn bayer_noisy() -> PathBuf {
+    fixture("DSC05765.ARW")
+}
+
 fn fixture(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures").join(name);
     // A hard failure rather than a skip. The feature is opt-in, so asking for it and
@@ -193,6 +204,7 @@ fn tile_job(path: &str, tile: Option<[usize; 4]>, levels: Option<crate::tone::Le
         // against a different neighbourhood than the frame did, and nothing said so.
         denoise_luminance: Some(40.0),
         denoise_colour: Some(40.0),
+        denoiser: crate::galosh::Denoiser::Galosh,
         // Off: a tile of this job is compared against a whole render of it, and a correction
         // the whole render detected for itself is not one a tile can be handed here.
         dust: crate::dust::Settings { enabled: false, ..Default::default() },
@@ -729,41 +741,67 @@ mod decode_geometry {
         );
     }
 
-    /// The denoise alone, straight off the demosaic with nothing after it, at 1:1 on the noisy
-    /// X-Trans frame: flat plaster in shadow for the luma, the halo and lettering for the edges and
-    /// the chroma.
+    /// The denoise alone, straight off the demosaic with nothing after it, at 1:1 on the two noisy
+    /// frames.
+    ///
+    /// The X-Trans one gives it flat plaster in shadow for the luma and the halo and the lettering
+    /// for the edges and the chroma. The Bayer one is four stops noisier and the crops are what a
+    /// night frame has to be judged on: a bare tree against the sky's gradient, two people the
+    /// picture keeps as silhouettes, a pole where a lit wall gives out to black, the shadow on its
+    /// own, and a tail light clipped in the red.
     #[test]
     fn the_denoise_at_each_setting_is_the_one_last_looked_at() {
+        use crate::px::{Drawn, Rect};
         use crate::snapshot::{Anchoring, Frame, Snapshot, Tolerance};
-        let path = fuji_noisy();
-        let path = path.to_str().unwrap();
-        let decode = |detail| crate::decode_rawler::decode(path, detail).expect("the frame");
-        let crops = [
-            crate::px::Rect::<crate::px::Drawn>::exact(300, 2100, 256, 256),
-            crate::px::Rect::exact(1900, 700, 256, 256),
+        let at = |left, top| Rect::<Drawn>::exact(left, top, 256, 256);
+        let frames = [
+            (
+                fuji_noisy(),
+                "",
+                vec![at(300, 2100), at(1900, 700)],
+                // Measured across NVIDIA, radv and lavapipe: 173 codes worst, on single pixels,
+                // mean 0.006.
+                Tolerance { worst: 512, mean: 0.1 },
+            ),
+            (
+                bayer_noisy(),
+                "bayer-",
+                vec![at(5230, 2990), at(5850, 3300), at(40, 3420), at(1200, 5150), at(6720, 3780)],
+                // Eight times the bound above, and the crops are why rather than the denoise: two
+                // of them are shadow, where PQ's slope is steepest, so a difference in scene light
+                // too small to see is thousands of coded ones. Measured against NVIDIA on radv,
+                // 2299 worst on single pixels, mean 0.021; lavapipe cannot open a 61MP frame at
+                // all.
+                Tolerance { worst: 4096, mean: 0.1 },
+            ),
         ];
 
-        let off = decode(crate::galosh::Detail::at(0.0, 0.0));
-        let resident = off.resident().expect("the decode leaves the frame on the device");
-        let samples = pollster::block_on(resident.host()).expect("the frame reads back");
-        // One anchoring for every setting, off the undenoised frame, so only the denoise moves.
-        let levels = crate::hdr::levels_of(adapter(), &samples, off.width, off.height, 0.995)
-            .expect("the frame has levels");
-        let anchoring = Anchoring {
-            levels: levels.anchored(),
-            reference_white_nits: crate::light::Light::exactly(203.0),
-        };
-        // Measured across NVIDIA, radv and lavapipe: 173 codes worst, on single pixels, mean 0.006.
-        let tolerance = Tolerance { worst: 512, mean: 0.1 };
+        for (path, prefix, crops, tolerance) in frames {
+            let path = path.to_str().unwrap();
+            let decode = |detail| crate::decode_rawler::decode(path, detail).expect("the frame");
 
-        Snapshot::crops(Frame::Scene(resident, anchoring), &crops).check("denoise/off", tolerance);
-        for (name, detail) in [
-            ("denoise/auto", crate::galosh::Detail::AUTO),
-            ("denoise/full", crate::galosh::Detail::at(100.0, 100.0)),
-        ] {
-            let frame = decode(detail);
-            let resident = frame.resident().expect("the decode leaves the frame on the device");
-            Snapshot::crops(Frame::Scene(resident, anchoring), &crops).check(name, tolerance);
+            let off = decode(crate::galosh::Detail::at(0.0, 0.0));
+            let resident = off.resident().expect("the decode leaves the frame on the device");
+            let samples = pollster::block_on(resident.host()).expect("the frame reads back");
+            // One anchoring for every setting, off the undenoised frame, so only the denoise moves.
+            let levels = crate::hdr::levels_of(adapter(), &samples, off.width, off.height, 0.995)
+                .expect("the frame has levels");
+            let anchoring = Anchoring {
+                levels: levels.anchored(),
+                reference_white_nits: crate::light::Light::exactly(203.0),
+            };
+            let name = |setting| format!("denoise/{prefix}{setting}");
+            Snapshot::crops(Frame::Scene(resident, anchoring), &crops)
+                .check(&name("off"), tolerance);
+            for (setting, detail) in [
+                ("auto", crate::galosh::Detail::AUTO),
+                ("full", crate::galosh::Detail::at(100.0, 100.0)),
+            ] {
+                let frame = decode(detail);
+                let resident = frame.resident().expect("the decode leaves the frame on the device");
+                Snapshot::crops(Frame::Scene(resident, anchoring), &crops)
+                    .check(&name(setting), tolerance);
+            }
         }
     }
 
@@ -858,6 +896,7 @@ mod decode_geometry {
             )),
             denoise_luminance: Some(40.0),
             denoise_colour: Some(40.0),
+            denoiser: crate::galosh::Denoiser::Galosh,
             // **On, and that is the point of it being on here.** The frame corrects from that list
             // and the bands are handed it through the analysis; a band that looked for its own, or
             // that was handed coordinates in the wrong space, would divide a shadow out of the
@@ -897,6 +936,7 @@ mod decode_geometry {
                     },
                     denoise_luminance: request.denoise_luminance,
                     denoise_colour: request.denoise_colour,
+                    denoiser: request.denoiser,
                     dust: request.dust,
                     adjust: crate::gpu::Adjust::none(),
                     levels: Some(crate::tone::Levels {
@@ -1188,12 +1228,12 @@ mod decode_geometry {
         }
     }
 
-    /// What the automatic Detail is chosen from ranks these five photographs the way their
+    /// What the automatic Detail is chosen from ranks these six photographs the way their
     /// sensitivities do.
     ///
     /// **The one property `read_noise` has to have, and the only one it is used for.** Nothing reads
     /// its absolute value: `suggested_amount` ramps it between a gate and a span, so what decides
-    /// whether a photograph is filtered is where it sits against the others. Five frames over 40x of
+    /// whether a photograph is filtered is where it sits against the others. Six frames over 320x of
     /// ISO, two sensor patterns interleaved, and the order has to be the ISO order.
     ///
     /// It was not. `ne_dark_finalize` took `alpha * dark_thresh * 0.5` back out of the measurement
@@ -1205,17 +1245,26 @@ mod decode_geometry {
     /// A strict ordering rather than a tolerance, because a rule that ramps cannot be stated as a
     /// number per frame without pinning this machine's GPU into the suite.
     ///
-    /// **Three bodies, so the ordering is worth only as much as its margins.** `read_noise`'s own
+    /// **Three makes, so the ordering is worth only as much as its margins.** `read_noise`'s own
     /// doc records base-ISO frames spanning 0.17 to 0.52 of a thousandth across the 42-frame
-    /// library, which is threefold at one end of the scale - so five frames from three sensors
+    /// library, which is threefold at one end of the scale - so six frames from three sensors
     /// could in principle order by sensor rather than by sensitivity. Measured here they do not:
-    /// 0.00017, 0.00052, 0.00072, 0.00154, 0.00267, whose tightest neighbouring gap is the Sony at
-    /// 640 over the X-T3 at 160, and that is still 1.38x. Nothing a reduction order moves is near
-    /// that. A frame swapped into this list wants the gaps checked again.
+    /// 0.00017, 0.00052, 0.00073, 0.00154, 0.00268, 0.00394, whose tightest neighbouring gap is the
+    /// Sony at 640 over the X-T3 at 160, and that is still 1.39x. The ISO 40000 frame over the
+    /// clipped one at 5000 is the next tightest at 1.47x, which is far less than the eightfold in
+    /// their sensitivities because the clipped frame was pushed. Nothing a reduction order moves is
+    /// near either. A frame swapped into this list wants the gaps checked again.
     #[test]
     fn the_dark_variance_orders_the_fixtures_by_iso() {
         // The sensitivity each fixture was shot at, which is the premise the ordering is against.
-        let frames = [(125, canon()), (160, fuji()), (640, sony()), (4000, fuji_noisy()), (5000, clipped())];
+        let frames = [
+            (125, canon()),
+            (160, fuji()),
+            (640, sony()),
+            (4000, fuji_noisy()),
+            (5000, clipped()),
+            (40000, bayer_noisy()),
+        ];
         let mut measured = Vec::new();
         for (iso, path) in frames {
             let path = path.to_str().unwrap().to_string();
@@ -3329,6 +3378,7 @@ mod one_open_at_a_time {
             // rather than a cheaper one that skips the denoise.
             denoise_luminance: Some(20.0),
             denoise_colour: Some(30.0),
+            denoiser: crate::galosh::Denoiser::Galosh,
         }
     }
 

@@ -32,6 +32,7 @@ import { PENDING, bodyLabel, pendingUntil, shutterLabel, stageLabel, takenLabel 
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { styles } from './photo_detail_page.stylex';
 import { renditionLabel } from '../renditions';
+import { isComposite } from '../photos_store';
 
 export const PhotoRating = observer(function PhotoRating({ photoId }: { photoId: string }): JSX.Element {
   return (
@@ -289,20 +290,23 @@ export const RawPanel = observer(function RawPanel({ photoId, defaultOpen, style
         ],
         ...(photo?.processing_error != null ? ([[PhotoDetailStrings.error(), photo.processing_error]] as MetaRow[]) : []),
         // Neither for a row composed rather than imported, which has no file of its own to name.
-        [
-          PhotoDetailStrings.path(),
-          pending((p) => {
-            const path = p.original_path ?? p.file_path;
-            if (path == null) return PhotoDetailStrings.unknown();
-            return (
-              <>
-                {path}
-                <CopyButton text={path} />
-              </>
-            );
-          }),
-        ],
-        ...(photo != null && !photo.has_original ?
+        ...(isComposite(shape) ? []
+        : ([
+            [
+              PhotoDetailStrings.path(),
+              pending((p) => {
+                const path = p.original_path ?? p.file_path;
+                if (path == null) return PhotoDetailStrings.unknown();
+                return (
+                  <>
+                    {path}
+                    <CopyButton text={path} />
+                  </>
+                );
+              }),
+            ],
+          ] as MetaRow[])),
+        ...(photo != null && !isComposite(shape) && !photo.has_original ?
           ([[PhotoDetailStrings.original(), <RemoteOriginal photoId={photo.id} libraryId={photo.library_id} />]] as MetaRow[])
         : []),
       ]}

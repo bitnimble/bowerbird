@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import type { DustSettings } from '../../../../../src/schemas/dust_settings';
-import type { Repair } from '../../../../../src/schemas/photo_edits';
+import {
+  type Denoiser,
+  DenoiserSchema,
+  type Repair,
+} from '../../../../../src/schemas/photo_edits';
 import {
   DustSettingsSchema,
   type JobAdjust,
@@ -55,6 +59,7 @@ export type LocalPrepare = {
   /** Null is the document not having said, answered by the frame's own fit (`galosh::Detail`). */
   luminance: number | null;
   colour: number | null;
+  denoiser: Denoiser;
   sharpen: number;
   dust: DustSettings;
   /**
@@ -85,6 +90,7 @@ export type LocalTileRequest = {
   strengths: { sharpen: number; defringe: number };
   denoiseLuminance: number | null;
   denoiseColour: number | null;
+  denoiser: Denoiser;
   dust: DustSettings;
   /** Read for the presence three alone: how far past the tile the guided filter reaches. */
   adjust: JobAdjust;
@@ -120,6 +126,7 @@ export type TileKeep = z.infer<typeof TileKeepSchema>;
 const PrepareCrossingSchema = z.object({
   luminance: z.number().nullable(),
   colour: z.number().nullable(),
+  denoiser: DenoiserSchema,
   sharpen: z.number(),
   dust: DustSettingsSchema,
   repairs: JsonSchema,

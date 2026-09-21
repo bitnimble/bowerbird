@@ -197,6 +197,17 @@ lto = false
 codegen-units = 16
 incremental = true
 
+# Vulkan without wgpu in the way, for the one thing WGSL cannot say: the cooperative matrices a
+# tensor core is reached through. Already in the tree - it is what wgpu's own Vulkan backend calls -
+# and named here because `examples/coopmat.rs` opens a device of its own with it.
+#
+# **Not on wasm, where it does not compile at all**: it loads the Vulkan loader through
+# `libloading`, which a browser has no equivalent of. An unconditional dependency here builds every
+# native target and fails the one the editor runs on, which no cargo suite would have caught -
+# `--all-targets` is every target for *this* triple.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ash = "0.38"
+
 # Not ours: rawler enables uuid's `v4`, and uuid refuses to compile for wasm32 without a named
 # source of randomness even where nothing generates one - here nothing does, the CR3 reader only
 # compares UUIDs it read out of BMFF boxes. Declared as our dependency so feature unification hands

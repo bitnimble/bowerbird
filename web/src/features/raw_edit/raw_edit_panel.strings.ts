@@ -101,6 +101,10 @@ export const RawEditPanelStrings = {
   colourProfileNone: () => 'None',
   colourProfileMatched: () => 'Matched',
 
+  denoiser: () => 'Denoiser',
+  denoiserGalosh: () => 'GALOSH',
+  denoiserPmrid: () => 'PMRID',
+
   softProof: () => 'Soft proof',
   softProofHdr: () => 'Rec.2020 PQ HDR',
   softProofSrgb: () => 'sRGB',

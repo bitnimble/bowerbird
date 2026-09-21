@@ -300,7 +300,8 @@ pub(crate) async fn decode_tile_source(
         crate::dust::apply(gpu, &mosaic, &dust, (left, top));
     }
 
-    let noise = galosh_over(gpu, &mut mosaic, detail, fit, halo, &cfa).await;
+    let noise =
+        denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, channel_ceilings(image)).await;
 
     let colour = colour_of(image)?;
     // The tile's place inside the region, which is where the margin that was grown on ends.
@@ -791,7 +792,8 @@ impl Held {
         // bands either side of it.
         crate::dust::apply(gpu?, &mosaic, &dust, (left, top));
 
-        let noise = galosh_over(gpu, &mut mosaic, detail, fit, halo, &cfa).await;
+        let noise =
+            denoise_over(gpu, &mut mosaic, detail, fit, halo, &cfa, colour.ceiling).await;
 
         let inset = (origin.0 + tile.left - left, origin.1 + tile.top - top);
         let region_crop = (
@@ -905,16 +907,36 @@ impl Held {
                         // undenoised photograph is a photograph.
                         match brought || measured.usable() {
                             true => {
-                                denoise_in_tiles(
-                                    gpu,
-                                    kernels,
-                                    frame,
-                                    &cfa,
-                                    amounts,
-                                    measured,
-                                    crate::RENDITION_TILE_HALO,
-                                )
-                                .await;
+                                match detail.denoiser {
+                                    crate::galosh::Denoiser::Pmrid => match crate::pmrid::device(gpu)
+                                    {
+                                        Some(net) => crate::pmrid::denoise(
+                                            gpu,
+                                            net,
+                                            frame,
+                                            &cfa,
+                                            colour.ceiling,
+                                            detail,
+                                            measured,
+                                        ),
+                                        None => crate::warn(
+                                            "rawshim: PMRID's weights have not been handed over, \
+                                             so this frame was not denoised",
+                                        ),
+                                    },
+                                    crate::galosh::Denoiser::Galosh => {
+                                        denoise_in_tiles(
+                                            gpu,
+                                            kernels,
+                                            frame,
+                                            &cfa,
+                                            amounts,
+                                            measured,
+                                            crate::RENDITION_TILE_HALO,
+                                        )
+                                        .await;
+                                    }
+                                }
                                 Some(measured)
                             }
                             false => {
@@ -1040,13 +1062,19 @@ fn spans(total: usize) -> impl Iterator<Item = (usize, usize)> {
 }
 
 /// What a region decode does about its noise: measure it, filter with it, or both.
-async fn galosh_over(
+///
+/// **Which filter is the document's, and the measurement is not.** Both denoisers are driven by the
+/// same fit - GALOSH filters on it, PMRID converts it into the anchor its weights were trained at -
+/// so the choice reaches only as far as the filtering itself. `gains` are the conditioning's own,
+/// which only PMRID needs.
+async fn denoise_over(
     gpu: Option<&'static crate::gpu::Gpu>,
     mosaic: &mut crate::condition::Mosaic,
     detail: crate::galosh::Detail,
     fit: crate::galosh::Fit,
     halo: usize,
     cfa: &crate::cfa::Cfa,
+    gains: [f32; 3],
 ) -> Option<crate::galosh::NoiseFit> {
     let mut noise = None;
     let only = matches!(fit, crate::galosh::Fit::Only);
@@ -1066,12 +1094,16 @@ async fn galosh_over(
             // sample of the frame: measured on the fixtures, a 512px tile fitted between 0.49 and
             // 1.51 times its own frame's noise, which is the strength it is then denoised at. So a
             // loupe disagreed with the export it exists to predict, and moved as the reader panned.
+            let network = detail.denoiser == crate::galosh::Denoiser::Pmrid;
             let measured = match fit {
                 crate::galosh::Fit::Given(fit) => Some(fit),
                 // A tile fitting itself is the case above's cost, not its correctness: it is what a
                 // caller with no frame's fit to hand back gets, and it is what the numbers describe.
                 // Measured by the one filtering run below rather than by a pass of its own.
-                _ if !only && !tiled && !detail.needs_a_fit() => None,
+                //
+                // Only GALOSH can fold the measurement into its filtering: PMRID needs the numbers
+                // before it reads a photosite, since what they scale is its input.
+                _ if !only && !tiled && !detail.needs_a_fit() && !network => None,
                 // Tiled, the fit has to be taken over the whole region first: measured inside the
                 // filtering run it would be each tile's own statistics, which is the disagreement
                 // above at a smaller scale and against itself. An unset slider needs it ahead of
@@ -1091,6 +1123,25 @@ async fn galosh_over(
                     ));
                     None
                 }
+                // The network tiles itself, and with a halo of its own, so the region's is not
+                // used: what a tile of it needs on every side is the reach of four halvings rather
+                // than of a kernel.
+                (Some(fit), _) if network => match crate::pmrid::device(gpu) {
+                    Some(net) => {
+                        crate::pmrid::denoise(gpu, net, mosaic, cfa, gains, detail, fit);
+                        Some(fit)
+                    }
+                    // A page that asked for the network before handing over what it fetched. Said
+                    // here rather than left to the line below, which would name GALOSH and send a
+                    // reader looking at the wrong filter.
+                    None => {
+                        crate::warn(
+                            "rawshim: PMRID's weights have not been handed over, so this frame was \
+                             not denoised",
+                        );
+                        None
+                    }
+                },
                 (Some(fit), true) => {
                     denoise_in_tiles(gpu, kernels, mosaic, cfa, amounts, fit, halo).await;
                     Some(fit)

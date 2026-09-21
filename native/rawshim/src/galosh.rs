@@ -750,16 +750,46 @@ impl Amounts {
 pub struct Detail {
     pub luminance: Option<f64>,
     pub colour: Option<f64>,
+    /// Which filter those two positions drive, which is a choice and not a strength.
+    #[serde(default)]
+    pub denoiser: Denoiser,
+}
+
+/// The filter the Detail panel drives.
+///
+/// **Here beside the panel's own document rather than in either filter's module**, because it is
+/// neither one's to define: a document holds a reader's choice between them, and both modules are
+/// downstream of that. What the two positions mean does depend on which is chosen - GALOSH reads
+/// Luminance as a multiple of the noise it measured, where PMRID reads it as the share of the
+/// residual it predicted to keep - and `crate::pmrid::denoise` says why that is not a mismatch to
+/// paper over.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Denoiser {
+    /// The blind denoise, which measures this frame and filters it on its own statistics.
+    #[default]
+    Galosh,
+    /// A published network, which brings another sensor's calibration and is worth choosing where
+    /// this frame suits it.
+    Pmrid,
 }
 
 impl Detail {
     /// Both halves as a reader set them.
     pub const fn at(luminance: f64, colour: f64) -> Detail {
-        Detail { luminance: Some(luminance), colour: Some(colour) }
+        Detail { luminance: Some(luminance), colour: Some(colour), denoiser: Denoiser::Galosh }
+    }
+
+    /// The same pair, driving the other filter.
+    pub const fn using(self, denoiser: Denoiser) -> Detail {
+        Detail { denoiser, ..self }
     }
 
     /// Neither, which is what a document that has never been edited holds.
-    pub const AUTO: Detail = Detail { luminance: None, colour: None };
+    pub const AUTO: Detail =
+        Detail { luminance: None, colour: None, denoiser: Denoiser::Galosh };
 
     /// Whether either half is still a measurement rather than a number.
     pub fn needs_a_fit(&self) -> bool {
@@ -2026,7 +2056,8 @@ fn fit_of(mapped: &[u8]) -> NoiseFit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACHROMATIC_RANGE, ALPHA_MIN, Amounts, COLOUR_LEAD, Detail, NoiseFit, NoiseModel, P_ALPHA,
+        ACHROMATIC_RANGE, ALPHA_MIN, Amounts, COLOUR_LEAD, Denoiser, Detail, NoiseFit, NoiseModel,
+        P_ALPHA,
         P_DARK_REF0,
         P_INV_SG, P_SIGMA_SQ, P_UNIFIED_SIGMA, DARK_HIST_BINS, LUT_SIZE, SIGMA_BINS, denoise, device,
         phases,
@@ -2215,6 +2246,24 @@ mod tests {
     }
 
     /// What an unset slider resolves to, and what a decode may conclude before it has measured.
+    /// A library edited before there was a choice has documents that do not mention one, and every
+    /// one of them has to keep rendering as it did.
+    #[test]
+    fn a_document_that_names_no_denoiser_is_galosh() {
+        let old: Detail = serde_json::from_str(r#"{"luminance":40,"colour":20}"#).expect("reads");
+        assert_eq!(old.denoiser, Denoiser::Galosh);
+        assert_eq!(old.resolved(None), (40.0, 20.0));
+
+        let chosen: Detail =
+            serde_json::from_str(r#"{"luminance":40,"colour":20,"denoiser":"pmrid"}"#)
+                .expect("reads");
+        assert_eq!(chosen.denoiser, Denoiser::Pmrid);
+        assert_eq!(
+            serde_json::to_value(chosen).expect("writes")["denoiser"],
+            serde_json::json!("pmrid"),
+        );
+    }
+
     #[test]
     fn an_unset_detail_is_the_frames_own_and_not_a_number() {
         let noisy = NoiseFit {
@@ -2228,7 +2277,7 @@ mod tests {
 
         // Half set is half resolved: a reader who moved one slider is not asking the frame about
         // the other one as well.
-        let half = Detail { luminance: Some(4.0), colour: None };
+        let half = Detail { luminance: Some(4.0), ..Detail::AUTO };
         assert_eq!(half.resolved(Some(noisy)), (4.0, colour.round()));
 
         // **A decode cannot say an unset slider does nothing until it has measured**, which is what

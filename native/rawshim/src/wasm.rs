@@ -391,6 +391,24 @@ fn repairs_of(json: &str) -> Result<Vec<crate::repair::Repair>, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("rawshim: these repairs are malformed: {e}")))
 }
 
+/// Which filter the Detail panel is driving, as the document spells it.
+fn denoiser_of(name: &str) -> Result<crate::galosh::Denoiser, JsValue> {
+    serde_json::from_str(&format!("\"{name}\""))
+        .map_err(|_| JsValue::from_str(&format!("rawshim: {name} is not a denoiser")))
+}
+
+/// PMRID's weights, which the page fetches rather than carrying in this module.
+///
+/// **Four megabytes that would otherwise be in every reader's download.** The module's name is its
+/// own hash, so a build that changes one line of Rust re-fetches everything in it; served apart,
+/// these are cached apart and only a reader who chooses the network asks for them at all. Handing
+/// them over is what makes `pmrid::device` answer, so the page does it before the first prepare
+/// that names PMRID rather than at startup.
+#[wasm_bindgen(js_name = holdPmridWeights)]
+pub fn hold_pmrid_weights(bytes: Vec<u8>) {
+    crate::pmrid::hold_weights(bytes);
+}
+
 /// Where a fill is read from, from where it lands, on the `px::Stored` grid.
 type Donor = [crate::px::Extent<crate::px::Stored>; 2];
 
@@ -754,6 +772,7 @@ impl HeldRaw {
         &self,
         luminance: Option<f64>,
         colour: Option<f64>,
+        denoiser: &str,
         sharpen: f64,
         dust_enabled: bool,
         dust_sensitivity: f64,
@@ -763,7 +782,7 @@ impl HeldRaw {
         let repairs = repairs_of(repairs)?;
         // Undefined either side is the document not having said, which the decode answers with this
         // frame's own fit rather than with a number (`galosh::Detail`).
-        let detail = crate::galosh::Detail { luminance, colour };
+        let detail = crate::galosh::Detail { luminance, colour, denoiser: denoiser_of(denoiser)? };
         // The photograph's own fit where one was measured, which is what a region would be
         // denoised at too - never a fit of whatever this amount happens to produce.
         let fit = self
@@ -1057,6 +1076,7 @@ impl HeldRaw {
         &self,
         luminance: Option<f64>,
         colour: Option<f64>,
+        denoiser: &str,
         sharpen: f64,
         dust_enabled: bool,
         dust_sensitivity: f64,
@@ -1080,6 +1100,7 @@ impl HeldRaw {
         let band = self.band_request(
             luminance,
             colour,
+            denoiser_of(denoiser)?,
             sharpen,
             dust,
             top,
@@ -1179,6 +1200,7 @@ impl HeldRaw {
         &self,
         luminance: Option<f64>,
         colour: Option<f64>,
+        denoiser: crate::galosh::Denoiser,
         sharpen: f64,
         dust: crate::dust::Settings,
         top: usize,
@@ -1206,6 +1228,7 @@ impl HeldRaw {
             },
             denoise_luminance: luminance,
             denoise_colour: colour,
+            denoiser,
             // The photograph's particles reach this through the analysis, as its noise and its lens
             // already do; what is here is only what the reader asked be done with them.
             dust,

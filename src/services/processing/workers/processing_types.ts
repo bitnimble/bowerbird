@@ -1,7 +1,7 @@
 import { type ProcessingStage, RENDITION_SOURCES, type RenditionSource } from '../../../schemas/common';
 import type { DustSettings } from '../../../schemas/dust_settings';
 import type { CompositeWant, JobAdjust, JobGeometry } from '../../../schemas/jobs';
-import type { Repair } from '../../../schemas/photo_edits';
+import type { Denoiser, Repair } from '../../../schemas/photo_edits';
 import type { Rendition } from '../renditions/renditions';
 
 export type { RenditionSource };
@@ -73,6 +73,8 @@ export interface Developed {
    */
   denoiseLuminance: number | null;
   denoiseColour: number | null;
+  /** Which filter the pair above drives (`galosh::Denoiser`). */
+  denoiser: Denoiser;
   /** The dust panel's switch and pair, already scaled to the fractions the module reads. */
   dust: DustSettings;
   /** The reader's repairs, as the document holds them (`crate::repair`). */

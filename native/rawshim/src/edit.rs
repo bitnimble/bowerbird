@@ -47,6 +47,10 @@ pub struct EditRequest {
     pub denoise_luminance: Option<f64>,
     #[serde(default)]
     pub denoise_colour: Option<f64>,
+    /// Which filter those two positions drive. Absent is the one every document had before there
+    /// was a choice.
+    #[serde(default)]
+    pub denoiser: crate::galosh::Denoiser,
     /// The dust panel's switch and two sliders, which correct the mosaic where the denoise does.
     ///
     /// Here for the same reason the Detail pair is: the shadow is one number per photosite while the
@@ -64,6 +68,7 @@ impl EditRequest {
         crate::galosh::Detail {
             luminance: self.denoise_luminance,
             colour: self.denoise_colour,
+            denoiser: self.denoiser,
         }
     }
 
@@ -473,6 +478,7 @@ pub async fn from_frame(
                 strengths,
                 denoise_luminance: request.denoise_luminance,
                 denoise_colour: request.denoise_colour,
+                denoiser: request.denoiser,
                 // Off, and it has to be: this window is handed a frame the decode already
                 // corrected, so asking again would divide every shadow out twice and leave a bright
                 // disc where a dark one was. Spelled rather than defaulted, because the default is

@@ -19,6 +19,7 @@ fn main() {
 
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     shaders(&out);
+    weights();
 
     // Only a `renditions` build binds anything: rawler reads the RAWs, and lensfun and libavif are
     // the server's alone. An editor build links no C at all.
@@ -26,6 +27,26 @@ fn main() {
         return;
     }
     std::fs::write(out.join("bindings.rs"), server_bindings().to_string()).expect("write bindings");
+}
+
+/// PMRID's published weights, which `src/pmrid.rs` embeds.
+///
+/// Named here so that a tree without them fails at the build saying which command fetches them,
+/// rather than at an `include_bytes!` pointing at a path nobody has heard of. The same reasoning as
+/// the compiler and the codecs: what a photograph looks like is not allowed to depend on which
+/// files happen to be beside the binary.
+fn weights() {
+    let home = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
+        .join(".pmrid");
+    for name in ["weights.bin", "weights.json"] {
+        let at = home.join(name);
+        println!("cargo:rerun-if-changed={}", at.display());
+        assert!(
+            at.exists(),
+            "{}: missing. `bun run get:pmrid` unpacks the denoiser's published weights.",
+            at.display(),
+        );
+    }
 }
 
 /// Every shader the crate reads, compiled into `$OUT_DIR/wgsl` under the name it is asked for.
@@ -78,6 +99,7 @@ fn shaders(out: &Path) {
         );
     }
     std::fs::create_dir_all(staged.join("galosh")).expect("create the staged shader directory");
+    std::fs::create_dir_all(out.join("spirv")).expect("create the staged shader directory");
 
     for (from, to) in gather(Path::new("../../slang")) {
         // A file declaring itself a module is one another file imports, not a stage of its own.
@@ -88,7 +110,15 @@ fn shaders(out: &Path) {
         if source.lines().any(|line| line.starts_with("module ")) {
             continue;
         }
-        compile(&slangc, &from, &staged.join(to.replace(".slang", ".wgsl")));
+        // `slang/spirv` is what WGSL cannot say - today the cooperative matrices a tensor core is
+        // reached through, which no browser exposes - so it compiles for Vulkan alone and a host
+        // that wants it holds a device of its own.
+        match to.strip_prefix("spirv/") {
+            Some(name) => {
+                compile(&slangc, &from, &out.join("spirv").join(name.replace(".slang", ".spv")))
+            }
+            None => compile(&slangc, &from, &staged.join(to.replace(".slang", ".wgsl"))),
+        }
     }
 }
 
@@ -133,7 +163,13 @@ fn gather(root: &Path) -> Vec<(PathBuf, String)> {
 /// would fail at the first tick with a missing entry point, which names neither the shader nor the
 /// reason.
 fn compile(slangc: &Path, from: &Path, to: &Path) {
-    let run = Command::new(slangc).arg(from).arg("-target").arg("wgsl").arg("-o").arg(to).output();
+    let spirv = to.extension().is_some_and(|it| it == "spv");
+    let mut command = Command::new(slangc);
+    command.arg(from).arg("-target").arg(if spirv { "spirv" } else { "wgsl" });
+    if spirv {
+        command.arg("-capability").arg("spvCooperativeMatrixKHR");
+    }
+    let run = command.arg("-o").arg(to).output();
     let run = run.unwrap_or_else(|e| {
         panic!(
             "{}: {e}\nThe Slang compiler is the shaders' toolchain. `bun run get:slangc` fetches \

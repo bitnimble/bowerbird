@@ -3,7 +3,7 @@ import { type EditDoc, type EditState } from '../../../../../src/schemas/photo_e
 import { photoEditsApi } from '../../../api/photo_edits';
 import { ApiError } from '../../../api/request';
 import { newId } from '../../../../../src/schemas/id';
-import { diffEdits, type ColourProfile } from '../../../../../src/schemas/photo_edits';
+import { diffEdits, type ColourProfile, type Denoiser } from '../../../../../src/schemas/photo_edits';
 import type { AsShot } from '../../../../../src/schemas/prepared';
 import type { RepairPresenter } from '../repair/repair_presenter';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
@@ -170,6 +170,11 @@ export class EditPresenter {
   @action.bound
   setColourProfile(colourProfile: ColourProfile): void {
     this.settle({ colourProfile });
+  }
+
+  @action.bound
+  setDenoiser(denoiser: Denoiser): void {
+    this.settle({ denoiser });
   }
 
   /**

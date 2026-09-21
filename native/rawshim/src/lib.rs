@@ -155,6 +155,8 @@ pub mod fit_source;
 pub mod frame;
 /// The denoise, on the mosaic, before anything has averaged a neighbour into it.
 pub mod galosh;
+/// The other denoise, in the same place: a learned network a reader can choose instead.
+pub mod pmrid;
 pub mod gpu;
 pub mod hdr;
 pub mod hdr_args;

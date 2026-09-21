@@ -9,5 +9,11 @@ import type { EditDoc } from './photo_edits';
  */
 export type PrepareDevelop = Pick<
   EditDoc,
-  'luminanceNoise' | 'colourNoise' | 'sharpening' | 'dustRemoval' | 'dustSensitivity' | 'dustIntensity'
+  | 'luminanceNoise'
+  | 'colourNoise'
+  | 'denoiser'
+  | 'sharpening'
+  | 'dustRemoval'
+  | 'dustSensitivity'
+  | 'dustIntensity'
 >;

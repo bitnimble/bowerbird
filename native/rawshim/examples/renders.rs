@@ -1,7 +1,7 @@
 //! What the editor shows, which is what a rendition ships, from the same RAW, without a browser.
 //!
 //! ```text
-//! renders <raw> <out-dir> [--detail N|auto] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr|--linear]
+//! renders <raw> <out-dir> [--detail N|auto] [--denoiser galosh|pmrid] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr|--linear]
 //!         [--as-export] [--defocus r,b] [--phases 2|4|8|16] [--pool 0|1]
 //!         [--chroma-detail 0|1] [--reach N] [--ratio-floor N]
 //!         [--ev N] [--edge N]
@@ -612,6 +612,16 @@ fn main() {
             }
             "--colour" => {
                 detail.colour = Some(args.next().expect("a number").parse().expect("a number"));
+            }
+            // Which filter those positions drive, which is a document's choice and so is here
+            // rather than a build of its own.
+            "--denoiser" => {
+                let asked = args.next().expect("galosh or pmrid");
+                detail = detail.using(match asked.as_str() {
+                    "galosh" => rawshim::galosh::Denoiser::Galosh,
+                    "pmrid" => rawshim::galosh::Denoiser::Pmrid,
+                    other => panic!("{other} is not a denoiser"),
+                });
             }
             "--crop" => {
                 let spec = args.next().expect("x,y,side");

@@ -10,7 +10,7 @@ import { CropPresenter } from '../crop/crop_presenter';
 import type { CropStore } from '../crop/crop_store';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import { adjustOf } from '../../../../../src/schemas/edit_adjust';
-import type { ColourProfile } from '../../../../../src/schemas/photo_edits';
+import type { ColourProfile, Denoiser } from '../../../../../src/schemas/photo_edits';
 import { RepairPresenter } from '../repair/repair_presenter';
 import { EditPresenter } from '../edit/edit_presenter';
 import type { EditStore } from '../edit/edit_store';
@@ -636,6 +636,10 @@ export class RawEditPresenter {
 
   setColourProfile(colourProfile: ColourProfile): void {
     this.edit.setColourProfile(colourProfile);
+  }
+
+  setDenoiser(denoiser: Denoiser): void {
+    this.edit.setDenoiser(denoiser);
   }
 
   flushReprepare(): void {

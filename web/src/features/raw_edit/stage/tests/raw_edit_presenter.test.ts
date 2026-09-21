@@ -143,6 +143,7 @@ describe('a slider reaching the picture', () => {
     expect(prepareOf(undefined)).toEqual({
       luminance: neutral.luminanceNoise,
       colour: neutral.colourNoise,
+      denoiser: neutral.denoiser,
       sharpen: neutral.sharpening / 100,
       dust: {
         enabled: neutral.dustRemoval,
@@ -181,6 +182,7 @@ describe('a slider reaching the picture', () => {
       {
         luminance: 60,
         colour: 20,
+        denoiser: 'galosh',
         sharpen: 0.5,
         dust: { enabled: true, sensitivity: 0.25, intensity: 1 },
         repairs: [],
@@ -219,11 +221,17 @@ describe('a slider reaching the picture', () => {
     expect(asked().length).toBe(ran + 3);
     expect(asked().at(-1)?.sharpen).toBe(0.9);
 
+    // Which filter runs is a re-prepare like the amounts are, and not a word in the tick's uniform.
+    presenter.setDenoiser('pmrid');
+    await settled();
+    expect(asked().length).toBe(ran + 4);
+    expect(asked().at(-1)?.denoiser).toBe('pmrid');
+
     // And nothing is asked for twice: settling the same positions again is the picture the frame
     // already holds, which must not cost a second re-prepare.
     presenter.settle({ dustRemoval: true, dustSensitivity: 80, dustIntensity: 60 });
     await settled();
-    expect(asked().length).toBe(ran + 3);
+    expect(asked().length).toBe(ran + 4);
   });
 
   /**

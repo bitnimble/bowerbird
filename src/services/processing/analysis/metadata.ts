@@ -100,6 +100,7 @@ async function withTile(filePath: string, stage: TileStage): Promise<RawHeader> 
       matchEmbeddedJpeg: false,
       denoiseLuminance: 0,
       denoiseColour: 0,
+      denoiser: 'galosh',
       dust: dustSettings(undefined),
       sharpen: 0,
       defringe: 0,
