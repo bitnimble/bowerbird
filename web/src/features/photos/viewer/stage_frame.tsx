@@ -31,6 +31,7 @@ export function StageFrame({
   state,
   zoomed,
   shown,
+  requested,
   whole,
   onDecoded,
   onMissing,
@@ -51,6 +52,7 @@ export function StageFrame({
    * elements carry the same `alt` and only one of them is a picture anybody is looking at.
    */
   shown: boolean;
+  requested: boolean;
   onDecoded: (source: string, width: number, height: number) => void;
   onMissing: (source: string) => void;
 }): JSX.Element {
@@ -64,6 +66,8 @@ export function StageFrame({
   // Through a ref too: as a dependency, every zoom in or out would redraw the whole frame.
   const wholeRef = useRef(whole);
   wholeRef.current = whole;
+  const requestedRef = useRef(requested);
+  requestedRef.current = requested;
   // Bumped to replace the canvas element itself, which is the only answer to one that took
   // a WebGPU context and then could not be drawn into: it can hold no other kind, so a 2D
   // draw on it is impossible and the frame would otherwise be reported as one the server
@@ -141,7 +145,7 @@ export function StageFrame({
       };
     }
 
-    void decodeFrame(source, wholeRef.current).then(draw, (err: unknown) => {
+    void decodeFrame(source, wholeRef.current, requestedRef.current ? 'interactive' : 'background').then(draw, (err: unknown) => {
       // Abandoned rather than absent: the reader stepped past this photograph while it was
       // being fetched, which is not a photograph the server is missing.
       if (!live || (err instanceof Error && err.message === 'superseded')) return;

@@ -1,7 +1,7 @@
 // The zoom's detail decode against the stage's own, with the browser's decoders stood in for.
 // No WebCodecs here, so every decode is `createImageBitmap`, which honours the size it is asked
 // for the way a camera JPEG's decoder does.
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, jest, test } from 'bun:test';
 
 const FILE = { width: 9504, height: 6336 };
 const decodes: { resizeWidth?: number }[] = [];
@@ -44,6 +44,14 @@ afterAll(() => {
 // test file shares, and whichever file runs first decides which one a bare import gets.
 const real: string = '../stage_bitmaps.ts?real';
 const { decodeDetail, decodeFrame, keepOnly, releaseHolder }: typeof import('../stage_bitmaps') = await import(real);
+
+test('a prefetched frame identifies its request as background work', async () => {
+  const fetching = jest.spyOn(globalThis, 'fetch');
+  try {
+    await decodeFrame('/image/prefetch/renditions/full', false, 'background');
+    expect(new Headers(fetching.mock.calls[0]?.[1]?.headers).get('x-bowerbird-activity')).toBe('background');
+  } finally { fetching.mockRestore(); decodes.length = 0; }
+});
 
 test('a camera JPEG decoded whole for the zoom is decoded once while its photograph is open', async () => {
   const jpeg = '/image/p1/renditions/embedded';

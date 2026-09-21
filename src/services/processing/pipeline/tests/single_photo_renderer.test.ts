@@ -10,6 +10,9 @@ import { ProcessingService } from '../processing_service';
 import { RenderTimingsFile } from '../../renditions/render_timings_file';
 import { REFERENCE_PIXELS } from '../../../../schemas/render_stages';
 import type { WorkerJob } from '../../workers/processing_types';
+import { Logger } from '../../../../logger';
+import { toCommand } from '../../rawshim/worker_command';
+import { writePhotoAnalysis } from '../../analysis/photo_analysis_store';
 import { DESCRIPTOR, LIB, MockWorker, REAL_WORKER, posted, settingsWith } from './processing_test_helpers';
 
 describe('single-photo rendering', () => {
@@ -24,6 +27,72 @@ describe('single-photo rendering', () => {
     globalThis.Worker = REAL_WORKER;
     rmSync(root, { recursive: true, force: true });
     rmSync(dataPathForLibraryId(LIB), { recursive: true, force: true });
+  });
+
+  it('waits for the result after reporting the worker start and its analysis cache', async () => {
+    let finish = (): void => {};
+    class ObservedWorker extends MockWorker {
+      override postMessage(job: WorkerJob): void {
+        this.onmessage?.({ data: { kind: 'started', photoId: job.photoId, analysisCache: 'supplied' } });
+        finish = () => this.onmessage?.({ data: { photoId: job.photoId, success: true } });
+      }
+    }
+    Object.assign(globalThis, { Worker: ObservedWorker });
+    const logged = jest.spyOn(Logger.prototype, 'info').mockImplementation(() => {});
+    try {
+      const repo = { markRenditionsBuilt: jest.fn() } as unknown as PhotoProcessingRepository;
+      const service = makeService(repo);
+      const library = { id: 'lib', root_path: root, render_skip_full: [], render_skip_max: [] } as never;
+      let settled = false;
+      const running = service.renderOne('/lib/a.arw', 'p1', library, 'full', true).then(
+        () => { settled = true; },
+        () => { settled = true; },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(false);
+      expect(logged.mock.calls.some(([message, fields]) => message === 'render inputs' && fields?.analysisCache === 'supplied' && fields?.file === 'a.arw')).toBe(true);
+      finish();
+      await running;
+      expect(repo.markRenditionsBuilt).toHaveBeenCalledTimes(1);
+      expect(logged.mock.calls.map(([message]) => message)).toEqual(['render inputs']);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it.each(['supplied', 'missing', 'refresh'] as const)('reports the analysis actually supplied to the native command: %s', async (expected) => {
+    let analysis: string | undefined;
+    let supplied: number[] | undefined;
+    class CommandWorker extends MockWorker {
+      override postMessage(job: WorkerJob): void {
+        if (job.kind !== 'rendition') throw new Error('expected one photo');
+        supplied = toCommand(job, (cache) => { analysis = cache; }).photoAnalysis;
+        super.postMessage(job);
+      }
+    }
+    Object.assign(globalThis, { Worker: CommandWorker });
+    if (expected !== 'missing') writePhotoAnalysis(dataPathForLibraryId(LIB), 'p1', new Uint8Array([1, 2, 3]));
+    const repo = { markRenditionsBuilt: jest.fn() } as unknown as PhotoProcessingRepository;
+    const library = { id: LIB, root_path: root, render_skip_full: [], render_skip_max: [] } as never;
+    await makeService(repo).renderOne('/lib/a.arw', 'p1', library, 'full', true, 'render', expected === 'refresh');
+    expect(analysis).toBe(expected);
+    expect(supplied).toEqual(expected === 'supplied' ? [1, 2, 3] : undefined);
+  });
+
+  it('leaves a worker spawn failure to the workflow that owns the render', async () => {
+    class RefusedWorker extends MockWorker {
+      constructor(url: string) { super(url); throw new Error('no worker slots'); }
+    }
+    Object.assign(globalThis, { Worker: RefusedWorker });
+    const warning = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    try {
+      const library = { id: LIB, root_path: root, render_skip_full: [], render_skip_max: [] } as never;
+      await expect(makeService({} as PhotoProcessingRepository).renderOne('/lib/a.arw', 'p1', library, 'full', true))
+        .rejects.toThrow('no worker slots');
+      expect(warning).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
+    } finally { warning.mockRestore(); error.mockRestore(); }
   });
 
   it('benchmarks forced stage amounts and prices lens against the colour-free render', async () => {

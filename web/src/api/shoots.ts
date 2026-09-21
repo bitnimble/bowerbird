@@ -1,5 +1,6 @@
 import { type PhotoListResponse, PhotoListResponseSchema, type PhotoTarget, PhotoTargetSchema } from '../../../src/schemas/photos';
 import { PathSegment, route } from '../../../src/schemas/route';
+import type { RequestActivity } from '../../../src/schemas/request_activity';
 import {
   type CreateShootRequest,
   CreateShootRequestSchema,
@@ -50,12 +51,12 @@ export const shootsApi = {
       route(PathSegment.api(), PathSegment.shoots(), id, PathSegment.photos()),
       PhotoTargetSchema.parse(target),
     ),
-  listPhotos: (id: string, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> =>
+  listPhotos: (id: string, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> =>
     request(
       PhotoListResponseSchema,
       'GET',
       `${route(PathSegment.api(), PathSegment.shoots(), id, PathSegment.photos())}${photoListQuery(params)}`,
       undefined,
-      signal,
+      { signal, activity: activity ?? (params.count === false ? 'background' : 'interactive') },
     ),
 };

@@ -20,6 +20,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { APP_BINARY, CDP_URL } from './shell';
 import { PathSegment, route } from '../src/schemas/route';
+import { REQUEST_ACTIVITY_HEADER } from '../src/schemas/request_activity';
 
 const SERVER = process.env.BOWERBIRD_E2E_SERVER ?? '';
 // A second running library, for the one case that needs two: moving between them.
@@ -31,6 +32,9 @@ type Bridge = {
     event: {
       listen: (e: string, h: (m: { payload: unknown }) => void) => Promise<() => void>;
     };
+  };
+  __TAURI_INTERNALS__: {
+    convertFileSrc: (file: string, protocol: string) => string;
   };
 };
 
@@ -110,6 +114,24 @@ test.describe('Bowerbird desktop shell', () => {
     expect(reply.head.headers['content-type']).toContain('json');
     expect(reply.framed).toBeGreaterThan(4);
     expect(() => JSON.parse(reply.body)).not.toThrow();
+  });
+
+  test('forwards an activity-marked asset request through its custom scheme', async () => {
+    const result = await shell.evaluate(async ({ header, path }) => {
+      const { convertFileSrc } = (window as unknown as Bridge).__TAURI_INTERNALS__;
+      const prefix = convertFileSrc('', 'bowerbird').replace(/\/$/, '');
+      try {
+        const reply = await fetch(`${prefix}${path}`, { headers: { [header]: 'interactive' } });
+        return { status: reply.status, error: null };
+      } catch (error) {
+        return { status: 0, error: String(error) };
+      }
+    }, {
+      header: REQUEST_ACTIVITY_HEADER,
+      path: route(PathSegment.image(), 'missing-photo', PathSegment.download(), 'original'),
+    });
+
+    expect(result).toEqual({ status: 404, error: null });
   });
 
   /**

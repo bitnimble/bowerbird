@@ -1,4 +1,5 @@
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
+import { REQUEST_ACTIVITY_HEADER } from '../../../../../src/schemas/request_activity';
 import { photosApi } from '../../../api/photos';
 import { envelopeOf } from '../../../api/request';
 import { settingsApi } from '../../../api/settings';
@@ -129,6 +130,7 @@ export async function preparedPicture(
 ): Promise<Uint8Array<ArrayBuffer>> {
   const reply = await fetch(photosApi.preparedPictureUrl(photoId, shown, develop), {
     signal: shown?.signal ?? null,
+    headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
   });
   if (!reply.ok) throw new Error(await refusal(reply));
   return new Uint8Array(await reply.arrayBuffer());
@@ -282,7 +284,7 @@ export function sameDevelop(at: LocalPrepare | null, next: LocalPrepare): boolea
  * for a photograph nothing has measured yet, and then the open measures its own.
  */
 async function storedPhotoAnalysis(photoId: string): Promise<number[] | undefined> {
-  const reply = await fetch(photosApi.analysisUrl(photoId));
+  const reply = await fetch(photosApi.analysisUrl(photoId), { headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' } });
   if (!reply.ok) return undefined;
   return Array.from(new Uint8Array(await reply.arrayBuffer()));
 }

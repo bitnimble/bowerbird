@@ -13,6 +13,7 @@
 
 import { type Region, paintExtended, planarLayout } from './stage_gpu';
 import { orientationOfAvif } from 'avif-hdr-video';
+import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../../../src/schemas/request_activity';
 
 /** The longest edge a frame is decoded to: a 4K stage at 2x, which is past any display we draw on. */
 const DECODE_CAP = 4096;
@@ -191,8 +192,8 @@ async function decodePicture(
  * `whole` for a stage that is zoomed in, where [`decodeDetail`] then answers from this same
  * decode rather than decoding the file a second time.
  */
-export async function decodeFrame(source: string, whole = false): Promise<Decoded> {
-  return whole ? decodedAt(source, held, inFlight, Infinity, true) : decodedAt(source, held, inFlight, DECODE_CAP);
+export async function decodeFrame(source: string, whole = false, activity: RequestActivity = 'interactive'): Promise<Decoded> {
+  return decodedAt(source, held, inFlight, whole ? Infinity : DECODE_CAP, whole, activity);
 }
 
 /** Every pixel of the file, in rects that mean what they say (`decodePicture`'s `cropped`). */
@@ -267,6 +268,7 @@ function decodedAt(
   running: Map<string, { work: Promise<Decoded>; abort: AbortController }>,
   cap: number,
   cropped = false,
+  activity: RequestActivity = 'interactive',
 ): Promise<Decoded> {
   const already = store.get(source);
   if (already != null) return Promise.resolve(already);
@@ -284,7 +286,7 @@ function decodedAt(
     const superseded = <T,>(err: unknown): T => {
       throw abort.signal.aborted ? new Error('superseded') : err;
     };
-    const response = await fetch(source, { signal: abort.signal }).catch(superseded<Response>);
+    const response = await fetch(source, { signal: abort.signal, headers: { [REQUEST_ACTIVITY_HEADER]: activity } }).catch(superseded<Response>);
     if (!response.ok) throw new Error(`${response.status} for ${source}`);
     const blob = await response.blob().catch(superseded<Blob>);
     const natural = await shapeOf(blob).catch(superseded<{ width: number; height: number }>);

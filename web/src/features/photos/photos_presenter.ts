@@ -2,6 +2,7 @@ import { action, comparer, computed, reaction, runInAction } from 'mobx';
 import { type Ordering, type ProcessingStage } from '../../../../src/schemas/common';
 import { type CompositeKind, type PhotoMarks, type PhotoSelection, type PhotoSummary, type PhotoTarget, type Triage } from '../../../../src/schemas/photos';
 import { type ViewerRendition } from '../../../../src/schemas/settings';
+import type { RequestActivity } from '../../../../src/schemas/request_activity';
 import { type Rendition } from '../../../../src/services/processing/renditions/renditions';
 import { photosApi } from '../../api/photos';
 import { ApiError } from '../../api/request';
@@ -199,7 +200,7 @@ export class PhotosPresenter {
       this.viewerPresenter,
       this.listingPresenter,
       this.stackActionsPresenter,
-      () => this.refreshDetail(),
+      (activity) => this.refreshDetail(activity),
       (error) => this.fail(error),
       (photoId) => this.isCurrent(photoId),
     );
@@ -366,7 +367,7 @@ export class PhotosPresenter {
     return photosApi.range({ scope: scopeOf(source), filters: this.selectionFilters(), from, to });
   }
 
-  async reload(): Promise<void> {
+  async reload(activity: RequestActivity = 'interactive'): Promise<void> {
     if (this.listing.source == null) return;
     // Whatever moved out there moved for photographs this session has read details of, and
     // this is the one signal the client gets that it did: a peer's edits applying, a sync
@@ -375,7 +376,7 @@ export class PhotosPresenter {
     // The open photograph's is kept rather than dropped under the panels drawing from it, so
     // it is the one this has to re-read - and the only one whose staleness the reader can
     // actually see. `refresh` reads rows and bands and never touches a detail.
-    await Promise.all([this.refresh(), this.refreshDetail()]);
+    await Promise.all([this.refresh(activity), this.refreshDetail(activity)]);
   }
 
   /**
@@ -1072,8 +1073,8 @@ export class PhotosPresenter {
     await this.renditionsPresenter.buildMissing(photoId, rendition);
   }
 
-  private async refreshDetail(): Promise<void> {
-    await this.detailPresenter.refresh();
+  private async refreshDetail(activity?: RequestActivity): Promise<void> {
+    await this.detailPresenter.refresh(activity);
   }
   async deletePhotos(target: PhotoTarget): Promise<void> {
     await this.bulkPresenter.deletePhotos(target);
@@ -1107,8 +1108,8 @@ export class PhotosPresenter {
     await this.stackActionsPresenter.followBand(stackId);
   }
 
-  async replaceBands(): Promise<void> {
-    await this.stackActionsPresenter.replaceBands();
+  async replaceBands(activity: RequestActivity = 'interactive'): Promise<void> {
+    await this.stackActionsPresenter.replaceBands(activity);
   }
   @action.bound
   toggleMember(photo: PhotoSummary): void {
@@ -1283,8 +1284,8 @@ export class PhotosPresenter {
 
   // --- loading the collection ---
 
-  private refresh(): Promise<void> {
-    return this.listingPresenter.refresh();
+  private refresh(activity: RequestActivity = 'interactive'): Promise<void> {
+    return this.listingPresenter.refresh(activity);
   }
 
   private async ensureBlocks(blocks: number[]): Promise<void> {

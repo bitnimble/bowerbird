@@ -4,6 +4,7 @@
 import { beforeEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { type Transfer } from '../../../../../src/schemas/blobs';
+import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import { type Library } from '../../../../../src/schemas/libraries';
 import { type EditConflict } from '../../../../../src/schemas/photo_edits';
 import { type PairedPeer, type PeersResponse } from '../../../../../src/schemas/replication';
@@ -45,6 +46,7 @@ interface Harness {
   librariesStore: LibrariesStore;
   presenter: ReplicationPresenter;
   reloads: () => number;
+  reloadActivities: (RequestActivity | undefined)[];
   libraryLoads: () => number;
   toasts: string[];
 }
@@ -55,19 +57,20 @@ function harness(): Harness {
   const librariesStore = new LibrariesStore();
   librariesStore.libraries = [{ id: 'lib', name: 'Trip' } as Library];
   let reloads = 0;
+  const reloadActivities: (RequestActivity | undefined)[] = [];
   let libraryLoads = 0;
   const toasts: string[] = [];
   const presenter = new ReplicationPresenter(
     store,
     librariesStore,
     { load: () => Promise.resolve(void libraryLoads++) },
-    { reload: () => Promise.resolve(void reloads++) },
+    { reload: (activity) => { reloadActivities.push(activity); return Promise.resolve(void reloads++); } },
     {
       show: (message: string) => toasts.push(message),
       showError: (message: string) => toasts.push(message),
     },
   );
-  return { store, librariesStore, presenter, reloads: () => reloads, libraryLoads: () => libraryLoads, toasts };
+  return { store, librariesStore, presenter, reloads: () => reloads, reloadActivities, libraryLoads: () => libraryLoads, toasts };
 }
 
 beforeEach(() => {
@@ -87,12 +90,24 @@ test('a session that brought nothing over leaves the grid alone', async () => {
 });
 
 test('a session that applied changes re-reads the grid, because rows moved under it', async () => {
-  const { presenter, reloads } = harness();
+  const { presenter, reloads, reloadActivities } = harness();
   replicationApi.replicate = () => Promise.resolve({ applied: 12, peers: 1 });
 
   await presenter.replicate('lib');
 
   expect(reloads()).toBe(1);
+  expect(reloadActivities).toEqual([undefined]);
+});
+
+test('a completed transfer refreshes the grid as background work', async () => {
+  const { presenter, store, reloadActivities } = harness();
+  const transfer = { id: 'transfer', photo_id: 'photo', direction: 'pull', state: 'active' } as Transfer;
+  runInAction(() => { store.transfers = [transfer]; });
+  blobsApi.listTransfers = () => Promise.resolve([{ ...transfer, state: 'done' }]);
+  try {
+    await presenter.refreshTransfers();
+    expect(reloadActivities).toEqual(['background']);
+  } finally { presenter.stop(); }
 });
 
 test('a library nobody can be reached for says so rather than reporting success', async () => {
@@ -139,9 +154,15 @@ test('keeping a candidate clears the divergence and re-reads the picture it chan
 test('a session the server announces re-reads that library, and only libraries this page has', async () => {
   const { store, presenter } = harness();
   const asked: string[] = [];
-  replicationApi.listPeers = (libraryId: string) => {
+  const activities: (RequestActivity | undefined)[] = [];
+  replicationApi.listPeers = (libraryId: string, activity?: RequestActivity) => {
     asked.push(libraryId);
+    activities.push(activity);
     return peersAnswer([{ ...PEER, last_error: 'connection refused' }]);
+  };
+  photoEditsApi.listConflicts = (_libraryId, activity) => {
+    activities.push(activity);
+    return Promise.resolve([]);
   };
 
   await presenter.libraryChanged('lib');
@@ -149,6 +170,7 @@ test('a session the server announces re-reads that library, and only libraries t
   await presenter.libraryChanged('somebody-elses');
 
   expect(asked).toEqual(['lib']);
+  expect(activities).toEqual(['background', 'background']);
   expect(store.failingPeers).toBe(1);
 });
 
@@ -158,8 +180,10 @@ test('a session the server announces re-reads that library, and only libraries t
 test('following the library list asks again only when a library came or went', async () => {
   const { presenter, librariesStore } = harness();
   let asks = 0;
-  replicationApi.listAllPeers = () => {
+  const activities: (RequestActivity | undefined)[] = [];
+  replicationApi.listAllPeers = (activity) => {
     asks++;
+    activities.push(activity);
     return Promise.resolve({ libraries: [] });
   };
 
@@ -178,6 +202,7 @@ test('following the library list asks again only when a library came or went', a
   presenter.unfollow();
 
   expect(asks).toBe(2);
+  expect(activities).toEqual(['background', 'background']);
 });
 
 // The gate on every strip, badge and panel is "does this library have a peer",

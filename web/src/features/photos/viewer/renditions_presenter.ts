@@ -1,4 +1,5 @@
 import { type ProcessingStage } from '../../../../../src/schemas/common';
+import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { type Rendition } from '../../../../../src/services/processing/renditions/renditions';
 import { renditionsApi } from '../../../api/renditions';
@@ -16,7 +17,7 @@ export class RenditionsPresenter {
     private readonly viewer: ViewerPresenter,
     private readonly listing: ListingPresenter,
     private readonly stacks: StackActionsPresenter,
-    private readonly refreshDetail: () => Promise<void>,
+    private readonly refreshDetail: (activity?: RequestActivity) => Promise<void>,
     private readonly fail: (error: unknown) => void,
     private readonly isCurrent: (photoId: string) => boolean,
   ) {}
@@ -106,7 +107,7 @@ export class RenditionsPresenter {
     // dynamic range and path off the detail's rendition entries, which still describe the file
     // that was just replaced. A library-wide rebuild has no other point that re-reads them.
     if (this.isCurrent(photoId)) {
-      void this.refreshDetail();
+      void this.refreshDetail('background');
       return;
     }
     // Any other photograph's is dropped rather than re-read: nothing is showing it, and a

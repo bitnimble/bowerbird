@@ -1,7 +1,7 @@
 import { afterEach, beforeEach } from 'bun:test';
 import { DEFAULT_SETTINGS, type Settings } from '../../../../schemas/settings';
 import type { SettingsRepository } from '../../../settings/settings_repository';
-import type { CompositeJob, ProcessingResult, RenditionJob } from '../../workers/processing_types';
+import type { CompositeJob, ProcessingMessage, RenditionJob } from '../../workers/processing_types';
 
 export const CRASH = 'crash-photo';
 export const LIB = 'processing-service-test';
@@ -12,7 +12,7 @@ export const DESCRIPTOR = new Uint8Array([1, 2, 3]);
 // Fake Worker: a job for CRASH fires onerror (a native-crash-like event, which
 // skips worker's own catch); everything else reports success.
 export class MockWorker {
-  onmessage: ((event: { data: ProcessingResult }) => void) | null = null;
+  onmessage: ((event: { data: ProcessingMessage }) => void) | null = null;
   onerror: ((event: { message: string }) => void) | null = null;
   constructor(_url: string) {
     built.push(this);

@@ -1,6 +1,7 @@
 import { action, runInAction } from 'mobx';
 import { type Ordering, type RenditionSource } from '../../../../src/schemas/common';
 import { type CreateLibraryRequest, type FolderRule, type Library, type UpdateLibraryRequest } from '../../../../src/schemas/libraries';
+import type { RequestActivity } from '../../../../src/schemas/request_activity';
 import { setStage, type OptionalStage, type RenderedRendition } from '../../../../src/schemas/render_stages';
 import { folderRulesApi } from '../../api/folder_rules';
 import { librariesApi } from '../../api/libraries';
@@ -19,13 +20,13 @@ export class LibrariesPresenter {
     private readonly toasts: ToastsPresenter,
   ) {}
 
-  async load(): Promise<void> {
+  async load(activity: RequestActivity = 'interactive'): Promise<void> {
     this.beginLoad();
     try {
       // Alongside the list rather than once at startup: it is one small immutable
       // record, and pairing them means the settings page never has a library in
       // hand with nothing to compare it against.
-      const [libraries, defaults] = await Promise.all([librariesApi.list(), librariesApi.getDefaults()]);
+      const [libraries, defaults] = await Promise.all([librariesApi.list(activity), librariesApi.getDefaults(activity)]);
       runInAction(() => {
         this.store.libraries = libraries;
         this.store.defaults = defaults;

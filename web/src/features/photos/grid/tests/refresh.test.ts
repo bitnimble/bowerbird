@@ -3,6 +3,7 @@
 // the part that cannot be reached from the pure layout and range modules.
 import { beforeEach, expect, test } from 'bun:test';
 import { type PhotoListResponse, type PhotoSummary } from '../../../../../../src/schemas/photos';
+import type { RequestActivity } from '../../../../../../src/schemas/request_activity';
 import { type PhotoListParams, photosApi } from '../../../../api/photos';
 import { PhotosPresenter } from '../../photos_presenter';
 import { SelectionRanges } from '../../selection';
@@ -23,6 +24,7 @@ let collection: string[] = [];
 let parked: (() => void)[] | null = null;
 // Blocks whose request should fail, by offset.
 let failing = new Set<number>();
+let activities: (RequestActivity | undefined)[] = [];
 
 function row(id: string): PhotoSummary {
   return {
@@ -47,7 +49,8 @@ function row(id: string): PhotoSummary {
 // `api` is a module singleton, so this is the seam. Answers out of `collection`
 // as it stands when the request is *answered*, not when it is made, which is
 // what makes an overlapping pair of re-reads reproducible.
-photosApi.listLibrary = (_libraryId: string, params: PhotoListParams): Promise<PhotoListResponse> => {
+photosApi.listLibrary = (_libraryId: string, params: PhotoListParams, _signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> => {
+  activities.push(activity);
   const offset = params.offset ?? 0;
   const limit = params.limit ?? 100;
   const answer = (): PhotoListResponse =>
@@ -89,6 +92,14 @@ async function openAt(count: number): Promise<{ store: ListingStore; marks: Mark
 beforeEach(() => {
   parked = null;
   failing = new Set();
+  activities = [];
+});
+
+test('an empty collection keeps initial navigation interactive and automatic refresh background', async () => {
+  const { presenter } = await openAt(0);
+  expect(activities).toEqual(['interactive']);
+  await presenter.reload('background');
+  expect(activities).toEqual(['interactive', 'background']);
 });
 
 // Two of these overlap routinely: the sync poll ticks once a second while a verdict is being

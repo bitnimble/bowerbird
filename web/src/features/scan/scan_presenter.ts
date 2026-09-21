@@ -128,13 +128,13 @@ export class ScanPresenter {
     // announcement (§18.6), so a list request per second would answer with the
     // page the grid already has.
     const finished = this.busy && !wasBusy;
-    if (placingRows || finished) await this.photos.reload();
+    if (placingRows || finished) await this.photos.reload('background');
     // The library's photo count and "scanned 3 min ago" come off the library list,
     // which nothing else re-reads while the settings page stays open. Read
     // through the scan as well as at the end: the rows are inserted as the walk
     // finds them, so the sidebar counts a first import up as it goes rather than
     // sitting at zero through the hour of renditions that follows.
-    if (placingRows || finished) await this.libraries.load();
+    if (placingRows || finished) await this.libraries.load('background');
     this.busy = wasBusy;
 
     if (wasBusy && this.store.libraryId === libraryId) {

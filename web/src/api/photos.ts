@@ -36,6 +36,7 @@ import {
 } from '../../../src/schemas/photos';
 import type { PrepareDevelop } from '../../../src/schemas/prepare_develop';
 import { PathSegment, route } from '../../../src/schemas/route';
+import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../src/schemas/request_activity';
 import type { ViewerRendition } from '../../../src/schemas/settings';
 import { assetUrl } from './transport';
 import { NothingSchema, request } from './request';
@@ -108,24 +109,24 @@ export const photosApi = {
   // The list calls take a signal because a scroll abandons blocks faster than
   // they answer: without it every request a flick started stays on the wire,
   // competing with the ones the reader is actually waiting for.
-  listLibrary: (libraryId: string, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> =>
+  listLibrary: (libraryId: string, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> =>
     request(
       PhotoListResponseSchema,
       'GET',
       `${route(PathSegment.api(), PathSegment.libraries(), libraryId, PathSegment.photos())}${photoListQuery(params)}`,
       undefined,
-      signal,
+      { signal, activity: activity ?? (params.count === false ? 'background' : 'interactive') },
     ),
-  listMissing: (libraryId: string, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> =>
+  listMissing: (libraryId: string, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> =>
     request(
       PhotoListResponseSchema,
       'GET',
       `${route(PathSegment.api(), PathSegment.libraries(), libraryId, PathSegment.photos(), PathSegment.missing())}${photoListQuery(params)}`,
       undefined,
-      signal,
+      { signal, activity: activity ?? (params.count === false ? 'background' : 'interactive') },
     ),
-  get: (id: string): Promise<PhotoDetail> =>
-    request(PhotoDetailSchema, 'GET', route(PathSegment.api(), PathSegment.photos(), id)),
+  get: (id: string, activity: RequestActivity = 'interactive'): Promise<PhotoDetail> =>
+    request(PhotoDetailSchema, 'GET', route(PathSegment.api(), PathSegment.photos(), id), undefined, { activity }),
   // What a selection stands for, spelled out. Only the export asks: every other bulk
   // action names its target and lets the server resolve it privately.
   ids: (target: PhotoTarget): Promise<{ photo_ids: string[] }> =>
@@ -197,7 +198,7 @@ export const photosApi = {
       'POST',
       route(PathSegment.api(), PathSegment.photos(), PathSegment.positions()),
       PhotoPositionsRequestSchema.parse(body),
-      signal,
+      { signal, activity: 'background' },
     ),
   // What the viewer's arrows step through: the collection uncollapsed, so a stack
   // is one tile in the grid and every frame of it in the viewer (§19.5.3). Rows
@@ -210,7 +211,7 @@ export const photosApi = {
       'POST',
       route(PathSegment.api(), PathSegment.photos(), PathSegment.neighbours()),
       PhotoNeighboursRequestSchema.parse(body),
-      signal,
+      { signal, activity: 'background' },
     ),
   // The same listing asked for by its ends: hand it the photographs a stack lies
   // between and it answers with the stack, so nothing on this side has to know
@@ -221,7 +222,7 @@ export const photosApi = {
       'POST',
       route(PathSegment.api(), PathSegment.photos(), PathSegment.range()),
       PhotoRangeRequestSchema.parse(body),
-      signal,
+      { signal, activity: 'background' },
     ),
   // The bodies and lenses this collection was shot with, which is what the filter
   // menu offers rather than every model the catalogue has ever seen.
@@ -231,7 +232,7 @@ export const photosApi = {
       'POST',
       route(PathSegment.api(), PathSegment.photos(), PathSegment.models()),
       PhotoModelsRequestSchema.parse(body),
-      signal,
+      { signal, activity: 'background' },
     ),
   // What the collection holds per day, which the filter calendar shades its dots by
   // and picks its opening month from.
@@ -241,7 +242,7 @@ export const photosApi = {
       'POST',
       route(PathSegment.api(), PathSegment.photos(), PathSegment.days()),
       PhotoDaysRequestSchema.parse(body),
-      signal,
+      { signal, activity: 'background' },
     ),
 
   // The URLs below are loaded by the browser itself - an `<img>`, an `EventSource`, a
@@ -267,7 +268,7 @@ export const photosApi = {
    * measuring for having them. 404 until something has measured this photograph.
    */
   downloadRaw: async (photoId: string): Promise<Uint8Array<ArrayBuffer>> => {
-    const reply = await fetch(downloadUrl(photoId, 'original'));
+    const reply = await fetch(downloadUrl(photoId, 'original'), { headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' } });
     if (!reply.ok) {
       // Named and quoted: this is the first request an open makes, so it is where a photograph
       // that is not there is found out, and "404" alone leaves a reader with nothing to act on.

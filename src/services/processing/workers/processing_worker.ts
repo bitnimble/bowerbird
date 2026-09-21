@@ -3,7 +3,7 @@ import path from 'node:path';
 import { runJob, writeRendered } from '../rawshim/rawshim_job';
 import { writePhotoAnalysis } from '../analysis/photo_analysis_store';
 import { toCommand, toCompositeCommand } from '../rawshim/worker_command';
-import type { ProcessingResult, WorkerJob } from './processing_types';
+import type { ProcessingMessage, WorkerJob } from './processing_types';
 
 // Bun worker thread (DESIGN §10.3). Writes renditions of one photo - the grid
 // tile, the full-size view, the max-resolution export - in AVIF, plus the
@@ -20,7 +20,7 @@ import type { ProcessingResult, WorkerJob } from './processing_types';
 // the directories, and cleaning up after a failure.
 declare const self: {
   onmessage: ((event: MessageEvent<WorkerJob>) => void) | null;
-  postMessage: (message: ProcessingResult) => void;
+  postMessage: (message: ProcessingMessage) => void;
 };
 
 function outputsOf(job: WorkerJob): string[] {
@@ -48,12 +48,15 @@ self.onmessage = async (event) => {
     // **A composite's is worth as much as a photograph's and costs more to find**: its levels and
     // its colour are measured over every source stacked, so a panorama that filed nothing paid for
     // the whole set again on every render and every open of it.
+    const command = job.kind === 'composite' ? toCompositeCommand(job) : toCommand(job, job.observe
+      ? (analysisCache) => self.postMessage({ kind: 'started', photoId: job.photoId, analysisCache })
+      : undefined);
     const { descriptor, photoAnalysis, composite } =
       job.kind === 'composite'
-        ? runJob(toCompositeCommand(job))
+        ? runJob(command)
         : job.rendered != null
-          ? writeRendered(toCommand(job), job.rendered)
-          : runJob(toCommand(job));
+          ? writeRendered(command, job.rendered)
+          : runJob(command);
     if (photoAnalysis != null) writePhotoAnalysis(job.dataPath, job.photoId, photoAnalysis);
     self.postMessage({ photoId: job.photoId, success: true, descriptor, composite });
   } catch (err) {

@@ -1,4 +1,6 @@
 import { rename } from 'node:fs/promises';
+import path from 'node:path';
+import { Logger } from '../../../logger';
 import { newId } from '../../../schemas/id';
 import type { Job } from '../../../schemas/jobs';
 import type { Library } from '../../../schemas/libraries';
@@ -12,9 +14,11 @@ import type { OptionalStage } from '../../../schemas/render_stages';
 import { toCommand } from '../rawshim/worker_command';
 import { workerEntry } from '../../worker_entry';
 import type { CompositeWorker } from '../workers/composite_worker';
-import type { ProcessingResult, RenditionJob, RenditionSource, RenditionTarget, RenditionWritten } from '../workers/processing_types';
+import type { ProcessingMessage, RenditionJob, RenditionSource, RenditionTarget, RenditionWritten } from '../workers/processing_types';
 import { developed } from './developed';
 import type { RenderTargets } from './render_targets';
+
+const log = new Logger('processing');
 
 export class SinglePhotoRenderer {
   constructor(
@@ -305,19 +309,27 @@ export class SinglePhotoRenderer {
    * is now on disk under this photo.
    */
   async runDetached(job: RenditionJob): Promise<Uint8Array | undefined> {
+    const fields = { photo: job.photoId, file: path.basename(job.rawFilePath) };
     const worker = new Worker(workerEntry('processing_worker', new URL('../workers/processing_worker.ts', import.meta.url)));
-    try {
-      return await new Promise<Uint8Array | undefined>((resolve, reject) => {
-        worker.onmessage = (event: MessageEvent<ProcessingResult>) => {
-          if (event.data.success) resolve(event.data.descriptor);
-          else reject(new Error(event.data.error));
-        };
-        worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
-        // Moved rather than copied: a client's `max` is hundreds of megabytes.
-        worker.postMessage(job, job.kind === 'rendition' && job.rendered != null ? [job.rendered.buffer] : []);
-      });
-    } finally {
-      worker.terminate();
-    }
+    return await new Promise<Uint8Array | undefined>((resolve, reject) => {
+      worker.onmessage = (event: MessageEvent<ProcessingMessage>) => {
+        if ('kind' in event.data) {
+          log.info('render inputs', {
+            ...fields, analysisCache: event.data.analysisCache, cameraMatch: job.cameraMatch,
+            targets: job.targets.map(({ rendition, hdr, size, source }) => ({ rendition, hdr, size, source })),
+            halfSize: job.halfSize ?? false, denoiser: job.denoiser,
+            denoiseLuminance: job.denoiseLuminance ?? 'auto', denoiseColour: job.denoiseColour ?? 'auto',
+            sharpen: job.sharpen, defringe: job.defringe, dust: job.dust.enabled,
+            repairs: job.repairs.length, input: job.rendered == null ? 'original' : 'client-rendered',
+          });
+          return;
+        }
+        if (event.data.success) resolve(event.data.descriptor);
+        else reject(new Error(event.data.error));
+      };
+      worker.onerror = (event: ErrorEvent) => reject(new Error(`worker crashed: ${event.message}`));
+      // Moved rather than copied: a client's `max` is hundreds of megabytes.
+      worker.postMessage({ ...job, observe: true }, job.rendered != null ? [job.rendered.buffer] : []);
+    }).finally(() => worker.terminate());
   }
 }

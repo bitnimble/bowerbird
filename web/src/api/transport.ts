@@ -17,6 +17,12 @@
 
 import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
+import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../src/schemas/request_activity';
+
+export interface RequestOptions {
+  signal?: AbortSignal;
+  activity?: RequestActivity;
+}
 
 export interface Reply {
   status: number;
@@ -56,12 +62,12 @@ export async function send(
   method: string,
   path: string,
   body?: unknown,
-  signal?: AbortSignal,
+  { signal, activity = 'interactive' }: RequestOptions = {},
 ): Promise<Reply> {
   const invoke = shellInvoke();
   return invoke == null
-    ? await overHttp(method, path, body, signal)
-    : await overIpc(invoke, { cmd, method, path, body }, signal);
+    ? await overHttp(method, path, body, { signal, activity })
+    : await overIpc(invoke, { cmd, method, path, body, activity }, signal);
 }
 
 /**
@@ -89,11 +95,11 @@ async function overHttp(
   method: string,
   path: string,
   body: unknown,
-  signal?: AbortSignal,
+  { signal, activity = 'interactive' }: RequestOptions,
 ): Promise<Reply> {
   const response = await fetch(path, {
     method,
-    headers: body == null ? undefined : { 'Content-Type': 'application/json' },
+    headers: { [REQUEST_ACTIVITY_HEADER]: activity, ...(body == null ? {} : { 'Content-Type': 'application/json' }) },
     body: body == null ? undefined : JSON.stringify(body),
     ...(signal != null && { signal }),
   });

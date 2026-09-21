@@ -83,6 +83,8 @@ import { ProcessingService } from './services/processing/pipeline/processing_ser
 import { shim } from './services/processing/rawshim/rawshim';
 import { config } from './config';
 import { Logger, setLogLevel } from './logger';
+import { requestLogLevel } from './api/request_logging';
+import { REQUEST_ACTIVITY_HEADER } from './schemas/request_activity';
 import type { Settings } from './schemas/settings';
 
 const log = new Logger('server');
@@ -389,33 +391,12 @@ app.use(route(PathSegment.any()), async (c, next) => {
   await next();
   c.header('X-Content-Type-Options', 'nosniff');
 });
-// A read is only worth a line when it went wrong, or when it cost something: a grid
-// scrolling through a shoot is hundreds of rendition GETs a minute, and burying the import
-// that is actually running is how a log stops being read. Anything that changes state is
-// worth one whatever it returns.
-//
-// A slow one is the exception, and by what it cost rather than by which route it is: an
-// editor open is seconds of decoding and was invisible here, which is the wrong way round -
-// it is the first thing anyone looks for when the app feels slow, and a list of routes
-// would only have covered the one somebody thought of.
-//
-// Time rather than size, having tried both. Size is the better instinct and it cannot be
-// had: `content-length` is not on `c.res` by the time this runs, so the test never fired
-// once in 125 requests. It would also have been the wrong question - a large rendition read
-// straight off disk is exactly the flood this stays quiet about, and what makes a read worth
-// a line is that it kept someone waiting.
-const SLOW_MS = 1_000;
-
 app.use(route(PathSegment.any()), async (c, next) => {
-  const started = Date.now();
+  const started = performance.now();
   await next();
   const status = c.res.status;
-  const ms = Date.now() - started;
-  const level =
-    status >= 500 ? 'error'
-    : status >= 400 ? 'warn'
-    : c.req.method !== 'GET' || ms >= SLOW_MS ? 'info'
-    : 'debug';
+  const ms = Math.round(performance.now() - started);
+  const level = requestLogLevel({ status, ms, method: c.req.method, path: c.req.path, activity: c.req.header(REQUEST_ACTIVITY_HEADER) });
   requestLog[level](`${c.req.method} ${c.req.path}`, { status, ms });
 });
 app.route(route(PathSegment.api(), PathSegment.events()), eventsApi.routes);

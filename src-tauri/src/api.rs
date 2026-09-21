@@ -174,6 +174,32 @@ struct Request {
     method: String,
     path: String,
     body: Option<serde_json::Value>,
+    activity: Option<RequestActivity>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RequestActivity {
+    Interactive,
+    Background,
+}
+
+impl Request {
+    fn into_http(self, url: &str) -> Result<reqwest::RequestBuilder, String> {
+        let method = reqwest::Method::from_bytes(self.method.as_bytes())
+            .map_err(|e| format!("bad method {}: {e}", self.method))?;
+        let mut send = client().request(method, url);
+        if let Some(activity) = self.activity {
+            send = send.header("X-Bowerbird-Activity", match activity {
+                RequestActivity::Interactive => "interactive",
+                RequestActivity::Background => "background",
+            });
+        }
+        if let Some(body) = self.body {
+            send = send.json(&body);
+        }
+        Ok(send)
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -193,14 +219,7 @@ pub async fn api(request: String) -> Result<Response, String> {
         serde_json::from_str(&request).map_err(|e| format!("bad request: {e}"))?;
 
     let url = format!("{}{}", origin(), request.path);
-    let method = reqwest::Method::from_bytes(request.method.as_bytes())
-        .map_err(|e| format!("bad method {}: {e}", request.method))?;
-
-    let mut send = client().request(method, &url);
-    if let Some(body) = request.body {
-        send = send.header("content-type", "application/json").json(&body);
-    }
-    let reply = send
+    let reply = request.into_http(&url)?
         .send()
         .await
         .map_err(|e| format!("could not reach {url}: {e}"))?;
@@ -261,6 +280,11 @@ fn frame(head: &Head, body: &[u8]) -> Vec<u8> {
 /// draws, so a grid of thumbnails would freeze the window for as long as the library took
 /// to answer - which for a remote one is the whole point of the app being responsive.
 pub fn asset(request: tauri::http::Request<Vec<u8>>, responder: tauri::UriSchemeResponder) {
+    let cors_origin = asset_cors_origin(request.headers()).map(str::to_owned);
+    if let Some(reply) = asset_preflight(request.method(), cors_origin.as_deref()) {
+        responder.respond(reply);
+        return;
+    }
     let path = request
         .uri()
         .path_and_query()
@@ -271,34 +295,67 @@ pub fn asset(request: tauri::http::Request<Vec<u8>>, responder: tauri::UriScheme
     // Whatever the page sent, so a conditional request stays conditional and a range stays a
     // range. An `<img>` revalidating sends `If-None-Match` and the viewer's seek sends
     // `Range`; dropping them turned every one into a plain GET.
-    let forwarded: Vec<(String, String)> = request
-        .headers()
-        .iter()
-        .filter(|(name, _)| FORWARDED_TO_LIBRARY.contains(&name.as_str()))
-        .filter_map(|(name, value)| {
-            value.to_str().ok().map(|value| (name.as_str().to_string(), value.to_string()))
-        })
-        .collect();
+    let forwarded = asset_headers(request.headers());
 
     tauri::async_runtime::spawn(async move {
-        responder.respond(match fetch(&url, &forwarded).await {
+        let response = match fetch(&url, &forwarded).await {
             Ok(reply) => {
                 let mut built = tauri::http::Response::builder().status(reply.status);
                 for (name, value) in &reply.headers {
                     built = built.header(name, value);
                 }
                 built
-                    // The page is at the app's own origin and this is a scheme of its own, so
-                    // every one of these fetches is cross-origin. Tauri sets this for the
-                    // protocols it registers itself and nothing sets it for ours, so without
-                    // it the browser drops the reply whatever the library answered.
-                    .header("access-control-allow-origin", "*")
                     .body(reply.body)
                     .unwrap_or_else(|_| bad_gateway("the reply could not be built"))
             }
             Err(e) => bad_gateway(&format!("could not reach {url}: {e}")),
-        });
+        };
+        responder.respond(with_asset_cors(response, cors_origin.as_deref()));
     });
+}
+
+fn asset_preflight(
+    method: &tauri::http::Method,
+    origin: Option<&str>,
+) -> Option<tauri::http::Response<Vec<u8>>> {
+    if method != tauri::http::Method::OPTIONS {
+        return None;
+    }
+    let response = tauri::http::Response::builder()
+        .status(204)
+        .header("access-control-allow-methods", "GET, OPTIONS")
+        .header("access-control-allow-headers", FORWARDED_TO_LIBRARY.join(", "))
+        .body(Vec::new())
+        .expect("fixed preflight headers are valid");
+    Some(with_asset_cors(response, origin))
+}
+
+fn asset_cors_origin(headers: &tauri::http::HeaderMap) -> Option<&str> {
+    let origin = headers.get("origin")?.to_str().ok()?;
+    WEBVIEW_ORIGINS.contains(&origin).then_some(origin)
+}
+
+fn with_asset_cors(
+    mut response: tauri::http::Response<Vec<u8>>,
+    origin: Option<&str>,
+) -> tauri::http::Response<Vec<u8>> {
+    if let Some(origin) = origin {
+        response.headers_mut().insert(
+            "access-control-allow-origin",
+            origin.parse().expect("trusted webview origins are valid headers"),
+        );
+        response.headers_mut().insert("vary", tauri::http::HeaderValue::from_static("Origin"));
+    }
+    response
+}
+
+fn asset_headers(headers: &tauri::http::HeaderMap) -> Vec<(String, String)> {
+    headers.iter()
+        .filter(|(name, _)| FORWARDED_TO_LIBRARY.contains(&name.as_str()))
+        .filter_map(|(name, value)| {
+            value.to_str().ok().map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect()
 }
 
 /// What a reply has to keep for the element that asked for it to behave.
@@ -321,8 +378,13 @@ const KEPT_FROM_LIBRARY: [&str; 7] = [
 ];
 
 /// And what the page's own request has to carry through for those to mean anything.
-const FORWARDED_TO_LIBRARY: [&str; 5] =
-    ["accept", "range", "if-none-match", "if-modified-since", "cache-control"];
+const FORWARDED_TO_LIBRARY: [&str; 6] =
+    ["accept", "range", "if-none-match", "if-modified-since", "cache-control", "x-bowerbird-activity"];
+const WEBVIEW_ORIGINS: [&str; 3] = [
+    "http://tauri.localhost",
+    "tauri://localhost",
+    "http://localhost:5199",
+];
 
 struct Fetched {
     status: u16,
@@ -380,4 +442,76 @@ fn bad_gateway(why: &str) -> tauri::http::Response<Vec<u8>> {
         .header("content-type", "text/plain")
         .body(why.as_bytes().to_vec())
         .expect("a 502 with a literal body always builds")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{asset_cors_origin, asset_headers, asset_preflight, with_asset_cors, Request};
+
+    #[test]
+    fn asset_get_forwards_activity_and_range_without_unrelated_headers() {
+        let request = tauri::http::Request::builder()
+            .header("X-Bowerbird-Activity", "background")
+            .header("Range", "bytes=0-99")
+            .header("Cookie", "private=value")
+            .body(Vec::<u8>::new()).unwrap();
+        let mut forwarded = asset_headers(request.headers());
+        forwarded.sort();
+        assert_eq!(forwarded, vec![
+            ("range".to_string(), "bytes=0-99".to_string()),
+            ("x-bowerbird-activity".to_string(), "background".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn asset_activity_preflight_is_answered_without_fetching_a_picture() {
+        let request = tauri::http::Request::builder()
+            .header("Origin", "http://tauri.localhost")
+            .body(Vec::<u8>::new()).unwrap();
+        let origin = asset_cors_origin(request.headers());
+        let response = asset_preflight(&tauri::http::Method::OPTIONS, origin);
+        assert_eq!(response.as_ref().map(|reply| reply.status().as_u16()), Some(204));
+        let response = response.unwrap();
+        assert_eq!(response.headers()["access-control-allow-origin"], "http://tauri.localhost");
+        assert_eq!(response.headers()["vary"], "Origin");
+        assert_eq!(response.headers()["access-control-allow-methods"], "GET, OPTIONS");
+        let allowed = response.headers()["access-control-allow-headers"].to_str().unwrap();
+        for header in ["x-bowerbird-activity", "range", "if-none-match", "cache-control"] {
+            assert!(allowed.split(", ").any(|value| value == header));
+        }
+        assert!(response.body().is_empty());
+        assert!(asset_preflight(&tauri::http::Method::GET, origin).is_none());
+
+        let untrusted = tauri::http::Request::builder()
+            .header("Origin", "https://attacker.example")
+            .body(Vec::<u8>::new()).unwrap();
+        let response = asset_preflight(
+            &tauri::http::Method::OPTIONS,
+            asset_cors_origin(untrusted.headers()),
+        ).unwrap();
+        assert!(!response.headers().contains_key("access-control-allow-origin"));
+    }
+
+    #[test]
+    fn asset_get_allows_only_the_requesting_webview_origin() {
+        let response = tauri::http::Response::builder().status(404).body(Vec::new()).unwrap();
+        let response = with_asset_cors(response, Some("tauri://localhost"));
+        assert_eq!(response.headers()["access-control-allow-origin"], "tauri://localhost");
+        assert_eq!(response.headers()["vary"], "Origin");
+    }
+
+    #[test]
+    fn proxy_forwards_request_activity_and_body() {
+        for activity in ["interactive", "background"] {
+            let input = serde_json::json!({
+                "cmd": "post:photos/neighbours", "method": "POST", "path": "/api/photos/neighbours",
+                "body": { "id": "photo" }, "activity": activity,
+            });
+            let request: Request = serde_json::from_value(input).unwrap();
+            let http = request.into_http("http://localhost/api/photos/neighbours").unwrap().build().unwrap();
+            assert_eq!(http.headers().get("X-Bowerbird-Activity").and_then(|value| value.to_str().ok()), Some(activity));
+            assert_eq!(http.headers().get("content-type").unwrap(), "application/json");
+            assert_eq!(http.body().and_then(|body| body.as_bytes()).unwrap(), b"{\"id\":\"photo\"}");
+        }
+    }
 }
