@@ -560,6 +560,7 @@ pub(crate) struct Base {
     /// belong to - the pair `image::deconvolve_split` carries to each target's scale.
     pub(crate) capture_sigma: Option<f32>,
     pub(crate) sensor_long: usize,
+    pub(crate) sharpen_noise: crate::image::SharpenNoise,
     /// Whether what this base measured describes the photograph, and so is worth filing under it.
     ///
     /// **False for a composite of the cameras' own pictures**, whose every measurement is of what
@@ -711,6 +712,7 @@ impl Base {
         let frame_reduced = frame.reduced.max(1);
         let sensor_long = width.max(height) * frame_reduced;
         let as_shot = frame.as_shot;
+        let wb_gains = frame.wb_gains;
         let dust = frame.dust.clone();
         let crate::frame::Pixels::Resident(resident) = frame.pixels else {
             return Err("the render needs a 16-bit scene-linear decode on the device".to_string());
@@ -748,6 +750,14 @@ impl Base {
         // Floored here and carried, so the white the frame is *coded* against and the white the
         // shader is told about are one number rather than two computed alike.
         let levels = measured.anchored();
+        let sharpen_noise = crate::base::sharpen_noise(
+            levels,
+            job.grade.reference_white_nits,
+            noise,
+            matrix,
+            wb_gains,
+            frame_reduced,
+        );
         // Read off the levels and coded against them, once, here. Everything below this line
         // - the filters, the resize, the warp, the shader - reads normalised PQ rather than
         // sensor levels, and `tone::encode_base` says what that buys.
@@ -775,6 +785,7 @@ impl Base {
             job.grade.reference_white_nits,
             strengths,
             crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
+            crate::image::SharpenNoise::NONE,
             &crate::fit::Lens::none(),
             defringe,
             noise,
@@ -829,6 +840,7 @@ impl Base {
             as_shot,
             capture_sigma,
             sensor_long,
+            sharpen_noise,
             describes_the_photograph: true,
         })
     }
@@ -1025,6 +1037,7 @@ impl Base {
             // sigma for it; carried anyway so the analysis written back stays whole.
             capture_sigma: stored.from_raw.capture_sigma,
             sensor_long: photograph.0.max(photograph.1),
+            sharpen_noise: crate::image::SharpenNoise::NONE,
             describes_the_photograph: true,
         }))
     }
@@ -1371,6 +1384,7 @@ async fn render(
         as_shot,
         capture_sigma,
         sensor_long,
+        sharpen_noise,
         describes_the_photograph,
         // No window: a rendition is of the whole picture, and the crop it ships is taken here rather
         // than asked of the assembly (`Base::cropped`).
@@ -1436,7 +1450,13 @@ async fn render(
                 sensor_long,
                 size.width.max(size.height) as usize,
             );
-            let cut = hdr::Cut::from_base(frame, lens, size, job.sharpen, sigma);
+            let noise = sharpen_noise.at(
+                crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
+                crate::px::Span::<crate::px::Drawn>::exact(
+                    size.width.max(size.height) as usize,
+                ),
+            );
+            let cut = hdr::Cut::from_base(frame, lens, size, job.sharpen, sigma, noise);
             repaired(&cut, job)?;
             cut
         }

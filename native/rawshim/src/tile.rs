@@ -405,12 +405,26 @@ pub async fn prepared_on_device(
     // `job::run` sharpens, and where: a tile skipped it entirely once, and showed a softer
     // photograph than the export at the one magnification a reader could have seen the
     // difference at. Its sigma is the capture's, carried to this scale's pixels.
+    let sensor_long = request
+        .sensor_long
+        .unwrap_or_else(|| grown.photograph.0.max(grown.photograph.1));
+    let drawn_long = grown.frame.0.max(grown.frame.1);
     let sigma = crate::image::deconvolve_split(
         request.capture_sigma.or(stored.from_raw.capture_sigma),
-        request
-            .sensor_long
-            .unwrap_or_else(|| grown.photograph.0.max(grown.photograph.1)),
-        grown.frame.0.max(grown.frame.1),
+        sensor_long,
+        drawn_long,
+    );
+    let sharpen_noise = crate::base::sharpen_noise(
+        levels,
+        request.grade.reference_white_nits,
+        noise,
+        matrix,
+        wb_gains,
+        frame.reduced,
+    )
+    .at(
+        crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
+        crate::px::Span::<crate::px::Drawn>::exact(drawn_long),
     );
     let chained = crate::base::prepare(
         gpu,
@@ -424,6 +438,7 @@ pub async fn prepared_on_device(
             ..strengths
         },
         sigma,
+        sharpen_noise,
         grown.lens.as_ref().unwrap_or(&none),
         defocus,
         noise,

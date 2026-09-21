@@ -263,10 +263,14 @@ fn rendition(
         base.sensor_long,
         size.width.max(size.height) as usize,
     );
+    let noise = base.sharpen_noise.at(
+        crate::px::Span::<crate::px::Sensor>::exact(base.sensor_long),
+        crate::px::Span::<crate::px::Drawn>::exact(size.width.max(size.height) as usize),
+    );
     let crate::job::Cutting::OnDevice(frame) = base.frame else {
         panic!("a whole-frame build leaves its frame on the device")
     };
-    let cut = crate::hdr::Cut::from_base(frame, lens.as_ref(), size, job.sharpen, sigma);
+    let cut = crate::hdr::Cut::from_base(frame, lens.as_ref(), size, job.sharpen, sigma, noise);
     let gpu = crate::gpu::device().expect("an adapter");
     let grade = scene
         .gpu_grade(cut.width, cut.height, job.grade.peak_nits, crate::gpu::Output::Pq)
@@ -1681,7 +1685,18 @@ mod loupe_tile {
                         base.sensor_long,
                         width.max(height),
                     );
-                    crate::hdr::Cut::from_base(frame, lens.as_ref(), size, job.sharpen, sigma)
+                    let noise = base.sharpen_noise.at(
+                        crate::px::Span::<crate::px::Sensor>::exact(base.sensor_long),
+                        crate::px::Span::<crate::px::Drawn>::exact(width.max(height)),
+                    );
+                    crate::hdr::Cut::from_base(
+                        frame,
+                        lens.as_ref(),
+                        size,
+                        job.sharpen,
+                        sigma,
+                        noise,
+                    )
                 }
             }
         };
@@ -3087,6 +3102,7 @@ mod hdr_grade {
                     size,
                     0.0,
                     crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
+                    crate::image::SharpenNoise::NONE,
                 )
             };
             let shared = unsharpened(large).downscale(small);
@@ -3315,6 +3331,73 @@ mod pictures {
             job.sharpen = amount;
             Snapshot::crops(Frame::Coded(&rendered(&job, 0)), &crops).check(name, NEUTRAL);
         }
+    }
+
+    #[test]
+    fn default_sharpening_does_not_turn_high_iso_shadow_grain_into_speckles() {
+        let render = |sharpen, decode| {
+            let mut job = tile_job(bayer_noisy().to_str().unwrap(), None, None);
+            job.match_embedded_jpeg = true;
+            job.denoise_luminance = None;
+            job.denoise_colour = None;
+            job.sharpen = sharpen;
+            job.adjust.blacks = -27.0;
+            rendition(&job, decode, Lensing::Fitted)
+        };
+        let p99 = |frame: &[u16], width: usize, (left, top, side)| {
+            let mut laplacians = Vec::with_capacity(side * (side - 2));
+            for y in top..top + side {
+                for x in left..left + side - 2 {
+                    let green = |x| i64::from(frame[(y * width + x) * 3 + 1]);
+                    laplacians.push((green(x) - 2 * green(x + 1) + green(x + 2)).unsigned_abs());
+                }
+            }
+            laplacians.sort_unstable();
+            laplacians[laplacians.len() * 99 / 100]
+        };
+        for (name, decode, crop) in [
+            ("sharpen/high-iso-max", 0, (1200, 5150, 256)),
+            ("sharpen/high-iso-reduced-bayer", SHRUNK, (600, 2575, 128)),
+        ] {
+            let (unsharpened, width, height, _) = render(0.0, decode);
+            let (sharpened, sharpened_width, sharpened_height, _) = render(0.5, decode);
+            assert_eq!((sharpened_width, sharpened_height), (width, height));
+            let (before, after) = (
+                p99(&unsharpened, width, crop),
+                p99(&sharpened, width, crop),
+            );
+            assert!(
+                after * 10 <= before * 11,
+                "default sharpening raised {name}'s p99 high-frequency magnitude from {before} to {after}",
+            );
+            let resident = crate::resident::Resident::upload(adapter(), &sharpened, width, height);
+            Snapshot::crops(Frame::Coded(&resident), &[square(crop.0, crop.1, crop.2)])
+                .check(name, NEUTRAL);
+        }
+    }
+
+    #[test]
+    fn reduced_xtrans_keeps_supported_sharpening() {
+        let mut job = plain(&fuji_noisy());
+        job.sharpen = 0.0;
+        let unsharpened = rendered(&job, SHRUNK);
+        job.sharpen = 0.5;
+        let sharpened = rendered(&job, SHRUNK);
+        let (width, height) = sharpened.size();
+        assert_eq!(unsharpened.size(), (width, height));
+        assert!(
+            (SHRUNK as usize..2000).contains(&width.max(height)),
+            "the X-Trans decode was not reduced: {width}x{height}",
+        );
+        let before = pollster::block_on(unsharpened.host()).expect("the frame reads");
+        let after = pollster::block_on(sharpened.host()).expect("the frame reads");
+        let moved = before.iter().zip(&after).filter(|(a, b)| a != b).count();
+        assert!(
+            moved > width * height / 100,
+            "sharpening moved only {moved} samples in a {width}x{height} reduced frame",
+        );
+        Snapshot::whole(Frame::Coded(&sharpened), WHOLE)
+            .check("sharpen/reduced-xtrans", NEUTRAL);
     }
 
     /// The demosaic straight off the mosaic, undenoised, beside the photosites it read: a Bayer

@@ -662,13 +662,9 @@ pub const DECONVOLVE_SIGMA: f32 = 0.7;
 
 /// What the Detail panel's Sharpening slider asks for at the top of its track.
 ///
-/// The blend is a fraction of the recovered estimate, so the middle of the track is the
-/// deconvolution exactly as computed and the top extrapolates to twice its difference from the
-/// frame, with [`SHARPEN_OVERSHOOT`] holding what that pushes past a neighbourhood's range.
-///
-/// **The estimate is unregularised, and nothing in the sharpen smooths.** A step that takes texture
-/// out to buy a larger gain reads as a painting; the plain estimate amplifies grain instead, which is
-/// the trade a capture sharpen is for.
+/// The blend is a fraction of the supported recovered estimate, so the middle of the track applies
+/// its accepted correction and the top extrapolates to twice that difference, with
+/// [`SHARPEN_OVERSHOOT`] holding what it pushes past a neighbourhood's range.
 pub const SHARPEN_GAIN: f64 = 2.0;
 
 /// How far past its neighbourhood's range a sharpened pixel may go, as a share of that range;
@@ -687,6 +683,55 @@ pub struct SharpenSigma {
     /// `(capture at this scale, the resample's own spread)`, recomposed per pixel by
     /// `sharpen.slang` under the warp's local derivative.
     pub terms: Option<(f32, f32)>,
+}
+
+/// Sensor noise carried to the raster and coding capture sharpening reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SharpenNoise {
+    pub(crate) sensitivity: [[f32; 3]; 3],
+    pub(crate) shot_per_light: [f32; 3],
+    pub(crate) read_variance: [f32; 3],
+    pub(crate) reduction: usize,
+}
+
+impl SharpenNoise {
+    pub const NONE: SharpenNoise = SharpenNoise {
+        sensitivity: [[0.0; 3]; 3],
+        shot_per_light: [0.0; 3],
+        read_variance: [0.0; 3],
+        reduction: 1,
+    };
+
+    pub fn at(
+        self,
+        sensor: crate::px::Span<crate::px::Sensor>,
+        drawn: crate::px::Span<crate::px::Drawn>,
+    ) -> SharpenNoise {
+        let reduction = self.reduction.max(1);
+        let decoded = sensor.raw().div_ceil(reduction).max(1);
+        let linear = drawn.raw().min(decoded) as f32 / decoded as f32;
+        let area = linear * linear;
+        let samples = match reduction {
+            2 => [1.0, 2.0, 1.0],
+            3 => [1.0, 5.0, 1.0],
+            _ => [1.0; 3],
+        };
+        SharpenNoise {
+            shot_per_light: std::array::from_fn(|channel| {
+                self.shot_per_light[channel] * area / samples[channel]
+            }),
+            read_variance: std::array::from_fn(|channel| {
+                self.read_variance[channel] * area / samples[channel]
+            }),
+            ..self
+        }
+    }
+}
+
+impl Default for SharpenNoise {
+    fn default() -> Self {
+        SharpenNoise::NONE
+    }
 }
 
 impl SharpenSigma {
@@ -1486,6 +1531,72 @@ mod tests {
                 "{deepest} from {capture}"
             );
         }
+    }
+
+    #[test]
+    fn sharpen_noise_follows_the_decode_and_resize_samples() {
+        let noise = SharpenNoise {
+            shot_per_light: [4.0; 3],
+            read_variance: [8.0; 3],
+            ..SharpenNoise::NONE
+        };
+        let sensor = crate::px::Span::<crate::px::Sensor>::exact(6000);
+        assert_eq!(
+            noise.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(6000)),
+            noise,
+        );
+        assert_eq!(
+            noise.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(3000)),
+            SharpenNoise {
+                shot_per_light: [1.0; 3],
+                read_variance: [2.0; 3],
+                ..noise
+            },
+        );
+
+        let halved = SharpenNoise { reduction: 2, ..noise };
+        assert_eq!(
+            halved.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(3000)),
+            SharpenNoise {
+                shot_per_light: [4.0, 2.0, 4.0],
+                read_variance: [8.0, 4.0, 8.0],
+                ..halved
+            },
+        );
+        assert_eq!(
+            halved.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(1500)),
+            SharpenNoise {
+                shot_per_light: [1.0, 0.5, 1.0],
+                read_variance: [2.0, 1.0, 2.0],
+                ..halved
+            },
+        );
+
+        let third = SharpenNoise { reduction: 3, ..noise };
+        let cfa = crate::cfa::tests::parse(crate::cfa::tests::XTRANS, 6, 6);
+        let mut least = [usize::MAX; 3];
+        for row in 0..6 {
+            for col in 0..6 {
+                let mut counts = [0usize; 3];
+                for dy in 0..3 {
+                    for dx in 0..3 {
+                        counts[usize::from(cfa.colour_at(row + dy, col + dx))] += 1;
+                    }
+                }
+                for channel in 0..3 {
+                    least[channel] = least[channel].min(counts[channel]);
+                }
+            }
+        }
+        assert_eq!(least, [1, 5, 1]);
+        assert_eq!(
+            third.at(sensor, crate::px::Span::<crate::px::Drawn>::exact(2000)),
+            SharpenNoise {
+                shot_per_light: [4.0, 0.8, 4.0],
+                read_variance: [8.0, 1.6, 8.0],
+                ..third
+            },
+        );
     }
 
     /// A lens that moves pixels every way this gather can be asked to: a radial curve, a rescale,

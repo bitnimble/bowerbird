@@ -92,6 +92,20 @@ fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
         sensor_long,
         size.width.max(size.height) as usize,
     );
+    let sharpen_noise = rawshim::base::sharpen_noise(
+        levels,
+        options.grade.reference_white_nits,
+        frame.noise,
+        frame.matrix,
+        frame.wb_gains,
+        frame.reduced,
+    )
+    .at(
+        rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
+        rawshim::px::Span::<rawshim::px::Drawn>::exact(
+            size.width.max(size.height) as usize,
+        ),
+    );
     let cut = {
         let resident =
             rawshim::resident::Resident::upload(gpu, &samples, frame.width, frame.height);
@@ -104,6 +118,7 @@ fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
             options.grade.reference_white_nits,
             strengths().before_the_fit(),
             rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
+            rawshim::image::SharpenNoise::NONE,
             &rawshim::fit::Lens::none(),
             rawshim::base::Defringe::Measure,
             frame.noise,
@@ -111,7 +126,14 @@ fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
         ))
         .expect("the coding and the defringe");
         let lens = matched.as_ref().map(|m| &m.lens);
-        hdr::Cut::from_base(prepared, lens, size, strengths().sharpen, sigma)
+        hdr::Cut::from_base(
+            prepared,
+            lens,
+            size,
+            strengths().sharpen,
+            sigma,
+            sharpen_noise,
+        )
     };
 
     let scene = rawshim::tone::SceneGrade::new(

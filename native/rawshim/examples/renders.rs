@@ -297,6 +297,20 @@ fn graded(
             size.width.max(size.height) as usize,
         ),
     };
+    let sharpen_noise = rawshim::base::sharpen_noise(
+        levels,
+        options.grade.reference_white_nits,
+        frame.noise,
+        frame.matrix,
+        frame.wb_gains,
+        frame.reduced,
+    )
+    .at(
+        rawshim::px::Span::<rawshim::px::Sensor>::exact(sensor_long),
+        rawshim::px::Span::<rawshim::px::Drawn>::exact(
+            size.width.max(size.height) as usize,
+        ),
+    );
     // What the deconvolution was actually given, since `deconvolve_split` clamps and a run that
     // sat on the ceiling is sharpening less than the frame asked for.
     eprintln!(
@@ -322,6 +336,7 @@ fn graded(
             options.grade.reference_white_nits,
             Strengths { sharpen: stages.sharpen, defringe: stages.defringe }.before_the_fit(),
             rawshim::image::SharpenSigma::fixed(rawshim::image::DECONVOLVE_SIGMA),
+            rawshim::image::SharpenNoise::NONE,
             &rawshim::fit::Lens::none(),
             stages.defocus.map_or(rawshim::base::Defringe::Measure, rawshim::base::Defringe::Take),
             frame.noise,
@@ -329,7 +344,7 @@ fn graded(
         ))
         .expect("the coding and the defringe");
         let lens = matched.as_ref().map(|m| &m.lens).filter(|_| stages.lens);
-        hdr::Cut::from_base(prepared, lens, size, stages.sharpen, sigma)
+        hdr::Cut::from_base(prepared, lens, size, stages.sharpen, sigma, sharpen_noise)
     };
 
     let colour = matched.as_ref().filter(|_| stages.matched).and_then(|m| m.colour.as_ref()).map(|colour| {

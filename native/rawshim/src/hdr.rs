@@ -478,6 +478,7 @@ fn cut_for(
         size,
         options.strengths.sharpen,
         image::SharpenSigma::fixed(options.sharpen_sigma.unwrap_or(image::DECONVOLVE_SIGMA)),
+        image::SharpenNoise::NONE,
     )
 }
 
@@ -571,6 +572,7 @@ impl Cut {
         size: hdr_args::Size,
         sharpen: f64,
         sharpen_sigma: image::SharpenSigma,
+        sharpen_noise: image::SharpenNoise,
     ) -> Cut {
         let gpu = frame.gpu();
         let base = crate::base::device(gpu).expect("the device the pipelines were built on");
@@ -631,6 +633,7 @@ impl Cut {
                 height,
                 sharpen,
                 sharpen_sigma,
+                sharpen_noise,
                 jacobian.as_ref(),
             );
             recording.submit();
