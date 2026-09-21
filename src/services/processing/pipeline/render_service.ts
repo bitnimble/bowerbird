@@ -68,7 +68,7 @@ export abstract class RenderService {
       },
     );
     this.exports = new ExportRenderer(settings, editsFor, this.targets, this.singlePhoto, this.composites);
-    this.benchmark = new RenderBenchmark(photoPaths, libraryOf, this.singlePhoto);
+    this.benchmark = new RenderBenchmark(this.singlePhoto);
   }
 
   /** What a render's stages cost on this machine, measured now and filed in `into`. */

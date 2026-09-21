@@ -90,33 +90,20 @@ export class SinglePhotoRenderer {
 
 
 
-  /**
-   * The job a rendition of this photograph would run, with the stages to leave out named here
-   * rather than read off the library, and writing under `dataPath` rather than under the library.
-   *
-   * **Both overrides are what makes a benchmark a measurement rather than an edit.** What it times
-   * is one photograph rendered several ways, so it has to be able to ask for stages the library has
-   * turned off; and a temporary `dataPath` keeps the rendition it writes, and the analysis the
-   * render measures, off the photograph's own copies.
-   *
-   * **`remeasure`, and it is load-bearing rather than tidy.** A render handed the analysis on file
-   * skips the camera match, the noise fit and the levels - and the first round writes that file
-   * into the very directory the rest would read it from. Without this only the first round is cold
-   * and the camera match measures as costing nothing.
-   *
-   * HDR and the camera match are asked for rather than read off the library and the settings, for
-   * the reason the sensor is scaled away: one machine has one answer, and a figure that also
-   * depended on how whichever catalogue the photograph came from is configured would not be it.
-   */
   benchmarkJob(
     rawFilePath: string,
     photoId: string,
-    library: Library,
     rendition: Rendition,
     dataPath: string,
     skip: readonly OptionalStage[],
   ): RenditionJob {
-    const { job } = this.oneRendition(rawFilePath, photoId, library, rendition, true, 'render', true, skip, dataPath);
+    const { job } = this.jobFor(rawFilePath, photoId, rendition, {
+      hdr: true,
+      source: 'render',
+      remeasure: true,
+      skip,
+      dataPath,
+    });
     return { ...job, matchEmbeddedJpeg: !skip.includes('match') };
   }
 
@@ -128,8 +115,34 @@ export class SinglePhotoRenderer {
     hdr: boolean,
     source: RenditionSource,
     remeasure: boolean,
-    skip: readonly OptionalStage[] = renditionSkips(library, rendition),
-    dataPath: string = getDataPath(library),
+  ): { job: RenditionJob; builtFrom: string | null } {
+    const skip = renditionSkips(library, rendition);
+    return this.jobFor(rawFilePath, photoId, rendition, {
+      hdr,
+      source,
+      remeasure,
+      skip,
+      dataPath: getDataPath(library),
+    });
+  }
+
+  private jobFor(
+    rawFilePath: string,
+    photoId: string,
+    rendition: Rendition,
+    {
+      hdr,
+      source,
+      remeasure,
+      skip,
+      dataPath,
+    }: {
+      hdr: boolean;
+      source: RenditionSource;
+      remeasure: boolean;
+      skip: readonly OptionalStage[];
+      dataPath: string;
+    },
   ): { job: RenditionJob; builtFrom: string | null } {
     const edits = this.editsFor(photoId);
     return {

@@ -32,6 +32,7 @@ jobs:
       # the submodule is a cargo build that fails on a directory that is not there.
       - uses: actions/checkout@v4
         with:
+          lfs: true
           submodules: recursive
 
       # A runner has ~14GB free and the Rust stage peaks near 3. The toolchains this
@@ -140,6 +141,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          lfs: true
           submodules: recursive
       - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable

@@ -129,6 +129,7 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, St
         .env("DATA_DIR", data.join("data"))
         .env("BOWERBIRD_WORKER_DIR", &workers)
         .env("BOWERBIRD_NATIVE_LIB", &native)
+        .env("BOWERBIRD_REFERENCE_FRAME", resources.join("reference_frame.ARW"))
         // Inherited so the server's own log lands wherever the app's does, which is
         // the only account of what went wrong when it will not start.
         .stdout(Stdio::inherit())

@@ -344,6 +344,7 @@ COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts native/report_gp
 RUN chmod +x ./payload/native/entrypoint.sh
 COPY --chown=bun:bun package.json bun.lock tsconfig.json ./payload/
 COPY --chown=bun:bun src ./payload/src
+COPY --chown=bun:bun assets/reference_frame.ARW ./payload/assets/reference_frame.ARW
 # `bun run restore` is the documented way back from a bad catalogue (§4.9), and the
 # backups it reads are on a named volume inside this image's world. Left out, the
 # only supported deployment is the one deployment that cannot restore its own

@@ -12,13 +12,14 @@
 // is a shared object opened by `dlopen`, and the shell tells the server where it
 // landed (`BOWERBIRD_NATIVE_LIB`).
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 const BINARIES = join(ROOT, 'src-tauri', 'binaries');
 const RESOURCES = join(ROOT, 'src-tauri', 'resources');
 const SERVER = join(RESOURCES, 'server');
+const REFERENCE_FRAME = 'reference_frame.ARW';
 
 /**
  * Every entry point the bundle needs: the server, and each worker it starts.
@@ -168,8 +169,15 @@ chmodSync(sidecar, 0o755);
 const library = nativeLibrary(triple);
 copyFileSync(library, join(RESOURCES, libraryName(triple)));
 
+const frame = join(ROOT, 'assets', REFERENCE_FRAME);
+if (!existsSync(frame) || statSync(frame).size < 1_000_000) {
+  throw new Error(`no reference frame at ${frame}. Run \`git lfs pull\`, or the Measure button ships broken.`);
+}
+copyFileSync(frame, join(RESOURCES, REFERENCE_FRAME));
+
 console.log(`sidecar: ${sidecar} (the Bun runtime, from ${runtime})`);
 console.log(`server:  ${join(SERVER, 'index.js')}`);
 console.log(`native:  ${join(RESOURCES, libraryName(triple))} (from ${library})`);
+console.log(`frame:   ${join(RESOURCES, REFERENCE_FRAME)}`);
 console.log(`schema:  ${join(SERVER, 'migrations')}`);
 console.log(`libsql:  ${join(SERVER, 'node_modules', libsqlPackage(triple))}`);

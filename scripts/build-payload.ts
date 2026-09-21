@@ -67,6 +67,7 @@ function need(path: string, how: string): string {
 if (!shellOnly) {
   need(sidecar, 'Run `bun run build:sidecar` first, or pass --shell-only.');
   need(join(resources, 'server', 'index.js'), 'Run `bun run build:sidecar` first, or pass --shell-only.');
+  need(join(resources, 'reference_frame.ARW'), 'Run `bun run build:sidecar` first, or pass --shell-only.');
 }
 
 /**

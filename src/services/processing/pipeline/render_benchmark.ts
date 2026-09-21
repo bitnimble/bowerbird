@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AppError } from '../../../errors';
 import { deleteScratchDirectory } from '../../../utils/deletions';
-import type { Library } from '../../../schemas/libraries';
+import { newId } from '../../../schemas/id';
 import {
   OPTIONAL_STAGES,
   scaledToReference,
@@ -12,9 +12,8 @@ import {
   type RenderTiming,
   type RenderedRendition,
 } from '../../../schemas/render_stages';
-import { originalPathOf } from '../../../utils/paths';
-import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type { RenderTimingsFile } from '../renditions/render_timings_file';
+import { readRawHeader } from '../rawshim/raw_decoder';
 import { openCompositeWorker } from '../workers/composite_worker';
 import type { SinglePhotoRenderer } from './single_photo_renderer';
 
@@ -26,6 +25,8 @@ import type { SinglePhotoRenderer } from './single_photo_renderer';
  */
 const ROUNDS = 3;
 
+const REFERENCE_FRAME = process.env.BOWERBIRD_REFERENCE_FRAME ?? './assets/reference_frame.ARW';
+
 /**
  * What each optional stage costs on this machine, as the difference two renders of one photograph
  * make, scaled to a full-frame sensor (§10.1).
@@ -34,9 +35,8 @@ const ROUNDS = 3;
  */
 export class RenderBenchmark {
   constructor(
-    private readonly photoPaths: PhotoPathsRepository,
-    private readonly libraryOf: (libraryId: string) => Library | null,
     private readonly renderer: SinglePhotoRenderer,
+    private readonly frame: string = REFERENCE_FRAME,
   ) {}
 
   /**
@@ -44,17 +44,12 @@ export class RenderBenchmark {
    * owns the file is the caller, and a benchmark is the only thing here that writes it.
    */
   async run(rendition: RenderedRendition, into: RenderTimingsFile): Promise<RenderTiming> {
-    const photo = this.photoPaths.aFileToBenchmark();
-    if (photo == null) throw new AppError('NOT_FOUND', 'there is no photograph here to time a render against');
-    const library = this.libraryOf(photo.library_id);
-    if (library == null) throw new AppError('NOT_FOUND', `the library ${photo.id} is in is no longer here`);
-    const raw = originalPathOf(library, photo);
-    if (raw == null || !existsSync(raw)) {
-      throw new AppError('NOT_FOUND', `the file behind ${photo.id} is not on this device`);
+    if (!existsSync(this.frame)) {
+      throw new AppError('NOT_FOUND', `this build carries no reference frame at ${this.frame}`);
     }
+    const header = readRawHeader(this.frame);
+    const benchmarkPhotoId = newId();
 
-    // Everything the rounds write goes in here and leaves with it: the renditions, and the analysis
-    // each cold round measures. Nothing under the library is touched.
     const scratch = await mkdtemp(join(tmpdir(), 'bowerbird-benchmark-'));
     // One worker for every round, so the half second spent acquiring an adapter and compiling the
     // shader modules is paid once rather than folded into each difference.
@@ -62,7 +57,7 @@ export class RenderBenchmark {
     try {
       const time = async (skip: readonly OptionalStage[]): Promise<number> => {
         const began = performance.now();
-        await on.run(this.renderer.benchmarkJob(raw, photo.id, library, rendition, scratch, skip));
+        await on.run(this.renderer.benchmarkJob(this.frame, benchmarkPhotoId, rendition, scratch, skip));
         return performance.now() - began;
       };
 
@@ -91,7 +86,7 @@ export class RenderBenchmark {
       }
       const timing = scaledToReference(
         { total, stages, measured_at: new Date().toISOString() },
-        photo.width * photo.height,
+        header.width * header.height,
       );
       into.put(rendition, timing);
       return timing;

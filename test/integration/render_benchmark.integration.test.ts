@@ -5,75 +5,69 @@
 // failed or as a saving of nothing.
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Library } from '../../src/schemas/libraries';
-import { fileRecipe } from '../../src/schemas/recipes';
 import { OPTIONAL_STAGES } from '../../src/schemas/render_stages';
 import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/pipeline/processing_service';
+import { readRawHeader } from '../../src/services/processing/rawshim/raw_decoder';
 import { RenderTimingsFile } from '../../src/services/processing/renditions/render_timings_file';
 import type { PhotoPathsRepository } from '../../src/services/photos/paths/photo_paths_repository';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
-import { getDataPath } from '../../src/utils/paths';
 
-const PHOTO = 'bench-photo';
+const REFERENCE_FRAME = join(import.meta.dir, '../../assets/reference_frame.ARW');
+const TIFF_TYPE_BYTES: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8 };
 
-const library: Library = {
-  id: 'render-benchmark',
-  root_path: `${import.meta.dir}/../fixtures`,
-  bin_name: 'Bin',
-  read_only: false,
-  name: 'lib',
-  ordering: 'added_desc',
-  rendition_source: 'render',
-  rendition_hdr: true,
-  render_skip_full: [],
-  render_skip_max: [],
-  include_subfolders: true,
-  include_non_raw: false,
-  auto_stack: true,
-  auto_stack_similarity: 0.78,
-  auto_stack_window_seconds: 60,
-  last_synced_at: null,
-  photo_count: 1,
-};
-
-// The one photograph the benchmark renders, handed over without a catalogue behind it. Its stated
-// size is the frame's own, so what comes back is what was timed rather than something scaled.
-const paths = {
-  aFileToBenchmark: () => ({
-    id: PHOTO,
-    library_id: library.id,
-    shoot_id: null,
-    recipe: fileRecipe('DSC02981.ARW'),
-    width: 6000,
-    height: 4000,
-  }),
-} as unknown as PhotoPathsRepository;
+function tiffValue(file: Buffer, ifd: number, tag: number): Buffer {
+  const count = file.readUInt16LE(ifd);
+  for (let index = 0; index < count; index += 1) {
+    const entry = ifd + 2 + index * 12;
+    if (file.readUInt16LE(entry) !== tag) continue;
+    const bytes = (TIFF_TYPE_BYTES[file.readUInt16LE(entry + 2)] ?? 0) * file.readUInt32LE(entry + 4);
+    const offset = bytes <= 4 ? entry + 8 : file.readUInt32LE(entry + 8);
+    return file.subarray(offset, offset + bytes);
+  }
+  throw new Error(`TIFF tag 0x${tag.toString(16)} is missing`);
+}
 
 function service(): ProcessingService {
   const settings: Settings = { ...DEFAULT_SETTINGS, processing_concurrency: 1, match_embedded_jpeg: true };
   return new ProcessingService(
     { markTileBuilt: () => {}, markRenditionsBuilt: () => {}, markCopyBuilt: () => {} } as never,
-    paths,
+    {} as PhotoPathsRepository,
     {} as ConstructorParameters<typeof ProcessingService>[2],
     { get: () => settings } as SettingsRepository,
     () => null,
-    () => library,
+    () => null,
   );
 }
 
-// Under a scratch directory of its own rather than the app's, which no test should be writing to.
-function timings(): RenderTimingsFile {
-  return new RenderTimingsFile(join(mkdtempSync(join(tmpdir(), 'bowerbird-timings-')), 'render_timings.json'));
+function timings(): { file: RenderTimingsFile; root: string } {
+  const root = mkdtempSync(join(tmpdir(), 'bowerbird-timings-'));
+  return { file: new RenderTimingsFile(join(root, 'render_timings.json')), root };
 }
 
 const scratchDirs = (): string[] => readdirSync(tmpdir()).filter((entry) => entry.startsWith('bowerbird-benchmark-'));
 
-test('every optional stage is priced, and nothing of the photograph is written', async () => {
-  const into = timings();
+test('the sanitized shipped frame prices every optional stage without a library', async () => {
+  const raw = readFileSync(REFERENCE_FRAME);
+  const exif = tiffValue(raw, raw.readUInt32LE(4), 0x8769).readUInt32LE(0);
+  expect(tiffValue(raw, exif, 0x927c).every((byte) => byte === 0)).toBe(true);
+  for (const tag of [0x9290, 0x9291, 0x9292]) {
+    expect(tiffValue(raw, exif, tag).every((byte) => byte === 0)).toBe(true);
+  }
+  expect(readRawHeader(REFERENCE_FRAME)).toMatchObject({
+    width: 6336,
+    height: 9504,
+    dateTaken: null,
+    latitude: null,
+    longitude: null,
+    cameraMake: 'Sony',
+    cameraModel: 'ILCE-7CR',
+  });
+
+  const { file: into, root } = timings();
   const before = scratchDirs();
   // A measurement of another rendition, to prove this one files beside it rather than over it.
   into.put('max', { total: 999, stages: { denoise: 1 }, measured_at: '2026-01-01T00:00:00.000Z' });
@@ -95,11 +89,8 @@ test('every optional stage is priced, and nothing of the photograph is written',
     expect(filed.full?.total).toBe(timing.total);
     expect(filed.max?.total).toBe(999);
 
-    // Not under the photograph: a benchmark writes renditions and measures an analysis, and both
-    // go in a scratch directory that leaves with it.
-    expect(existsSync(getDataPath(library))).toBe(false);
     expect(scratchDirs()).toEqual(before);
   } finally {
-    rmSync(getDataPath(library), { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 }, 600_000);
