@@ -26,6 +26,8 @@ const COMPACT_OPTIONS: Option<Triage>[] = OPTIONS.map((option) => ({
   label: option.hint == null ? option.label : TriageControlStrings.withHint(option.label, option.hint),
 }));
 
+const OPTIONS_WITHOUT_HINTS: Option<Triage>[] = OPTIONS.map((option) => ({ ...option, hint: undefined }));
+
 // Three states, not a checkbox: "not yet decided" is different from "decided
 // against", and a two-state control cannot say which one a photo is in.
 export function TriageControl({
@@ -48,7 +50,7 @@ export function TriageControl({
     <SegmentedControl
       stretch={stretch}
       label={TriageControlStrings.triage()}
-      options={compact ? COMPACT_OPTIONS : OPTIONS}
+      options={compact ? COMPACT_OPTIONS : stretch ? OPTIONS_WITHOUT_HINTS : OPTIONS}
       value={value}
       held={held}
       onChange={onChange}

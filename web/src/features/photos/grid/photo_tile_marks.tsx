@@ -15,8 +15,10 @@ const styles = stylex.create({
     flexGrow: 0,
     flexShrink: 0,
     flexBasis: 'auto',
+    marginLeft: 'auto',
   },
   list: {
+    marginLeft: 0,
     pointerEvents: 'auto',
   },
 });
