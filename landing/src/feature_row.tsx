@@ -11,14 +11,14 @@ const WIDE = '@media (min-width: 960px)';
 const styles = stylex.create({
   row: {
     display: 'grid',
-    gridTemplateColumns: { default: null, [WIDE]: 'minmax(0, 4fr) minmax(0, 7fr)' },
+    gridTemplateColumns: { default: 'minmax(0, 1fr)', [WIDE]: 'minmax(0, 4fr) minmax(0, 7fr)' },
     gap: '24px 56px',
     alignItems: 'center',
     paddingBlock: { default: '40px', [WIDE]: '64px' },
     scrollMarginTop: layout.headerH,
   },
   flipped: {
-    gridTemplateColumns: { default: null, [WIDE]: 'minmax(0, 7fr) minmax(0, 4fr)' },
+    gridTemplateColumns: { default: 'minmax(0, 1fr)', [WIDE]: 'minmax(0, 7fr) minmax(0, 4fr)' },
   },
   visualFirst: {
     order: { default: null, [WIDE]: -1 },

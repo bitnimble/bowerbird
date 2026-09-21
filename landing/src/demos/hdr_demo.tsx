@@ -8,6 +8,8 @@ import { SplitFrame, splitImage } from './split_frame';
 
 type View = 'sdr' | 'split' | 'hdr';
 
+const NARROW = '@media (max-width: 345px)';
+
 const DIVIDER: Record<View, number> = { sdr: 100, split: 50, hdr: 0 };
 
 const VIEWS: { value: View; label: string }[] = [
@@ -17,6 +19,16 @@ const VIEWS: { value: View; label: string }[] = [
 ];
 
 const SCENE_OPTIONS = SCENES.map((value) => ({ value, label: DEMO.hdr.scenes[value] }));
+
+const styles = stylex.create({
+  control: {
+    width: 'auto',
+    maxWidth: '100%',
+  },
+  controlItem: {
+    paddingInline: { default: '10px', [NARROW]: '6px' },
+  },
+});
 
 function viewAt(divider: number): View | null {
   return VIEWS.find((view) => DIVIDER[view.value] === divider)?.value ?? null;
@@ -30,12 +42,23 @@ export function HdrDemo(): JSX.Element {
   return (
     <Demo>
       <DemoBar>
-        <SegmentedControl label={DEMO.hdr.sceneLabel} options={SCENE_OPTIONS} value={scene} onChange={setScene} />
+        <SegmentedControl
+          label={DEMO.hdr.sceneLabel}
+          options={SCENE_OPTIONS}
+          value={scene}
+          onChange={setScene}
+          stretch
+          style={styles.control}
+          itemStyle={styles.controlItem}
+        />
         <SegmentedControl
           label={DEMO.hdr.viewLabel}
           options={VIEWS}
           value={viewAt(divider)}
           onChange={(view) => setDivider(DIVIDER[view])}
+          stretch
+          style={styles.control}
+          itemStyle={styles.controlItem}
         />
       </DemoBar>
       <SplitFrame

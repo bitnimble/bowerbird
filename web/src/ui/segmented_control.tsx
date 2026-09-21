@@ -114,6 +114,7 @@ export function SegmentedControl<T extends string>({
   as = 'toggle',
   focusable = true,
   style,
+  itemStyle,
 }: {
   options: Option<T>[];
   value: T | null;
@@ -133,6 +134,7 @@ export function SegmentedControl<T extends string>({
    */
   focusable?: boolean;
   style?: stylex.StyleXStyles;
+  itemStyle?: stylex.StyleXStyles;
 }): JSX.Element {
   const group = stylex.props(styles.group, stretch && styles.groupStretch, style);
   const tabIndex = focusable ? undefined : -1;
@@ -147,6 +149,7 @@ export function SegmentedControl<T extends string>({
       held != null && (option.value === held ? styles.held : styles.underHold),
       option.value === held && option.tone === 'pick' && styles.heldPick,
       option.value === held && option.tone === 'reject' && styles.heldReject,
+      itemStyle,
     );
   const contents = (option: Option<T>): JSX.Element => (
     <>

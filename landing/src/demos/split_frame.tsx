@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import type { ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { focusRing } from '../../../web/src/ui/focus_ring';
 import { color } from '../../../web/src/ui/tokens.stylex';
 import { Badge } from './badge';
@@ -93,9 +93,9 @@ const styles = stylex.create({
     touchAction: 'pan-y',
     '::-webkit-slider-thumb': { appearance: 'none', width: '44px', height: '2000px' },
     '::-moz-range-thumb': { width: '44px', height: '2000px' },
-  },});
+  },
+});
 
-/** `before` sits in flow and sizes the frame; `after` fills it, shown right of the divider at `value` percent. */
 export function SplitFrame({
   before,
   after,
@@ -113,17 +113,26 @@ export function SplitFrame({
   value: number;
   onChange: (value: number) => void;
 }): JSX.Element {
-  const shown = Math.max(0.001, 1 - value / 100);
+  const latestValue = useRef(value);
+  const [dragValue, setDragValue] = useState<number | null>(null);
+  const shownValue = dragValue ?? value;
+  const shown = Math.max(0.001, 1 - shownValue / 100);
+  const commit = (): void => {
+    if (dragValue == null) return;
+    setDragValue(null);
+    onChange(latestValue.current);
+  };
+
   return (
     <div {...stylex.props(styles.split, focusRing.within)}>
       <div>{before}</div>
       {/* Clipped by overflow, not clip-path or a transform: either can flatten an HDR image to SDR. */}
-      <div {...stylex.props(styles.after)} style={{ left: `${value}%` }}>
+      <div {...stylex.props(styles.after)} style={{ left: `${shownValue}%` }}>
         <div {...stylex.props(styles.afterFrame)} style={{ width: `${100 / shown}%` }}>
           {after}
         </div>
       </div>
-      <span {...stylex.props(styles.handle)} style={{ left: `${value}%` }} aria-hidden />
+      <span {...stylex.props(styles.handle)} style={{ left: `${shownValue}%` }} aria-hidden />
       <Badge style={[styles.tag, styles.tagBefore]} aria-hidden>
         {beforeLabel}
       </Badge>
@@ -136,9 +145,20 @@ export function SplitFrame({
         min={0}
         max={100}
         step={1}
-        value={value}
+        value={shownValue}
         aria-label={label}
-        onChange={(event) => onChange(Number(event.target.value))}
+        onPointerDown={() => {
+          latestValue.current = value;
+          setDragValue(value);
+        }}
+        onPointerUp={commit}
+        onPointerCancel={() => setDragValue(null)}
+        onChange={(event) => {
+          const next = Number(event.currentTarget.value);
+          latestValue.current = next;
+          if (dragValue == null) onChange(next);
+          else setDragValue(next);
+        }}
       />
     </div>
   );

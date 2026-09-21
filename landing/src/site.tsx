@@ -12,6 +12,7 @@ const HOME_URL = import.meta.env.BASE_URL;
 export const FEATURES_URL = `${import.meta.env.BASE_URL}features.html`;
 
 const FINE = '@media (pointer: fine)';
+const NARROW = '@media (max-width: 345px)';
 
 const styles = stylex.create({
   html: {
@@ -43,9 +44,9 @@ const styles = stylex.create({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: '16px',
+    gap: { default: '16px', [NARROW]: '8px' },
     paddingBlock: 0,
-    paddingInline: layout.pageX,
+    paddingInline: { default: layout.pageX, [NARROW]: '12px' },
     backgroundColor: color.ink,
     borderBottomWidth: '1px',
     borderBottomStyle: 'solid',
@@ -61,7 +62,7 @@ const styles = stylex.create({
   },
   nav: {
     display: 'flex',
-    gap: '18px',
+    gap: { default: '18px', [NARROW]: '12px' },
     fontSize: '14px',
   },
   footer: {
