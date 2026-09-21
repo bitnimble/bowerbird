@@ -1,6 +1,10 @@
-// The picture pairs on `/hdr`, built by the app's own pipeline.
+// The committed demo pictures, built by the app's own pipeline: the pairs on `/hdr`, and
+// the colour matching pair the landing site's demo swaps between.
 //
-//   BOWERBIRD_HDR_RAWS=<the directory holding the raws> bun run scripts/hdr-demo-assets.ts [slug...]
+//   BOWERBIRD_DEMO_GAMUT=<a raw> BOWERBIRD_DEMO_WHITES=<a raw> ... bun run scripts/demo-assets.ts [slug...]
+//
+// One variable per picture, named for its slug (`rawFor`), and a run only asks for the
+// pictures it is building.
 //
 // One `runJob` per photograph produces the HDR rendition, at the shipped defaults and
 // at 1200px rather than 3840. **The 8-bit arm is then derived from that file** rather
@@ -21,47 +25,97 @@
 // the result written as 8-bit sRGB. No tone mapping, no second grade - a clamp and a
 // colour conversion, which is exactly what the page says it is showing.
 //
-// The raw files are the maintainer's own, named by filename and found under
-// `BOWERBIRD_HDR_RAWS`, so this does not run on a fresh checkout and does not need to:
-// the renditions are committed and the page serves those. The originals stay in the
-// library they came from - three raws are 44MB - and the path to it stays out of here.
+// The raw files are the maintainer's own and every one of them is passed in, so this does
+// not run on a fresh checkout and does not need to: the renditions are committed and the
+// page serves those.
 //
 // `bun run build:native` first: this goes through the same FFI the server does.
 // `ffmpeg` and `avifenc` are needed too, as dev-stage tools (DESIGN §10.7).
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
+import { canvasLongEdgeFor } from '../src/schemas/composition';
+import { AlignedSchema, type Aligned } from '../src/schemas/recipes';
 import { SettingsSchema } from '../src/schemas/settings';
+import { dustSettings } from '../src/schemas/dust_settings';
 import { AS_METERED } from '../src/services/processing/pipeline/developed';
 import { encoderQuality } from '../src/services/processing/analysis/quality';
-import type { JobTarget } from '../src/schemas/jobs';
+import type { Job, JobCompositeSource, JobTarget } from '../src/schemas/jobs';
 import { runJob } from '../src/services/processing/rawshim/rawshim_job';
 
-interface Scene {
-  /** Names the two files, and the page's entry for this picture. */
-  slug: string;
-  /** The raw, inside `BOWERBIRD_HDR_RAWS`. Owned rather than licensed, so nobody is credited. */
-  file: string;
-}
-
 /**
- * Where the originals are, passed in rather than written down.
+ * Where a picture's raw is, read from the variable named after its slug.
  *
- * They are 11-17MB each and live in a photo library, not in this repository - and the
- * path to somebody's library is theirs, not something a public repository should carry.
- * Only this file's author can rebuild these renditions, which is fine: they are
- * committed, and the page serves those.
+ * **Nothing about the originals is written down here** - not a path, not a directory, not a
+ * filename. They live in a photo library rather than in this repository, and a library's
+ * shape is its owner's: the folders are their trips and their rejects, and a camera's own
+ * name for a frame is enough to ask after the rest of the album. So every one of them is
+ * passed in, and this file knows only what it calls the picture.
  */
-const LIBRARY = process.env.BOWERBIRD_HDR_RAWS;
+function rawFor(slug: string): string {
+  const variable = `BOWERBIRD_DEMO_${slug.toUpperCase().replaceAll('-', '_')}`;
+  const path = process.env[variable];
+  if (path == null || path === '') throw new Error(`${variable} must name the raw to build ${slug} from`);
+  return path;
+}
 
 // The pictures on the page, in its order. Each is a case the page makes in words
 // beside it, so a change here wants a look at `web/src/features/hdr/hdr_page.tsx`.
-const SCENES: Scene[] = [
-  { slug: 'rapids', file: 'IMG_8659.CR3' },
-  { slug: 'sunset', file: 'IMG_8584.CR3' },
-  { slug: 'arches', file: 'IMG_0844.CR3' },
-];
+const SCENES: readonly string[] = ['gamut', 'whites', 'sun', 'saturated'];
+
+/**
+ * The landing site's colour matching demo, which is one picture rendered two ways.
+ *
+ * The same photograph as `whites`, and pointed at by a variable of its own rather than
+ * borrowing that one: which raw a slug is built from is the caller's to say, every time.
+ */
+const COLOUR = 'colour';
+
+/**
+ * What the unmatched arm is exposed down by, so the pair differs in colour and not in level.
+ *
+ * The camera's curve is what rolls the highlights off, and the neutral arm does not have one,
+ * so it renders brighter everywhere: on this frame 3.3% of its pixels clip against the matched
+ * arm's 1.1%, and the overcast sky behind the trees goes flat white. That reads as a broken
+ * render rather than as an unmatched one, which is the opposite of what the demo is for.
+ *
+ * Swept at 0.3 stop steps and measured against the matched arm: 0.9 stops down puts the two
+ * within 0.2 points of each other on the share of the frame in the top quarter of the range,
+ * 12.5% against 12.3%, and takes the clipping under it at 0.3%. The shadows stay lifted at any
+ * exposure, because that is the curve rather than the level, and the demo says so.
+ */
+const NEUTRAL_EXPOSURE = -0.9;
+
+/**
+ * The landing site's take best parts demo: two frames of one street, a moment apart.
+ *
+ * Shot back to back on the same camera, so the frames line up closely enough that a piece
+ * of one dropped into the other reads as one photograph. What moves between them is people.
+ */
+const MERGE: readonly string[] = ['merge-a', 'merge-b'];
+
+/**
+ * The frames the panorama demo is merged from, left to right across the finished picture.
+ *
+ * The sweep is numbered as it reads rather than as it was shot, so a strip of these under the
+ * panorama runs the same way the picture does. Which frame is which is the caller's to point at.
+ */
+const PANORAMA: readonly string[] = [1, 2, 3, 4, 5].map((at) => `pano-${at}`);
+
+/** The dust removal demo's frame, which has a dirty sensor's spots in its sky. */
+const DUST = 'dust';
+
+/**
+ * The part of that frame the demo shows, as Camera Raw's left, top, right and bottom.
+ *
+ * A spot is a few sensor pixels across, so the whole frame at the width the page draws it is not
+ * a demonstration of anything: measured over the pair, the 44 spots the removal moved are 3 to 9
+ * pixels wide at 1200px, which is under 6 on screen. This rectangle is a twentieth of the frame
+ * and holds 4 of them at 23 to 25 pixels, all left of where the divider starts, so the reader
+ * drags over spots rather than towards them.
+ */
+const DUST_CROP: [number, number, number, number] = [0.49, 0.13, 0.71, 0.35];
 
 /**
  * Long enough to look at, short enough to ship ten of them: the page is not a
@@ -69,8 +123,15 @@ const SCENES: Scene[] = [
  */
 const LONG_EDGE = 1200;
 
+/** Wider than a photograph, so its long edge buys less height than everything else here. */
+const PANORAMA_EDGE = 2000;
+
+/** A panorama's frames are shown in a strip under it, at a thumbnail's size. */
+const FRAME_EDGE = 400;
+
 const ROOT = resolve(import.meta.dir, '..');
 const OUT = join(ROOT, 'web', 'public', 'hdr');
+const LANDING_OUT = join(ROOT, 'landing', 'public', 'samples');
 
 /** Every rendition setting at its shipped default, so the page shows the shipped look. */
 const SETTINGS = SettingsSchema.parse({});
@@ -80,6 +141,10 @@ const PEAK_OVER_WHITE = SETTINGS.hdr_peak_nits / SETTINGS.hdr_reference_white_ni
 
 function outputPath(slug: string, hdr: boolean): string {
   return join(OUT, `${slug}-${hdr ? 'hdr' : 'sdr'}.avif`);
+}
+
+function colourPath(profile: 'matched' | 'none'): string {
+  return join(LANDING_OUT, `colour-${profile}.avif`);
 }
 
 function target(slug: string): JobTarget {
@@ -342,15 +407,161 @@ async function buildSwatches(): Promise<void> {
   Readable.from([Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)]).pipe(ffmpeg.stdin!);
   const out = join(OUT, 'swatches.avif');
   await run('avifenc', ['--stdin', '--cicp', '9/16/9', '--clli', contentLight(samples), '--min', '0', '--max', '0', '-s', '4', out], ffmpeg.stdout!);
-  console.error(`[hdr-assets] swatches: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
+  console.error(`[demo-assets] swatches: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
 }
 
-async function build(scene: Scene): Promise<void> {
-  const raw = join(LIBRARY!, scene.file);
-  if (!existsSync(raw)) throw new Error(`${scene.file} is not in BOWERBIRD_HDR_RAWS`);
-  try {
+/**
+ * The landing site's colour matching demo: the same raw with the camera's colour and without.
+ *
+ * Both arms are 8-bit sRGB, where the pairs above are HDR. The claim here is about hue rather
+ * than headroom, so the pair has to read correctly on the ordinary screen most visitors have,
+ * and a PQ file on one of those is painted about a quarter dim.
+ *
+ * `match_embedded_jpeg` stays on in both: it decides whether the profile is *fitted*, and the
+ * document's `colourProfile` decides whether the fit is used. Turning the setting off instead
+ * would compare a fitted render against one that never measured anything, which is not the
+ * switch the editor offers.
+ */
+async function buildColour(): Promise<void> {
+  const raw = rawFor(COLOUR);
+  for (const profile of ['matched', 'none'] as const) {
+    renderSrgb(raw, colourPath(profile), profile, profile === 'none' ? NEUTRAL_EXPOSURE : 0);
+    console.error(`[demo-assets] colour ${profile}: ${(Bun.file(colourPath(profile)).size / 1024).toFixed(0)}kB`);
+  }
+}
+
+/** The take best parts demo's frames, which are two photographs rather than two renderings of one. */
+async function buildMerge(): Promise<void> {
+  for (const frame of MERGE) {
+    const out = join(LANDING_OUT, `${frame}.avif`);
+    renderSrgb(rawFor(frame), out, 'matched');
+    console.error(`[demo-assets] ${frame}: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
+  }
+}
+
+/**
+ * The panorama demo: five frames of one sweep, and what the merge makes of them.
+ *
+ * The align searches the frames for a recipe - where each one sits in the finished picture - and
+ * the render composites them against it, which is what the server runs (`CompositesService`). A
+ * set that does not align is a refusal rather than a bad picture, so there is nothing to check
+ * afterwards.
+ */
+async function buildPanorama(): Promise<void> {
+  const sources: JobCompositeSource[] = PANORAMA.map((frame, at) => ({
+    // A source is keyed the way a library keys a photograph, which the recipe's schema holds to.
+    photoId: `pano000${at}`,
+    rawFilePath: rawFor(frame),
+  }));
+  const job = {
+    rawFilePath: sources[0]!.rawFilePath,
+    matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
+    defringe: SETTINGS.raw_defringe,
+    ...AS_METERED,
+    grade: {
+      peakNits: SETTINGS.hdr_peak_nits,
+      referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
+      whiteQuantile: SETTINGS.hdr_white_quantile,
+    },
+  };
+
+  let aligned = align(job, sources);
+  // A recipe is stated in the camera's corrected geometry, so the composite reaches each raw
+  // through that lens's ratio table - and the table is fitted inside a render, which nothing here
+  // has run. Stitched without one, every seam doubles its edges, so the lens is measured and the
+  // set aligned again, as `CompositesService.aligned` does it.
+  for (const photoId of aligned.lensless) {
+    const source = sources.find((each) => each.photoId === photoId)!;
+    const fit = runJob({ ...job, rawFilePath: source.rawFilePath, matchEmbeddedJpeg: true, measure: true, targets: [] });
+    if (fit.photoAnalysis == null) throw new Error(`nothing could fit the lens ${source.rawFilePath} was shot on`);
+    source.photoAnalysis = Array.from(fit.photoAnalysis);
+  }
+  if (aligned.lensless.length > 0) aligned = align(job, sources);
+
+  const { recipe, dropped, lensless } = aligned;
+  if (dropped.length > 0) throw new Error(`the align left ${dropped.join(', ')} out of the panorama`);
+  if (lensless.length > 0) throw new Error(`the lens ${lensless.join(', ')} was shot on is still unfitted`);
+
+  const out = join(LANDING_OUT, 'panorama.avif');
+  runJob({
+    ...job,
+    // The wedges of nothing a hand-held pan leaves at the canvas's corners, trimmed the way a
+    // merge trims them: the align's own crop, on the field every render already takes.
+    geometry: { ...AS_METERED.geometry, crop: recipe.crop },
+    targets: [
+      { ...target('panorama'), output: 'srgb', outputPath: out, size: canvasLongEdgeFor(recipe, PANORAMA_EDGE) },
+    ],
+    composite: { want: 'render', recipe: { ...recipe, kind: 'panorama' }, sources },
+  });
+  console.error(`[demo-assets] panorama: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
+
+  for (const frame of PANORAMA) {
+    const path = join(LANDING_OUT, `${frame}.avif`);
+    renderSrgb(rawFor(frame), path, 'matched', 0, FRAME_EDGE);
+  }
+}
+
+function align(job: Omit<Job, 'targets'>, sources: JobCompositeSource[]): Aligned {
+  const answered = runJob({ ...job, targets: [], composite: { want: 'align', sources } });
+  if (answered.composite == null) throw new Error('the panorama frames did not align');
+  return AlignedSchema.parse(JSON.parse(answered.composite));
+}
+
+/**
+ * The dust removal demo: one frame with the spots left in, and the same frame with them taken out.
+ *
+ * The only pair here that differs by a stage rather than by a setting of the grade, so both arms
+ * are the shipped render and the switch is the one the edit panel offers.
+ */
+async function buildDust(): Promise<void> {
+  const raw = rawFor(DUST);
+  for (const [slug, dust] of [
+    ['dust-before', { ...dustSettings(undefined), enabled: false }],
+    ['dust-after', dustSettings(undefined)],
+  ] as const) {
+    const out = join(LANDING_OUT, `${slug}.avif`);
     runJob({
       rawFilePath: raw,
+      matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
+      defringe: SETTINGS.raw_defringe,
+      ...AS_METERED,
+      dust,
+      geometry: { ...AS_METERED.geometry, crop: DUST_CROP },
+      grade: {
+        peakNits: SETTINGS.hdr_peak_nits,
+        referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
+        whiteQuantile: SETTINGS.hdr_white_quantile,
+      },
+      // A target's size is the long edge of the whole frame, so the crop has to ask for as much
+      // more as it is about to take away if the picture is to come out `LONG_EDGE` wide.
+      targets: [{ ...target(DUST), output: 'srgb', outputPath: out, size: Math.round(LONG_EDGE / (DUST_CROP[2] - DUST_CROP[0])) }],
+    });
+    console.error(`[demo-assets] ${slug}: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
+  }
+}
+
+/** One 8-bit picture at the shipped settings, which is what the landing site's demos show. */
+function renderSrgb(raw: string, outputPath: string, colourProfile: 'matched' | 'none', exposure = 0, size = LONG_EDGE): void {
+  runJob({
+    rawFilePath: raw,
+    matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
+    defringe: SETTINGS.raw_defringe,
+    ...AS_METERED,
+    exposure,
+    adjust: { ...AS_METERED.adjust, colourProfile },
+    grade: {
+      peakNits: SETTINGS.hdr_peak_nits,
+      referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
+      whiteQuantile: SETTINGS.hdr_white_quantile,
+    },
+    targets: [{ ...target(COLOUR), output: 'srgb', outputPath, size }],
+  });
+}
+
+async function build(scene: string): Promise<void> {
+  try {
+    runJob({
+      rawFilePath: rawFor(scene),
       matchEmbeddedJpeg: SETTINGS.match_embedded_jpeg,
       defringe: SETTINGS.raw_defringe,
       // The page shows the shipped look, so the frames carry no develop settings - the
@@ -361,28 +572,37 @@ async function build(scene: Scene): Promise<void> {
         referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
         whiteQuantile: SETTINGS.hdr_white_quantile,
       },
-      targets: [target(scene.slug)],
+      targets: [target(scene)],
     });
-    await clipToWhite(scene.slug);
+    await clipToWhite(scene);
   } catch (failure) {
     // The HDR arm lands before the 8-bit one is derived from it, so a failure in the
     // second step leaves the first behind - and these outputs are committed, where a
     // half-built pair is a picture the page shows against one it does not. The worker
     // cleans up for the same reason (`processing_worker.ts`).
-    for (const hdr of [false, true]) await Bun.file(outputPath(scene.slug, hdr)).delete().catch(() => {});
+    for (const hdr of [false, true]) await Bun.file(outputPath(scene, hdr)).delete().catch(() => {});
     throw failure;
   }
 
-  const sizes = [false, true].map((hdr) => Bun.file(outputPath(scene.slug, hdr)).size);
-  console.error(`[hdr-assets] ${scene.slug}: ${(sizes[0]! / 1024).toFixed(0)}kB SDR, ${(sizes[1]! / 1024).toFixed(0)}kB HDR`);
+  const sizes = [false, true].map((hdr) => Bun.file(outputPath(scene, hdr)).size);
+  console.error(`[demo-assets] ${scene}: ${(sizes[0]! / 1024).toFixed(0)}kB SDR, ${(sizes[1]! / 1024).toFixed(0)}kB HDR`);
 }
 
 const asked = process.argv.slice(2);
-const wanted = asked.length === 0 ? SCENES : SCENES.filter((scene) => asked.includes(scene.slug));
+const wanted = asked.length === 0 ? SCENES : SCENES.filter((scene) => asked.includes(scene));
 const swatches = asked.length === 0 || asked.includes('swatches');
-if (wanted.length === 0 && !swatches) throw new Error(`no such scene: ${asked.join(', ')}`);
-// The swatches are drawn rather than photographed, so they rebuild without the library.
-if (wanted.length > 0 && LIBRARY == null) throw new Error('BOWERBIRD_HDR_RAWS must name the directory holding the raw files');
+const colour = asked.length === 0 || asked.includes(COLOUR);
+const merge = asked.length === 0 || asked.includes('merge');
+const panorama = asked.length === 0 || asked.includes('panorama');
+const dust = asked.length === 0 || asked.includes(DUST);
+if (wanted.length === 0 && !swatches && !colour && !merge && !panorama && !dust) {
+  throw new Error(`no such scene: ${asked.join(', ')}`);
+}
 mkdirSync(OUT, { recursive: true });
+mkdirSync(LANDING_OUT, { recursive: true });
 if (swatches) await buildSwatches();
+if (colour) await buildColour();
+if (merge) await buildMerge();
+if (panorama) await buildPanorama();
+if (dust) await buildDust();
 for (const scene of wanted) await build(scene);

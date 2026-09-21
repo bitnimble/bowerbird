@@ -8,8 +8,11 @@ import { Badge } from './badge';
 export const splitImage = stylex.create({
   before: {
     display: 'block',
-    width: '100%',
+    width: 'auto',
     height: 'auto',
+    maxWidth: '100%',
+    // A portrait photograph is otherwise a metre of demo beside three lines of text.
+    maxHeight: '760px',
   },
   after: {
     display: 'block',
@@ -21,6 +24,9 @@ export const splitImage = stylex.create({
 const styles = stylex.create({
   split: {
     position: 'relative',
+    // Hugs the picture, so a frame narrower than the column has no bars down its sides.
+    width: 'fit-content',
+    marginInline: 'auto',
     overflow: 'hidden',
     borderRadius: '4px',
     backgroundColor: '#000',

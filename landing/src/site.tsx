@@ -29,7 +29,7 @@ const styles = stylex.create({
     height: 'auto',
   },
   page: {
-    maxWidth: '1200px',
+    maxWidth: '1320px',
     marginBlock: 0,
     marginInline: 'auto',
     paddingBlock: 0,
@@ -65,7 +65,7 @@ const styles = stylex.create({
     fontSize: '14px',
   },
   footer: {
-    maxWidth: '1200px',
+    maxWidth: '1320px',
     marginTop: '64px',
     marginInline: 'auto',
     marginBottom: 0,

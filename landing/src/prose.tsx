@@ -13,9 +13,10 @@ const styles = stylex.create({
     fontSize: { default: '44px', [WIDE]: '56px' },
     letterSpacing: '-0.02em',
     lineHeight: 1.05,
+    textWrap: 'balance',
     marginTop: 0,
     marginInline: 0,
-    marginBottom: '12px',
+    marginBottom: '20px',
   },
   paragraph: {
     marginTop: 0,
@@ -34,12 +35,15 @@ const styles = stylex.create({
     marginTop: { default: null, ':not(:first-child)': '6px' },
   },
   sectionTitle: {
+    fontSize: { default: '24px', [WIDE]: '30px' },
+    letterSpacing: '-0.02em',
+    lineHeight: 1.15,
     marginBottom: '16px',
   },
 });
 
-export function Title({ children }: { children: ReactNode }): JSX.Element {
-  return <h1 {...stylex.props(styles.title)}>{children}</h1>;
+export function Title({ style, children }: { style?: stylex.StyleXStyles; children: ReactNode }): JSX.Element {
+  return <h1 {...stylex.props(styles.title, style)}>{children}</h1>;
 }
 
 export function SectionTitle({ children }: { children: ReactNode }): JSX.Element {
@@ -62,9 +66,9 @@ export function Paragraph({
   );
 }
 
-export function Bullets({ items }: { items: readonly string[] }): JSX.Element {
+export function Bullets({ items, style }: { items: readonly string[]; style?: stylex.StyleXStyles }): JSX.Element {
   return (
-    <ul {...stylex.props(styles.bullets)}>
+    <ul {...stylex.props(styles.bullets, style)}>
       {items.map((line) => (
         <li key={line} {...stylex.props(styles.bullet)}>
           {line}

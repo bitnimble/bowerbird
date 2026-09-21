@@ -12,15 +12,18 @@ export const HdrPageStrings = {
   axisWhite: () => 'white',
   axisTick: (stops: number) => `${stops > 0 ? '+' : ''}${stops}`,
 
-  sceneRapidsTitle: () => 'Whitewater under an overcast sky',
-  sceneRapidsBody: () =>
-    "An 8-bit file clips foam and clouds to white. Switch to HDR to see their detail.",
-  sceneSunsetTitle: () => 'A sunset over railway tracks',
-  sceneSunsetBody: () =>
-    'An 8-bit file clips the brightest band above the horizon. HDR shows its light above white.',
-  sceneArchesTitle: () => 'Lit arches at night',
-  sceneArchesBody: () =>
-    'In 8 bits, 48% of the bright pink pixels become white. HDR keeps them pink.',
+  sceneWhitesTitle: () => 'A white dog in autumn leaves',
+  sceneWhitesBody: () =>
+    'In 8 bits the sky through the trees and the sunlit fur become the same white. HDR keeps both.',
+  sceneSunTitle: () => 'The sun going down behind a mountain',
+  sceneSunBody: () =>
+    'The sun here is 2.3 stops above white, as bright as HDR holds. In 8 bits it is the same white as the haze around it.',
+  sceneSaturatedTitle: () => 'A seabird over surf in low sun',
+  sceneSaturatedBody: () =>
+    'The lit wing is deep yellow and brighter than white. An 8-bit file keeps the brightness and drops the colour.',
+  sceneGamutTitle: () => 'Race cars under gallery lights',
+  sceneGamutBody: () =>
+    '7% of this frame is outside the colours a JPEG can store. HDR has room for the paint under the spotlights.',
 
   swapLabel: (label: string, showingHdr: boolean) =>
     `${label}. Showing the ${showingHdr ? 'HDR' : '8-bit'} version. Activate to see the other one.`,
@@ -65,5 +68,5 @@ export const HdrPageStrings = {
 
   aboutHeading: () => 'About these photos',
   aboutBody: () =>
-    'Each pair comes from 1 RAW exported in HDR and 8 bits. Differences show where 8 bits clipped detail.',
+    'Each pair comes from 1 RAW exported in HDR and 8 bits. Differences show what 8 bits had to throw away.',
 };

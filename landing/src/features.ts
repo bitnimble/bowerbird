@@ -13,204 +13,129 @@ export type Shot = { src: string; alt: string; frame: ShotFrame };
 export type Feature = {
   id: string;
   title: string;
-  tagline: string;
+  summary: string;
   body: readonly string[];
-  key: boolean;
-  shot?: Shot;
-  demo?: DemoId;
+  visual: { demo: DemoId } | { shot: Shot };
 };
 
 export const REPO_URL = 'https://github.com/bitnimble/bowerbird';
 export const RELEASES_URL = `${REPO_URL}/releases`;
 
+export const SPEED = {
+  heading: 'Speed',
+  body: [
+    'Bowerbird shows the next photo within a single screen refresh. You never wait for it while you triage, even with thousands of photos to get through.',
+    'It imports around 50 photos a second, even from an SD card or a hard drive, and every imported photo opens at full size straight away.',
+  ],
+};
+
+export const HDR: Feature = {
+  id: 'hdr',
+  title: 'HDR viewing',
+  summary: "Shows every RAW in HDR from the moment it's imported",
+  body: [
+    'See how much highlight detail a RAW is holding before you touch a slider. Every photo gets an HDR rendition as it imports, so the whole library is ready to triage.',
+    'HDR also keeps colour a JPEG throws away. Bright paint, low sun, and city lights stay coloured instead of washing out to white.',
+  ],
+  visual: { demo: 'hdr' },
+};
+
 export const FEATURES: readonly Feature[] = [
-  {
-    id: 'import',
-    title: 'Import speed',
-    tagline: 'Imports around 50 photos a second, even from an SD card',
-    body: [
-      "When Bowerbird imports a photo, the photo gets a thumbnail in the grid. It opens at full size in the photo viewer or the editor straight away.",
-    ],
-    key: true,
-    shot: { src: 'grid.jpg', alt: 'The grid full of thumbnails from a new import', frame: 'desktop' },
-  },
-  {
-    id: 'viewing',
-    title: 'Viewing speed',
-    tagline: 'Shows the next photo within 1 screen refresh',
-    body: [
-      'Most of the time you spend on photos goes on looking at them.',
-      "Select the next photo, and it appears within 1 screen refresh. You don't wait for Bowerbird while you're viewing.",
-    ],
-    key: true,
-    shot: { src: 'viewer.jpg', alt: 'The photo viewer showing 1 photo at full size, with the filmstrip below', frame: 'desktop' },
-  },
-  {
-    id: 'hdr',
-    title: 'HDR viewing',
-    tagline: 'Shows the headroom in every RAW while you triage',
-    body: [
-      'Bowerbird makes an HDR rendition of every RAW as it imports, so you can view every photo in HDR straight away.',
-      'HDR matters most during triage. It shows how much exposure headroom a RAW has before you edit it.',
-      'HDR shows clipped highlights and clipped colour. A saturated light that a JPEG turns flat white keeps its colour in HDR. This helps most with night photos, especially in cities.',
-    ],
-    key: true,
-    demo: 'hdr',
-  },
-  {
-    id: 'editing',
-    title: 'Light editing',
-    tagline: 'Handles exposure, colour, noise, sharpening, and crop',
-    body: [
-      'Bowerbird is built for light edits to the whole photo, a couple of minutes each.',
-      'The edit panel has Light, White balance, Colour, Effects, Detail, Dust removal, and Geometry, where you crop, straighten, and correct perspective.',
-      'Noise reduction and sharpening are built in.',
-    ],
-    key: false,
-    shot: { src: 'editor.jpg', alt: 'The editor, with a photo beside the edit panel', frame: 'desktop' },
-  },
-  {
-    id: 'colour',
-    title: 'Colour matching',
-    tagline: "Matches your camera's own colours",
-    body: [
-      'Bowerbird builds a colour profile that matches how your camera rendered each photo.',
-      "If you like your camera's colour, or switch its profiles between photos, you don't need to rebuild those looks in a RAW editor. Colour matching is on by default.",
-    ],
-    key: true,
-    demo: 'colour',
-  },
-  {
-    id: 'lens',
-    title: 'Lens distortion matching',
-    tagline: "Corrects each lens's distortion without a lens profile",
-    body: [
-      'Bowerbird works out the distortion correction for each of your lenses from your photos.',
-      'If you have a profile for a lens, you can load it.',
-    ],
-    key: false,
-  },
-  {
-    id: 'dust',
-    title: 'Dust removal',
-    tagline: 'Finds and removes spots from sensor dust',
-    body: [
-      'At a small aperture, dust on the sensor shows as spots in the photo. Bowerbird finds those spots and removes them.',
-      "It compares many photos across the library to tell dust from detail, so it's accurate enough to be on by default.",
-    ],
-    key: false,
-    demo: 'dust',
-  },
+  HDR,
   {
     id: 'stacks',
     title: 'Stacks',
-    tagline: 'Groups similar photos into 1 thumbnail',
+    summary: 'Groups similar photos into a single thumbnail',
     body: [
-      'Bowerbird groups similar photos into stacks, such as a burst or several photos of 1 scene.',
-      'Bowerbird still groups the photos when exposure, focus, composition, or orientation changes between them.',
-      'A stack shows as 1 thumbnail in the grid. Open it, and its photos appear in a row below.',
+      'Your grid shows each scene once, however many photos you took of it.',
+      'Stacks hold together even when the exposure, focus, composition, or orientation changes between photos.',
     ],
-    key: true,
-    demo: 'stacks',
+    visual: { demo: 'stacks' },
   },
   {
     id: 'triage',
     title: 'Triage stack',
-    tagline: 'Shows a stack 2 photos at a time until the best is left',
+    summary: 'Finds the best photo in a stack, 2 at a time',
     body: [
-      'Comparing 15 photos of 1 scene by flicking between them is slow. Triage stack shows the photos of a stack 2 at a time.',
-      'Choose the better of the 2. It stays, the next photo takes the other side, and the stack narrows to its best photos.',
-      'An optometrist tests your eyes the same way, asking whether lens A or lens B is sharper.',
+      'Stop flicking back and forth between 15 burst shots. Triage stack puts two photos side-by-side, you choose the better one, and a few rounds later you have your best.',
+      'It works the way an eye test does, with lens A against lens B.',
     ],
-    key: true,
-    shot: { src: 'triage.jpg', alt: 'Triage stack, with photo A and photo B side by side', frame: 'desktop' },
-    demo: 'triage',
+    visual: { demo: 'triage' },
+  },
+  {
+    id: 'colour',
+    title: 'Colour matching',
+    summary: "Matches your camera's colour",
+    body: [
+      'Your RAWs are rendered looking like the photos you saw on your camera.',
+      'Bowerbird fits a colour profile to every photo, down to the picture profile you had set, so you never rebuild a look by hand.',
+    ],
+    visual: { demo: 'colour' },
+  },
+  {
+    id: 'editing',
+    title: 'Light editing',
+    summary: 'Finishes most photos in a couple of minutes',
+    body: [
+      'The editor has everything a quick edit needs: light, white balance, colour, noise reduction, sharpening, crop, straighten, and perspective.',
+      'The picture keeps up with the slider as you drag it.',
+    ],
+    visual: { shot: { src: 'editor.jpg', alt: 'The editor, with a photo beside the edit panel', frame: 'desktop' } },
+  },
+  {
+    id: 'dust',
+    title: 'Dust removal',
+    summary: 'Finds and removes sensor dust spots',
+    body: [
+      'Forget about the dust on your sensor. Bowerbird finds the dark spots it leaves at small apertures and removes them.',
+      'It checks each spot against the rest of your library, so real detail is never mistaken for dust.',
+    ],
+    visual: { demo: 'dust' },
   },
   {
     id: 'merge',
     title: 'Take best parts',
-    tagline: 'Builds 1 photo from the best part of each frame',
+    summary: 'Builds your best photo from several frames',
     body: [
-      "In a group photo that's almost right, someone has blinked. Bowerbird can take their face from a similar frame and merge it in.",
-      "Take best parts also removes things you don't want in a photo, if you have a similar frame taken a moment later.",
+      'Fix the group photo where someone blinked. Take their face from another frame, and Bowerbird merges it in.',
+      "Remove a passer-by the same way, using a frame where they've moved on.",
     ],
-    key: true,
-    demo: 'merge',
+    visual: { demo: 'merge' },
   },
   {
     id: 'panorama',
     title: 'Panoramas',
-    tagline: 'Merges overlapping RAWs into 1 wide photo',
-    body: [
-      'Bowerbird merges 20 RAWs into 1 panorama in seconds.',
-      'The demo below is an illustration. It shows overlapping frames moving together into 1 photo.',
-    ],
-    key: false,
-    demo: 'panorama',
+    summary: 'Merges a panorama in seconds',
+    body: ['Bowerbird merges overlapping RAWs into one wide photo. Even 20 of them take a few seconds.'],
+    visual: { demo: 'panorama' },
   },
   {
     id: 'nas',
     title: 'NAS hosting',
-    tagline: 'Keeps your files on your NAS while you edit in a web browser',
+    summary: 'Runs on your NAS and works from any device',
     body: [
-      'Run Bowerbird on a NAS, and your photos stay on its storage.',
-      'View, triage, and edit from your other devices in a web browser. Bowerbird is built to be used this way first.',
+      'Keep your photos on your NAS and work from whichever device is to hand. Bowerbird runs next to your files, so there is nothing to copy to your computer first.',
+      "Editing uses the graphics hardware of the device you're on, so a laptop, a phone, or a tablet is as quick as sitting at the NAS.",
     ],
-    key: true,
-    shot: { src: 'settings.jpg', alt: 'The settings page, with a library on network storage', frame: 'desktop' },
+    visual: { shot: { src: 'mobile-viewer.jpg', alt: 'A RAW photo open in the photo viewer on a phone', frame: 'phone' } },
+  },
+];
+
+export const MORE_FEATURES: readonly { id: string; title: string; body: string }[] = [
+  {
+    id: 'lens',
+    title: 'Lens distortion matching',
+    body: "Bowerbird corrects each lens's distortion without a lens profile, by working it out from your own photos.",
   },
   {
     id: 'sync',
     title: 'Sync',
-    tagline: 'Keeps a library the same on your laptop and your NAS',
-    body: [
-      'Run Bowerbird on a travel laptop too. Import and edit during the trip, then sync the library to your NAS when you get home.',
-      'Bowerbird syncs a library when you ask it to. A library can sync with more than 2 devices.',
-    ],
-    key: false,
-  },
-  {
-    id: 'devices',
-    title: 'Supported devices',
-    tagline: 'Runs on Mac, Linux, Windows, iPhone, and Android',
-    body: [
-      'View, triage, and edit on a Mac, Linux, Windows, an iPhone, or Android. Every feature works in any recent browser apart from Firefox.',
-      'Viewing and triage need less. Any browser that can show a JPEG works, even on a TV.',
-    ],
-    key: false,
-    shot: { src: 'mobile-grid.jpg', alt: 'The grid on a phone', frame: 'phone' },
-  },
-  {
-    id: 'browser',
-    title: 'Editing in a browser',
-    tagline: 'Edits RAWs in a web browser, even on a phone',
-    body: [
-      "Bowerbird runs on your device's graphics hardware, which keeps it fast.",
-      'On any fairly new device, every feature works in a web browser, including RAW editing on a phone. Editing large RAWs on a phone may not be reliable yet.',
-    ],
-    key: false,
-    shot: { src: 'mobile-viewer.jpg', alt: 'A RAW photo open in the photo viewer on a phone', frame: 'phone' },
-  },
-  {
-    id: 'organise',
-    title: 'Shoots and albums',
-    tagline: 'Organises photos into folders on disk and albums you choose',
-    body: [
-      'A shoot is a folder on disk. A photo belongs to 1 shoot.',
-      'An album is a set of photos you choose, and a photo can be in as many albums as you like. Use shoots, albums, or both.',
-    ],
-    key: false,
-    shot: { src: 'sidebar.jpg', alt: 'The sidebar with shoots and albums', frame: 'desktop' },
+    body: 'Take Bowerbird with you on a laptop. Import and edit while you travel, then sync everything to your NAS when you get home.',
   },
   {
     id: 'read-only',
     title: 'Read-only libraries',
-    tagline: 'Keeps files in read-only libraries unchanged on disk',
-    body: [
-      'Bowerbird never deletes your originals. At most, it moves them to the Bin.',
-      "Make a library read-only, and Bowerbird can't move or delete anything in it. Around 95% of features still work.",
-    ],
-    key: false,
+    body: 'Bowerbird never deletes your originals. Make a library read-only and it cannot move them either.',
   },
 ];
 
@@ -222,44 +147,27 @@ export const SITE = {
 };
 
 export const HOME = {
-  pitch: 'A free, fast tool for triaging RAW photos, with light editing built in',
-  lead: 'Bowerbird gets you through the thousands of photos from a holiday. It imports around 50 photos a second, shows the next photo within 1 screen refresh, and helps you find your Picks.',
+  headline: 'A faster way through thousands of RAW photos',
+  lead: 'Get through the thousands of photos you bring home from a trip. Bowerbird is free, it never makes you wait, and it has the editing to finish most of your Picks.',
   seeFeatures: 'See all features',
-  heroShot: { src: 'grid.jpg', alt: 'The Bowerbird grid, full of thumbnails from 1 trip', frame: 'desktop' } satisfies Shot,
-  keyHeading: 'Key features',
-  more: 'Read more',
-  tryHeading: 'HDR and SDR compared',
-  tryBody: 'Each side shows the same RAW, as an ordinary JPEG and in HDR. Drag the divider to compare them.',
-  whoHeading: "Who it's for",
-  whoIntro: 'Bowerbird is for people who take many photos and keep a few. You may:',
-  whoList: [
-    'Come home from 1 shoot with 1,000 photos, or several thousand',
-    'Keep 10 to 30% of them, which means looking at every one',
-    'Edit most of your Picks lightly, in under 2 minutes each',
-    'Edit a handful of favourites in depth',
-  ],
-  whoPeople:
-    "That fits a holiday photographer, an event or wedding team, and a portrait, sports, or bird photographer. When you can't take your time, you take every photo you can and triage later.",
-  whoNot:
-    'If you take each photo slowly and deliberately, as on film, or you need everything a mature RAW editor has, Bowerbird may not suit you.',
+  heroShot: { src: 'viewer.jpg', alt: 'The photo viewer showing a photo at full size, with the filmstrip beside it', frame: 'desktop' } satisfies Shot,
+  featuresHeading: 'More features',
   freeHeading: 'Always free',
-  freeBody: "Bowerbird is free, and it always will be. It has no paid tier and no ads. Every feature is free, on every device.",
+  freeBody: "Bowerbird is free and open source, and that won't change. It has no paid tier and no ads, and every feature is free on every device.",
   stabilityBody:
-    "Bowerbird is still early. It never deletes your originals, but an update may mean importing a library again, and edited photos may look slightly different afterwards.",
+    'Bowerbird is still early. It never deletes your originals, but an update may mean importing a library again, and edits may look a little different afterwards.',
 };
 
 export const FEATURES_PAGE = {
   title: 'Features',
-  lead: 'Bowerbird features with interactive sample photo demos',
-  navLabel: 'Features on this page',
+  lead: 'Try most of them here on sample photos.',
+  moreHeading: 'Also included',
   comingSoonHeading: 'Coming soon',
   comingSoon: [
     'Local hosting with network backup',
     'AI noise reduction, sharpening, and object removal',
     'Print soft proofs in 3D lighting',
-    'Custom colour mapping and editing',
     'Custom colour grading across photos',
-    'Improved Fujifilm X-Trans support',
     'Scheduled Instagram posts',
     'Exposure and focus bracket merging',
     'Sony 4× and 16× pixel shift',
@@ -267,20 +175,25 @@ export const FEATURES_PAGE = {
   ],
   requirementsHeading: 'Requirements',
   requirements: [
-    'Viewing needs a web browser, or the app.',
-    'Editing needs a device with graphics hardware. The graphics built into most laptops and phones are enough.',
+    'Viewing and triage need a web browser, or the app.',
+    'Editing works in any recent browser apart from Firefox.',
+    'Editing needs graphics hardware on the device you edit on. Integrated graphics is enough, which covers most laptops and phones.',
+    'The NAS or server that runs Bowerbird needs graphics hardware as well.',
+    'Bowerbird uses 2 to 4 GB of memory and 2 to 4 GB of graphics memory.',
   ],
   stabilityHeading: 'Stability',
   stability: [
-    'Bowerbird is still early.',
-    'Bowerbird never deletes your originals. At most, it moves them to the Bin, and a read-only library stops even that.',
-    "The catalogue records your albums, Picks, and edits, and it's still changing. An update may mean importing a library again. Edited photos may also look slightly different after an update.",
+    'Bowerbird is still early, and some parts are more settled than others.',
+    'Your photos are safe. Bowerbird never deletes originals. The most it does is move them to the Bin, and a read-only library prevents that too.',
+    'The catalogue, which holds your albums, Picks, and edits, is still changing. An update may mean importing a library again.',
+    'Updates also change how edits are drawn, mostly to fix bugs, so an edited photo may look a little different afterwards.',
+    "Editing a large RAW on a phone isn't reliable yet.",
   ],
 };
 
 export const DEMO = {
   hdr: {
-    scenes: { rapids: 'Rapids', sunset: 'Sunset', arches: 'Arches' },
+    scenes: { gamut: 'Race cars', whites: 'Autumn', sun: 'Sunset', saturated: 'Seabird' },
     sceneLabel: 'Photo',
     viewLabel: 'View',
     sdr: 'SDR',
@@ -289,26 +202,22 @@ export const DEMO = {
     divider: 'Divider between the SDR and HDR renditions',
     sdrAlt: (scene: string) => `${scene}, as an ordinary JPEG`,
     hdrAlt: (scene: string) => `${scene}, in HDR`,
-    note: 'The HDR side shows its full brightness only on an HDR screen, in Chrome or Safari. Anywhere else, it may look dimmer.',
+    note: 'Note: viewing HDR requires an HDR display, and Chrome or Safari.',
   },
   colour: {
     label: 'Colour profile',
     matched: 'Matched',
     neutral: 'None',
-    shots: {
-      matched: { src: 'editor-matched.jpg', alt: "A photo in the editor, with the camera's colour matched", frame: 'desktop' },
-      neutral: { src: 'editor-neutral.jpg', alt: 'The same photo, with no colour profile', frame: 'desktop' },
-    } satisfies Record<string, Shot>,
+    matchedAlt: "A dog in autumn leaves, with the camera's colour matched",
+    neutralAlt: 'The same photo with no colour profile',
   },
   dust: {
     before: 'Before',
     after: 'After',
     divider: 'Divider between the photo before and after dust removal',
-    alt: 'A sunset over railway tracks',
-    note: 'This is an illustration. The dust spots in the sky are drawn on.',
+    alt: 'A dusk sky with sensor dust spots across it',
   },
   stacks: {
-    hint: 'Select the stack to open it',
     toggle: (count: number, open: boolean) => `${open ? 'Close' : 'Open'} the stack of ${count} photos`,
     alt: (name: string) => `Sample photo ${name}`,
   },
@@ -321,19 +230,15 @@ export const DEMO = {
     pick: 'Pick',
     reject: 'Reject',
     restart: 'Start again',
-    hint: 'Select the better photo, or press the arrow keys',
   },
   merge: {
-    hint: 'Select an outlined area to use that area from another frame',
-    region: (index: number) => `Choose a frame for area ${index + 1}`,
-    frames: 'Frames for this area',
-    frame: (name: string) => `Use ${name}`,
-    reset: 'Reset photo',
-    alt: 'Rapids running through a gorge',
+    person: (index: number) => `Remove the person in area ${index + 1}`,
+    alt: 'A tree-lined street with 2 people walking across it',
+    frameWith: 'The frame with both people',
+    frameWithout: 'The frame with nobody crossing',
   },
   panorama: {
-    stitch: 'Merge frames',
-    apart: 'Separate frames',
-    alt: '3 overlapping frames of a sunset over railway tracks',
+    alt: 'A wide photo of a lake below a mountain range at sunset',
+    frame: (index: number) => `Frame ${index + 1} of the panorama`,
   },
 };

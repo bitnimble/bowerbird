@@ -7,7 +7,7 @@ import { Text } from '../../../web/src/ui/text';
 import { color } from '../../../web/src/ui/tokens.stylex';
 import { DEMO } from '../features';
 import { Badge } from './badge';
-import { Demo, DemoBar, DemoNote } from './demo';
+import { Demo, DemoBar } from './demo';
 import { FramePhoto, type Frame } from './frame_photo';
 
 const OPENERS: readonly [Frame, Frame] = [
@@ -164,7 +164,6 @@ export function TriageDemo(): JSX.Element {
           </button>
         ))}
       </div>
-      <DemoNote>{DEMO.triage.hint}</DemoNote>
     </Demo>
   );
 }

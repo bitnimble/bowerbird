@@ -3,28 +3,30 @@ import { useState } from 'react';
 import { focusRing } from '../../../web/src/ui/focus_ring';
 import { color, derivedSize, font, size } from '../../../web/src/ui/tokens.stylex';
 import { DEMO } from '../features';
-import { Demo, DemoNote } from './demo';
+import { Demo } from './demo';
 import { FramePhoto, type Frame } from './frame_photo';
 
+// Every photograph appears once, so the grid reads as a library rather than as a demo with
+//4 pictures in it. The stack is the one place a scene repeats, which is the point of it.
 const BEFORE: readonly Frame[] = [
+  { name: 'DSC_3782', scene: 'gamut', exposure: 1, zoom: 1.2, shift: 4 },
+  { name: 'DSC_3796', scene: 'sun', exposure: 1.05, zoom: 1.1, shift: -3 },
   { name: 'DSC_3810', scene: 'sunset', exposure: 1, zoom: 1, shift: 0 },
-  { name: 'DSC_3822', scene: 'arches', exposure: 1.1, zoom: 1.3, shift: 6 },
 ];
 
 const STACK: readonly [Frame, ...Frame[]] = [
-  { name: 'DSC_3901', scene: 'rapids', exposure: 1, zoom: 1, shift: 0 },
-  { name: 'DSC_3902', scene: 'rapids', exposure: 1.1, zoom: 1.08, shift: 2 },
-  { name: 'DSC_3903', scene: 'rapids', exposure: 0.9, zoom: 1.15, shift: -2 },
-  { name: 'DSC_3904', scene: 'rapids', exposure: 1.05, zoom: 1.25, shift: 3 },
-  { name: 'DSC_3905', scene: 'rapids', exposure: 0.95, zoom: 1.4, shift: -4 },
+  { name: 'DSC_3901', scene: 'arches', exposure: 1, zoom: 1, shift: 0 },
+  { name: 'DSC_3902', scene: 'arches', exposure: 1.1, zoom: 1.12, shift: 4 },
+  { name: 'DSC_3903', scene: 'arches', exposure: 0.9, zoom: 1.25, shift: -3 },
+  { name: 'DSC_3904', scene: 'arches', exposure: 1.05, zoom: 1.4, shift: 6 },
+  { name: 'DSC_3905', scene: 'arches', exposure: 0.95, zoom: 1.55, shift: -6 },
 ];
 
 const AFTER: readonly Frame[] = [
-  { name: 'DSC_3940', scene: 'sunset', exposure: 1.2, zoom: 1.5, shift: -8 },
-  { name: 'DSC_3951', scene: 'arches', exposure: 0.9, zoom: 1, shift: 0 },
-  { name: 'DSC_3957', scene: 'arches', exposure: 1.2, zoom: 1.6, shift: -10 },
-  { name: 'DSC_3962', scene: 'sunset', exposure: 0.85, zoom: 1.2, shift: 5 },
-  { name: 'DSC_3970', scene: 'rapids', exposure: 1, zoom: 1.7, shift: 12 },
+  { name: 'DSC_3928', scene: 'rapids', exposure: 0.9, zoom: 1, shift: 0 },
+  { name: 'DSC_3940', scene: 'whites', exposure: 1, zoom: 1.25, shift: 0 },
+  { name: 'DSC_3951', scene: 'street', exposure: 1.05, zoom: 1.2, shift: -4 },
+  { name: 'DSC_3962', scene: 'saturated', exposure: 0.95, zoom: 1.3, shift: 6 },
 ];
 
 const BAND = '#9d7ce8';
@@ -191,7 +193,6 @@ export function StacksDemo(): JSX.Element {
           <Tile key={frame.name} frame={frame} />
         ))}
       </div>
-      <DemoNote>{DEMO.stacks.hint}</DemoNote>
     </Demo>
   );
 }

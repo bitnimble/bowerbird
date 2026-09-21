@@ -49,10 +49,12 @@ const styles = stylex.create({
     marginTop: '30px',
     gridTemplateColumns: { default: null, [SPLIT]: 'minmax(0, 48ch) minmax(0, 1fr)' },
   },
+  // Two across where there is room, so four pictures make a block rather than a row of
+  // three and an orphan.
   scenes: {
     display: 'grid',
     gap: '40px 32px',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
     marginTop: '20px',
   },
   // A shared pair of rows, or captions of different lengths start the three pictures at three heights.
@@ -226,7 +228,7 @@ const styles = stylex.create({
     width: 'auto',
     height: 'auto',
     maxWidth: '100%',
-    maxHeight: '72vh',
+    maxHeight: '82vh',
   },
   layerOver: {
     position: 'absolute',
@@ -446,23 +448,30 @@ interface Scene {
   body: string;
 }
 
-// From the losses every photographer has seen to the one nobody thinks about. The
-// slugs are `scripts/hdr-demo-assets.ts`'s, which is where the raw files are named.
+// From the losses every photographer has seen to the one nobody thinks about: white
+// detail, then a highlight nothing can hold, then a colour going white, then a colour
+// eight bits has no way to say at all. The slugs are `scripts/hdr-demo-assets.ts`'s,
+// which is where the raw files are named.
 const SCENES: Scene[] = [
   {
-    slug: 'rapids',
-    title: HdrPageStrings.sceneRapidsTitle(),
-    body: HdrPageStrings.sceneRapidsBody(),
+    slug: 'whites',
+    title: HdrPageStrings.sceneWhitesTitle(),
+    body: HdrPageStrings.sceneWhitesBody(),
   },
   {
-    slug: 'sunset',
-    title: HdrPageStrings.sceneSunsetTitle(),
-    body: HdrPageStrings.sceneSunsetBody(),
+    slug: 'sun',
+    title: HdrPageStrings.sceneSunTitle(),
+    body: HdrPageStrings.sceneSunBody(),
   },
   {
-    slug: 'arches',
-    title: HdrPageStrings.sceneArchesTitle(),
-    body: HdrPageStrings.sceneArchesBody(),
+    slug: 'saturated',
+    title: HdrPageStrings.sceneSaturatedTitle(),
+    body: HdrPageStrings.sceneSaturatedBody(),
+  },
+  {
+    slug: 'gamut',
+    title: HdrPageStrings.sceneGamutTitle(),
+    body: HdrPageStrings.sceneGamutBody(),
   },
 ];
 

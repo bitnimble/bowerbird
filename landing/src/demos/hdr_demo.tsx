@@ -23,7 +23,7 @@ function viewAt(divider: number): View | null {
 }
 
 export function HdrDemo(): JSX.Element {
-  const [scene, setScene] = useState<Scene>('rapids');
+  const [scene, setScene] = useState<Scene>('gamut');
   const [divider, setDivider] = useState(50);
   const title = DEMO.hdr.scenes[scene];
 

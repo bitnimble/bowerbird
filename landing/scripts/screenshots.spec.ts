@@ -40,12 +40,6 @@ async function stageReady(page: Page): Promise<void> {
   await expect(stage(page)).toHaveAttribute('aria-busy', 'false', { timeout: 120_000 });
 }
 
-async function openLibraryGrid(page: Page): Promise<void> {
-  await page.goto('/');
-  await expect(gallery(page).getByRole('listitem')).toHaveCount(PHOTO_COUNT, { timeout: 60_000 });
-  await expect(gallery(page).locator('[role="listitem"][aria-busy="true"]')).toHaveCount(0, { timeout: 60_000 });
-}
-
 async function openEditor(page: Page, photoId: string): Promise<void> {
   await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
   await expect(stage(page).getByRole('img', { name: 'Edit preview' })).toBeVisible({ timeout: 300_000 });
@@ -81,25 +75,10 @@ test.beforeAll(async () => {
   for (const [name, data] of verdicts) {
     await api.patch(route(PathSegment.api(), PathSegment.photos(), idOf(name)), { data });
   }
-  const album = await api.post(route(PathSegment.api(), PathSegment.albums()), { data: { name: 'Favourites' } });
-  const albumId = ((await album.json()) as { id: string }).id;
-  await api.post(route(PathSegment.api(), PathSegment.albums(), albumId, PathSegment.photos()), {
-    data: { photo_ids: [idOf('AFXT2721.RAF'), idOf('sunset.avif'), idOf('arches.avif')] },
-  });
 });
 
 test.afterAll(async () => {
   await api.dispose();
-});
-
-test('grid and sidebar', async ({ page }) => {
-  await openLibraryGrid(page);
-  await shot(page, 'grid.jpg');
-
-  await page.getByRole('button', { name: 'Expand Shoots' }).click();
-  await page.getByRole('button', { name: 'Expand Albums' }).click();
-  await expect(page.getByRole('navigation').getByRole('link', { name: 'Favourites' })).toBeVisible();
-  await shot(page, 'sidebar.jpg');
 });
 
 test('viewer', async ({ page }) => {
@@ -110,65 +89,17 @@ test('viewer', async ({ page }) => {
   await shot(page, 'viewer.jpg');
 });
 
-test('editor, matched and neutral', async ({ page }) => {
-  const photoId = idOf('AFXT2721.RAF');
-  await openEditor(page, photoId);
+test('editor', async ({ page }) => {
+  await openEditor(page, idOf('AFXT2721.RAF'));
   await shot(page, 'editor.jpg');
-
-  // Both stored with history behind them, so Undo is lit in each and the pair differs by the grade alone.
-  await storeColourProfile(photoId, 'none');
-  for (const [profile, label, file] of [
-    ['matched', 'Matched', 'editor-matched.jpg'],
-    ['none', 'None', 'editor-neutral.jpg'],
-  ] as const) {
-    await storeColourProfile(photoId, profile);
-    await openEditor(page, photoId);
-    await expect(page.getByRole('combobox', { name: 'Colour profile' })).toHaveText(label);
-    await shot(page, file);
-  }
-});
-
-async function storeColourProfile(photoId: string, colourProfile: 'matched' | 'none'): Promise<void> {
-  const edits = route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits());
-  const { rev } = (await (await api.get(edits)).json()) as { rev: number };
-  const stored = await api.put(edits, { data: { doc: { version: 1, colourProfile }, rev, session: 'landing-shots' } });
-  expect(stored.ok(), await stored.text()).toBe(true);
-}
-
-test('settings', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  const details = page
-    .getByRole('list', { name: 'Libraries' })
-    .getByRole('listitem')
-    .locator('details')
-    .filter({ has: page.locator('summary', { hasText: 'Library settings' }) });
-  await details.getByText('Library settings').click();
-  await expect(details).toHaveAttribute('open', '');
-  await shot(page, 'settings.jpg');
 });
 
 test.describe('phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
 
-  test('grid and viewer', async ({ page }) => {
-    await openLibraryGrid(page);
-    await shot(page, 'mobile-grid.jpg');
-
+  test('viewer', async ({ page }) => {
     await page.goto(route(PathSegment.photos(), idOf('DSC00853.ARW')));
     await stageReady(page);
     await shot(page, 'mobile-viewer.jpg');
   });
-});
-
-test('stack triage', async ({ page }) => {
-  const stack = await api.post(route(PathSegment.api(), PathSegment.stacks()), {
-    data: { photo_ids: [idOf('DSC00853.ARW'), idOf('DSC02981.ARW')] },
-  });
-  expect(stack.ok(), await stack.text()).toBe(true);
-  await page.goto(route(PathSegment.photos(), idOf('DSC00853.ARW')));
-  await page.getByRole('button', { name: 'Triage stack' }).click();
-  await expect(page.getByRole('button', { name: 'Pick A' })).toBeEnabled({ timeout: 120_000 });
-  await page.getByRole('button', { name: 'Split' }).click();
-  await expect(stage(page).getByRole('img')).toHaveCount(2, { timeout: 60_000 });
-  await shot(page, 'triage.jpg');
 });

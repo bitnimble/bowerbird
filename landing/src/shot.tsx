@@ -13,7 +13,7 @@ const styles = stylex.create({
     backgroundColor: color.bower,
   },
   phone: {
-    maxWidth: '300px',
+    maxWidth: '380px',
     marginInline: 'auto',
   },
   image: {
