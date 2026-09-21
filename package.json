@@ -18,7 +18,7 @@
     "bench": "bun run scripts/bench.ts",
     "snapshots": "bun run scripts/cargo.ts run --profile quick --manifest-path native/rawshim/Cargo.toml --example snapshot_diff --",
     "shots": "playwright test -c landing/scripts/screenshots.config.ts",
-    "get:all": "bun run get:slangc && bun run get:libavif && bun run get:libjxl",
+    "get:all": "bun run get:slangc && bun run get:libavif && bun run get:libjxl && bun run get:pmrid",
     "get:slangc": "bun run scripts/get-slangc.ts",
     "get:libavif": "bun run scripts/get-libavif.ts",
     "get:libjxl": "bun run scripts/get-libjxl.ts",
