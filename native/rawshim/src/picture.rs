@@ -74,6 +74,7 @@ pub fn prepared(
         as_shot,
         capture_sigma,
         sensor_long,
+        sharpen_noise,
         // A prepare is always of the photographs (`assembled` takes no targets), so this is
         // always true here and there is no peak for it to gate: the peak is measured after a
         // grade, and a prepare hands the frame over before one.
@@ -113,9 +114,13 @@ pub fn prepared(
                 None => (size.width as usize).max(size.height as usize),
             };
             let sigma = crate::image::deconvolve_split(capture_sigma, sensor_long, scaled_long);
+            let noise = sharpen_noise.at(
+                crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
+                crate::px::Span::<crate::px::Drawn>::exact(scaled_long),
+            );
             // No repairs: the client draws them over whatever level and tiles it holds
             // (`wasm::HeldRaw::set_repairs`), as it draws the geometry.
-            crate::hdr::Cut::from_base(frame, lens, size, job.sharpen, sigma)
+            crate::hdr::Cut::from_base(frame, lens, size, job.sharpen, sigma, noise)
         }
     };
     if let Some(gpu) = crate::gpu::device() {

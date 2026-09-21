@@ -1038,6 +1038,7 @@ async fn taken(
         // Nothing to compose: the sharpen this would be the sigma for is the composite's, and
         // the strengths above zero it here on both arms.
         crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
+        crate::image::SharpenNoise::NONE,
         &crate::fit::Lens::none(),
         stored
             .and_then(|a| a.from_render.defocus)

@@ -12,6 +12,7 @@
 // drives one iteration as four dispatches (blur H, blur V + ratio, blur H, blur V + multiply)
 // over ping-pong planes; the iteration count is the host's `image::DECONVOLVE_ITERATIONS`.
 import lanes;
+import light;
 import packed;
 import px;
 
@@ -54,6 +55,8 @@ struct Params {
 [vk::binding(5, 0)] RWStructuredBuffer<float> ratio;
 /// The warp's own: output pixels per source pixel, `(x, y)` packed `f16`, per pixel.
 [vk::binding(6, 0)] RWStructuredBuffer<uint> jacobian;
+[vk::binding(7, 0)] StructuredBuffer<float> light_of_code;
+[vk::binding(8, 0)] StructuredBuffer<float> noise;
 
 /// Away from zero, since the update divides by the estimate's own blur. A frame in 0..1 with
 /// true blacks would otherwise produce infinities on the first pass.
@@ -67,6 +70,11 @@ static const float FLOOR = 1e-4;
 /// `image::deconvolve_split` composes per scale and clamps to what five taps are honest for.
 /// `image::DECONVOLVE_RADIUS`'s value; a test holds the two together.
 static const Span<Tap> RADIUS = { 2 };
+static const float SUPPORT_SIGMAS = 6.0;
+static const uint NOISE_SENSITIVITY = 0;
+static const uint NOISE_SHOT = 9;
+static const uint NOISE_READ = 12;
+static const uint NOISE_WORDS = 15;
 
 float sample_at(uint at)
 {
@@ -247,6 +255,50 @@ float limited(float value, float low, float high)
     return value;
 }
 
+float code_slope(uint code)
+{
+    let lo = code > 0 ? code - 1 : 0;
+    let hi = min(lo + 1, uint(params.full));
+    return (float(hi - lo) / params.full)
+        / max(light_of_code[hi] - light_of_code[lo], 1e-12);
+}
+
+float noise_at(float3 rgb)
+{
+    if (noise[NOISE_SHOT] + noise[NOISE_SHOT + 1] + noise[NOISE_SHOT + 2]
+            + noise[NOISE_READ] + noise[NOISE_READ + 1] + noise[NOISE_READ + 2] <= 0.0) {
+        return 0.0;
+    }
+    let codes = level_of(rgb);
+    let light = float3(
+        light_of_code[codes.r],
+        light_of_code[codes.g],
+        light_of_code[codes.b]);
+    let slopes = float3(code_slope(codes.r), code_slope(codes.g), code_slope(codes.b));
+    let brightest = max(light.r, max(light.g, light.b));
+
+    float sigma = 0.0;
+    [ForceUnroll]
+    for (uint camera = 0; camera < 3; camera = camera + 1) {
+        let at = NOISE_SENSITIVITY + camera * 3;
+        let sensitivity = abs(dot(float3(noise[at], noise[at + 1], noise[at + 2]), slopes));
+        let variance = noise[NOISE_SHOT + camera] * brightest + noise[NOISE_READ + camera];
+        // Sum, not root-sum-square: demosaic channels share photosites.
+        sigma = sigma + sensitivity * sqrt(max(variance, 0.0));
+    }
+    return sigma;
+}
+
+Gain detail_support(float3 rgb, float low, float high)
+{
+    let sigma = noise_at(rgb);
+    if (sigma <= 0.0) { return gain(1.0); }
+    let spread = high - low;
+    let total = spread * spread;
+    let noise_span = SUPPORT_SIGMAS * sigma;
+    return gain(max(total - noise_span * noise_span, 0.0) / max(total, 1e-12));
+}
+
 /// One pixel's three samples at the sharpened luma.
 ///
 /// **The limit is not optional.** RL converges on the maximum-likelihood inverse, and for a
@@ -264,13 +316,16 @@ float3 sharpened(uint pixel)
         max(ratio[column.x], ratio[column.y]),
         max(ratio[column.z], ratio[column.w])));
 
+    let p = pixel * 3;
+    let rgb = float3(sample_at(p), sample_at(p + 1), sample_at(p + 2));
     let l = observed[pixel];
-    let sharp = limited(l + params.amount * (estimate[pixel] - l), low, high);
+    let sharp = limited(
+        l + params.amount * detail_support(rgb, low, high).g * (estimate[pixel] - l),
+        low,
+        high);
 
     // Chroma rides through: the differences are held while luma moves, and green is solved from
     // the luma equation so the recombination cannot move brightness on its own.
-    let p = pixel * 3;
-    let rgb = float3(sample_at(p), sample_at(p + 1), sample_at(p + 2));
     let dr = rgb.r / params.full - l;
     let db = rgb.b / params.full - l;
     let dg = -(params.luma.r * dr + params.luma.b * db) / params.luma.g;

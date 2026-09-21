@@ -1005,6 +1005,7 @@ pub(crate) fn base(
         // frame's long edge is a fraction of a pan's, which pins `deconvolve_split`'s `k` at 1 and
         // deconvolves a reduced render as though it were native.
         sensor_long: spec.canvas[0].max(spec.canvas[1]),
+        sharpen_noise: crate::image::SharpenNoise::NONE,
         // The camera arm measures the bodies' own pictures rather than this canvas, so nothing it
         // found is true of the photograph - the peak `run` is about to read included.
         describes_the_photograph: from == crate::composite_tile::From::Original,
