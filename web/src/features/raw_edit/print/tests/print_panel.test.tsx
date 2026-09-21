@@ -17,6 +17,7 @@ test('mobile print replaces rotation controls with permission and recenter actio
     events, visibility: Object.assign(new window.EventTarget(), { hidden: false }),
     screenEvents: null, screenAngle: () => 0,
     requestPermission: async () => { requests += 1; return 'granted'; },
+    requestFrame: () => 0, cancelFrame: () => {}, now: () => 0,
   };
   const store = new PrintStore();
   presenter = new PrintPresenter(store, () => {}, motion);

@@ -22,6 +22,8 @@
 
 use crate::hdr_fit::{self, HdrColour};
 
+mod print_surface;
+
 /// `frame.slang`'s `FROM_FRAME`, as the draw's two pipelines name it.
 const FROM_FRAME_ID: &str = "0";
 
@@ -185,6 +187,7 @@ const PQ_CODES: u64 = 65536;
 pub struct ScenePeak {
     buffer: Buffer,
     measured: std::cell::Cell<bool>,
+    revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl ScenePeak {
@@ -253,6 +256,8 @@ pub struct Gpu {
     print_layout: wgpu::BindGroupLayout,
     print_pipeline: wgpu::RenderPipeline,
     print_pq_pipeline: wgpu::RenderPipeline,
+    print_pigment_pipeline: wgpu::RenderPipeline,
+    print_surface: print_surface::Pipelines,
     print_albedo_layout: wgpu::BindGroupLayout,
     print_albedo_tabulate: wgpu::ComputePipeline,
     print_albedo_average: wgpu::ComputePipeline,
@@ -829,15 +834,15 @@ impl Signal {
 }
 
 impl Gpu {
-    pub(crate) fn print_light_calibration(&self, parameters: [f32; 4]) -> Buffer {
+    pub(crate) fn print_light_calibration(&self, parameters: [f32; 4], temperature: f32) -> Buffer {
         let mut recording = self.record();
         let buffer = self.own_buffer(&wgpu::BufferDescriptor {
-            label: Some("print light calibration"), size: 8,
+            label: Some("print light calibration"), size: 32,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
         });
         recording.holding(&buffer);
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("print softbox"), contents: &crate::print::light_uniform(parameters),
+            label: Some("print softbox"), contents: &crate::print::light_uniform(parameters, temperature),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let group = self.bind_group(&wgpu::BindGroupDescriptor {
@@ -1217,7 +1222,7 @@ impl Gpu {
                 layout: Some(&device.create_pipeline_layout(
                     &wgpu::PipelineLayoutDescriptor {
                         label: Some("draw"),
-                        bind_group_layouts: &if entry != "fs" {
+                        bind_group_layouts: &if entry != "fs" && entry != "fs_print_pigment" {
                             vec![Some(&draw_layout), Some(&print_layout)]
                         } else {
                             vec![Some(&draw_layout)]
@@ -1258,6 +1263,8 @@ impl Gpu {
         let draw_from_pyramid = drawing(false, "fs");
         let print_pipeline = drawing(true, "fs_print");
         let print_pq_pipeline = drawing(true, "fs_print_pq");
+        let print_pigment_pipeline = drawing(true, "fs_print_pigment");
+        let print_surface = print_surface::Pipelines::new(&device);
         let peak_measure = compute("measure", &peak_module, &peak_layout, "measure");
         // The editor's route to the same number, so that it has one here to be held against:
         // `collect` keeps the brightest of the sampled million and `remeasure` grades only
@@ -1320,6 +1327,8 @@ impl Gpu {
             print_layout,
             print_pipeline,
             print_pq_pipeline,
+            print_pigment_pipeline,
+            print_surface,
             print_albedo_layout,
             print_albedo_tabulate,
             print_albedo_average,
@@ -2053,7 +2062,10 @@ impl Illuminant {
 pub struct Uploaded<'a> {
     gpu: &'a Gpu,
     print_albedo: std::cell::RefCell<Option<(f32, Buffer)>>,
-    print_light: std::cell::RefCell<Option<([f32; 4], Buffer)>>,
+    print_light: std::cell::RefCell<Option<([f32; 4], f32, Buffer)>>,
+    print_surface: std::cell::RefCell<print_surface::Cached>,
+    peak_revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    peak_cached: std::cell::RefCell<Option<(u64, Vec<u32>)>>,
     width: usize,
     height: usize,
     /// For the editor this is the `Resident`'s own frame, shared rather than copied.
@@ -2146,6 +2158,7 @@ impl Gpu {
                 mapped_at_creation: false,
             }),
             measured: std::cell::Cell::new(false),
+            revision: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -2201,7 +2214,8 @@ impl Gpu {
         buffer.unmap();
         // Claimed, so `upload` leaves it alone. The words above zero are the measurement's own
         // scratch and nothing but `peak.slang` reads them.
-        ScenePeak { buffer, measured: std::cell::Cell::new(true) }
+        ScenePeak { buffer, measured: std::cell::Cell::new(true),
+            revision: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)) }
     }
 
     /// The frame itself, written straight into the buffer the GPU will read.
@@ -2360,6 +2374,9 @@ impl Gpu {
             gpu: self,
             print_albedo: std::cell::RefCell::new(None),
             print_light: std::cell::RefCell::new(None),
+            print_surface: std::cell::RefCell::new(print_surface::Cached::default()),
+            peak_revision: peak.revision.clone(),
+            peak_cached: std::cell::RefCell::new(None),
             width: grade.width,
             height: grade.height,
             samples,
@@ -3049,7 +3066,18 @@ impl Uploaded<'_> {
     ///
     /// Nothing on the rendition path calls this: one exposure, measured once.
     pub fn peak_from_candidates(&self, grade: &Grade<'_>) {
+        let words = uniform_words(&Grade { canvas: None, ..*grade }, grade.colour.unwrap_or(&self.identity));
+        let revision = self.peak_revision.load(std::sync::atomic::Ordering::Relaxed);
+        if self.peak_cached.borrow().as_ref().is_some_and(|cached| cached.0 == revision && cached.1 == words) {
+            return;
+        }
         self.peak_passes(grade, PeakRoute::KeptCandidates);
+        *self.peak_cached.borrow_mut() = Some((self.peak_revision.load(std::sync::atomic::Ordering::Relaxed), words));
+    }
+
+    pub fn invalidate_print_cache(&self) {
+        self.print_surface.borrow_mut().pigment = None;
+        *self.peak_cached.borrow_mut() = None;
     }
 
     /// `collect`, over a histogram and a threshold `measure_peak` has already left.
@@ -3123,6 +3151,9 @@ impl Uploaded<'_> {
     }
 
     fn peak_passes(&self, grade: &Grade<'_>, route: PeakRoute) {
+        if route.reaches_the_quantile() {
+            self.peak_revision.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         let described = grade.colour.unwrap_or(&self.identity);
         let mut recording = self.gpu.record();
         let (edits, balance) = self.written(grade, described);
@@ -3541,8 +3572,25 @@ impl Uploaded<'_> {
         print: Option<&crate::print::Scene>,
         pq: bool,
     ) {
+        if let Some(scene) = print.filter(|scene| matches!(scene.presentation, crate::print::Presentation::Surface)) {
+            self.draw_print_surface(recording, grade, pyramid, target, scene, pq);
+            return;
+        }
+        self.draw_direct(recording, grade, pyramid, target, print, pq, false);
+    }
+
+    fn draw_direct(
+        &self,
+        recording: &mut Recording<'_>,
+        grade: &Grade<'_>,
+        pyramid: &crate::base::Pyramid,
+        target: &wgpu::TextureView,
+        print: Option<&crate::print::Scene>,
+        pq: bool,
+        pigment: bool,
+    ) {
         let print_grade;
-        let grade = if print.is_some() {
+        let grade = if print.is_some() || pigment {
             print_grade = Grade {
                 peak_nits: crate::light::Light::at_diffuse_white(grade.reference_nits),
                 ..*grade
@@ -3630,7 +3678,7 @@ impl Uploaded<'_> {
         let print_group = print.map(|scene| {
             let albedo = self.print_albedo_for(scene.refractive_index as f32);
             recording.holding(&albedo);
-            let calibration = self.print_light_for(scene.light_parameters());
+            let calibration = self.print_light_for(scene.light_parameters(), scene.light_temperature_kelvin as f32);
             recording.holding(&calibration);
             let buffer = recording.init(&wgpu::util::BufferInitDescriptor {
                 label: Some("print"),
@@ -3661,7 +3709,9 @@ impl Uploaded<'_> {
             })],
             ..Default::default()
         });
-        pass.set_pipeline(if print.is_some() && pq {
+        pass.set_pipeline(if pigment {
+            &self.gpu.print_pigment_pipeline
+        } else if print.is_some() && pq {
             &self.gpu.print_pq_pipeline
         } else if print.is_some() {
             &self.gpu.print_pipeline
@@ -3687,12 +3737,12 @@ impl Uploaded<'_> {
         buffer
     }
 
-    fn print_light_for(&self, parameters: [f32; 4]) -> Buffer {
-        if let Some((cached_parameters, buffer)) = self.print_light.borrow().as_ref() {
-            if *cached_parameters == parameters { return buffer.clone(); }
+    fn print_light_for(&self, parameters: [f32; 4], temperature: f32) -> Buffer {
+        if let Some((cached_parameters, cached_temperature, buffer)) = self.print_light.borrow().as_ref() {
+            if *cached_parameters == parameters && *cached_temperature == temperature { return buffer.clone(); }
         }
-        let buffer = self.gpu.print_light_calibration(parameters);
-        *self.print_light.borrow_mut() = Some((parameters, buffer.clone()));
+        let buffer = self.gpu.print_light_calibration(parameters, temperature);
+        *self.print_light.borrow_mut() = Some((parameters, temperature, buffer.clone()));
         buffer
     }
 }

@@ -376,11 +376,16 @@ pub async fn render_rendition(bytes: &[u8], job: &str) -> Result<Vec<u8>, JsValu
         .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))
 }
 
+#[wasm_bindgen(js_name = finishDraw)]
+pub async fn finish_draw() -> Result<(), JsValue> {
+    let gpu = crate::gpu::device()
+        .ok_or_else(|| JsValue::from_str("rawshim: this browser offered no WebGPU adapter"))?;
+    crate::gpu::finished(gpu).await
+        .ok_or_else(|| JsValue::from_str("rawshim: the GPU did not finish the draw"))?;
+    refused()
+}
+
 /// A refusal the device reported since the last draw.
-///
-/// Asked after a draw rather than before it: a refusal is reported asynchronously, so what this
-/// catches is the tick before this one, and the reader is told on the next frame instead of never
-/// ([`crate::gpu::refusal`]).
 fn refused() -> Result<(), JsValue> {
     match crate::gpu::refusal() {
         Some(said) => Err(JsValue::from_str(&said)),
@@ -1121,6 +1126,7 @@ impl HeldRaw {
         let Some(drawing) = held.as_mut() else {
             return Ok(());
         };
+        drawing.uploaded.invalidate_print_cache();
         drawing
             .frame
             .write_rows(strip, keep_top, keep_rows, top)
@@ -1135,6 +1141,7 @@ impl HeldRaw {
         let Some(drawing) = held.as_mut() else {
             return Ok(());
         };
+        drawing.uploaded.invalidate_print_cache();
         drawing
             .frame
             .redraw(&repairs)

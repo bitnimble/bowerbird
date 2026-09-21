@@ -142,8 +142,8 @@ impl Scene {
     }
 }
 
-pub(crate) fn light_uniform(parameters: [f32; 4]) -> Vec<u8> {
-    parameters.into_iter().flat_map(f32::to_le_bytes).collect()
+pub(crate) fn light_uniform(parameters: [f32; 4], temperature: f32) -> Vec<u8> {
+    parameters.into_iter().chain([temperature, 0.0, 0.0, 0.0]).flat_map(f32::to_le_bytes).collect()
 }
 
 fn print_lengths<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Share, D::Error> {
@@ -168,7 +168,7 @@ mod tests {
         let mut recording = gpu.record();
         let albedo = gpu.print_albedo_table(scene.refractive_index as f32);
         recording.holding(&albedo);
-        let calibration = gpu.print_light_calibration(scene.light_parameters());
+        let calibration = gpu.print_light_calibration(scene.light_parameters(), scene.light_temperature_kelvin as f32);
         recording.holding(&calibration);
         let inputs = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("print optical probes"),
@@ -248,7 +248,7 @@ mod tests {
 
     fn calibrated(scene: &Scene) -> [f32; 2] {
         let gpu = crate::gpu::device().expect("print requires Vulkan");
-        let calibration = gpu.print_light_calibration(scene.light_parameters());
+        let calibration = gpu.print_light_calibration(scene.light_parameters(), scene.light_temperature_kelvin as f32);
         let mut recording = gpu.record();
         recording.holding(&calibration);
         let readback = recording.buffer(&wgpu::BufferDescriptor {

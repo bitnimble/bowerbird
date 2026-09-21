@@ -1,6 +1,9 @@
 import print_light;
+import illuminant;
+import primaries;
+import prelude;
 
-struct Softbox { float4 shape; };
+struct Softbox { float4 shape; float4 temperature; };
 [vk::binding(0, 0)] ConstantBuffer<Softbox> light;
 [vk::binding(1, 0)] RWStructuredBuffer<float> calibration;
 groupshared float2 partial[64];
@@ -28,5 +31,11 @@ void calibrate(uint lane : SV_GroupIndex)
     if (lane == 0) {
         calibration[0] = 16384.0 / (4.0 * half_shape.x * half_shape.y * partial[0].x);
         calibration[1] = partial[0].y / partial[0].x;
+        let xyz = xyz_of(xy_of(light.temperature.x, 0.0));
+        let colour = mul(CONE_TO_R2020, mul(XYZ_TO_CONE, xyz));
+        let normalized = colour / dot(LUMA, colour);
+        calibration[2] = normalized.r;
+        calibration[3] = normalized.g;
+        calibration[4] = normalized.b;
     }
 }

@@ -64,7 +64,7 @@ mod tests {
                 "print_light_calibrate.wgsl",
                 "Softbox",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl")).to_string(),
-                crate::print::light_uniform(crate::print::Scene::default().light_parameters()).len(),
+                crate::print::light_uniform(crate::print::Scene::default().light_parameters(), 6500.0).len(),
             ),
             (
                 "frame.wgsl",

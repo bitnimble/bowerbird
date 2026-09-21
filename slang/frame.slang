@@ -311,7 +311,7 @@ float3 print_filtered(float2 source, float2 dx, float2 dy)
     for (uint i = 0; i < count; i += 1) {
         let at = source + ((float(i) + 0.5) / float(count) - 0.5) * reach;
         let first = print_sample(at, lower);
-        let second = upper == lower ? first : print_sample(at, upper);
+        let second = lod == lower ? first : print_sample(at, upper);
         sum += lerp(first, second, lod - lower);
     }
     return sum / float(count);
@@ -331,19 +331,41 @@ Colour<SrgbLinear> print_gamut(Colour<SrgbLinear> colour)
     return measured<SrgbLinear>(luma + chroma * (compressed / reach));
 }
 
+float3 print_pigment(float2 pixel, float2 dx, float2 dy)
+{
+    let source = geometry_at(pixel);
+    let source_dx = geometry_at(pixel + dx) - source;
+    let source_dy = geometry_at(pixel + dy) - source;
+    let nits = display_nits(measured<SceneNits>(print_filtered(source, source_dx, source_dy)), source);
+    return print_gamut(measured<SrgbLinear>(mul(R2020_TO_SRGB, nits.v / edit.peak))).v;
+}
+
+[shader("fragment")]
+float4 fs_print_pigment(float4 pos : SV_Position) : SV_Target
+{
+    let scale = edit.region_size / edit.canvas_size;
+    let pixel = edit.region_origin + pos.xy * scale;
+    return float4(print_pigment(pixel, float2(scale.x, 0.0), float2(0.0, scale.y)), 1.0);
+}
+
 Colour<DisplayNits> print_nits(float2 pos)
 {
     let shape = float2(float(edit.output_width), float(edit.output_height));
     PrintHit hit;
     float2 paper_dx;
     float2 paper_dy;
+    float2 pixel;
+    float2 dx;
+    float2 dy;
     var background = float3(0.0);
     if (print.illumination.w > 0.5) {
         let scale = edit.region_size / edit.canvas_size;
-        let pixel = edit.region_origin + pos * scale;
+        pixel = edit.region_origin + pos * scale;
         hit = paper_surface_hit(pixel / shape, shape);
-        paper_dx = float2(scale.x / shape.x, 0.0);
-        paper_dy = float2(0.0, scale.y / shape.y);
+        dx = float2(scale.x, 0.0);
+        dy = float2(0.0, scale.y);
+        paper_dx = dx / shape;
+        paper_dy = dy / shape;
     } else {
         hit = paper_covered(pos, edit.canvas_size, shape);
         background = print_background().v;
@@ -351,19 +373,15 @@ Colour<DisplayNits> print_nits(float2 pos)
         let center_uv = paper_uv(pos, edit.canvas_size, shape, hit);
         paper_dx = paper_uv(pos + float2(1.0, 0.0), edit.canvas_size, shape, hit) - center_uv;
         paper_dy = paper_uv(pos + float2(0.0, 1.0), edit.canvas_size, shape, hit) - center_uv;
+        pixel = hit.uv * shape;
+        dx = paper_dx * shape;
+        dy = paper_dy * shape;
     }
     let coverage = hit.coverage;
     var reflectance = float3(print.material.y);
     if (hit.normal.z > 0.5) {
-        let pixel = hit.uv * shape;
-        let dx = paper_dx * shape;
-        let dy = paper_dy * shape;
-        let source = geometry_at(pixel);
-        let source_dx = geometry_at(pixel + dx) - source;
-        let source_dy = geometry_at(pixel + dy) - source;
-        let nits = display_nits(measured<SceneNits>(print_filtered(source, source_dx, source_dy)), source);
-        let pigment = print_gamut(measured<SrgbLinear>(mul(R2020_TO_SRGB, nits.v / edit.peak)));
-        reflectance = mul(SRGB_TO_R2020, lerp(float3(print.material.z), float3(print.material.y), pigment.v));
+        let pigment = print_pigment(pixel, dx, dy);
+        reflectance = mul(SRGB_TO_R2020, lerp(float3(print.material.z), float3(print.material.y), pigment));
     }
     let footprint = 2.0 * (abs(paper_dx) + abs(paper_dy)) * shape / max(shape.x, shape.y);
     let reflected = reflected_print(reflectance, hit, footprint);

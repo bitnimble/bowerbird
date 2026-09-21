@@ -1,6 +1,6 @@
 import { action } from 'mobx';
 import { DEFAULT_PRINT_SCENE, PAPER_MATERIALS, PrintSceneSchema, type Paper, type PrintControl } from './print_scene';
-import { browserPrintMotion, PrintMotion, type PrintMotionEnvironment } from './print_motion';
+import { browserPrintMotion, PrintMotion, type PrintMotionEnvironment, type PrintTilt } from './print_motion';
 import type { PrintStore } from './print_store';
 
 type Drag = {
@@ -16,6 +16,9 @@ export class PrintPresenter {
   private drag: Drag | null = null;
   private desktopRotation = { yawDegrees: DEFAULT_PRINT_SCENE.yawDegrees, pitchDegrees: DEFAULT_PRINT_SCENE.pitchDegrees };
   private readonly tilt = new PrintMotion();
+  private tiltTarget: PrintTilt | null = null;
+  private tiltFrame: number | null = null;
+  private tiltTime = 0;
   private watching = false;
   private listening = false;
   private permission: 'unknown' | 'granted' | 'denied' = 'unknown';
@@ -82,6 +85,7 @@ export class PrintPresenter {
   @action.bound
   resetTilt = (): void => {
     if (!this.store.open || !this.store.surface || this.motion?.visibility.hidden) return;
+    this.stopTiltAnimation();
     this.tilt.reset();
     this.rotate(0, 0);
     if (this.listening) this.waitForTilt();
@@ -145,9 +149,48 @@ export class PrintPresenter {
     if (tilt == null) return;
     this.clearWaitingTimer();
     this.store.tiltStatus = 'active';
-    if (Math.abs(tilt.yaw - this.store.scene.yawDegrees) < 0.08 && Math.abs(tilt.pitch - this.store.scene.pitchDegrees) < 0.08) return;
-    this.rotate(tilt.yaw, tilt.pitch);
+    if (tilt === 'recenter') {
+      this.stopTiltAnimation();
+      if (this.store.scene.yawDegrees !== 0 || this.store.scene.pitchDegrees !== 0) this.rotate(0, 0);
+      return;
+    }
+    if (Math.abs(tilt.yaw - this.store.scene.yawDegrees) < 0.08 && Math.abs(tilt.pitch - this.store.scene.pitchDegrees) < 0.08) {
+      this.stopTiltAnimation();
+      return;
+    }
+    this.tiltTarget = tilt;
+    if (this.tiltFrame != null) return;
+    this.tiltTime = this.motion.now();
+    this.tiltFrame = this.motion.requestFrame(this.animateTilt);
   };
+
+  @action.bound
+  private animateTilt = (time: number): void => {
+    this.tiltFrame = null;
+    const target = this.tiltTarget;
+    if (target == null || !this.listening || this.motion == null || this.motion.visibility.hidden) return;
+    const yaw = this.store.scene.yawDegrees;
+    const pitch = this.store.scene.pitchDegrees;
+    const remaining = Math.max(Math.abs(target.yaw - yaw), Math.abs(target.pitch - pitch));
+    if (remaining < 0.08) {
+      this.tiltTarget = null;
+      this.rotate(target.yaw, target.pitch);
+      return;
+    }
+    const elapsed = Math.max(0, Math.min(100, time - this.tiltTime));
+    this.tiltTime = time;
+    if (elapsed > 0) {
+      const weight = -Math.expm1(-elapsed / 60);
+      this.rotate(yaw + (target.yaw - yaw) * weight, pitch + (target.pitch - pitch) * weight);
+    }
+    this.tiltFrame = this.motion.requestFrame(this.animateTilt);
+  };
+
+  private stopTiltAnimation(): void {
+    if (this.tiltFrame != null) this.motion?.cancelFrame(this.tiltFrame);
+    this.tiltFrame = null;
+    this.tiltTarget = null;
+  }
 
   private stopTilt(): void {
     this.permissionEpoch += 1;
@@ -163,6 +206,7 @@ export class PrintPresenter {
   }
 
   private stopListening(): void {
+    this.stopTiltAnimation();
     this.motion?.events.removeEventListener('deviceorientation', this.receiveTilt);
     this.listening = false;
     this.tilt.reset();

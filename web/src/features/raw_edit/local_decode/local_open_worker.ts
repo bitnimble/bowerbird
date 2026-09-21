@@ -2,6 +2,7 @@
 import init, {
   type HeldRaw,
   type InitOutput,
+  finishDraw,
   holdPicture,
   holdPmridWeights,
   holdRaw,
@@ -171,6 +172,7 @@ async function answer(ask: Ask): Promise<{ value: unknown; transfer?: Transferab
       editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
       if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
       if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);
+      await finishDraw();
       return { value: null };
     }
   }

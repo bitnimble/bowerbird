@@ -8,6 +8,9 @@ export type PrintMotionEnvironment = {
   screenEvents: MotionEvents | null;
   screenAngle: () => number;
   requestPermission: (() => Promise<unknown>) | null;
+  requestFrame: (callback: FrameRequestCallback) => number;
+  cancelFrame: (id: number) => void;
+  now: () => number;
 };
 
 export function browserPrintMotion(): PrintMotionEnvironment | null {
@@ -23,6 +26,9 @@ export function browserPrintMotion(): PrintMotionEnvironment | null {
       return window.screen.orientation?.angle ?? (typeof legacy === 'number' ? legacy : 0);
     },
     requestPermission: typeof permission === 'function' ? async () => permission.call(orientation) : null,
+    requestFrame: (callback) => window.requestAnimationFrame(callback),
+    cancelFrame: (id) => window.cancelAnimationFrame(id),
+    now: () => performance.now(),
   };
 }
 
@@ -30,7 +36,6 @@ const OrientationSchema = z.object({
   alpha: z.number().finite().nullable(),
   beta: z.number().finite(),
   gamma: z.number().finite(),
-  timeStamp: z.number().finite(),
 });
 
 type Vector = readonly [number, number, number];
@@ -41,18 +46,15 @@ export class PrintMotion {
   private baseline: Basis | null = null;
   private angle = 0;
   private hasHeading = false;
-  private previousTime = 0;
-  private filtered: PrintTilt = { yaw: 0, pitch: 0 };
 
   reset(): void {
     this.baseline = null;
-    this.filtered = { yaw: 0, pitch: 0 };
   }
 
-  read(event: Event, screenAngle: number): PrintTilt | null {
+  read(event: Event, screenAngle: number): PrintTilt | 'recenter' | null {
     const parsed = OrientationSchema.safeParse(event);
     if (!parsed.success || !Number.isFinite(screenAngle)) return null;
-    const { alpha: heading, beta, gamma, timeStamp } = parsed.data;
+    const { alpha: heading, beta, gamma } = parsed.data;
     const alpha = heading ?? 0;
     const [sa, ca] = [Math.sin(alpha * Math.PI / 180), Math.cos(alpha * Math.PI / 180)];
     const [sb, cb] = [Math.sin(beta * Math.PI / 180), Math.cos(beta * Math.PI / 180)];
@@ -69,9 +71,7 @@ export class PrintMotion {
       this.baseline = [screenRight, screenUp, normal];
       this.angle = angle;
       this.hasHeading = heading != null;
-      this.previousTime = timeStamp;
-      this.filtered = { yaw: 0, pitch: 0 };
-      return this.filtered;
+      return 'recenter';
     }
     const dot = (axis: Vector): number => axis[0] * normal[0] + axis[1] * normal[1] + axis[2] * normal[2];
     const x = dot(this.baseline[0]);
@@ -79,12 +79,6 @@ export class PrintMotion {
     const z = dot(this.baseline[2]);
     const yaw = Math.max(-70, Math.min(70, Math.asin(Math.max(-1, Math.min(1, x))) * 180 / Math.PI));
     const pitch = Math.max(-70, Math.min(70, Math.atan2(-y, z) * 180 / Math.PI));
-    const weight = 1 - Math.exp(-Math.max(1, Math.min(100, timeStamp - this.previousTime)) / 60);
-    this.previousTime = timeStamp;
-    this.filtered = {
-      yaw: this.filtered.yaw + (yaw - this.filtered.yaw) * weight,
-      pitch: this.filtered.pitch + (pitch - this.filtered.pitch) * weight,
-    };
-    return this.filtered;
+    return { yaw, pitch };
   }
 }

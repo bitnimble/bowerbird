@@ -315,10 +315,8 @@ export class LocalDecoder {
   /**
    * One tick, drawn where the frame already is.
    *
-   * Resolves once the worker has recorded the draw, which is what the presenter's pump waits on
-   * before asking for the next: the same one-at-a-time gate the page kept when it drew for itself,
-   * with the swapchain's backpressure now on that side of the boundary rather than on the thread
-   * handling the pointer.
+   * Resolves after GPU completion, keeping the presenter's next pose out of the queue until
+   * the current frame finishes.
    */
   tick(tick: {
     ev: number;

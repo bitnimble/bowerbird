@@ -45,6 +45,8 @@ class MotionHarness {
   readonly presenter: PrintPresenter;
   angle = 0;
   private time = 0;
+  private readonly frames = new Map<number, FrameRequestCallback>();
+  private nextFrame = 0;
 
   constructor(requestPermission: PrintMotionEnvironment['requestPermission'] = null) {
     this.presenter = new PrintPresenter(this.store, this.redraw, {
@@ -53,6 +55,13 @@ class MotionHarness {
       screenEvents: this.screenEvents,
       screenAngle: () => this.angle,
       requestPermission,
+      requestFrame: (callback) => {
+        const id = ++this.nextFrame;
+        this.frames.set(id, callback);
+        return id;
+      },
+      cancelFrame: (id) => { this.frames.delete(id); },
+      now: () => this.time,
     });
   }
 
@@ -63,12 +72,23 @@ class MotionHarness {
 
   orient(alpha: number | null, beta: number | null, gamma: number | null, count = 1): void {
     for (let i = 0; i < count; i += 1) {
-      this.time += 16;
-      const event = Object.assign(new Event('deviceorientation'), { alpha, beta, gamma });
-      Object.defineProperty(event, 'timeStamp', { value: this.time });
-      this.events.emit(event);
+      this.sample(alpha, beta, gamma);
+      this.frame(16);
     }
   }
+
+  sample(alpha: number | null, beta: number | null, gamma: number | null): void {
+    this.events.emit(Object.assign(new Event('deviceorientation'), { alpha, beta, gamma }));
+  }
+
+  frame(elapsed = 1000 / 120): void {
+    this.time += elapsed;
+    const pending = [...this.frames.values()];
+    this.frames.clear();
+    for (const callback of pending) callback(this.time);
+  }
+
+  get pendingFrames(): number { return this.frames.size; }
 }
 
 let harness: MotionHarness;
@@ -76,6 +96,81 @@ beforeEach(() => { jest.useFakeTimers(); harness = new MotionHarness(); });
 afterEach(() => { harness.presenter.close(); jest.useRealTimers(); });
 
 describe('print surface motion', () => {
+  test('draws intermediate poses on a 120 Hz display from 60 Hz sensor samples', () => {
+    harness.open();
+    harness.sample(0, 90, 0);
+    harness.redraw.mockClear();
+    let previous = 0;
+    for (let sample = 0; sample < 6; sample += 1) {
+      const target = 20 + sample * 5;
+      harness.sample(target, 90, 0);
+      for (let frame = 0; frame < 2; frame += 1) {
+        harness.frame();
+        const yaw = harness.store.scene.yawDegrees;
+        expect(yaw).toBeGreaterThan(previous);
+        expect(yaw).toBeLessThan(target);
+        previous = yaw;
+      }
+    }
+    expect(harness.redraw).toHaveBeenCalledTimes(12);
+    for (let frame = 0; frame < 120; frame += 1) harness.frame();
+    expect(harness.store.scene.yawDegrees).toBeCloseTo(45, 6);
+    expect(harness.pendingFrames).toBe(0);
+    harness.redraw.mockClear();
+    harness.sample(45, 90, 0);
+    harness.frame();
+    expect(harness.redraw).not.toHaveBeenCalled();
+    expect(harness.pendingFrames).toBe(0);
+  });
+
+  test('cancels interpolated motion on recenter, hiding, mode changes and close', () => {
+    const moving = (): void => {
+      harness.sample(0, 90, 0);
+      harness.sample(30, 90, 0);
+      harness.frame();
+      expect(harness.pendingFrames).toBe(1);
+    };
+    harness.open();
+    moving();
+    harness.presenter.resetTilt();
+    expect(harness.pendingFrames).toBe(0);
+    harness.frame();
+    expect(harness.store.scene.yawDegrees).toBe(0);
+    moving();
+    harness.visibility.setHidden(true);
+    expect(harness.pendingFrames).toBe(0);
+    harness.visibility.setHidden(false);
+    moving();
+    harness.presenter.setSurface(false);
+    expect(harness.pendingFrames).toBe(0);
+    harness.presenter.setSurface(true);
+    moving();
+    harness.presenter.close();
+    expect(harness.pendingFrames).toBe(0);
+    const calls = harness.redraw.mock.calls.length;
+    harness.frame();
+    expect(harness.redraw.mock.calls.length).toBe(calls);
+  });
+
+  test('new heading and screen references cancel an unfinished tilt', () => {
+    harness.open();
+    harness.sample(null, 90, 0);
+    harness.sample(null, 90, 20);
+    harness.frame();
+    expect(harness.pendingFrames).toBe(1);
+    harness.sample(80, 90, 20);
+    expect(harness.store.scene.yawDegrees).toBe(0);
+    expect(harness.pendingFrames).toBe(0);
+    harness.sample(90, 90, 20);
+    harness.frame();
+    expect(harness.pendingFrames).toBe(1);
+    harness.angle = 90;
+    harness.sample(90, 90, 20);
+    expect(harness.pendingFrames).toBe(0);
+    harness.frame();
+    expect(harness.store.scene).toMatchObject({ yawDegrees: 0, pitchDegrees: 0 });
+  });
+
   test('calibrates without jumping and maps upright-phone motion to the rendered pose', () => {
     harness.open();
     expect(harness.store.scene).toMatchObject({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });

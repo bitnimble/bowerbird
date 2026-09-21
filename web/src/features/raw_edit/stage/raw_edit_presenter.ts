@@ -897,20 +897,6 @@ export class RawEditPresenter {
     this.pump();
   }
 
-  /**
-   * One tick on the GPU at a time, and the next only once that one has landed.
-   *
-   * **`getCurrentTexture` blocks the main thread when the swapchain is full**, and a frame
-   * asked for every 16ms while each takes 200 to draw fills it and keeps it full - so the
-   * thread handling the pointer stalls inside the draw call, and the slider freezes for as
-   * long as the picture takes. Waiting for the GPU here is what keeps that off the main
-   * thread: an image is always free when the next draw asks for one, the controls stay live at
-   * whatever rate they emit, and the picture follows at whatever rate it can.
-   *
-   * Both canvases through one gate, because `onSubmittedWorkDone` answers for the queue and
-   * the two draws share it: gating them separately would have each waiting on the other's work
-   * anyway, and twice.
-   */
   private pump(): void {
     if (this.closed || this.frame !== 0 || this.drawing) return;
     if (this.pending == null && this.pendingLoupe == null) return;

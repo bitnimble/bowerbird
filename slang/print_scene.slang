@@ -6,18 +6,14 @@ import print_light;
 import print_parameters;
 import print_geometry;
 import prelude;
-import primaries;
-import illuminant;
 [vk::binding(1, 1)] StructuredBuffer<float> print_albedo;
 [vk::binding(2, 1)] public StructuredBuffer<float> print_light_calibration;
 
-static const uint LIGHT_SAMPLES = 128;
+public static const uint LIGHT_SAMPLES = 128;
 
 public float3 print_illuminant()
 {
-    let xyz = xyz_of(xy_of(print.illumination.y, 0.0));
-    let colour = mul(CONE_TO_R2020, mul(XYZ_TO_CONE, xyz));
-    return colour / dot(LUMA, colour);
+    return float3(print_light_calibration[2], print_light_calibration[3], print_light_calibration[4]);
 }
 
 public Gain print_exposure()
@@ -105,10 +101,8 @@ public float3 softbox_hit(float3 position, float3 direction, float3 tangent, flo
     return float3(along * along * SOFTBOX_ASPECT / (4.0 * half_width.d * half_width.d * cosine), at);
 }
 
-public Colour<DisplayNits> reflected_print_samples(float3 reflectance, PrintHit hit, float roughness, uint count)
+public float2 print_direct_coefficients(PrintHit hit, float roughness, uint count)
 {
-    let source = measured<DisplayNits>(print.illumination.x * print_light_calibration[0]);
-    let fill = measured<Illuminance>(print.illumination.z);
     let world_normal = paper_rotation(hit.normal);
     let world_view = paper_rotation(hit.view);
     let position = paper_rotation(hit.position);
@@ -117,8 +111,6 @@ public Colour<DisplayNits> reflected_print_samples(float3 reflectance, PrintHit 
     let bitangent = cross(world_normal, tangent);
     let local_view = float3(dot(world_view, tangent), dot(world_view, bitangent), max(dot(world_view, world_normal), 1e-5));
     let albedo = paper_albedo(local_view.z, roughness);
-    var result = fill.v / PRINT_PI * (albedo + reflectance * (1.0 - albedo));
-    if (source.v == 0.0) { return measured<DisplayNits>(result * print_illuminant()); }
     let light = print.light.xyz;
     let light_tangent = normalize(abs(light.z) < 0.99 ? cross(float3(0.0, 0.0, 1.0), light)
         : cross(float3(0.0, 1.0, 0.0), light));
@@ -127,7 +119,7 @@ public Colour<DisplayNits> reflected_print_samples(float3 reflectance, PrintHit 
     let half_width = exactly<PrintUnit>(print.surface.y);
     let alpha = roughness * roughness;
     let body = (1.0 - albedo) / (PRINT_PI * (1.0 - paper_average_albedo(roughness)));
-    var direct = float3(0.0);
+    var direct = float2(0.0);
     for (uint i = 0; i < count; i += 1) {
         let sample = quadrature(i, count);
         let emitter_at = 2.0 * sample - 1.0;
@@ -140,9 +132,9 @@ public Colour<DisplayNits> reflected_print_samples(float3 reflectance, PrintHit 
         if (incident.z > 0.0 && emitter_cosine > 0.0) {
             let pdf = dot(delta, delta) * SOFTBOX_ASPECT / (4.0 * half_width.d * half_width.d * emitter_cosine);
             let specular = specular_brdf(local_view, incident, alpha, print.material.w);
-            let diffuse = reflectance * body * (1.0 - paper_albedo(incident.z, roughness));
+            let diffuse = body * (1.0 - paper_albedo(incident.z, roughness));
             direct += softbox_profile(emitter_at) * incident.z
-                * (diffuse / pdf + specular / (pdf + normal_pdf(local_view, incident, alpha)));
+                * float2(diffuse / pdf, specular / (pdf + normal_pdf(local_view, incident, alpha)));
         }
         let half = visible_normal(local_view, alpha, sample);
         let reflected = reflect(-local_view, half);
@@ -150,13 +142,27 @@ public Colour<DisplayNits> reflected_print_samples(float3 reflectance, PrintHit 
             let world_direction = tangent * reflected.x + bitangent * reflected.y + world_normal * reflected.z;
             let emitter = softbox_hit(position, world_direction, light_tangent, light_bitangent, distance, half_width);
             if (emitter.x > 0.0) {
-                direct += softbox_profile(emitter.yz) * reflected.z
+                direct.y += softbox_profile(emitter.yz) * reflected.z
                     * specular_brdf(local_view, reflected, alpha, print.material.w)
                     / (emitter.x + normal_pdf(local_view, reflected, alpha));
             }
         }
     }
-    return measured<DisplayNits>((result + source.v * direct / float(count)) * print_illuminant());
+    return direct / float(count);
+}
+
+public float3 print_from_coefficients(float3 reflectance, PrintHit hit, float roughness, float2 direct)
+{
+    let albedo = paper_albedo(max(dot(hit.view, hit.normal), 1e-5), roughness);
+    let ambient = print.illumination.z / PRINT_PI * (albedo + reflectance * (1.0 - albedo));
+    return (ambient + print.illumination.x * print_light_calibration[0]
+        * (direct.x * reflectance + direct.y)) * print_illuminant();
+}
+
+public Colour<DisplayNits> reflected_print_samples(float3 reflectance, PrintHit hit, float roughness, uint count)
+{
+    let direct = print.illumination.x == 0.0 ? float2(0.0) : print_direct_coefficients(hit, roughness, count);
+    return measured<DisplayNits>(print_from_coefficients(reflectance, hit, roughness, direct));
 }
 
 public Colour<DisplayNits> reflected_print(float3 reflectance, PrintHit hit, float2 footprint)

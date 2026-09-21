@@ -66,8 +66,8 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 65, gamma: 15 }));
   });
-  await expect.poll(async () => Math.abs((await scene()).yawDegrees)).toBeGreaterThan(1);
-  await expect.poll(async () => Math.abs((await scene()).pitchDegrees)).toBeGreaterThan(1);
+  await expect.poll(async () => (await scene()).yawDegrees).toBeCloseTo(15, 3);
+  await expect.poll(async () => (await scene()).pitchDegrees).toBeCloseTo(-25, 3);
   await expect(page.getByText('Tilt your phone to move the reflections.')).toBeVisible();
   const tilted = await scene();
   const box = await editPreview(page).boundingBox();
