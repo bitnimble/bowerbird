@@ -1,9 +1,7 @@
 name: release
 
-# A tag is a release; the button is a container image and nothing else. A cold build is
-# three Rust release stages on four operating systems against 2,000 Actions minutes a
-# month, and each commit built would leave its own digest behind in a registry billed by
-# the byte.
+# A tag push builds every distributable and cuts a release; the button builds every
+# distributable without stamping a version or cutting a release.
 on:
   push:
     tags: ["v*"]
@@ -15,8 +13,8 @@ permissions:
   contents: read
 
 env:
-  # Empty for a manual run, which is what `publish` keys "there is no release to cut" off.
-  TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+  # Empty unless a tag push started the run; release-only steps key off it.
+  TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
 
 jobs:
   # The container, and the payload an installed one replaces itself with. Both come out
@@ -63,11 +61,11 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           # `latest` needs no line: the default flavour attaches it to whichever
-          # semver tag is highest. A manual run matches no semver and so publishes
-          # only its commit, which is what a build off a branch should be.
+          # semver tag is highest. A manual run publishes only its commit, even when
+          # the button targets a tag.
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},enable=${{ env.TAG != '' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ env.TAG != '' }}
             type=sha
 
       - uses: docker/build-push-action@v6
@@ -109,7 +107,6 @@ jobs:
           path: dist/
 
   desktop:
-    if: startsWith(github.ref, 'refs/tags/')
     strategy:
       # One platform's toolchain failing should not cost the other three their build.
       fail-fast: false
@@ -188,7 +185,8 @@ jobs:
           bun run get:libjxl
 
       - name: Stamp the version the tag names
-        run: bun run scripts/set-version.ts "${{ github.ref_name }}"
+        if: env.TAG != ''
+        run: bun run scripts/set-version.ts "$TAG"
         shell: bash
 
       # The editor's decoder, which the web build imports by path - so it has to exist
@@ -227,7 +225,6 @@ jobs:
   # Shell only by construction rather than by choice: `rawshim` without `renditions`
   # links no C at all, and lensfun has no prebuilt Android build anywhere.
   android:
-    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -251,7 +248,9 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: web
       - run: bun run get:slangc
-      - run: bun run scripts/set-version.ts "${{ github.ref_name }}"
+      - name: Stamp the version the tag names
+        if: env.TAG != ''
+        run: bun run scripts/set-version.ts "$TAG"
       # Pinned, and through bun rather than `cargo install`, which builds it from source
       # and costs minutes for a tool that publishes a binary.
       - run: bun x wasm-pack@0.13.1 build native/rawshim --target web --out-dir pkg --no-opt -- --no-default-features
@@ -274,7 +273,8 @@ jobs:
           apk=$(find src-tauri/gen/android -name '*release*.apk' | head -n1)
           # The bare version, like every bundler-produced installer beside it: this is the
           # one filename the build does not choose, so it is the one that can drift.
-          out="dist/android-aarch64/Bowerbird_${GITHUB_REF_NAME#v}.apk"
+          version="${TAG#v}"
+          out="dist/android-aarch64/Bowerbird_${version:-manual}.apk"
           if [ -z "${KEYSTORE:-}" ]; then
             echo "no ANDROID_KEYSTORE_BASE64 secret: publishing the unsigned APK"
             cp "$apk" "$out"
@@ -299,7 +299,7 @@ jobs:
     needs: [docker, desktop, android]
     # A platform that failed to build should not hold the release back; what it must not
     # do is appear in the manifest, which it cannot, having uploaded nothing.
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
