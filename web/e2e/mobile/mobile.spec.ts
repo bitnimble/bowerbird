@@ -234,8 +234,6 @@ test('the crop rectangle takes a finger, and the stage does not pan under it', a
   await waitForEditorLive(page);
 
   await editTools(page).getByRole('radio', { name: 'Crop' }).click();
-  // Opening the tool re-lays the page out - the panel empties, the sheet joins the flow, the
-  // view resets - so the grip's box is only worth reading once that has happened.
   await expect.poll(async () => cropRect(page)).not.toBeNull();
   const was = await cropRect(page);
   if (was == null) throw new Error('the crop has no rectangle');

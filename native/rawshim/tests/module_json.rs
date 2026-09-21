@@ -1,6 +1,6 @@
 //! What a tick carries, read by the host that receives it.
 //!
-//! **Three structs cross this boundary as JSON and their field names are written twice** - once as
+//! **Four structs cross this boundary as JSON and their field names are written twice** - once as
 //! `serde` attributes here, once as an interface in `web/src/features/raw_edit/edits.ts`. Nothing
 //! else holds the two together: a renamed field compiles on both sides, passes every unit test,
 //! and fails at the first tick with `missing field`, which is a black stage and a `failed` panel.
@@ -19,6 +19,7 @@ struct Sample {
     region: rawshim::gpu::Region,
     adjust: rawshim::gpu::Adjust,
     geometry: rawshim::image::Geometry,
+    print: rawshim::print::Scene,
 }
 
 fn sample() -> Sample {
@@ -68,4 +69,27 @@ fn a_tick_names_the_geometry_the_way_this_host_reads_it() {
         geometry.keystone,
         Some([1.01, 0.02, -0.03, 0.04, 1.05, -0.06, 0.07, -0.08]),
     );
+}
+
+#[test]
+fn a_tick_names_its_print_scene_the_way_this_host_reads_it() {
+    let scene = sample().print;
+    scene.validate().expect("a valid print scene");
+    assert!(matches!(scene.paper, rawshim::print::Paper::Satin));
+    assert!(matches!(scene.presentation, rawshim::print::Presentation::Scene));
+    assert_eq!(scene.yaw_degrees, -12.0);
+    assert_eq!(scene.pitch_degrees, 8.0);
+    assert_eq!(scene.key_lux.raw(), 1000.0);
+    assert_eq!(scene.light_azimuth_degrees, 0.0);
+    assert_eq!(scene.light_elevation_degrees, 75.0);
+    assert_eq!(scene.light_angular_degrees, 30.0);
+    assert_eq!(scene.fill_lux.raw(), 500.0);
+    assert_eq!(scene.light_temperature_kelvin, 6500.0);
+    assert_eq!(scene.roughness, 0.28);
+    assert_eq!(scene.white_reflectance.raw(), 0.9);
+    assert_eq!(scene.black_reflectance.raw(), 0.008);
+    assert_eq!(scene.refractive_index, 1.5);
+    assert_eq!(scene.light_distance.raw(), 4.0);
+    assert_eq!(scene.paper_long_edge_mm.raw(), 300.0);
+    assert_eq!(scene.surface_texture, 0.5);
 }

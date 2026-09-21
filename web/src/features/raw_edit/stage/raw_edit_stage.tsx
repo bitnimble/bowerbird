@@ -20,6 +20,10 @@ import { NO_SIZE, regionOf, useZoomPan } from '../../photos/viewer/zoom_pan';
 import type { RawEditPresenter } from './raw_edit_presenter';
 import type { StageStore } from './stage_store';
 import { RawEditStageStrings } from './raw_edit_stage.strings';
+import type { PrintStore } from '../print/print_store';
+import { PrintPanelStrings } from '../print/print_panel.strings';
+import { focusRing } from '../../../ui/focus_ring';
+import { useIsTouch } from '../../../app/device';
 
 const styles = stylex.create({
   // The page's own surround rather than black: at black the letterbox read as two bars framing the
@@ -32,6 +36,8 @@ const styles = stylex.create({
   loupe: {
     cursor: 'none',
   },
+  print: { cursor: 'grab' },
+  draggingPrint: { cursor: 'grabbing' },
   // Levelling wants a line near whatever is meant to be straight, so tenths rather than thirds.
   straightenGrid: {
     position: 'absolute',
@@ -74,6 +80,7 @@ export const RawEditStage = observer(function RawEditStage({
   keystone,
   repair,
   loupe,
+  print,
   presenter,
   toolsInto,
   zoomInto,
@@ -84,6 +91,7 @@ export const RawEditStage = observer(function RawEditStage({
   keystone: KeystoneStore;
   repair: RepairStore;
   loupe: LoupeStore;
+  print: PrintStore;
   presenter: RawEditPresenter;
   /**
    * Where to draw the zoom control, which is the viewer's own and goes where the viewer's
@@ -98,6 +106,12 @@ export const RawEditStage = observer(function RawEditStage({
 }): JSX.Element {
   const canvas = useRef<HTMLCanvasElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
+  const touch = useIsTouch();
+  const scenePrint = print.open && !print.surface;
+  useEffect(() => {
+    presenter.print.setSurface(touch);
+    return () => presenter.print.setSurface(false);
+  }, [presenter, touch]);
   // The wheel listens on the stage and the box is measured from the viewport, exactly as the
   // viewer does it: the stage is what a pointer is over, the viewport is what the frame is
   // fitted into.
@@ -124,7 +138,7 @@ export const RawEditStage = observer(function RawEditStage({
    * Both lay something out on the picture where a fitted view puts it, so a zoomed frame under
    * a crop rectangle or a keystone guide would have it naming somewhere else.
    */
-  const fitted = crop.cropping || keystone.keystoning;
+  const fitted = crop.cropping || keystone.keystoning || scenePrint;
   /**
    * Whether the stage's own zoom and pan take gestures.
    *
@@ -315,18 +329,54 @@ export const RawEditStage = observer(function RawEditStage({
       }
     : {};
 
+  const printHandlers = scenePrint ? {
+    onPointerDown: (event: React.PointerEvent<HTMLDivElement>): void => {
+      if (event.button !== 0 || !event.isPrimary || !stageStore.editable) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.currentTarget.focus();
+      presenter.print.beginDrag(event.pointerId, event.clientX, event.clientY, Math.min(box.width, box.height));
+      event.preventDefault();
+    },
+    onPointerMove: (event: React.PointerEvent<HTMLDivElement>): void => {
+      presenter.print.moveDrag(event.pointerId, event.clientX, event.clientY);
+    },
+    onPointerUp: (event: React.PointerEvent<HTMLDivElement>): void => {
+      presenter.print.endDrag(event.pointerId);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    },
+    onPointerCancel: (event: React.PointerEvent<HTMLDivElement>): void => presenter.print.endDrag(event.pointerId),
+    onLostPointerCapture: (event: React.PointerEvent<HTMLDivElement>): void => presenter.print.endDrag(event.pointerId),
+    onDoubleClick: (): void => presenter.print.resetRotation(),
+    onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>): void => {
+      if (!stageStore.editable || event.altKey || event.ctrlKey || event.metaKey) return;
+      const step = event.shiftKey ? 15 : 5;
+      switch (event.key) {
+        case 'ArrowLeft': presenter.print.rotateBy(-step, 0); break;
+        case 'ArrowRight': presenter.print.rotateBy(step, 0); break;
+        case 'ArrowUp': presenter.print.rotateBy(0, -step); break;
+        case 'ArrowDown': presenter.print.rotateBy(0, step); break;
+        case 'Home': presenter.print.resetRotation(); break;
+        default: return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    },
+  } : {};
+
   return (
     <div ref={captureStage} {...stylex.props(stageStyles.stage, styles.stage)}>
       {toolsInto == null ? <div {...stylex.props(stageStyles.tools)}>{tools}</div> : createPortal(tools, toolsInto)}
       {zoomInto != null && !still && createPortal(<ZoomSlider zoom={zoom} />, zoomInto)}
       <div
         ref={viewport}
-        {...stylex.props(stageStyles.viewport, loupe.loupeOpen && styles.loupe, stylex.defaultMarker())}
+        {...stylex.props(stageStyles.viewport, loupe.loupeOpen && styles.loupe, scenePrint && focusRing.ring, stylex.defaultMarker())}
         role="region"
-        aria-label={PhotoStageStrings.stage()}
+        aria-label={scenePrint ? PrintPanelStrings.rotatePrint() : PhotoStageStrings.stage()}
+        tabIndex={scenePrint ? 0 : undefined}
         aria-busy={!stageStore.live && stageStore.status !== 'failed'}
         {...handlers}
         {...loupeHandlers}
+        {...printHandlers}
       >
         <canvas
           ref={canvas}
@@ -335,6 +385,8 @@ export const RawEditStage = observer(function RawEditStage({
             stageStyles.ready,
             zoomed && stageStyles.zoomed,
             loupe.loupeOpen && styles.loupe,
+            scenePrint && styles.print,
+            print.dragging && styles.draggingPrint,
           )}
           role="img"
           aria-label={RawEditStageStrings.picture()}
@@ -362,6 +414,7 @@ export const RawEditStage = observer(function RawEditStage({
         data-size={`${stageStore.width}x${stageStore.height}`}
         data-stage={stageStore.stage == null ? undefined : `${stageStore.stage.width}x${stageStore.stage.height}`}
         data-matched={stageStore.matched}
+        data-rendered-mode={stageStore.renderedMode ?? undefined}
       />
       {!stageStore.live && stageStore.status !== 'failed' && (
         <div {...stylex.props(stageStyles.busy)}>

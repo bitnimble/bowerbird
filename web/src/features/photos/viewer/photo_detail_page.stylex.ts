@@ -90,12 +90,6 @@ export const styles = stylex.create({
   sheetStrip: {
     gridTemplateRows: 'minmax(0, 1fr) auto',
   },
-  // A crop's grips are on the picture's edges, so a sheet across the bottom of it is two corners no
-  // finger can reach: here the sheet takes a row and the stage fits into what is left.
-  sheetCropping: {
-    gridTemplateRows: 'minmax(0, 1fr) auto',
-    paddingBottom: 0,
-  },
   panels: {
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr)',
@@ -111,9 +105,6 @@ export const styles = stylex.create({
   panelsInSheet: {
     maxHeight: '60vh',
     marginBottom: size.sheetPad,
-  },
-  panelsInCroppingSheet: {
-    maxHeight: 'none',
   },
   panelFlush: {
     marginBottom: 0,
@@ -133,13 +124,6 @@ export const styles = stylex.create({
     borderTopWidth: '1px',
     borderTopStyle: 'solid',
     borderTopColor: color.slate,
-  },
-  // Never more than a third of the window: a phone on its side is 390px tall, and the tool's own
-  // controls are 200 of them.
-  sheetBarCropping: {
-    position: 'static',
-    maxHeight: '34vh',
-    overflowY: 'auto',
   },
   verdictControl: {
     flexGrow: 1,

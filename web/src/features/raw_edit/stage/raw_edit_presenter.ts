@@ -34,6 +34,8 @@ import type { EditTool } from '../edit_tool';
 import type { GuideKind } from '../keystone/keystone_store';
 import type { RepairStore } from '../repair/repair_store';
 import type { StageStore } from './stage_store';
+import type { PrintStore } from '../print/print_store';
+import { PrintPresenter } from '../print/print_presenter';
 
 const SOFT_PROOF_KEY = 'bowerbird.edit.softProof';
 
@@ -121,6 +123,7 @@ export class RawEditPresenter {
   readonly crop: CropPresenter;
   readonly keystone: KeystonePresenter;
   readonly loupe: LoupePresenter;
+  readonly print: PrintPresenter;
   /** The repair tool, which the panel and the stage drive directly. */
   readonly repair: RepairPresenter;
 
@@ -131,7 +134,9 @@ export class RawEditPresenter {
     private readonly keystoneStore: KeystoneStore,
     repairStore: RepairStore,
     loupeStore: LoupeStore,
+    private readonly printStore: PrintStore,
   ) {
+    this.print = new PrintPresenter(printStore, () => this.request(this.editStore.exposureEv));
     stage.softProof = readSetting(SOFT_PROOF_KEY) === 'srgb' ? 'srgb' : 'hdr';
     this.crop = new CropPresenter(stage, editStore, cropStore, {
       preview: (patch) => this.preview(patch),
@@ -274,7 +279,8 @@ export class RawEditPresenter {
     if (box == null || region == null) return null;
     if (box.width === 0 || box.height === 0) return null;
 
-    const size = stageResolution(box, region, this.maxTexture);
+    const scenePrint = this.printStore.open && !this.printStore.surface;
+    const size = stageResolution(box, scenePrint ? { x: 0, y: 0, ...box } : region, this.maxTexture);
     if (size.width === this.sized?.width && size.height === this.sized?.height) return null;
     this.sized = size;
     this.stage.stage = size;
@@ -468,6 +474,7 @@ export class RawEditPresenter {
   }
 
   setCropping(open: boolean): void {
+    if (open) this.print.setOpen(false);
     this.crop.setCropping(open);
   }
 
@@ -491,14 +498,9 @@ export class RawEditPresenter {
     this.crop.turn(by);
   }
 
-  /**
-   * The header's tool selector, which is the two modes and the absence of both.
-   *
-   * Each setter already closes the other, so the order here only decides which of them does
-   * the closing; both arms end at `showGeometry`, so the stage is drawn for whichever won.
-   */
   @action.bound
   setTool(tool: EditTool): void {
+    this.print.setOpen(tool === 'print');
     this.setCropping(tool === 'crop');
     this.setKeystoning(tool === 'perspective');
     this.setRepairing(tool === 'repair');
@@ -506,10 +508,12 @@ export class RawEditPresenter {
   }
 
   setRepairing(open: boolean): void {
+    if (open) this.print.setOpen(false);
     this.repair.setRepairing(open);
   }
 
   setLoupe(open: boolean): void {
+    if (open) this.print.setOpen(false);
     this.loupe.setLoupe(open);
   }
 
@@ -545,6 +549,7 @@ export class RawEditPresenter {
   }
 
   setKeystoning(open: boolean): void {
+    if (open) this.print.setOpen(false);
     this.keystone.setKeystoning(open);
   }
 
@@ -838,6 +843,7 @@ export class RawEditPresenter {
     // destroyed: cancelled rather than flushed.
     this.prepare.close();
     this.loupe.close();
+    this.print.close();
     // Same for a window the reader has stopped looking at, and the fetch it may already have
     // started: a hundred megabytes arriving for a closed editor is bandwidth spent, and a worker
     // message to a decoder that is about to be freed.
@@ -912,6 +918,7 @@ export class RawEditPresenter {
       this.frame = 0;
       const next = this.pending;
       const loupe = this.pendingLoupe;
+      const print = this.printStore.open ? this.printStore.scene : null;
       this.pending = null;
       this.pendingLoupe = null;
       const local = this.local;
@@ -924,6 +931,7 @@ export class RawEditPresenter {
         // `live` over a canvas that is black or confidently wrong. The module keeps the first one
         // and hands it back on the next tick (`gpu::refusal`); this is what puts it on screen.
         if (error != null) this.fail(describe(error));
+        else if (next != null) this.drew(print == null ? 'photo' : 'print');
         this.pump();
       };
       // One message carrying both draws and the size they read: the worker applies them in the
@@ -940,10 +948,16 @@ export class RawEditPresenter {
           adjust: this.adjust,
           geometry: this.keystoneStore.geometry,
           proof: this.stage.softProof,
+          print,
           stage: next == null ? null : this.stageSize(),
         })
         .then(() => landed(), landed);
     });
+  }
+
+  @action.bound
+  private drew(mode: 'photo' | 'print'): void {
+    this.stage.renderedMode = mode;
   }
 
   /**

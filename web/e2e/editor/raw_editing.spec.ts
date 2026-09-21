@@ -1,4 +1,5 @@
 import { type Locator, type Page, expect, test } from '@playwright/test';
+import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { EDIT_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import {
@@ -664,4 +665,170 @@ test('editor rotation lives in overflow and saves orientation edit', async ({ pa
     const state = (await response.json()) as { doc: { rotate: number } };
     return state.doc.rotate;
   }).toBe(90);
+});
+
+test('print mode rotates with a real pointer and keyboard without saving a photo edit', async ({ page }) => {
+  await page.route(/\/local_open_worker\.ts(?:\?|$)/, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      body: `
+        const hdrConfigurations = [];
+        const hdrReadbacks = [];
+        const editorCanvases = new WeakSet();
+        const editorTextures = new WeakSet();
+        const editorViews = new WeakMap();
+        let editorDevice;
+        let currentPrint;
+        let drawnTexture;
+        let wantedReadback;
+        let readbackId = 0;
+        self.addEventListener('message', (event) => {
+          if (event.data?.kind === 'attach' && event.data.which === 'stage') editorCanvases.add(event.data.canvas);
+          if (event.data?.kind === 'tick') currentPrint = event.data.print;
+        });
+        Object.defineProperty(globalThis, 'editorCanvasConfigurations', { get: () => hdrConfigurations });
+        Object.defineProperty(globalThis, 'editorCanvasReadbacks', { get: () => hdrReadbacks });
+        Object.defineProperty(globalThis, 'requestEditorReadback', { value: (scene) => {
+          wantedReadback = { id: ++readbackId, scene };
+          return readbackId;
+        }});
+        const configureHdrCanvas = GPUCanvasContext.prototype.configure;
+        GPUCanvasContext.prototype.configure = function (configuration) {
+          const editorCanvas = editorCanvases.has(this.canvas);
+          configureHdrCanvas.call(this, editorCanvas
+            ? { ...configuration, usage: configuration.usage | GPUTextureUsage.COPY_SRC }
+            : configuration);
+          if (!editorCanvases.has(this.canvas)) return;
+          editorDevice = configuration.device;
+          const actual = this.getConfiguration();
+          hdrConfigurations.push({ format: actual.format, colorSpace: actual.colorSpace, toneMapping: actual.toneMapping?.mode ?? null });
+        };
+        const getHdrTexture = GPUCanvasContext.prototype.getCurrentTexture;
+        GPUCanvasContext.prototype.getCurrentTexture = function () {
+          const texture = getHdrTexture.call(this);
+          if (editorCanvases.has(this.canvas)) editorTextures.add(texture);
+          return texture;
+        };
+        const createHdrView = GPUTexture.prototype.createView;
+        GPUTexture.prototype.createView = function (descriptor) {
+          const view = createHdrView.call(this, descriptor);
+          if (editorTextures.has(this)) editorViews.set(view, this);
+          return view;
+        };
+        const beginHdrPass = GPUCommandEncoder.prototype.beginRenderPass;
+        GPUCommandEncoder.prototype.beginRenderPass = function (descriptor) {
+          for (const attachment of descriptor.colorAttachments) {
+            if (attachment != null && editorViews.has(attachment.view)) drawnTexture = editorViews.get(attachment.view);
+          }
+          return beginHdrPass.call(this, descriptor);
+        };
+        const halfFloat = (word) => {
+          const sign = word & 32768 ? -1 : 1;
+          const exponent = (word >> 10) & 31;
+          const fraction = word & 1023;
+          return sign * (exponent === 0 ? fraction * 2 ** -24
+            : exponent === 31 ? (fraction === 0 ? Infinity : NaN) : (1 + fraction / 1024) * 2 ** (exponent - 15));
+        };
+        const submitHdrCommands = GPUQueue.prototype.submit;
+        GPUQueue.prototype.submit = function (commands) {
+          const texture = drawnTexture;
+          drawnTexture = null;
+          const requested = wantedReadback;
+          if (texture == null || requested == null ||
+              !Object.entries(requested.scene).every(([key, value]) => currentPrint?.[key] === value)) {
+            return submitHdrCommands.call(this, commands);
+          }
+          wantedReadback = null;
+          const scene = { ...currentPrint };
+          const buffer = editorDevice.createBuffer({ size: 256, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+          const encoder = editorDevice.createCommandEncoder();
+          encoder.copyTextureToBuffer(
+            { texture, origin: { x: Math.floor(texture.width / 2), y: Math.floor(texture.height / 2) } },
+            { buffer, bytesPerRow: 256 },
+            { width: 1, height: 1 },
+          );
+          submitHdrCommands.call(this, [...commands, encoder.finish()]);
+          buffer.mapAsync(GPUMapMode.READ).then(() => {
+            const raw = new DataView(buffer.getMappedRange());
+            hdrReadbacks.push({ id: requested.id, scene, rgb: [halfFloat(raw.getUint16(0, true)), halfFloat(raw.getUint16(2, true)), halfFloat(raw.getUint16(4, true))] });
+            buffer.unmap();
+            buffer.destroy();
+          });
+        };
+        ${await response.text()}
+      `,
+    });
+  });
+  await open(page);
+  const worker = page.workers().find((worker) => worker.url().includes('local_open_worker'));
+  if (worker == null) throw new Error('The editor worker was not created');
+  const Configurations = z.array(z.object({ format: z.string(), colorSpace: z.string(), toneMapping: z.string().nullable() }));
+  const canvasConfigurations = async (): Promise<z.infer<typeof Configurations>> => Configurations.parse(
+    await worker.evaluate(() => Reflect.get(globalThis, 'editorCanvasConfigurations')),
+  );
+  const hdrCanvas = { format: 'rgba16float', colorSpace: 'display-p3', toneMapping: 'extended' };
+  expect(await canvasConfigurations()).toContainEqual(hdrCanvas);
+  const revision = await savedRev(page, photoId);
+  await tool(page, 'Print').click();
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print');
+  for (const configuration of await canvasConfigurations()) expect(configuration).toEqual(hdrCanvas);
+  const print = page.getByRole('region', { name: 'Rotate print' });
+  const yaw = page.getByRole('slider', { name: 'Horizontal rotation', exact: true });
+  await expect(print).toBeVisible();
+  await expect(yaw).toHaveAttribute('aria-valuenow', '-12');
+  const box = await print.boundingBox();
+  if (box == null) throw new Error('The print stage has no layout box');
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 100, y + 30, { steps: 8 });
+  await page.mouse.up();
+  await expect(yaw).not.toHaveAttribute('aria-valuenow', '-12');
+  await print.press('Home');
+  await expect(yaw).toHaveAttribute('aria-valuenow', '-12');
+  await print.press('ArrowRight');
+  await expect(yaw).toHaveAttribute('aria-valuenow', '-7');
+  await page.getByRole('combobox', { name: 'Paper', exact: true }).click();
+  await page.getByRole('option', { name: 'Gloss', exact: true }).click();
+  await expect(page.getByRole('slider', { name: 'Surface roughness' })).toHaveAttribute('aria-valuenow', '0.08');
+  await print.press('Home');
+  await print.press('Shift+ArrowUp');
+  await print.press('Shift+ArrowUp');
+  await print.press('Shift+ArrowUp');
+  await print.press('ArrowRight');
+  await print.press('ArrowRight');
+  await expect(page.getByRole('slider', { name: 'Vertical rotation' })).toHaveAttribute('aria-valuenow', '-37');
+  const readbackId = z.number().parse(await worker.evaluate(() => {
+    const request = Reflect.get(globalThis, 'requestEditorReadback');
+    return request({ paper: 'gloss', yawDegrees: -2, pitchDegrees: -37, keyLux: 10000 });
+  }));
+  await page.getByRole('slider', { name: 'Light intensity' }).press('End');
+  const Readbacks = z.array(z.object({ id: z.number(), rgb: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]) }));
+  const readbacks = async (): Promise<z.infer<typeof Readbacks>> => Readbacks.parse(
+    await worker.evaluate(() => Reflect.get(globalThis, 'editorCanvasReadbacks')),
+  );
+  await expect.poll(async () => (await readbacks()).some((frame) => frame.id === readbackId)).toBe(true);
+  const rendered = (await readbacks()).find((frame) => frame.id === readbackId);
+  if (rendered == null) throw new Error('The print framebuffer was not read back');
+  expect(Math.max(...rendered.rgb)).toBeGreaterThan(1.5);
+  await test.info().attach('print-canvas-hdr.json', { body: JSON.stringify(rendered), contentType: 'application/json' });
+  const compositing = await print.getByRole('img', { name: 'Edit preview' }).evaluate((canvas) => {
+    const layers = [];
+    for (let element: Element | null = canvas; element != null; element = element.parentElement) {
+      const style = getComputedStyle(element);
+      layers.push({ tag: element.tagName, opacity: style.opacity, filter: style.filter, transform: style.transform, blend: style.mixBlendMode });
+    }
+    return layers;
+  });
+  expect(compositing.filter((layer) => layer.opacity !== '1' || layer.filter !== 'none' || layer.transform !== 'none' || layer.blend !== 'normal')).toEqual([]);
+  await expect(page.getByText(/^Unavailable/)).toHaveCount(0);
+  expect(await savedRev(page, photoId)).toBe(revision);
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await waitForEditorLive(page);
+  await expect(editTools(page)).toBeVisible();
+  await expect(print).toHaveCount(0);
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'photo');
+  await expect(editPreview(page)).toBeVisible();
 });

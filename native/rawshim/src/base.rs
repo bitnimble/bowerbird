@@ -261,11 +261,11 @@ impl Base {
         });
         let halve_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("halve"),
-            entries: &[uniform_entry(0), read_only_entry(1), written_level(3)],
+            entries: &[uniform_entry(0), read_only_entry(1), written_level(3), read_only_entry(5)],
         });
         let reduce_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("reduce"),
-            entries: &[read_level(2), written_level(3)],
+            entries: &[read_level(2), written_level(3), read_only_entry(5)],
         });
         let reducing = |entry: &str, layout: &wgpu::BindGroupLayout| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -910,7 +910,7 @@ pub fn pyramid_of(
     let uniform = reduction(&mut recording, source, half, (2.0, 2.0));
     for level in 0..levels {
         let (coarser, finer) = (one_level(level.saturating_sub(1)), one_level(level));
-        let entries = if level == 0 {
+        let mut entries = if level == 0 {
             vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -937,6 +937,10 @@ pub fn pyramid_of(
                 },
             ]
         };
+        entries.push(wgpu::BindGroupEntry {
+            binding: 5,
+            resource: base.light_of_code.as_entire_binding(),
+        });
         let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pyramid level"),
             layout: if level == 0 {
@@ -3823,7 +3827,7 @@ mod tests {
     /// of them: a scene-linear frame handed to [`super::resize`] is monotone and plausible and
     /// wrong, which is a bug nothing else in a picture would show.
     #[test]
-    fn the_scene_resize_averages_light_where_the_coded_one_averages_codes() {
+    fn scene_and_coded_resizes_decode_their_own_input_domains() {
         let Some(gpu) = crate::gpu::device() else {
             return;
         };
@@ -3867,26 +3871,23 @@ mod tests {
         );
     }
 
-    /// Every level of the pyramid against a mean of four, taken level by level on the host.
-    ///
-    /// **The footprint, pinned against arithmetic rather than against the resize beside it.** The
-    /// two kernels share `covers` and `overlap` and are dispatched from one file, but they
-    /// accumulate in different spaces on purpose - the resize in light, because a rendition is a
-    /// file, and the pyramid in the frame's own coding, because a level is 160MB and is only ever
-    /// read zoomed far enough out that four source pixels land inside one canvas one
-    /// (`reduce.slang`'s header measures what that costs). Holding one against the other would only
-    /// say they had stopped differing.
-    ///
-    /// Bit-equal, and it can be: at a ratio of exactly two every weight is one, and a mean of four
-    /// `u16`s is exact in `f32`. A tolerance would hide the arithmetic actually diverging.
-    ///
-    /// Level by level rather than one block mean per level, because that is how the pyramid is
-    /// built - `halve` off the frame, then `reduce` off the level above - so the rounding at each
-    /// step is part of the answer.
-    ///
-    /// An odd frame on purpose. A level is a *floored* half, so at 129 the last source column falls
-    /// outside every footprint and is read by nothing - which is the case that would break if the
-    /// ratio were divided out of the two sizes instead of given.
+    #[test]
+    fn pyramid_averages_hdr_light_and_preserves_flat_fields() {
+        let gpu = crate::gpu::device().expect("the pyramid requires Vulkan");
+        let base = super::device(gpu).expect("the pyramid pipeline");
+        let frame: Vec<u16> = (0..16).flat_map(|pixel| {
+            [if pixel % 2 == 1 && pixel / 4 % 2 == 1 { 59150 } else { 37953 }; 3]
+        }).collect();
+        let pyramid = super::pyramid(gpu, base, &frame, (4, 4)).expect("a pyramid");
+        let levels = pollster::block_on(pyramid.levels_host(gpu)).expect("the levels");
+        assert_eq!(levels[0], (vec![50270; 12], (2, 2)));
+        assert_eq!(levels[1], (vec![50270; 3], (1, 1)));
+        let flat = super::pyramid(gpu, base, &[59150; 48], (4, 4)).expect("a flat pyramid");
+        let levels = pollster::block_on(flat.levels_host(gpu)).expect("the flat levels");
+        assert_eq!(levels[0], (vec![59150; 12], (2, 2)));
+        assert_eq!(levels[1], (vec![59150; 3], (1, 1)));
+    }
+
     #[test]
     fn every_pyramid_level_is_a_mean_of_the_four_above_it() {
         let Some(gpu) = crate::gpu::device() else {
@@ -3925,12 +3926,16 @@ mod tests {
                         let (mut acc, mut taps) = (0.0f64, 0.0f64);
                         for sy in 2 * y..last_y {
                             for sx in 2 * x..last_x {
-                                acc += f64::from(coarser[((sy * size.0) + sx) * 3 + channel]);
+                                let code = coarser[((sy * size.0) + sx) * 3 + channel];
+                                acc += crate::tone::pq_inv::<crate::light::SceneNits>(
+                                    crate::light::Light::measured(f64::from(code) / 65535.0),
+                                ).raw();
                                 taps += 1.0;
                             }
                         }
-                        // Rounded, as `level_of` rounds: a flat field comes back what it went in as.
-                        mine[((y * half.0) + x) * 3 + channel] = (acc / taps + 0.5) as u16;
+                        mine[((y * half.0) + x) * 3 + channel] = (crate::tone::pq(
+                            crate::light::Light::<crate::light::SceneNits>::measured(acc / taps),
+                        ).raw() * 65535.0).round() as u16;
                     }
                 }
             }
@@ -3940,8 +3945,8 @@ mod tests {
                 .map(|(a, b)| a.abs_diff(*b))
                 .max()
                 .expect("samples");
-            assert_eq!(
-                worst, 0,
+            assert!(
+                worst <= 1,
                 "level {level} at {}x{} is {worst} counts off a mean of four",
                 half.0, half.1,
             );

@@ -233,7 +233,7 @@ Sharing the scene peak is a **correctness** fix as much as a saving, and it is t
 
 **And the renditions themselves share a frame, not just the settings.** `hdr::Cut` is the photo carried to the point where only the display still differs: normalised PQ codes, after the fit-to-size, the warp and the sharpen, and *before* the colour transform. Targets are ordered largest first; the first is cut off the base and every smaller one is a `downscale` of it, so it builds no warp table of its own. What is left per rendition is one dispatch - the colour transform, the roll-off into its peak and the transfer, which the shader does in a single pass - and then the encode.
 
-The shared frame is stored **coded, as `u16` PQ**, and both halves of that were arrived at by measurement rather than taste. §10.9 carries the argument for the coding; what it buys here is that every stage between the decode and the dispatch - the fit-to-size, the warp, the sharpen, the downscale - is pointwise on what the buffer holds.
+The shared frame is stored **coded, as `u16` PQ**. §10.9 describes the coding and its precision. Downscales decode each tap through the inverse-PQ table, average linear light and code the result back into the compact frame.
 
 *`u16`* rather than `f16`, which is the opposite of what it looks like it should be. Half precision is right for **nits**, which span decades - a shadow at hundredths, a highlight at thousands - and 11 bits of significand is ~0.05% wherever the exponent sits. It is wrong for **PQ**, which already normalises to 0..1: the exponent then buys nothing and 11 mantissa bits leaves an ULP of ~0.001 near white, about 87 output levels. Measured while the intermediate was still nits, `f16` PQ cost the shared route mean 5.04 counts of 65535 where `f16` nits cost 0.71. A `u16` is the same width, uniform across exactly the range PQ occupies, and is what the HDR encode wants anyway.
 
@@ -241,7 +241,10 @@ The shared frame is stored **coded, as `u16` PQ**, and both halves of that were 
 
 **Cutting a smaller rendition from a larger one is not free, and the reason usually given for it is the wrong one.** "The colour transform is a per-pixel lookup, so it does not depend on resolution" establishes that it is the same *function* at any size. It does not establish that it commutes with a box average - the transform is non-linear, so `mean(f(x))` is not `f(mean(x))`, and grading then downscaling is genuinely not the same picture as downscaling then grading.
 
-`gives_the_same_picture_whether_applied_before_or_after_the_resize` pins the two orders within mean deltaE76 1.0, and that is worth less than it looks: a *mean* passes a uniform cast easily, which is exactly the failure a colour transform can have. What actually carries the claim is the direct comparison at the size it matters - the 800px tile of a grid+full job, cut from the 3840px frame against averaged and graded on its own terms - and there the two differ by mean **0.39** counts of 255, worst 13, with 4.7% of samples differing by more than one and all of it on high-contrast edges. The average is taken in PQ, that being what the frame is stored in. The physical argument for a linear average - that it is what a larger sensor pixel would have integrated - is given up here, and the only place it still holds is the fit-to-size inside the decode, which happens before the coding. §10.9 records what that costs and why it is taken.
+The shared route is checked directly against a rendition resized and graded on its own terms.
+Both averages are taken in linear light. Their remaining difference comes from applying a
+nonlinear colour transform before or after the resize, so the comparison bounds the resulting
+picture rather than requiring those operations to commute.
 
 **A tile job does not demosaic.** Tiles and renditions are two passes, and the tile takes the embedded JPEG, so the only thing that reaches the shared base is one `full` or `max` - or a grid tile whose file embeds no usable preview, which falls through to the render rather than failing, since the decode is no longer gated on some *other* target having asked for one.
 

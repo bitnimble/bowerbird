@@ -18,13 +18,6 @@
 // shared by all three entry points, and `every_pyramid_level_is_a_mean_of_the_four_above_it` holds
 // the levels to it.
 //
-// **Where the three differ is the space they accumulate in, and that is the one deliberate split.**
-// `resize` cuts a rendition, which is a file: it decodes each tap through `light_of_code` and
-// averages light, because a mean of PQ codes is not a mean of light and PQ is quasi-logarithmic - on
-// a 4000-nit specular against a 200-nit surround at 2x, averaging codes gives 427 nits where the
-// light gives 1150. `halve` and `reduce` build the pyramid a canvas reads and stay in the frame's own
-// coding, for the reason recorded below.
-//
 // Beyond that they differ only in where a sample comes from and where the answer goes: the frame's
 // buffer or a coarser level, into a buffer or into the level below. The loops that walk the footprint
 // sit next to each other, to be edited in pairs.
@@ -42,12 +35,6 @@
 // rather than a third of a whole one - 160MB against 481 at 61MP - and the level it leaves out is
 // the one the draw reads straight from the buffer anyway.
 //
-// Levels hold the frame's own coding rather than light, which is a deliberate approximation rather
-// than the property the draw's own taps hold. Decoding here would mean an `rgba32float` pyramid -
-// twice the 160MB - to average a level the reader only ever sees zoomed far enough out that four
-// source pixels are inside one canvas one. Measured against a decoded reduce over the parity
-// fixtures, the worst canvas pixel moves under a count of 255; `covered`'s own taps decode first, so
-// a 1:1 view is exact.
 import lanes;
 import packed;
 
@@ -66,9 +53,6 @@ struct Reduction {
 [vk::binding(3, 0)] [format("rgba16ui")] WTexture2D<uint4> finer;
 [vk::binding(4, 0)] RWStructuredBuffer<uint> smaller;
 /// The frame's coding undone: light, normalised so that the largest code is one, per code.
-///
-/// Bound by `resize` alone. Its layout is its own (`base.rs` builds one per entry point), so the
-/// pyramid's two kernels neither carry this nor pay for it.
 [vk::binding(5, 0)] StructuredBuffer<float> light_of_code;
 
 /// Where an output pixel of a flat list sits in the grid the list is of.
@@ -90,18 +74,6 @@ float4 covers(float2 at, float2 scale)
 float overlap(float lo, float hi, uint at)
 {
     return min(float(at + 1), hi) - max(float(at), lo);
-}
-
-float sample_at(uint index)
-{
-    return float(half_of(frame[index / 2], index));
-}
-
-uint level_of(float value)
-{
-    // Rounded, where the gather truncates: this is an average rather than a resample, so there is no
-    // second pass to inherit the bias and a flat field must come back the value it went in as.
-    return uint(clamp(value + 0.5, 0.0, 65535.0));
 }
 
 /// The code at one sample, as the index the tables are keyed by.
@@ -142,33 +114,6 @@ float3 averaged_light(float2 at, float2 scale, uint2 source)
     return acc / max(total, 1e-6);
 }
 
-/// One output pixel, integrated over the frame buffer it covers, in the frame's own coding.
-///
-/// What the pyramid is built with. This file's header says why that stays in codes where the
-/// resize above does not: a level is only ever read zoomed far enough out that four source pixels
-/// are inside one canvas one, and decoding here would double the pyramid's 160MB.
-float3 averaged(float2 at, float2 scale, uint2 source)
-{
-    let box = covers(at, scale);
-    let first = uint2(box.xy);
-    let last = uint2(min(ceil(box.zw), float2(source)));
-
-    float3 acc = float3(0.0);
-    float total = 0.0;
-    for (uint sy = first.y; sy < last.y; sy = sy + 1) {
-        let wy = overlap(box.y, box.w, sy);
-        if (wy <= 0.0) { continue; }
-        for (uint sx = first.x; sx < last.x; sx = sx + 1) {
-            let weight = overlap(box.x, box.z, sx) * wy;
-            if (weight <= 0.0) { continue; }
-            let base = ((sy * source.x) + sx) * 3;
-            acc = acc + weight * float3(sample_at(base), sample_at(base + 1), sample_at(base + 2));
-            total = total + weight;
-        }
-    }
-    return acc / max(total, 1e-6);
-}
-
 /// The same over a coarser pyramid level, which is a texture rather than the frame's buffer.
 ///
 /// A copy of the loop above, differing in its fetch, because WGSL has nothing to parameterise one by
@@ -189,7 +134,8 @@ float3 averaged_coarser(float2 at, float2 scale, uint2 source)
         for (uint sx = first.x; sx < last.x; sx = sx + 1) {
             let weight = overlap(box.x, box.z, sx) * wy;
             if (weight <= 0.0) { continue; }
-            acc = acc + weight * float3(coarser.Load(int3(int(sx), int(sy), 0)).rgb);
+            let code = coarser.Load(int3(int(sx), int(sy), 0)).rgb;
+            acc = acc + weight * float3(light_of_code[code.r], light_of_code[code.g], light_of_code[code.b]);
             total = total + weight;
         }
     }
@@ -234,10 +180,10 @@ void halve(uint3 id : SV_DispatchThreadID)
     uint2 size;
     finer.GetDimensions(size.x, size.y);
     if (id.x >= size.x || id.y >= size.y) { return; }
-    let level = averaged(float2(id.xy), float2(2.0), reduction.source);
+    let level = averaged_light(float2(id.xy), float2(2.0), reduction.source);
     finer.Store(
         int2(int(id.x), int(id.y)),
-        uint4(level_of(level.r), level_of(level.g), level_of(level.b), 65535));
+        uint4(codes_of_light(light_of_code, level), 65535));
 }
 
 /// Every level after it, from the one above.
@@ -256,5 +202,5 @@ void reduce(uint3 id : SV_DispatchThreadID)
     let level = averaged_coarser(float2(id.xy), float2(2.0), above);
     finer.Store(
         int2(int(id.x), int(id.y)),
-        uint4(level_of(level.r), level_of(level.g), level_of(level.b), 65535));
+        uint4(codes_of_light(light_of_code, level), 65535));
 }

@@ -4,6 +4,7 @@ import {
   type Job as RenditionCommand,
 } from '../../../../../src/schemas/jobs';
 import type { EditAdjust, EditGeometry, Region, SoftProof } from '../edits';
+import type { PrintScene } from '../print/print_scene';
 import {
   AnswerSchema,
   AskSchema,
@@ -327,6 +328,7 @@ export class LocalDecoder {
     adjust: EditAdjust | null;
     geometry: EditGeometry | null;
     proof: SoftProof | null;
+    print: PrintScene | null;
     stage: { width: number; height: number } | null;
   }): Promise<void> {
     return this.nothing({
@@ -338,6 +340,7 @@ export class LocalDecoder {
       adjust: tick.adjust == null ? null : JSON.stringify(tick.adjust),
       geometry: tick.geometry == null ? null : JSON.stringify(tick.geometry),
       proof: tick.proof,
+      print: tick.print,
       stage: tick.stage,
     });
   }

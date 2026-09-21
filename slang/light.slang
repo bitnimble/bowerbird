@@ -92,6 +92,8 @@ public struct Graded : IWhiteAtOne {}
 /// Absolute nits at the display, bounded by the target's peak.
 public struct DisplayNits : INits {}
 
+public struct Illuminance : ILinear, IStandard {}
+
 /// `DisplayNits` over that peak, in 0..1, still Rec.2020 and still linear.
 ///
 /// **Not `IStandard`: this is where SDR and HDR part.** `job::peak_nits` gives an sRGB target its

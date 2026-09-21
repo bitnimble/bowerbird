@@ -43,6 +43,8 @@
 //   `REACH` and `GUARD` are the same kind: counts of cells, a cell being `repair::CELLS_ACROSS`
 //   of the loop the reader drew, so a dust spot and a person are searched alike. They reach a
 //   shader only resolved, as `repair.slang`'s `cell` and `feather`.
+//   Print geometry and lighting use `PrintUnit`, half the paper's long edge, for camera, bend and emitter distances.
+//   Stock thickness and coating texture use millimetres resolved from the physical long edge.
 //
 // **A struct constant used inside a loop wants its number hoisted first.** Slang synthesises an
 // initializer per use site, and a struct returned by value under a loop is a call Metal drops
@@ -104,6 +106,9 @@ public struct Tap : IAbsolute {}
 /// axis is in pixels and this is not; two and a half of these is a different number of pixels for
 /// every blob on the sensor.
 public struct BlobRadius : IAbsolute {}
+
+public struct PrintUnit : IAbsolute {}
+public struct Millimetre : IAbsolute {}
 
 /// Buckets of a histogram, indexed along a value and never a place.
 public struct Bin : IAbsolute {}

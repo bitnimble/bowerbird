@@ -20,7 +20,11 @@ import colour;
 import geometry;
 import catmull_rom;
 import light;
+import px;
 import primaries;
+import print_scene;
+import print_parameters;
+import print_geometry;
 
 [vk::binding(5, 0)] StructuredBuffer<float> peak_out;
 // Two `u16` components to a word, which is what `encode` below says. `ceil(pixels * 3 / 2)`
@@ -268,6 +272,118 @@ float4 fs(float4 pos : SV_Position) : SV_Target
     let nits = display_nits(covered(pos.xy), frame_at(pos.xy));
     let p3 = edit.output == OUTPUT_SRGB ? proofed(nits) : on_the_canvas(nits);
     return float4(srgb_oetf_signed(p3.v), 1.0);
+}
+
+float3 print_sample(float2 at, float lod)
+{
+    let shrink = exp2(lod);
+    let source = at / shrink;
+    if (lod < 1.0) {
+        let last = float2(float(edit.width), float(edit.height)) - 1.0;
+        return outside(source, last) ? float3(0.0) : nits_cubic(source, last);
+    }
+    uint width;
+    uint height;
+    uint levels;
+    let level = int(lod) - 1;
+    pyramid.GetDimensions(uint(level), width, height, levels);
+    let last = float2(float(width), float(height)) - 1.0;
+    return outside(source, last) ? float3(0.0) : pyramid_cubic(source, last, level);
+}
+
+float3 print_filtered(float2 source, float2 dx, float2 dy)
+{
+    let a = dx.x * dx.x + dy.x * dy.x;
+    let b = dx.x * dx.y + dy.x * dy.y;
+    let c = dx.y * dx.y + dy.y * dy.y;
+    let eigenvalue = 0.5 * (a + c + sqrt((a - c) * (a - c) + 4.0 * b * b));
+    let major = exactly<Drawn>(sqrt(max(eigenvalue, 1e-12)));
+    let minor = exactly<Drawn>(abs(dx.x * dy.y - dx.y * dy.x) / major.d);
+    let width = exactly<Drawn>(max(max(minor.d, major.d / 16.0), 1.0));
+    let lod = clamp(log2(width.d), 0.0, float(edit.max_lod));
+    let lower = floor(lod);
+    let upper = min(lower + 1.0, float(edit.max_lod));
+    let count = uint(clamp(ceil(major.d / width.d), 1.0, 16.0));
+    let axis = a >= c ? float2(eigenvalue - c, b) : float2(b, eigenvalue - a);
+    let direction = dot(axis, axis) > 1e-12 ? normalize(axis) : float2(1.0, 0.0);
+    let reach = direction * major.d;
+    var sum = float3(0.0);
+    for (uint i = 0; i < count; i += 1) {
+        let at = source + ((float(i) + 0.5) / float(count) - 0.5) * reach;
+        let first = print_sample(at, lower);
+        let second = upper == lower ? first : print_sample(at, upper);
+        sum += lerp(first, second, lod - lower);
+    }
+    return sum / float(count);
+}
+
+Colour<SrgbLinear> print_gamut(Colour<SrgbLinear> colour)
+{
+    let luma = saturate(dot(LUMA709, colour.v));
+    if (luma <= 0.0 || luma >= 1.0) { return measured<SrgbLinear>(float3(luma)); }
+    let chroma = colour.v - luma;
+    let high = max(chroma.r, max(chroma.g, chroma.b));
+    let low = min(chroma.r, min(chroma.g, chroma.b));
+    let reach = max(high / (1.0 - luma), -low / luma);
+    let knee = 0.9;
+    if (reach <= knee) { return colour; }
+    let compressed = knee + (1.0 - knee) * (reach - knee) / (reach + 1.0 - 2.0 * knee);
+    return measured<SrgbLinear>(luma + chroma * (compressed / reach));
+}
+
+Colour<DisplayNits> print_nits(float2 pos)
+{
+    let shape = float2(float(edit.output_width), float(edit.output_height));
+    PrintHit hit;
+    float2 paper_dx;
+    float2 paper_dy;
+    var background = float3(0.0);
+    if (print.illumination.w > 0.5) {
+        let scale = edit.region_size / edit.canvas_size;
+        let pixel = edit.region_origin + pos * scale;
+        hit = paper_surface_hit(pixel / shape, shape);
+        paper_dx = float2(scale.x / shape.x, 0.0);
+        paper_dy = float2(0.0, scale.y / shape.y);
+    } else {
+        hit = paper_covered(pos, edit.canvas_size, shape);
+        background = print_background().v;
+        if (hit.coverage == 0.0) { return measured<DisplayNits>(background); }
+        let center_uv = paper_uv(pos, edit.canvas_size, shape, hit);
+        paper_dx = paper_uv(pos + float2(1.0, 0.0), edit.canvas_size, shape, hit) - center_uv;
+        paper_dy = paper_uv(pos + float2(0.0, 1.0), edit.canvas_size, shape, hit) - center_uv;
+    }
+    let coverage = hit.coverage;
+    var reflectance = float3(print.material.y);
+    if (hit.normal.z > 0.5) {
+        let pixel = hit.uv * shape;
+        let dx = paper_dx * shape;
+        let dy = paper_dy * shape;
+        let source = geometry_at(pixel);
+        let source_dx = geometry_at(pixel + dx) - source;
+        let source_dy = geometry_at(pixel + dy) - source;
+        let nits = display_nits(measured<SceneNits>(print_filtered(source, source_dx, source_dy)), source);
+        let pigment = print_gamut(measured<SrgbLinear>(mul(R2020_TO_SRGB, nits.v / edit.peak)));
+        reflectance = mul(SRGB_TO_R2020, lerp(float3(print.material.z), float3(print.material.y), pigment.v));
+    }
+    let footprint = 2.0 * (abs(paper_dx) + abs(paper_dy)) * shape / max(shape.x, shape.y);
+    let reflected = reflected_print(reflectance, hit, footprint);
+    return measured<DisplayNits>(lerp(background, reflected.v * print_exposure().g, coverage));
+}
+
+[shader("fragment")]
+float4 fs_print(float4 pos : SV_Position) : SV_Target
+{
+    let nits = print_nits(pos.xy);
+    return float4(srgb_oetf_signed(on_the_canvas(nits).v), 1.0);
+}
+
+[shader("fragment")]
+uint4 fs_print_pq(float4 pos : SV_Position) : SV_Target
+{
+    let nits = print_nits(pos.xy);
+    let codes = float3(pq(measured<DisplayNits>(nits.v.r)).v, pq(measured<DisplayNits>(nits.v.g)).v,
+        pq(measured<DisplayNits>(nits.v.b)).v);
+    return uint4(uint3(round(codes * 65535.0)), 65535);
 }
 
 /// One pixel of the frame as a rendition would hold it, in the `u16` counts every output

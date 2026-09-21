@@ -8,6 +8,8 @@ import { KeystoneStore } from '../../keystone/keystone_store';
 import type { LocalPrepare, LocalTileRequest, TileKeep } from '../../local_decode/local_open';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
+import { PrintStore } from '../../print/print_store';
+import type { PrintScene } from '../../print/print_scene';
 import { StageStore } from '../stage_store';
 import { neutralEdits } from '../../../../../../src/schemas/photo_edits';
 import type { Repair } from '../../../../../../src/schemas/stored_grid';
@@ -44,6 +46,7 @@ export class FakeDecoder {
    * worker does with it.
    */
   stage = { width: 300, height: 150 };
+  print: PrintScene | null = null;
 
   /**
    * Every frame asked for: the window it read, the picture that window is on, and the canvas
@@ -78,11 +81,13 @@ export class FakeDecoder {
     adjust: EditAdjust | null;
     geometry: EditGeometry | null;
     proof: SoftProof | null;
+    print: PrintScene | null;
     stage: { width: number; height: number } | null;
   }): Promise<void> {
     if (tick.adjust != null) this.adjust = tick.adjust;
     if (tick.geometry != null) this.geometry = tick.geometry;
     if (tick.proof != null) this.proof = tick.proof;
+    this.print = tick.print;
     if (tick.stage != null) this.stage = tick.stage;
     if (tick.drawStage && tick.region != null && this.geometry != null) {
       this.exposure = tick.ev;
@@ -315,6 +320,7 @@ export type Editor = {
   keystone: KeystoneStore;
   repair: RepairStore;
   loupe: LoupeStore;
+  print: PrintStore;
   presenter: RawEditPresenter;
   decoder: FakeDecoder;
 };
@@ -343,6 +349,7 @@ export function openEditor(): Editor {
   const keystone = new KeystoneStore(stage, edit, crop);
   const repair = new RepairStore(edit, keystone);
   const loupe = new LoupeStore(crop, keystone, repair);
+  const print = new PrintStore();
   edit.doc = neutralEdits();
   stage.width = 4000;
   stage.height = 3000;
@@ -356,7 +363,8 @@ export function openEditor(): Editor {
     keystone,
     repair,
     loupe,
-    presenter: new RawEditPresenter(edit, stage, crop, keystone, repair, loupe),
+    print,
+    presenter: new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print),
     decoder: new FakeDecoder(keystone),
   };
   // The presenter builds all of this when a photo opens, which needs a worker holding the RAW

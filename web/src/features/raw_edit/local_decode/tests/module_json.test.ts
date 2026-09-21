@@ -5,7 +5,9 @@
 // that a *typed* value produces exactly those keys: the literals below are annotated, so a field
 // renamed in `edits.ts` stops compiling here, and one added or dropped fails the comparison.
 import { describe, expect, test } from 'bun:test';
+import { z } from 'zod';
 import type { EditAdjust, EditGeometry, Region } from '../../edits';
+import { DEFAULT_PRINT_SCENE, PrintSceneSchema } from '../../print/print_scene';
 
 // Typed as what it is meant to be so the comparisons below read straight. It is the *literals*
 // that carry the annotation this pin rests on; the file is the other host's answer.
@@ -14,6 +16,12 @@ const sample = (await Bun.file(
 ).json()) as { region: Region; adjust: EditAdjust; geometry: EditGeometry };
 
 describe('what a tick carries', () => {
+  test('names the print scene as the module reads it', async () => {
+    const wire: unknown = await Bun.file(
+      new URL('../../../../../../test/fixtures/tables/module-json.json', import.meta.url).pathname,
+    ).json();
+    expect(z.object({ print: PrintSceneSchema }).parse(wire).print).toEqual(DEFAULT_PRINT_SCENE);
+  });
   test('names the region as the module reads it', () => {
     const region: Region = { x: 12.5, y: 34.25, width: 640, height: 480 };
     expect(region).toEqual(sample.region);

@@ -6,6 +6,7 @@
 // upstream of the matrix.
 import edit;
 import white_balance;
+import illuminant;
 
 [shader("compute")]
 [numthreads(1, 1, 1)]

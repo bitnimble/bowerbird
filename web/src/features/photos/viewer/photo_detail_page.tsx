@@ -13,7 +13,7 @@ import {
   useStacksStore,
   useViewerStore,
 } from '../../../app/stores_context';
-import { useIsMobile } from '../../../app/device';
+import { useIsMobile, useIsTouch } from '../../../app/device';
 import { Button } from '../../../ui/button';
 import { EmptyState } from '../../../ui/empty_state';
 import { ICON } from '../../../ui/icon';
@@ -27,6 +27,7 @@ import { EditStore } from '../../raw_edit/edit/edit_store';
 import { KeystoneStore } from '../../raw_edit/keystone/keystone_store';
 import { LoupeStore } from '../../raw_edit/loupe/loupe_store';
 import { RepairStore } from '../../raw_edit/repair/repair_store';
+import { PrintStore } from '../../raw_edit/print/print_store';
 import { RawEditPresenter } from '../../raw_edit/stage/raw_edit_presenter';
 import { RawEditStage } from '../../raw_edit/stage/raw_edit_stage';
 import { StageStore } from '../../raw_edit/stage/stage_store';
@@ -66,6 +67,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const stacks = useStacksStore();
   const { photos, appSettings } = usePresenters();
   const mobile = useIsMobile();
+  const touch = useIsTouch();
   // Kept across photos: opened once to read a frame's settings, the reader means
   // to read the next one's too.
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -119,6 +121,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     keystone: KeystoneStore;
     repair: RepairStore;
     loupe: LoupeStore;
+    print: PrintStore;
     presenter: RawEditPresenter;
   } | null>(null);
 
@@ -155,8 +158,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     const keystone = new KeystoneStore(stage, edit, crop);
     const repair = new RepairStore(edit, keystone);
     const loupe = new LoupeStore(crop, keystone, repair);
-    const presenter = new RawEditPresenter(edit, stage, crop, keystone, repair, loupe);
-    setSession({ edit, stage, crop, keystone, repair, loupe, presenter });
+    const print = new PrintStore();
+    const presenter = new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print);
+    setSession({ edit, stage, crop, keystone, repair, loupe, print, presenter });
     let startingRotation: number | null = null;
     void presenter.open(photoId, EDIT_LONG_EDGE).then(() => {
       startingRotation = edit.doc?.rotate ?? 0;
@@ -245,20 +249,23 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // a phone's sheet.
   const expanded = !mobile && edge === 'beside';
   const mobileStrip = mobile && stripOpen && !editing;
-  const cropping = session?.crop.cropping === true || session?.keystone.keystoning === true;
-  const layout = mobile ? 'sheet' : !panelsOpen && !editing ? 'only' : edge;
+  const mobileEditor = editing && (mobile || touch);
+  const layout = mobile || mobileEditor ? 'sheet' : !panelsOpen && !editing ? 'only' : edge;
   // The panels' grid gap is all the spacing between them beside and below the stage.
   const panelStyle = mobile ? undefined : styles.panelFlush;
 
   const metaPanels = editing ? (
     session != null && (
       <RawEditPanel
+        key={photoId}
         edit={session.edit}
         stage={session.stage}
         crop={session.crop}
         keystone={session.keystone}
         repair={session.repair}
+        print={session.print}
         presenter={session.presenter}
+        mobile={mobile || touch}
       />
     )
   ) : (
@@ -277,14 +284,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // and the metadata is a fold above it rather than a column stealing the
   // screen. Desktop keeps the verdict in the header instead, so hiding the
   // panels never takes the cull controls with them.
-  const panels = mobile ? (
+  const panels = mobileEditor ? metaPanels : mobile ? (
     <div
-      {...stylex.props(styles.sheetBar, cropping && styles.sheetBarCropping)}
+      {...stylex.props(styles.sheetBar)}
       role="region"
       aria-label={PhotoDetailStrings.details()}
     >
-      {(sheetOpen || editing) && (
-        <div {...stylex.props(styles.panels, styles.panelsInSheet, cropping && styles.panelsInCroppingSheet)}>
+      {sheetOpen && (
+        <div {...stylex.props(styles.panels, styles.panelsInSheet)}>
           {!editing && (
             <Panel>
               <PhotoRating photoId={photoId} />
@@ -360,7 +367,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             styles.detail,
             styles[layout],
             layout === 'sheet' && mobileStrip && styles.sheetStrip,
-            layout === 'sheet' && cropping && styles.sheetCropping,
           )}
         >
           {editing ? (
@@ -384,6 +390,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
                 keystone={session.keystone}
                 repair={session.repair}
                 loupe={session.loupe}
+                print={session.print}
                 presenter={session.presenter}
                 toolsInto={toolsSlot}
                 zoomInto={zoomSlot}

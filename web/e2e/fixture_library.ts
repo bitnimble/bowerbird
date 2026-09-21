@@ -57,6 +57,7 @@ export const TRIAGE_PHOTOS_DIR = path.join(E2E_ROOT, 'triage-photos');
 // root can only be added once against the shared DB - so it gets its own rather
 // than leaving another spec's frames edited behind it.
 export const EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'edit-photos');
+export const MOBILE_EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'mobile-edit-photos');
 // The read-only spec bins and restores, and its whole point is that the tree it
 // does that over is untouched afterwards - which another spec's frames moving
 // around in it would make unassertable.
@@ -258,6 +259,7 @@ export function prepareFixture(): void {
     PHONE_PHOTOS_DIR,
     TRIAGE_PHOTOS_DIR,
     EDIT_PHOTOS_DIR,
+    MOBILE_EDIT_PHOTOS_DIR,
     ARCHIVE_PHOTOS_DIR,
     DECODE_PHOTOS_DIR,
     FALLBACK_PHOTOS_DIR,

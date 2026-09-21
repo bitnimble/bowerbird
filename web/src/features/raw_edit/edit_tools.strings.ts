@@ -6,6 +6,7 @@ export const EditToolsStrings = {
   crop: () => 'Crop',
   perspective: () => 'Perspective',
   repair: () => 'Remove',
+  print: () => 'Print',
   tool: () => 'Tool',
   rotateLeft: () => 'Rotate left',
   rotateRight: () => 'Rotate right',

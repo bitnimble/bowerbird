@@ -24,6 +24,7 @@ import { StageStore } from '../stage/stage_store';
 registerDom();
 const { cleanup, render, screen, within } = await import('@testing-library/react');
 const { kelvinAt, RawEditPanel, trackAt } = await import('../raw_edit_panel');
+const { PrintStore } = await import('../print/print_store');
 const { RawEditPanelStrings } = await import('../raw_edit_panel.strings');
 const { TEMPERATURE_GREY_AT } = await import('../../../ui/slider');
 
@@ -93,6 +94,7 @@ function open(
       crop={crop}
       keystone={keystone}
       repair={repair}
+      print={new PrintStore()}
       presenter={presenter}
     />,
   );
@@ -189,6 +191,7 @@ describe('the edit panel', () => {
           crop={crop}
           keystone={keystone}
           repair={repair}
+          print={new PrintStore()}
           presenter={recording().presenter}
         />,
       );

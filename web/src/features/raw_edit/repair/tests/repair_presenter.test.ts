@@ -12,6 +12,7 @@ import { RawEditPanelStrings } from '../../raw_edit_panel.strings';
 import { FakeDecoder, GRADE, openEditor, openedWith, type Editor } from '../../stage/tests/raw_edit_harness';
 import { MOVED_SOLVE_QUIET_MS } from '../repair_presenter';
 import { RepairStore } from '../repair_store';
+import { PrintStore } from '../../print/print_store';
 
 let editor: Editor;
 let stage: StageStore;
@@ -69,7 +70,7 @@ function rememberedRepair(): RepairStore {
   const nextKeystone = new KeystoneStore(nextStage, nextEdit, nextCrop);
   const nextRepair = new RepairStore(nextEdit, nextKeystone);
   const nextLoupe = new LoupeStore(nextCrop, nextKeystone, nextRepair);
-  new RawEditPresenter(nextEdit, nextStage, nextCrop, nextKeystone, nextRepair, nextLoupe);
+  new RawEditPresenter(nextEdit, nextStage, nextCrop, nextKeystone, nextRepair, nextLoupe, new PrintStore());
   return nextRepair;
 }
 

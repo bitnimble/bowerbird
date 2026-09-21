@@ -250,6 +250,13 @@ pub struct Gpu {
     draw_layout: wgpu::BindGroupLayout,
     draw_from_frame: wgpu::RenderPipeline,
     draw_from_pyramid: wgpu::RenderPipeline,
+    print_layout: wgpu::BindGroupLayout,
+    print_pipeline: wgpu::RenderPipeline,
+    print_pq_pipeline: wgpu::RenderPipeline,
+    print_albedo_layout: wgpu::BindGroupLayout,
+    print_albedo_tabulate: wgpu::ComputePipeline,
+    print_albedo_average: wgpu::ComputePipeline,
+    print_light_calibrate: wgpu::ComputePipeline,
     peak_layout: wgpu::BindGroupLayout,
     peak_measure: wgpu::ComputePipeline,
     peak_collect: wgpu::ComputePipeline,
@@ -822,6 +829,66 @@ impl Signal {
 }
 
 impl Gpu {
+    pub(crate) fn print_light_calibration(&self, parameters: [f32; 4]) -> Buffer {
+        let mut recording = self.record();
+        let buffer = self.own_buffer(&wgpu::BufferDescriptor {
+            label: Some("print light calibration"), size: 8,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
+        });
+        recording.holding(&buffer);
+        let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("print softbox"), contents: &crate::print::light_uniform(parameters),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = self.bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("print light calibration"), layout: &self.print_albedo_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: buffer.as_entire_binding() },
+            ],
+        });
+        {
+            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_pipeline(&self.print_light_calibrate);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        recording.submit();
+        buffer
+    }
+
+    pub(crate) fn print_albedo_table(&self, eta: f32) -> Buffer {
+        let mut recording = self.record();
+        let buffer = self.own_buffer(&wgpu::BufferDescriptor {
+            label: Some("print directional albedo"),
+            size: crate::print::ALBEDO_BYTES,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        recording.holding(&buffer);
+        let values = [eta, 0.0, 0.0, 0.0].into_iter().flat_map(f32::to_le_bytes).collect::<Vec<_>>();
+        let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("print material"), contents: &values, usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = self.bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("print albedo"), layout: &self.print_albedo_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: buffer.as_entire_binding() },
+            ],
+        });
+        {
+            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_pipeline(&self.print_albedo_tabulate);
+            pass.dispatch_workgroups(crate::print::ALBEDO_VIEWS.div_ceil(64), crate::print::ALBEDO_ROUGHNESSES, 1);
+            pass.set_pipeline(&self.print_albedo_average);
+            pass.dispatch_workgroups(crate::print::ALBEDO_ROUGHNESSES.div_ceil(64), 1, 1);
+        }
+        recording.submit();
+        buffer
+    }
+
     /// One submission, and the pool everything it reads is allocated from.
     pub fn record(&self) -> Recording<'_> {
         Recording { gpu: self, encoder: None, held: Vec::new() }
@@ -1123,13 +1190,38 @@ impl Gpu {
         // output one. Two pipelines over one entry point: `FROM_FRAME` is a specialisation
         // constant rather than a branch because as a branch it cost the zoomed-out case a third
         // of its time for a path those fragments never take (`frame.slang`).
-        let drawing = |from_frame: bool| {
+        let print_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("print"),
+            entries: &[
+                Binding::Uniform.drawn(0), Binding::Storage { read_only: true }.drawn(1),
+                Binding::Storage { read_only: true }.drawn(2),
+            ],
+        });
+        let print_albedo_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("print albedo"),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_albedo.wgsl")).into()),
+        });
+        let print_albedo_layout = group_layout("print albedo", &[
+            (0, Binding::Uniform), (1, Binding::Storage { read_only: false }),
+        ]);
+        let print_albedo_tabulate = compute("print albedo", &print_albedo_module, &print_albedo_layout, "tabulate");
+        let print_albedo_average = compute("print average albedo", &print_albedo_module, &print_albedo_layout, "average");
+        let print_light_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("print softbox"),
+            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl")).into()),
+        });
+        let print_light_calibrate = compute("print light calibration", &print_light_module, &print_albedo_layout, "calibrate");
+        let drawing = |from_frame: bool, entry: &str| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("draw"),
                 layout: Some(&device.create_pipeline_layout(
                     &wgpu::PipelineLayoutDescriptor {
                         label: Some("draw"),
-                        bind_group_layouts: &[Some(&draw_layout)],
+                        bind_group_layouts: &if entry != "fs" {
+                            vec![Some(&draw_layout), Some(&print_layout)]
+                        } else {
+                            vec![Some(&draw_layout)]
+                        },
                         ..Default::default()
                     },
                 )),
@@ -1141,7 +1233,7 @@ impl Gpu {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
-                    entry_point: Some("fs"),
+                    entry_point: Some(entry),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         // Keyed by the id `frame.slang`'s `[vk::constant_id(0)]` fixes, not by
                         // the name: the generated WGSL renames it `FROM_FRAME_0`, and a key that
@@ -1149,7 +1241,11 @@ impl Gpu {
                         constants: &[(FROM_FRAME_ID, f64::from(u8::from(from_frame)))],
                         ..Default::default()
                     },
-                    targets: &[Some(CANVAS_FORMAT.into())],
+                    targets: &[Some(if entry == "fs_print_pq" {
+                        wgpu::TextureFormat::Rgba16Uint.into()
+                    } else {
+                        CANVAS_FORMAT.into()
+                    })],
                 }),
                 primitive: Default::default(),
                 depth_stencil: None,
@@ -1158,8 +1254,10 @@ impl Gpu {
                 cache: None,
             })
         };
-        let draw_from_frame = drawing(true);
-        let draw_from_pyramid = drawing(false);
+        let draw_from_frame = drawing(true, "fs");
+        let draw_from_pyramid = drawing(false, "fs");
+        let print_pipeline = drawing(true, "fs_print");
+        let print_pq_pipeline = drawing(true, "fs_print_pq");
         let peak_measure = compute("measure", &peak_module, &peak_layout, "measure");
         // The editor's route to the same number, so that it has one here to be held against:
         // `collect` keeps the brightest of the sampled million and `remeasure` grades only
@@ -1219,6 +1317,13 @@ impl Gpu {
             draw_layout,
             draw_from_frame,
             draw_from_pyramid,
+            print_layout,
+            print_pipeline,
+            print_pq_pipeline,
+            print_albedo_layout,
+            print_albedo_tabulate,
+            print_albedo_average,
+            print_light_calibrate,
             peak_layout,
             peak_measure,
             peak_collect,
@@ -1447,6 +1552,7 @@ pub fn present(
     stage: &Stage,
     grade: &Grade<'_>,
     pyramid: &crate::base::Pyramid,
+    print: Option<&crate::print::Scene>,
 ) {
     use wgpu::CurrentSurfaceTexture::{Success, Suboptimal};
     // Suboptimal draws too: the image is the right one and only its configuration has drifted,
@@ -1457,7 +1563,7 @@ pub fn present(
     };
     let target = image.texture.create_view(&Default::default());
     let mut recording = uploaded.gpu.record();
-    uploaded.draw_into(&mut recording, grade, pyramid, &target);
+    uploaded.draw_into(&mut recording, grade, pyramid, &target, print, false);
     recording.submit();
     uploaded.gpu.queue.present(image);
 }
@@ -1946,6 +2052,8 @@ impl Illuminant {
 
 pub struct Uploaded<'a> {
     gpu: &'a Gpu,
+    print_albedo: std::cell::RefCell<Option<(f32, Buffer)>>,
+    print_light: std::cell::RefCell<Option<([f32; 4], Buffer)>>,
     width: usize,
     height: usize,
     /// For the editor this is the `Resident`'s own frame, shared rather than copied.
@@ -2250,6 +2358,8 @@ impl Gpu {
         );
         let uploaded = Uploaded {
             gpu: self,
+            print_albedo: std::cell::RefCell::new(None),
+            print_light: std::cell::RefCell::new(None),
             width: grade.width,
             height: grade.height,
             samples,
@@ -3310,6 +3420,39 @@ impl Uploaded<'_> {
     /// Comes back as `f32` per channel, the target being `rgba16float`, which is what the canvas
     /// itself holds: these are display nits over an SDR white and go past one.
     pub fn draw(&self, grade: &Grade<'_>, pyramid: &crate::base::Pyramid) -> Vec<f32> {
+        self.draw_with_print(grade, pyramid, None, false).into_iter()
+            .map(|word| half::f16::from_bits(word).to_f32()).collect()
+    }
+
+    pub fn draw_print(
+        &self,
+        grade: &Grade<'_>,
+        pyramid: &crate::base::Pyramid,
+        scene: &crate::print::Scene,
+    ) -> Vec<f32> {
+        self.draw_with_print(grade, pyramid, Some(scene), false).into_iter()
+            .map(|word| half::f16::from_bits(word).to_f32()).collect()
+    }
+
+    pub fn print_pq(
+        &self,
+        grade: &Grade<'_>,
+        pyramid: &crate::base::Pyramid,
+        scene: &crate::print::Scene,
+    ) -> Vec<u16> {
+        self.draw_with_print(grade, pyramid, Some(scene), true)
+            .chunks_exact(4)
+            .flat_map(|rgba| rgba[..3].iter().copied())
+            .collect()
+    }
+
+    fn draw_with_print(
+        &self,
+        grade: &Grade<'_>,
+        pyramid: &crate::base::Pyramid,
+        print: Option<&crate::print::Scene>,
+        pq: bool,
+    ) -> Vec<u16> {
         let shown = grade.canvas.expect("a draw needs a canvas to draw onto");
         let (canvas_w, canvas_h) = shown.size.raw();
         let mut recording = self.gpu.record();
@@ -3323,13 +3466,13 @@ impl Uploaded<'_> {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: CANVAS_FORMAT,
+            format: if pq { wgpu::TextureFormat::Rgba16Uint } else { CANVAS_FORMAT },
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let target = canvas.view();
 
-        self.draw_into(&mut recording, grade, pyramid, &target);
+        self.draw_into(&mut recording, grade, pyramid, &target, print, pq);
 
         let stride = (canvas_w * 8).div_ceil(256) * 256;
         let staged = recording.buffer(&wgpu::BufferDescriptor {
@@ -3371,7 +3514,7 @@ impl Uploaded<'_> {
                 let bytes = &mapped[row * stride..];
                 for channel in 0..canvas_w * 4 {
                     let at = channel * 2;
-                    out.push(f32::from(half::f16::from_le_bytes([bytes[at], bytes[at + 1]])));
+                    out.push(u16::from_le_bytes([bytes[at], bytes[at + 1]]));
                 }
             }
             out
@@ -3395,7 +3538,19 @@ impl Uploaded<'_> {
         grade: &Grade<'_>,
         pyramid: &crate::base::Pyramid,
         target: &wgpu::TextureView,
+        print: Option<&crate::print::Scene>,
+        pq: bool,
     ) {
+        let print_grade;
+        let grade = if print.is_some() {
+            print_grade = Grade {
+                peak_nits: crate::light::Light::at_diffuse_white(grade.reference_nits),
+                ..*grade
+            };
+            &print_grade
+        } else {
+            grade
+        };
         let shown = grade.canvas.expect("a draw needs a canvas to draw onto");
         let described = grade.colour.unwrap_or(&self.identity);
         // What this binds belongs to the upload and the pyramid rather than to the recording, so
@@ -3472,6 +3627,26 @@ impl Uploaded<'_> {
         // chose differently would draw from the buffer where the reader draws from a level.
         let ratio = (shown.region.2 / canvas_w as f64).max(shown.region.3 / canvas_h as f64);
         let from_frame = shown.max_lod == 0 || ratio < 2.0;
+        let print_group = print.map(|scene| {
+            let albedo = self.print_albedo_for(scene.refractive_index as f32);
+            recording.holding(&albedo);
+            let calibration = self.print_light_for(scene.light_parameters());
+            recording.holding(&calibration);
+            let buffer = recording.init(&wgpu::util::BufferInitDescriptor {
+                label: Some("print"),
+                contents: &scene.uniform(),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            self.gpu.bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("print"),
+                layout: &self.gpu.print_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: albedo.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: calibration.as_entire_binding() },
+                ],
+            })
+        });
 
         let mut pass = recording.encoder().begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("draw"),
@@ -3486,13 +3661,39 @@ impl Uploaded<'_> {
             })],
             ..Default::default()
         });
-        pass.set_pipeline(match from_frame {
-            true => &self.gpu.draw_from_frame,
-            false => &self.gpu.draw_from_pyramid,
+        pass.set_pipeline(if print.is_some() && pq {
+            &self.gpu.print_pq_pipeline
+        } else if print.is_some() {
+            &self.gpu.print_pipeline
+        } else if from_frame {
+            &self.gpu.draw_from_frame
+        } else {
+            &self.gpu.draw_from_pyramid
         });
         pass.set_bind_group(0, &group, &[]);
+        if let Some(group) = print_group.as_ref() {
+            pass.set_bind_group(1, group, &[]);
+        }
         // One triangle covering the target, as `vs` builds it from the vertex index alone.
         pass.draw(0..3, 0..1);
+    }
+
+    fn print_albedo_for(&self, eta: f32) -> Buffer {
+        if let Some((cached_eta, buffer)) = self.print_albedo.borrow().as_ref() {
+            if *cached_eta == eta { return buffer.clone(); }
+        }
+        let buffer = self.gpu.print_albedo_table(eta);
+        *self.print_albedo.borrow_mut() = Some((eta, buffer.clone()));
+        buffer
+    }
+
+    fn print_light_for(&self, parameters: [f32; 4]) -> Buffer {
+        if let Some((cached_parameters, buffer)) = self.print_light.borrow().as_ref() {
+            if *cached_parameters == parameters { return buffer.clone(); }
+        }
+        let buffer = self.gpu.print_light_calibration(parameters);
+        *self.print_light.borrow_mut() = Some((parameters, buffer.clone()));
+        buffer
     }
 }
 

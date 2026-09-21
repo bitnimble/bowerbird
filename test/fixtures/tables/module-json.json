@@ -15,6 +15,25 @@
     "tint": null,
     "colourProfile": "none"
   },
+  "print": {
+    "paper": "satin",
+    "presentation": "scene",
+    "yawDegrees": -12,
+    "pitchDegrees": 8,
+    "keyLux": 1000,
+    "lightAzimuthDegrees": 0,
+    "lightElevationDegrees": 75,
+    "lightAngularDegrees": 30,
+    "fillLux": 500,
+    "lightTemperatureKelvin": 6500,
+    "roughness": 0.28,
+    "whiteReflectance": 0.9,
+    "blackReflectance": 0.008,
+    "refractiveIndex": 1.5,
+    "lightDistance": 4,
+    "paperLongEdgeMm": 300,
+    "surfaceTexture": 0.5
+  },
   "geometry": {
     "crop": [0.1, 0.2, 0.8, 0.9],
     "angleDegrees": 6.5,

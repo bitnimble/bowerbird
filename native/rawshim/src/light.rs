@@ -97,6 +97,8 @@ pub enum Graded {}
 /// Absolute nits at the display, past the roll-off and bounded by the target's peak.
 pub enum DisplayNits {}
 
+pub enum Illuminance {}
+
 /// [`DisplayNits`] over that peak, in 0..1, still Rec.2020 and still linear.
 ///
 /// **Not [`Standard`]: this is where SDR and HDR part.** `job::peak_nits` gives an sRGB target its
@@ -128,6 +130,7 @@ impl Linear for Scene {}
 impl Linear for Rendered {}
 impl Linear for Graded {}
 impl Linear for DisplayNits {}
+impl Linear for Illuminance {}
 impl Linear for Signal {}
 impl Linear for SrgbLinear {}
 impl Linear for P3Linear {}
@@ -146,6 +149,7 @@ impl Standard for SceneNits {}
 impl Standard for Scene {}
 impl Standard for Graded {}
 impl Standard for DisplayNits {}
+impl Standard for Illuminance {}
 impl Standard for P3Linear {}
 impl Standard for Pq {}
 
@@ -177,7 +181,8 @@ pub struct Light<D>(f64, PhantomData<fn() -> D>);
 ///
 /// Belonging to no domain, because it left with the units: multiplying a light by one is the one
 /// operation that can cross a whole stage and still be the same picture.
-#[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct Gain(f64);
 
 /// A [`Gain`] in log units, which is where the pipeline reasons about light.

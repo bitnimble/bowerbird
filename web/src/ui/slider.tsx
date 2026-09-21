@@ -1,8 +1,11 @@
 import { Slider as BaseSlider } from '@base-ui-components/react/slider';
 import * as stylex from '@stylexjs/stylex';
-import { useEffect, useRef } from 'react';
+import { type PointerEvent, useContext, useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { focusRing } from './focus_ring';
-import { color, size } from './tokens.stylex';
+import { SliderStrings } from './slider.strings';
+import { SliderIsolationContext } from './slider_isolation';
+import { color, font, size } from './tokens.stylex';
 
 const DISABLED = '[data-disabled]';
 
@@ -24,6 +27,7 @@ const styles = stylex.create({
     alignItems: 'center',
     height: '100%',
     cursor: 'pointer',
+    touchAction: 'none',
   },
   track: {
     position: 'relative',
@@ -66,6 +70,40 @@ const styles = stylex.create({
       position: 'absolute',
       inset: '-16px 0',
     },
+  },
+  isolated: {
+    position: 'fixed',
+    zIndex: 70,
+    pointerEvents: 'none',
+    color: color.bone,
+    backgroundColor: color.bower,
+    borderRadius: size.radius,
+    boxShadow: `0 0 0 8px ${color.bower}`,
+  },
+  readout: {
+    position: 'absolute',
+    bottom: '100%',
+    left: '-8px',
+    right: '-8px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '6px 8px',
+    backgroundColor: color.bower,
+    borderRadius: size.radius,
+    fontFamily: font.body,
+    fontSize: '13px',
+  },
+  readoutValue: {
+    fontFamily: font.mono,
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+  },
+  isolatedThumb: {
+    position: 'absolute',
+    top: '50%',
+    translate: '-50% -50%',
   },
 });
 
@@ -157,6 +195,23 @@ export function Slider({
   const share = (at: number): number => Math.min(Math.max(((at - min) / (max - min)) * 100, 0), 100);
   const from = share(origin ?? 0);
   const to = share(value);
+  const id = useId();
+  const isolation = useContext(SliderIsolationContext);
+  const endIsolation = isolation?.end;
+  const active = isolation?.active;
+  const isolated = active?.id === id ? active : null;
+  const pointer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    pointer.current = null;
+    endIsolation?.(id);
+  }, [endIsolation, id]);
+
+  const finishIsolation = (event: PointerEvent<HTMLDivElement>): void => {
+    if (pointer.current !== event.pointerId) return;
+    pointer.current = null;
+    endIsolation?.(id);
+  };
 
   const control = useRef<HTMLDivElement>(null);
   // Observed rather than measured where it is used: `held` runs on every move of a drag, and a
@@ -182,42 +237,87 @@ export function Slider({
   };
 
   return (
-    <BaseSlider.Root
-      {...stylex.props(styles.root, style)}
-      value={value}
-      min={min}
-      max={max}
-      step={step}
-      disabled={disabled}
-      onValueChange={(next, details) => {
-        if (typeof next === 'number') onChange(held(next, details.reason));
-      }}
-      onValueCommitted={(next, details) => {
-        if (typeof next === 'number') onCommit?.(held(next, details.reason));
-      }}
-    >
-      <BaseSlider.Control {...stylex.props(styles.control)} ref={control}>
-        <BaseSlider.Track {...stylex.props(styles.track, tone != null && styles[tone])}>
-          {snap?.map((at) => (
-            <span key={at} {...stylex.props(styles.snap)} style={{ left: `${share(at)}%` }} />
-          ))}
-          {/* Ours rather than `BaseSlider.Indicator`, which only ever fills from the minimum. */}
-          {tone == null && (
-            <span
-              {...stylex.props(styles.fill)}
-              style={{ left: `${Math.min(from, to)}%`, width: `${Math.abs(to - from)}%` }}
+    <>
+      <BaseSlider.Root
+        {...stylex.props(styles.root, style)}
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled}
+        onPointerDownCapture={(event) => {
+          if (isolation == null || disabled || event.button !== 0 || !event.isPrimary || event.defaultPrevented
+            || pointer.current != null) return;
+          const { left, top, width, height } = event.currentTarget.getBoundingClientRect();
+          pointer.current = event.pointerId;
+          isolation.begin(id, { left, top, width, height });
+        }}
+        onPointerUp={finishIsolation}
+        onPointerCancel={finishIsolation}
+        onLostPointerCapture={finishIsolation}
+        onValueChange={(next, details) => {
+          if (typeof next === 'number') onChange(held(next, details.reason));
+        }}
+        onValueCommitted={(next, details) => {
+          if (typeof next === 'number') onCommit?.(held(next, details.reason));
+        }}
+      >
+        <BaseSlider.Control {...stylex.props(styles.control)} ref={control}>
+          <BaseSlider.Track {...stylex.props(styles.track, tone != null && styles[tone])}>
+            <SliderMarks snap={snap} share={share} tone={tone} from={from} to={to} />
+            {/* On the thumb, which is what carries the range input: the control around it is a
+                plain div, so a name left there reaches nothing that announces a value. */}
+            <BaseSlider.Thumb
+              {...stylex.props(styles.thumb, focusRing.within)}
+              aria-label={label}
+              getAriaValueText={valueText == null ? undefined : (_formatted, at) => valueText(at)}
+              tabIndex={focusable ? undefined : -1}
             />
-          )}
-          {/* On the thumb, which is what carries the range input: the control around it is a
-              plain div, so a name left there reaches nothing that announces a value. */}
-          <BaseSlider.Thumb
-            {...stylex.props(styles.thumb, focusRing.within)}
-            aria-label={label}
-            getAriaValueText={valueText == null ? undefined : (_formatted, at) => valueText(at)}
-            tabIndex={focusable ? undefined : -1}
-          />
-        </BaseSlider.Track>
-      </BaseSlider.Control>
-    </BaseSlider.Root>
+          </BaseSlider.Track>
+        </BaseSlider.Control>
+      </BaseSlider.Root>
+      {isolated != null && createPortal(
+        <div
+          {...stylex.props(styles.root, styles.isolated)}
+          style={isolated.rectangle}
+          role="region"
+          aria-label={SliderStrings.adjusting(label)}
+        >
+          <div {...stylex.props(styles.readout)}>
+            <span>{label}</span>
+            <span {...stylex.props(styles.readoutValue)}>{valueText?.(value) ?? value}</span>
+          </div>
+          <div {...stylex.props(styles.control)} aria-hidden="true">
+            <div {...stylex.props(styles.track, tone != null && styles[tone])}>
+              <SliderMarks snap={snap} share={share} tone={tone} from={from} to={to} />
+              <span {...stylex.props(styles.thumb, styles.isolatedThumb)} style={{ left: `${to}%` }} />
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+function SliderMarks({ snap, share, tone, from, to }: {
+  snap: readonly number[] | undefined;
+  share: (value: number) => number;
+  tone: 'temperature' | 'tint' | undefined;
+  from: number;
+  to: number;
+}): JSX.Element {
+  return (
+    <>
+      {snap?.map((at) => (
+        <span key={at} {...stylex.props(styles.snap)} style={{ left: `${share(at)}%` }} />
+      ))}
+      {tone == null && (
+        <span
+          {...stylex.props(styles.fill)}
+          style={{ left: `${Math.min(from, to)}%`, width: `${Math.abs(to - from)}%` }}
+        />
+      )}
+    </>
   );
 }

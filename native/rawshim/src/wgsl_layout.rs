@@ -61,6 +61,18 @@ mod tests {
         // the same way when one is next touched and add a line here.
         let cases: Vec<(&str, &str, String, usize)> = vec![
             (
+                "print_light_calibrate.wgsl",
+                "Softbox",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl")).to_string(),
+                crate::print::light_uniform(crate::print::Scene::default().light_parameters()).len(),
+            ),
+            (
+                "frame.wgsl",
+                "PrintParams",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/frame.wgsl")).to_string(),
+                crate::print::Scene::default().uniform().len(),
+            ),
+            (
                 "assemble.wgsl",
                 "Params",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/assemble.wgsl")).to_string(),

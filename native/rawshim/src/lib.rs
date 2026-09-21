@@ -156,6 +156,7 @@ pub mod galosh;
 /// The other denoise, in the same place: a learned network a reader can choose instead.
 pub mod pmrid;
 pub mod gpu;
+pub mod print;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;

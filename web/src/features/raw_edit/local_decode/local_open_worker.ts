@@ -168,6 +168,7 @@ async function answer(ask: Ask): Promise<{ value: unknown; transfer?: Transferab
       if (ask.adjust != null) editor.setAdjust(ask.adjust);
       if (ask.geometry != null) editor.setGeometry(ask.geometry);
       if (ask.proof != null) editor.setProof(ask.proof);
+      editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
       if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
       if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);
       return { value: null };

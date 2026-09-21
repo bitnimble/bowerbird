@@ -37,6 +37,7 @@ export class StageStore {
 
   /** Whether the camera's own colour is in play, or the grade fell back to neutral. */
   @observable accessor matched = false;
+  @observable accessor renderedMode: 'photo' | 'print' | null = null;
 
   /**
    * Whether this photograph has a sensor mosaic behind it, off the prepared header.

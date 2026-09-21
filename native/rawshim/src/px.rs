@@ -71,6 +71,9 @@ pub enum Texel {}
 /// The stage the editor draws onto, in the pixels the browser hands out.
 pub enum Canvas {}
 
+pub enum PrintUnit {}
+pub enum Millimetre {}
+
 /// The camera match's own plane, a fixed 1280 across the photograph.
 pub enum FitPlane {}
 
@@ -146,6 +149,8 @@ pub enum Bin {}
 /// sized from it. Those get no constants: see [`Share`].
 pub trait Absolute {}
 impl Absolute for Sensor {}
+impl Absolute for PrintUnit {}
+impl Absolute for Millimetre {}
 impl Absolute for Photograph {}
 impl Absolute for Drawn {}
 impl Absolute for FitPlane {}

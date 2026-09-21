@@ -112,6 +112,7 @@ pub struct HeldRaw {
     adjust: std::cell::Cell<crate::gpu::Adjust>,
     /// Which output the reader is proofing against, which the draw grades and clips for.
     proof: std::cell::Cell<crate::gpu::Output>,
+    print: std::cell::Cell<Option<crate::print::Scene>>,
     /// What an open answered with, for a picture that arrived already prepared.
     ///
     /// `prepare` returns this as its result and keeps nothing; a picture handed over coded was
@@ -308,6 +309,7 @@ pub async fn hold_raw(bytes: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
         geometry: std::cell::Cell::new(crate::image::Geometry::none()),
         adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
         proof: std::cell::Cell::new(crate::gpu::Output::Pq),
+        print: std::cell::Cell::new(None),
         header: String::new(),
     })
 }
@@ -354,6 +356,7 @@ pub async fn hold_picture(framed: &[u8], request: &str) -> Result<HeldRaw, JsVal
         geometry: std::cell::Cell::new(crate::image::Geometry::none()),
         adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
         proof: std::cell::Cell::new(crate::gpu::Output::Pq),
+        print: std::cell::Cell::new(None),
         header: String::new(),
     };
     held.take_picture(framed)?;
@@ -1766,6 +1769,14 @@ impl HeldRaw {
         Ok(())
     }
 
+    #[wasm_bindgen(js_name = setPrint)]
+    pub fn set_print(&self, scene: Option<String>) -> Result<(), JsValue> {
+        let parsed = scene.as_deref().map(crate::print::Scene::parse).transpose()
+            .map_err(|error| JsValue::from_str(&format!("rawshim: invalid print scene: {error}")))?;
+        self.print.set(parsed);
+        Ok(())
+    }
+
     /// The reader's crop, straighten and turn, as `image::Geometry` JSON.
     #[wasm_bindgen(js_name = setGeometry)]
     pub fn set_geometry(&self, geometry: &str) -> Result<(), JsValue> {
@@ -1841,7 +1852,7 @@ impl HeldRaw {
                     .window
                     .grade(&scene, proofed(tiled.peak_nits), proof)
                     .onto(shown);
-                crate::gpu::present(&tiled.uploaded, stage, &grade, &drawing.pyramid);
+                crate::gpu::present(&tiled.uploaded, stage, &grade, &drawing.pyramid, None);
                 return refused();
             }
             Reading::Frame => (
@@ -1859,6 +1870,7 @@ impl HeldRaw {
         };
         let (picture_w, picture_h) = drawing.picture();
         let adjust = self.adjust.get();
+        let print = if std::ptr::eq(onto, &self.stage) { self.print.get() } else { None };
         let grade = crate::gpu::Grade {
             width,
             height,
@@ -1888,7 +1900,7 @@ impl HeldRaw {
         if grade.colour.is_some() && matches!(reading, Reading::Frame) {
             drawing.uploaded.peak_from_candidates(&grade);
         }
-        crate::gpu::present(uploaded, stage, &grade, &drawing.pyramid);
+        crate::gpu::present(uploaded, stage, &grade, &drawing.pyramid, print.as_ref());
         refused()
     }
 

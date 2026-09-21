@@ -145,6 +145,44 @@ Two things in that build are silent when wrong and cost an afternoon each. libao
 
 A drag emits far more pointer positions than the grade can serve, so requests **coalesce rather than queue**: only the latest position is ever outstanding, and queueing them would replay the drag in slow motion after the user let go.
 
+Print mode holds its paper, lighting and orientation in a separate `PrintStore`, written by
+`PrintPresenter`. These are viewing settings and leave the photo document and its history alone.
+The same worker and HDR canvas draw a suspended sheet through the shared Slang renderer. The photo
+is graded to a bounded print reflectance before illumination, with smooth chroma compression
+into the generic sRGB paper gamut that preserves luminance and neutral whites. Surface reflections
+can exceed diffuse white. Dragging or arrow keys rotate the sheet, and the panel controls its material and light.
+The camera rays intersect a slightly bowed sheet, lit by a finite softbox whose illuminance is specified at
+the print centre facing the light. Its diffuser has a smooth spatial radiance profile, shared by
+light samples and reflected rays. Surface reflection uses dielectric Fresnel and GGX; its
+GPU-tabulated directional albedo couples it to the diffuse body through the reciprocal
+[OpenPBR glossy-diffuse model](https://academysoftwarefoundation.github.io/OpenPBR/).
+This conserves reflected energy while approximating scattering inside the paper. Surface
+texture varies roughness in paper coordinates, with its physical scale set by the print's
+long edge and its visible detail filtered against the camera-ray footprint.
+Camera exposure meters ambient and direct illuminance reaching the visible sheet's centre.
+The GPU integrates the finite light against the sheet's orientation, including light crossing
+its horizon. One exposure gain applies to the whole scene, anchored to 203-nit diffuse white
+and bounded in dark rooms; coating reflections retain their HDR headroom.
+The featureless background follows ambient illumination and is black at zero ambient. Defaults
+use 500 lux ambient, a 1000-lux overhead light and 6500 K illumination; the light temperature
+uses the same Robertson chromaticity model as white balance. Gloss reflects the uniform ambient
+field through its directional Fresnel response, producing a broad sheen at grazing angles.
+Edge pixels integrate subpixel coverage of the curved sheet, with denser sampling for thin silhouettes.
+The photo uses up to 16 anisotropic taps along the projected footprint, with trilinear mip
+sampling in decoded light, so a tilted sheet preserves detail along its less compressed axis.
+Touch devices use a surface presentation: the print fills the editor's canvas with its normal
+crop, zoom and pan mapping, while device orientation changes material lighting without rotating
+the image. Motion permission is requested through an explicit control where the browser requires
+it. Tilt is relative to the device's initial pose, recentres across screen orientation changes,
+and stops while the tab is hidden or Print is closed. Without motion access the surface remains
+usable with the lighting controls.
+Mobile editing controls sit in footer tabs. A tab opens one panel over the photograph without
+resizing it. During a slider drag the panel fades away and a floating readout keeps the active
+slider visible at the same position; its original control keeps pointer capture and commits
+the edit on release. Panels support keyboard navigation, Escape and reduced motion.
+Gloss, satin and matte are generic simulations. Predicting a specific print requires its
+printer, ink and paper colour profile, measured surface reflectance and calibrated viewing conditions.
+
 ### 21.5 Tests
 
 Cross-origin isolation and the thread pool are pinned by e2e, because the module needs `SharedArrayBuffer` and the failure is a silent fall back to one thread. The still route's PQ tagging is asserted on the bytes the browser was handed, over a real graded frame from the ARW fixture: the route is HDR only because of four bytes in a cICP chunk, and a PNG that loses them is a valid, ordinary, SDR picture that every other check downstream would pass.

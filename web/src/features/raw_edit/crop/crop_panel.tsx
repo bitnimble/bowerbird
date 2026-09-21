@@ -68,6 +68,7 @@ function StraightenControl({
         step={0.05}
         snap={[0]}
         label={label}
+        valueText={(at) => RawEditPanelStrings.degrees(reading(at, { min: -45, step: 0.05 }))}
         disabled={!stage.editable}
       />
     </div>
@@ -126,16 +127,18 @@ export const CropPanel = observer(function CropPanel({
   store,
   presenter,
   styles,
+  section,
 }: {
   edit: EditStore;
   stage: StageStore;
   store: CropStore;
   presenter: RawEditPresenter;
   styles: RawEditPanelStyles;
+  section?: 'aspect' | 'geometry';
 }): JSX.Element {
   return (
     <>
-      <Panel style={styles.group} titleStyle={styles.groupTitle} title={RawEditPanelStrings.aspectRatio()}>
+      {(section == null || section === 'aspect') && <Panel style={styles.group} titleStyle={styles.groupTitle} title={RawEditPanelStrings.aspectRatio()}>
         <Select
           style={styles.selectTrigger}
           label={RawEditPanelStrings.aspectRatio()}
@@ -143,10 +146,10 @@ export const CropPanel = observer(function CropPanel({
           value={store.cropAspect}
           onChange={presenter.setCropAspect}
         />
-      </Panel>
-      <Panel style={styles.group} titleStyle={styles.groupTitle} title={EditToolsStrings.crop()}>
+      </Panel>}
+      {(section == null || section === 'geometry') && <Panel style={styles.group} titleStyle={styles.groupTitle} title={EditToolsStrings.crop()}>
         <GeometryControls edit={edit} stage={stage} store={store} presenter={presenter} styles={styles} />
-      </Panel>
+      </Panel>}
     </>
   );
 });
