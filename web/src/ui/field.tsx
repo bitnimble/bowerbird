@@ -21,6 +21,7 @@ export function Field({
   /** For a set of choices that answer one question. */
   role?: 'radiogroup';
   'aria-label'?: string;
+  title?: string;
 }): JSX.Element {
   return (
     <div {...stylex.props(styles.field)} {...rest}>

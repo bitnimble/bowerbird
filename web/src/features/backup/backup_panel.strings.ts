@@ -18,6 +18,7 @@ export const BackupStrings = {
   gigabytes: () => 'GB',
   /** Why the field exists, said once under it: the limit is what the removal follows from. */
   storageLimitHint: () => "Above this, we'll remove the local copies you've used least recently. They stay on the backup.",
+  storageLimitReadOnly: () => 'Read-only libraries cannot remove local originals.',
   usingOf: (used: string, limit: string) => `Using ${used} GB of ${limit} GB`,
   using: (used: string) => `Using ${used} GB`,
   onBackupOnly: (photos: number) => `${photos} ${photos === 1 ? 'photo has' : 'photos have'} no local copy`,

@@ -105,7 +105,7 @@ const ConfiguredBackup = observer(function ConfiguredBackup({
         : BackupStrings.backedUp(status.backed_up, status.owed)}
       </Text>
 
-      <Field>
+      <Field title={library.read_only ? BackupStrings.storageLimitReadOnly() : undefined}>
         <Text variant="label" as="span">
           {BackupStrings.storageLimit()}
         </Text>
@@ -116,13 +116,14 @@ const ConfiguredBackup = observer(function ConfiguredBackup({
           label={BackupStrings.storageLimit()}
           suffix={BackupStrings.gigabytes()}
           value={limit}
+          disabled={library.read_only}
           onChange={setLimit}
           onBlur={commitLimit}
           onKeyDown={(event) => event.key === 'Enter' && commitLimit()}
           describedBy={hintId}
         />
         <Text variant="mono" as="p" id={hintId}>
-          {BackupStrings.storageLimitHint()}
+          {library.read_only ? BackupStrings.storageLimitReadOnly() : BackupStrings.storageLimitHint()}
         </Text>
         <Text variant="muted" as="p">
           {status.local_budget_bytes == null ?
