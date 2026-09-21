@@ -781,7 +781,7 @@ fn resized_through(
 ) -> Option<crate::resident::Resident> {
     let source = frame.size();
     let (sw, sh) = source;
-    if out.0 >= sw || out.1 >= sh || out.0 == 0 || out.1 == 0 {
+    if out == source || out.0 > sw || out.1 > sh || out.0 == 0 || out.1 == 0 {
         return None;
     }
     let pixels = out.0 * out.1;

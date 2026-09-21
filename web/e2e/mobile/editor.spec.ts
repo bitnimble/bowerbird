@@ -129,3 +129,78 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await page.screenshot({ path: '/tmp/bowerbird-mobile-footer.png' });
   await cdp.detach();
 });
+
+test.describe('zoom on a high density phone display', () => {
+  test.use({ deviceScaleFactor: 3 });
+
+  for (const { tool, panel, slider } of [
+    { tool: 'Cursor', panel: 'Light', slider: 'Exposure' },
+    { tool: 'Print', panel: 'Lighting', slider: 'Ambient light' },
+  ]) {
+    test(`tapping the photo in ${tool} loads detail and keeps sliders usable`, async ({ page }) => {
+      await page.route(/\/local_open_worker\.ts(?:\?|$)/, async (route) => {
+        const response = await route.fetch();
+        await route.fulfill({
+          response,
+          body: `
+            const zoomRequests = new Map();
+            const zoomWindows = new Map();
+            const zoomDrawn = new Set();
+            let zoomReady = [];
+            Object.defineProperty(globalThis, 'drawnPhotoWindows', { get: () => [...zoomDrawn] });
+            self.addEventListener('message', ({ data }) => {
+              zoomRequests.set(data.id, { kind: data.kind, level: data.level, ready: zoomReady });
+              if (data.kind === 'takeTiles') zoomReady = [];
+            });
+            const zoomSend = self.postMessage.bind(self);
+            self.postMessage = (answer, ...rest) => {
+              const request = zoomRequests.get(answer.id);
+              zoomRequests.delete(answer.id);
+              if (answer.ok && request?.kind === 'takeTiles') {
+                const header = JSON.parse(answer.value);
+                if (header.window != null) {
+                  const key = JSON.stringify([header.level, header.window.canvas, header.window.origin]);
+                  zoomWindows.set(key, JSON.stringify(header.window.canvas));
+                }
+              }
+              if (answer.ok && request?.kind === 'showTiles' && answer.value.missing === null) {
+                zoomReady = [...zoomWindows].filter(([, level]) => level === request.level).map(([key]) => key);
+              }
+              if (answer.ok && request?.kind === 'tick') {
+                for (const key of request.ready) zoomDrawn.add(key);
+              }
+              zoomSend(answer, ...rest);
+            };
+            ${await response.text()}
+          `,
+        });
+      });
+      await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
+      await waitForEditorLive(page);
+      const worker = page.workers().find((worker) => worker.url().includes('local_open_worker'));
+      if (worker == null) throw new Error('The editor worker was not created');
+      await editTools(page).getByRole('radio', { name: tool, exact: true }).click();
+      const drawnWindows = async (): Promise<string[]> => z.array(z.string()).parse(
+        await worker.evaluate(() => Reflect.get(globalThis, 'drawnPhotoWindows')),
+      );
+      const previous = new Set(await drawnWindows());
+      const prepared = page.waitForResponse((reply) => {
+        const url = new URL(reply.url());
+        const region = url.searchParams.get('region');
+        return url.pathname.endsWith('/prepare') && region != null && Number(region.split(',')[2]) < 0.99;
+      });
+      await editPreview(page).tap();
+      const response = await prepared;
+      expect(response.status()).toBe(200);
+      await expect.poll(async () => (await drawnWindows()).some((key) => !previous.has(key))).toBe(true);
+      await expect(page.getByText(/^Unavailable/)).toHaveCount(0);
+      await page.getByRole('tab', { name: panel, exact: true }).click();
+      const control = page.getByRole('slider', { name: slider, exact: true });
+      await expect(control).toBeEnabled();
+      const before = await control.getAttribute('aria-valuenow');
+      await control.press('ArrowRight');
+      await expect.poll(() => control.getAttribute('aria-valuenow')).not.toBe(before);
+      await expect(page.getByText(/^Unavailable/)).toHaveCount(0);
+    });
+  }
+});

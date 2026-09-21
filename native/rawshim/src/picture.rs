@@ -6,11 +6,6 @@
 //! [`crate::job::Base`] assembly a rendition calls, the same [`crate::hdr::Cut::from_base`], and
 //! stops - which is what makes what a reader drags their sliders over the same picture the export
 //! ships.
-//!
-//! **The recipe kind never appears here.** `Base` already dispatches on it, so a file and a
-//! twenty-six frame panorama reach this by the same line, and a client is handed the same three
-//! things either way: the coded samples, the numbers the grade cannot re-derive from them, and
-//! everything the picture is described by.
 
 use crate::job::Job;
 
@@ -57,9 +52,25 @@ pub fn prepared(
         .ok()
         .filter(|size| *size > 0)
         .ok_or_else(|| format!("level {level} of a {long}px picture is no picture"))?;
+    let shape = crate::composite_job::level_shape(&[picture.0, picture.1], level);
+    if let Some(window) = window {
+        let (x, y, width, height) = window.raw();
+        if width == 0 || height == 0 || x >= shape.0 || y >= shape.1
+            || width > shape.0 - x || height > shape.1 - y
+        {
+            return Err(format!("a {width}x{height} window at {x},{y} is outside a {}x{} picture", shape.0, shape.1));
+        }
+    }
+    let decode_size = if job.composite.is_none()
+        && (shape.0 > picture.0 / 2 || shape.1 > picture.1 / 2)
+    {
+        long as u32
+    } else {
+        size
+    };
     // No targets: a prepare is of the photographs rather than of the cameras' own pictures, and it
     // takes no crop - the client applies the reader's geometry to what it is handed.
-    let base = crate::job::assembled(job, size, &[], window, parts)?;
+    let base = crate::job::assembled(job, decode_size, &[], window, parts)?;
 
     let crate::job::Base {
         frame,
@@ -67,7 +78,7 @@ pub fn prepared(
         height: frame_height,
         levels,
         photograph,
-        window: placed,
+        window: mut placed,
         matched,
         mut analysis,
         stored,
@@ -87,24 +98,11 @@ pub fn prepared(
         Some(_) => None,
         None => matched.as_ref().map(|m| &m.lens),
     };
-    let cut = match frame {
+    let mut cut = match frame {
         crate::job::Cutting::AlreadyCut(cut) => cut,
         crate::job::Cutting::OnDevice(frame) => {
-            // **The level's size, which the frame in hand may not already be.** A composite is
-            // assembled at the size it was asked for, so for one - windowed or whole - this is the
-            // shape it already has. A decode is not: it offers the sensor's resolution or half of
-            // it and nothing between, so a level below that comes out of `Base::build` larger than
-            // asked.
-            //
-            // Measured off the *frame* rather than off `photograph`, which for a window is the
-            // canvas this is a rectangle of: fitting that to the level would ask the resize to
-            // stretch the window up to the whole picture's size.
-            //
-            // `hdr_args::fitted` rather than a ratio worked out here, so the picture a level hands
-            // over is the frame a rendition of that size would cut - down to which axis the long
-            // edge lands on and how the short one rounds against it.
-            let size =
-                crate::hdr_args::fitted(frame_width as u32, frame_height as u32, want as f64);
+            let (width, height) = if placed.is_some() { (frame_width, frame_height) } else { shape };
+            let size = crate::hdr_args::Size { width: width as u32, height: height as u32 };
             // **The whole picture's long edge at this scale, not the cut's.** The sigma is in the
             // sensor's pixels and this composes it for the resolution the frame is at, which a
             // window shares with the canvas it came out of - so a 1000px window of a 4000px level
@@ -123,6 +121,27 @@ pub fn prepared(
             crate::hdr::Cut::from_base(frame, lens, size, job.sharpen, sigma, noise)
         }
     };
+    if let Some(window) = window.filter(|_| placed.is_none()) {
+        let (x, y, width, height) = window.raw();
+        let source = cut.resident().ok_or("the prepared picture is not on the GPU")?;
+        let gpu = source.gpu();
+        let cropped = crate::resident::Resident::empty(gpu, width, height);
+        let mut recording = gpu.record();
+        // Crop after filtering so window boundaries keep the whole picture's neighbours.
+        crate::retouched_frame::copy(
+            &mut recording,
+            (source, crate::px::At::exact(x, y)),
+            (&cropped, crate::px::At::exact(0, 0)),
+            crate::px::Size::exact(width, height),
+        );
+        recording.submit();
+        placed = Some(crate::gpu::Window {
+            photograph: crate::px::Size::exact(cut.width, cut.height),
+            origin: crate::px::At::exact(x, y),
+        });
+        cut.release();
+        cut = crate::hdr::Cut::device(cropped, width, height);
+    }
     if let Some(gpu) = crate::gpu::device() {
         gpu.settle();
     }

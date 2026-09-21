@@ -88,10 +88,6 @@ export type LocalSource = {
  * **No RAW crosses.** That is the point for a composite - ten 61MP frames are 3.6GB before the
  * canvas they compose into - and for a phone, which cannot hold one photograph's samples let alone
  * a set of them.
- *
- * One level, the coarsest the picture has. So a reader sees the whole picture and can grade every
- * slider at tick speed; what they cannot yet do is zoom into its own pixels, there being no finer
- * level to ask for.
  */
 async function preparedThere(photoId: string): Promise<LocalSource & { prepared: string }> {
   const { LocalDecoder } = await import('./local_decoder');

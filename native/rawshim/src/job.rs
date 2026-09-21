@@ -623,13 +623,6 @@ pub(crate) fn assembled(
             parts,
         ),
         Some(_) => Err("only a render of a composite has a picture to draw".into()),
-        None if window.is_some() => {
-            // The single-file arm reaches the sensor through `decode`, which offers the frame
-            // whole or halved and nothing between - so there is no arithmetic here for a
-            // rectangle of a level. `Composition::of_one` is the route, and taking it is the gather
-            // merge rather than this call.
-            Err("a window of a single photograph is not prepared yet".into())
-        }
         None => pollster::block_on(single(job, Raw::Path(&job.raw_file_path), size, rendered)),
     }
 }
