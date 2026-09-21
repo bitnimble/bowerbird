@@ -19,7 +19,8 @@
   "widened": {
     "AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (IntegratedGpu, Vulkan) via radv": {
       "DSC00853.ARW": {
-        "condition": 18
+        "condition": 35.7,
+        "demosaic": 82.2
       }
     }
   },

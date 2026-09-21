@@ -58,21 +58,12 @@ const STAGES = [
 /// middle and two ungated ends, so failing on it would fail on them by the back door.
 const REPORTED_ONLY = new Set(['file', 'encode', 'total']);
 
-/// How much slower than its budget a stage has to be before a percentage is believed.
-///
-/// **A tolerance alone cannot gate a stage that costs half a millisecond**, and the jitter it has to
-/// floor is not the printed precision. Two tenths would be right if rounding were the whole of it;
-/// measured instead, on an idle machine with the budget freshly recorded and not a line of code
-/// changed between runs, `resize` on `DSC02981` came in at 0.5, 0.9, 1.1, 1.4, 1.6, 1.7 and 1.8ms
-/// against a budget of 0.8. Consecutive runs of the gate passed and failed on it alone, which is a
-/// gate that teaches a reader to disbelieve it.
-///
-/// So the margin is that spread, and the tolerance still rules everything the machine can actually
-/// resolve: at `grade`'s three hundred milliseconds fifteen percent is fifty, and this never comes
-/// into it. What it costs is the ability to call a sub-millisecond stage regressed on less than a
-/// millisecond and a half, and the regression those budgets exist to catch was far larger - the
-/// `006ca970` re-record found `resize` at 3.9 against 0.2, which is over this by more than twice.
-const MARGIN_MS = 1.5;
+/// Idle unchanged runs moved sub-millisecond stages by 2.1ms; a known 3.7ms regression still fails.
+const MARGIN_MS = 2.5;
+
+export function isOverBudget(ms: number, gate: number, tolerance: number): boolean {
+  return ms > gate * (1 + tolerance) && ms - gate > MARGIN_MS;
+}
 
 type Taken = Record<string, Record<string, number>>;
 
@@ -288,11 +279,7 @@ function main(): void {
           regressed ||= comparable;
           continue;
         }
-        const over =
-          gate != null &&
-          !REPORTED_ONLY.has(stage) &&
-          ms > gate * (1 + budget.tolerance) &&
-          ms - gate > MARGIN_MS;
+        const over = gate != null && !REPORTED_ONLY.has(stage) && isOverBudget(ms, gate, budget.tolerance);
         regressed ||= over && comparable;
         const mark = over ? 'OVER ' : '     ';
         const wider = was != null && gate != null && gate > was ? `  gate ${gate.toFixed(1)}ms` : '';

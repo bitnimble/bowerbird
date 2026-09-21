@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { gateOf, rerecorded } from './bench';
+import { gateOf, isOverBudget, rerecorded } from './bench';
 
 const ADAPTER = 'RADV RAPHAEL_MENDOCINO';
 const budget = {
@@ -14,6 +14,11 @@ test('a stage is held to its measurement unless it is widened past it', () => {
   expect(gateOf(budget, ADAPTER, 'DSC00853.ARW', 'denoise')).toBe(1526.7);
   expect(gateOf(budget, ADAPTER, 'DSC00853.ARW', 'resize')).toBeUndefined();
   expect(gateOf(budget, 'NVIDIA', 'DSC00853.ARW', 'condition')).toBeUndefined();
+});
+
+test('sub-millisecond stages ignore measured jitter but catch the known regression', () => {
+  expect(isOverBudget(2.3, 0.2, 0.15)).toBe(false);
+  expect(isOverBudget(3.9, 0.2, 0.15)).toBe(true);
 });
 
 test('a re-record writes what it measured and keeps every widening', () => {
