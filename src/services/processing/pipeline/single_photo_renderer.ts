@@ -90,13 +90,19 @@ export class SinglePhotoRenderer {
 
 
 
-  benchmarkJob(
-    rawFilePath: string,
-    photoId: string,
-    rendition: Rendition,
-    dataPath: string,
-    skip: readonly OptionalStage[],
-  ): RenditionJob {
+  benchmarkJob({
+    rawFilePath,
+    photoId,
+    rendition,
+    dataPath,
+    skip,
+  }: {
+    rawFilePath: string;
+    photoId: string;
+    rendition: Rendition;
+    dataPath: string;
+    skip: readonly OptionalStage[];
+  }): RenditionJob {
     const { job } = this.jobFor(rawFilePath, photoId, rendition, {
       hdr: true,
       source: 'render',

@@ -1,8 +1,6 @@
-import { existsSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AppError } from '../../../errors';
 import { deleteScratchDirectory } from '../../../utils/deletions';
 import { newId } from '../../../schemas/id';
 import {
@@ -13,6 +11,7 @@ import {
   type RenderedRendition,
 } from '../../../schemas/render_stages';
 import type { RenderTimingsFile } from '../renditions/render_timings_file';
+import { assertReferenceFrame, REFERENCE_FRAME } from '../renditions/reference_frame';
 import { readRawHeader } from '../rawshim/raw_decoder';
 import { openCompositeWorker } from '../workers/composite_worker';
 import type { SinglePhotoRenderer } from './single_photo_renderer';
@@ -25,7 +24,7 @@ import type { SinglePhotoRenderer } from './single_photo_renderer';
  */
 const ROUNDS = 3;
 
-const REFERENCE_FRAME = process.env.BOWERBIRD_REFERENCE_FRAME ?? './assets/reference_frame.ARW';
+const REFERENCE_FRAME_PATH = process.env.BOWERBIRD_REFERENCE_FRAME ?? REFERENCE_FRAME.path;
 
 /**
  * What each optional stage costs on this machine, as the difference two renders of one photograph
@@ -36,7 +35,7 @@ const REFERENCE_FRAME = process.env.BOWERBIRD_REFERENCE_FRAME ?? './assets/refer
 export class RenderBenchmark {
   constructor(
     private readonly renderer: SinglePhotoRenderer,
-    private readonly frame: string = REFERENCE_FRAME,
+    private readonly frame: string = REFERENCE_FRAME_PATH,
   ) {}
 
   /**
@@ -44,9 +43,7 @@ export class RenderBenchmark {
    * owns the file is the caller, and a benchmark is the only thing here that writes it.
    */
   async run(rendition: RenderedRendition, into: RenderTimingsFile): Promise<RenderTiming> {
-    if (!existsSync(this.frame)) {
-      throw new AppError('NOT_FOUND', `this build carries no reference frame at ${this.frame}`);
-    }
+    assertReferenceFrame(this.frame);
     const header = readRawHeader(this.frame);
     const benchmarkPhotoId = newId();
 
@@ -57,7 +54,15 @@ export class RenderBenchmark {
     try {
       const time = async (skip: readonly OptionalStage[]): Promise<number> => {
         const began = performance.now();
-        await on.run(this.renderer.benchmarkJob(this.frame, benchmarkPhotoId, rendition, scratch, skip));
+        await on.run(
+          this.renderer.benchmarkJob({
+            rawFilePath: this.frame,
+            photoId: benchmarkPhotoId,
+            rendition,
+            dataPath: scratch,
+            skip,
+          }),
+        );
         return performance.now() - began;
       };
 
