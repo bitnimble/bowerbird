@@ -41,7 +41,7 @@ function build(repo: LibrariesRepository): LibrariesService {
 const sample: Library = { id: 'id-1', root_path: '/x', bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'taken_desc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], render_timings: {},
+  render_skip_full: [], render_skip_max: [],
   include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
 
 describe('LibrariesService.get', () => {

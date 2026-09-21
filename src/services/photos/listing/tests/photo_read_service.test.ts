@@ -106,7 +106,7 @@ function build(over: {
 const library: Library = { id: 'lib', root_path: '/r', bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], render_timings: {},
+  render_skip_full: [], render_skip_max: [],
   include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
 const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc', photo_count: 0, is_hidden: false, hidden_directly: false };
 const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };

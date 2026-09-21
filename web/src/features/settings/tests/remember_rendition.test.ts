@@ -25,7 +25,7 @@ beforeEach(() => {
 function build(mode: ViewerRenditionMode, last: ViewerRendition | null): AppSettingsPresenter {
   const store = new AppSettingsStore();
   store.settings = { viewer_rendition_mode: mode, last_viewer_rendition: last } as Settings;
-  return new AppSettingsPresenter(store);
+  return new AppSettingsPresenter(store, { showError: () => {} } as never);
 }
 
 test('choosing the rendition already remembered writes nothing', async () => {

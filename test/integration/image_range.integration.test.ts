@@ -43,7 +43,6 @@ beforeAll(() => {
     rendition_hdr: false,
     render_skip_full: [],
     render_skip_max: [],
-    render_timings: {},
     include_subfolders: true,
     include_non_raw: false,
     auto_stack: true,

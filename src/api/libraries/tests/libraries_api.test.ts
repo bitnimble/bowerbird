@@ -7,7 +7,6 @@ import { AppError } from '../../../errors';
 import { libraryScope } from '../../../utils/scope';
 import { applyErrorHandler } from '../../error_handler';
 import type { Library, LibraryScanStatus } from '../../../schemas/libraries';
-import type { RenderTiming, RenderedRendition } from '../../../schemas/render_stages';
 import { PathSegment, route } from '../../../schemas/route';
 import type { LibrariesService } from '../../../services/libraries/libraries_service';
 import type { FolderRulesRepository } from '../../../services/shoots/folder_rules_repository';
@@ -19,7 +18,7 @@ const LIBRARY_ID = 'lib00001';
 const library: Library = { id: LIBRARY_ID, root_path: '/r', bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'taken_desc',
   rendition_source: 'embedded',
   rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], render_timings: {},
+  render_skip_full: [], render_skip_max: [],
   include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
 const status: LibraryScanStatus = {
   library_id: LIBRARY_ID,
@@ -41,11 +40,6 @@ function buildApp(
   rules: Partial<FolderRulesRepository> = {},
   detectStacks: (libraryId: string) => number = jest.fn(() => 0),
   shootsOver: Partial<ShootsService> = {},
-  benchmarkRender: (libraryId: string, rendition: RenderedRendition) => Promise<RenderTiming> = jest.fn(async () => ({
-    total: 0,
-    stages: {},
-    measured_at: new Date(0).toISOString(),
-  })),
 ) {
   const libraries = {
     create: jest.fn(async () => library),
@@ -69,10 +63,10 @@ function buildApp(
   const app = new Hono();
   app.route(
     route(PathSegment.api(), PathSegment.libraries()),
-    new LibrariesApi(libraries, syncSvc, folderRules, shoots, detectStacks, benchmarkRender).routes,
+    new LibrariesApi(libraries, syncSvc, folderRules, shoots, detectStacks).routes,
   );
   applyErrorHandler(app);
-  return { app, libraries, scan: syncSvc, folderRules, shoots, detectStacks, benchmarkRender };
+  return { app, libraries, scan: syncSvc, folderRules, shoots, detectStacks };
 }
 
 describe('LibrariesApi', () => {
@@ -113,30 +107,6 @@ describe('LibrariesApi', () => {
     const res = await app.request(route(PathSegment.api(), PathSegment.libraries(), LIBRARY_ID, PathSegment.sync()), { method: 'POST' });
     expect(res.status).toBe(200);
     expect(scanLibrary).toHaveBeenCalledWith(LIBRARY_ID);
-  });
-
-  it('times a render of the rendition the query names', async () => {
-    const measured = { total: 800, stages: { match: 400 }, measured_at: '2026-01-01T00:00:00.000Z' };
-    const benchmarkRender = jest.fn(async () => measured);
-    const { app } = buildApp({}, {}, {}, undefined, {}, benchmarkRender);
-    const at = route(PathSegment.api(), PathSegment.libraries(), LIBRARY_ID, PathSegment.jobs(), PathSegment.benchmark());
-
-    const res = await app.request(`${at}?rendition=max`, { method: 'POST' });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(measured);
-    expect(benchmarkRender).toHaveBeenCalledWith(LIBRARY_ID, 'max');
-  });
-
-  it('refuses a rendition it does not build, rather than timing whatever was asked for', async () => {
-    // `grid` is the camera's own JPEG and takes no list of stages, so naming it here is a caller's
-    // bug. Defaulted instead, this would report a `full` render's numbers under another name.
-    const benchmarkRender = jest.fn(async () => ({ total: 0, stages: {}, measured_at: '' }));
-    const { app } = buildApp({}, {}, {}, undefined, {}, benchmarkRender);
-    const at = route(PathSegment.api(), PathSegment.libraries(), LIBRARY_ID, PathSegment.jobs(), PathSegment.benchmark());
-
-    expect((await app.request(`${at}?rendition=grid`, { method: 'POST' })).status).toBe(400);
-    expect((await app.request(at, { method: 'POST' })).status).toBe(400);
-    expect(benchmarkRender).not.toHaveBeenCalled();
   });
 
   it('queues a library-wide tile rebuild', async () => {

@@ -23,7 +23,7 @@ import type {
   RenditionWritten,
 } from '../workers/processing_types';
 import type { RenderTiming, RenderedRendition } from '../../../schemas/render_stages';
-import type { RenderTimingsRepository } from '../renditions/render_timings_repository';
+import type { RenderTimingsFile } from '../renditions/render_timings_file';
 import { RenderTargets } from './render_targets';
 import { RenderBenchmark } from './render_benchmark';
 import { CompositeRenderer } from './composite_renderer';
@@ -68,16 +68,12 @@ export abstract class RenderService {
       },
     );
     this.exports = new ExportRenderer(settings, editsFor, this.targets, this.singlePhoto, this.composites);
-    this.benchmark = new RenderBenchmark(photoPaths, this.singlePhoto);
+    this.benchmark = new RenderBenchmark(photoPaths, libraryOf, this.singlePhoto);
   }
 
-  /** What this library's stages cost on this machine, measured now and filed in `into`. */
-  async benchmarkRender(
-    library: Library,
-    rendition: RenderedRendition,
-    into: RenderTimingsRepository,
-  ): Promise<RenderTiming> {
-    return this.benchmark.run(library, rendition, into);
+  /** What a render's stages cost on this machine, measured now and filed in `into`. */
+  async benchmarkRender(rendition: RenderedRendition, into: RenderTimingsFile): Promise<RenderTiming> {
+    return this.benchmark.run(rendition, into);
   }
 
   protected abstract stageDone(

@@ -7,13 +7,14 @@ import { deleteScratchDirectory } from '../../../utils/deletions';
 import type { Library } from '../../../schemas/libraries';
 import {
   OPTIONAL_STAGES,
+  scaledToReference,
   type OptionalStage,
   type RenderTiming,
   type RenderedRendition,
 } from '../../../schemas/render_stages';
 import { originalPathOf } from '../../../utils/paths';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
-import type { RenderTimingsRepository } from '../renditions/render_timings_repository';
+import type { RenderTimingsFile } from '../renditions/render_timings_file';
 import { openCompositeWorker } from '../workers/composite_worker';
 import type { SinglePhotoRenderer } from './single_photo_renderer';
 
@@ -26,24 +27,27 @@ import type { SinglePhotoRenderer } from './single_photo_renderer';
 const ROUNDS = 3;
 
 /**
- * What each optional stage costs on this machine, as the difference two renders of one of this
- * library's photographs make (§10.1).
+ * What each optional stage costs on this machine, as the difference two renders of one photograph
+ * make, scaled to a full-frame sensor (§10.1).
  *
  * Tens of seconds on a `full` and minutes on a `max`: the caller is a button somebody pressed.
  */
 export class RenderBenchmark {
   constructor(
     private readonly photoPaths: PhotoPathsRepository,
+    private readonly libraryOf: (libraryId: string) => Library | null,
     private readonly renderer: SinglePhotoRenderer,
   ) {}
 
   /**
-   * `into` is a parameter rather than a field because the renderers are built without a database
-   * handle: what owns one is the caller, and a benchmark is the only thing here that files a row.
+   * `into` is a parameter rather than a field because the renderers are built without one: what
+   * owns the file is the caller, and a benchmark is the only thing here that writes it.
    */
-  async run(library: Library, rendition: RenderedRendition, into: RenderTimingsRepository): Promise<RenderTiming> {
-    const photo = this.photoPaths.firstFileIn(library.id);
-    if (photo == null) throw new AppError('NOT_FOUND', `${library.name} has no photograph to time a render against`);
+  async run(rendition: RenderedRendition, into: RenderTimingsFile): Promise<RenderTiming> {
+    const photo = this.photoPaths.aFileToBenchmark();
+    if (photo == null) throw new AppError('NOT_FOUND', 'there is no photograph here to time a render against');
+    const library = this.libraryOf(photo.library_id);
+    if (library == null) throw new AppError('NOT_FOUND', `the library ${photo.id} is in is no longer here`);
     const raw = originalPathOf(library, photo);
     if (raw == null || !existsSync(raw)) {
       throw new AppError('NOT_FOUND', `the file behind ${photo.id} is not on this device`);
@@ -83,10 +87,13 @@ export class RenderBenchmark {
       for (const stage of OPTIONAL_STAGES) {
         // Floored at zero: a stage that cost less than the spread across rounds can come out
         // negative, and a row reading "-3 ms" is worse than one reading nothing.
-        stages[stage] = Math.max(0, Math.round(total - (fastest.get(stage) ?? total)));
+        stages[stage] = Math.max(0, total - (fastest.get(stage) ?? total));
       }
-      const timing: RenderTiming = { total: Math.round(total), stages, measured_at: new Date().toISOString() };
-      into.put(library.id, rendition, timing);
+      const timing = scaledToReference(
+        { total, stages, measured_at: new Date().toISOString() },
+        photo.width * photo.height,
+      );
+      into.put(rendition, timing);
       return timing;
     } finally {
       on.close();

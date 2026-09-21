@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { OrderingSchema, RenditionSourceSchema, IdSchema } from './common';
-import { OptionalStagesSchema, RenderTimingsSchema } from './render_stages';
+import { OptionalStagesSchema } from './render_stages';
 
 // One folder name, not a path: it names the library's single bin, at its root,
 // and the rest of that bin's layout mirrors the folders photographs came from
@@ -61,9 +61,6 @@ export const LibrarySchema = z.object({
   // `max` is what gets pixel-peeped. Not retroactive, like every setting in this panel.
   render_skip_full: OptionalStagesSchema.default([]),
   render_skip_max: OptionalStagesSchema.default([]),
-  // What those renders were measured to cost on this device, where a benchmark has run. Read
-  // rather than set: the panel shows estimates until it has one of these to show instead.
-  render_timings: RenderTimingsSchema.default({}),
   include_subfolders: z.boolean().default(true),
   // Whether JPEG, PNG, HEIC and AVIF are photographs here. Off by default: beside
   // a folder of RAWs they are usually the camera's own copies of frames the

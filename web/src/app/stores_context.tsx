@@ -117,7 +117,7 @@ function build(): { stores: Stores; presenters: Presenters } {
   const sidebar = new SidebarPresenter(stores.sidebar);
   const shoots = new ShootsPresenter(stores.shoots, sidebar);
   const albums = new AlbumsPresenter(stores.albums);
-  const appSettings = new AppSettingsPresenter(stores.appSettings);
+  const appSettings = new AppSettingsPresenter(stores.appSettings, toasts);
   // A finished scan moves the library's photo count, and sorting a grid edits
   // the collection it is of, so both write through the presenter that owns it.
   const libraries = new LibrariesPresenter(stores.libraries, toasts);

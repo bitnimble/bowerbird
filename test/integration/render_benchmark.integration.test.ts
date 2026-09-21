@@ -5,16 +5,15 @@
 // failed or as a saving of nothing.
 //   docker exec bowerbird-dev bun test test/integration
 import { expect, test } from 'bun:test';
-import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { Database } from '../../src/db/driver';
-import { runMigrations } from '../../src/db/migrate';
+import { join } from 'node:path';
 import type { Library } from '../../src/schemas/libraries';
 import { fileRecipe } from '../../src/schemas/recipes';
 import { OPTIONAL_STAGES } from '../../src/schemas/render_stages';
 import { DEFAULT_SETTINGS, type Settings } from '../../src/schemas/settings';
 import { ProcessingService } from '../../src/services/processing/pipeline/processing_service';
-import { RenderTimingsRepository } from '../../src/services/processing/renditions/render_timings_repository';
+import { RenderTimingsFile } from '../../src/services/processing/renditions/render_timings_file';
 import type { PhotoPathsRepository } from '../../src/services/photos/paths/photo_paths_repository';
 import type { SettingsRepository } from '../../src/services/settings/settings_repository';
 import { getDataPath } from '../../src/utils/paths';
@@ -32,7 +31,6 @@ const library: Library = {
   rendition_hdr: true,
   render_skip_full: [],
   render_skip_max: [],
-  render_timings: {},
   include_subfolders: true,
   include_non_raw: false,
   auto_stack: true,
@@ -42,9 +40,17 @@ const library: Library = {
   photo_count: 1,
 };
 
-// The one photograph the benchmark renders, handed over without a catalogue behind it.
+// The one photograph the benchmark renders, handed over without a catalogue behind it. Its stated
+// size is the frame's own, so what comes back is what was timed rather than something scaled.
 const paths = {
-  firstFileIn: () => ({ id: PHOTO, library_id: library.id, shoot_id: null, recipe: fileRecipe('DSC02981.ARW') }),
+  aFileToBenchmark: () => ({
+    id: PHOTO,
+    library_id: library.id,
+    shoot_id: null,
+    recipe: fileRecipe('DSC02981.ARW'),
+    width: 6000,
+    height: 4000,
+  }),
 } as unknown as PhotoPathsRepository;
 
 function service(): ProcessingService {
@@ -54,16 +60,14 @@ function service(): ProcessingService {
     paths,
     {} as ConstructorParameters<typeof ProcessingService>[2],
     { get: () => settings } as SettingsRepository,
+    () => null,
+    () => library,
   );
 }
 
-// A row of its own, so the library the timings hang off exists for the foreign key.
-function timings(): RenderTimingsRepository {
-  const db = new Database(':memory:');
-  db.exec('PRAGMA foreign_keys = ON;');
-  runMigrations(db);
-  db.query(`INSERT INTO libraries (id, root_path, name) VALUES (?, ?, 'lib')`).run(library.id, library.root_path);
-  return new RenderTimingsRepository(db);
+// Under a scratch directory of its own rather than the app's, which no test should be writing to.
+function timings(): RenderTimingsFile {
+  return new RenderTimingsFile(join(mkdtempSync(join(tmpdir(), 'bowerbird-timings-')), 'render_timings.json'));
 }
 
 const scratchDirs = (): string[] => readdirSync(tmpdir()).filter((entry) => entry.startsWith('bowerbird-benchmark-'));
@@ -72,9 +76,9 @@ test('every optional stage is priced, and nothing of the photograph is written',
   const into = timings();
   const before = scratchDirs();
   // A measurement of another rendition, to prove this one files beside it rather than over it.
-  into.put(library.id, 'max', { total: 999, stages: { denoise: 1 }, measured_at: '2026-01-01T00:00:00.000Z' });
+  into.put('max', { total: 999, stages: { denoise: 1 }, measured_at: '2026-01-01T00:00:00.000Z' });
   try {
-    const timing = await service().benchmarkRender(library, 'full', into);
+    const timing = await service().benchmarkRender('full', into);
 
     expect(timing.total).toBeGreaterThan(0);
     // Every stage answers, whether or not it cost anything on this frame: a missing key reads as
@@ -86,8 +90,8 @@ test('every optional stage is priced, and nothing of the photograph is written',
     // stopped rendering cold would report nothing for it while every other stage still read.
     expect(timing.stages.match).toBeGreaterThan(0);
 
-    // Filed under the library and the rendition, beside the one that was already there.
-    const filed = into.forLibrary(library.id);
+    // Filed under the rendition, beside the one that was already there.
+    const filed = into.read();
     expect(filed.full?.total).toBe(timing.total);
     expect(filed.max?.total).toBe(999);
 

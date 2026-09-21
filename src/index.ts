@@ -8,7 +8,7 @@ import { applyErrorHandler } from './api/error_handler';
 import { LibrariesApi } from './api/libraries/libraries_api';
 import { assertNoDataDirectoryOverlap, LibrariesService } from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
-import { RenderTimingsRepository } from './services/processing/renditions/render_timings_repository';
+import { RenderTimingsFile } from './services/processing/renditions/render_timings_file';
 import { PhotosApi } from './api/photos/photos_api';
 import { PhotoCompositesRepository } from './services/photos/composites/photo_composites_repository';
 import { PhotoListingRepository } from './services/photos/listing/photo_listing_repository';
@@ -103,7 +103,7 @@ const db = createDatabase(config.dbPath);
 
 const settingsRepo = new SettingsRepository(db);
 const librariesRepo = new LibrariesRepository(db);
-const renderTimingsRepo = new RenderTimingsRepository(db);
+const renderTimings = new RenderTimingsFile();
 // After the repository exists, because it reads every library's root. `DATA_DIR`
 // is an environment variable, so a catalogue that was valid yesterday can be
 // started against a data directory that now swallows one of its roots (§6).
@@ -277,14 +277,8 @@ scanService.onSettled((libraryId, changed) => {
   }
 });
 
-const librariesApi = new LibrariesApi(
-  librariesService,
-  scanService,
-  folderRulesRepo,
-  shootsService,
-  (libraryId) => stacksService.detect(libraryId),
-  (libraryId, rendition) =>
-    processingService.benchmarkRender(librariesService.get(libraryId), rendition, renderTimingsRepo),
+const librariesApi = new LibrariesApi(librariesService, scanService, folderRulesRepo, shootsService, (libraryId) =>
+  stacksService.detect(libraryId),
 );
 const photosApi = new PhotosApi(photoReadService, photoMutationService, photoRenditionService, processingService);
 const albumsApi = new AlbumsApi(albumsService, photoReadService);
@@ -388,7 +382,11 @@ app.use(route(PathSegment.any()), async (c, next) => {
   requestLog[level](`${c.req.method} ${c.req.path}`, { status, ms });
 });
 app.route(route(PathSegment.api(), PathSegment.events()), eventsApi.routes);
-app.route(route(PathSegment.api(), PathSegment.settings()), new SettingsApi(settingsRepo).routes);
+app.route(
+  route(PathSegment.api(), PathSegment.settings()),
+  new SettingsApi(settingsRepo, renderTimings, (rendition) => processingService.benchmarkRender(rendition, renderTimings))
+    .routes,
+);
 app.route(route(PathSegment.api(), PathSegment.updates()), new UpdatesApi(new UpdateService()).routes);
 app.route(route(PathSegment.api(), PathSegment.browse()), new BrowseApi().routes);
 app.route(route(PathSegment.api(), PathSegment.libraries()), librariesApi.routes);

@@ -103,6 +103,10 @@ export class SinglePhotoRenderer {
    * skips the camera match, the noise fit and the levels - and the first round writes that file
    * into the very directory the rest would read it from. Without this only the first round is cold
    * and the camera match measures as costing nothing.
+   *
+   * HDR and the camera match are asked for rather than read off the library and the settings, for
+   * the reason the sensor is scaled away: one machine has one answer, and a figure that also
+   * depended on how whichever catalogue the photograph came from is configured would not be it.
    */
   benchmarkJob(
     rawFilePath: string,
@@ -112,8 +116,8 @@ export class SinglePhotoRenderer {
     dataPath: string,
     skip: readonly OptionalStage[],
   ): RenditionJob {
-    return this.oneRendition(rawFilePath, photoId, library, rendition, library.rendition_hdr, 'render', true, skip, dataPath)
-      .job;
+    const { job } = this.oneRendition(rawFilePath, photoId, library, rendition, true, 'render', true, skip, dataPath);
+    return { ...job, matchEmbeddedJpeg: !skip.includes('match') };
   }
 
   private oneRendition(

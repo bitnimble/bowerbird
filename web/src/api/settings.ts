@@ -4,6 +4,13 @@ import {
   type UpdateSettingsRequest,
   UpdateSettingsRequestSchema,
 } from '../../../src/schemas/settings';
+import {
+  RenderTimingSchema,
+  RenderTimingsSchema,
+  type RenderTiming,
+  type RenderTimings,
+  type RenderedRendition,
+} from '../../../src/schemas/render_stages';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { request } from './request';
 
@@ -17,4 +24,16 @@ export const settingsApi = {
   // with the database about what "default" means.
   getDefaults: (): Promise<Settings> =>
     request(SettingsSchema, 'GET', route(PathSegment.api(), PathSegment.settings(), PathSegment.defaults())),
+  // What a render costs on the machine the server is on, stage by stage. Empty until somebody
+  // has measured one.
+  renderTimings: (): Promise<RenderTimings> =>
+    request(RenderTimingsSchema, 'GET', route(PathSegment.api(), PathSegment.settings(), PathSegment.renderTimings())),
+  // Measures it now: several renders of one photograph, so it answers in seconds on a `full` and
+  // in tens of them on a `max`.
+  benchmarkRender: (rendition: RenderedRendition): Promise<RenderTiming> =>
+    request(
+      RenderTimingSchema,
+      'POST',
+      `${route(PathSegment.api(), PathSegment.settings(), PathSegment.renderTimings(), PathSegment.benchmark())}?rendition=${rendition}`,
+    ),
 };

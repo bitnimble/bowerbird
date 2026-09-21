@@ -7,7 +7,7 @@ import { librariesApi } from '../../api/libraries';
 import { ApiError } from '../../api/request';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { LibrariesPresenterStrings } from './libraries_presenter.strings';
-import { benchmarkKey, type LibrariesStore } from './libraries_store';
+import type { LibrariesStore } from './libraries_store';
 
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : (err as Error).message;
@@ -98,32 +98,6 @@ export class LibrariesPresenter {
       : skipped.includes(stage) ? skipped
       : [...skipped, stage];
     await this.update(libraryId, rendition === 'full' ? { render_skip_full: next } : { render_skip_max: next });
-  }
-
-  /**
-   * Times this library's own render here, so the panel stops quoting one machine's estimates.
-   *
-   * Minutes on a `max`. The list is re-read afterwards because the answer is filed under the
-   * library, which is what the panel draws from.
-   */
-  async benchmarkRender(libraryId: string, rendition: RenderedRendition): Promise<void> {
-    if (this.store.isBenchmarking(libraryId, rendition)) return;
-    this.markBenchmarking(libraryId, rendition, true);
-    try {
-      await librariesApi.benchmarkRender(libraryId, rendition);
-      await this.load();
-    } catch (err) {
-      this.toasts.showError(LibrariesPresenterStrings.couldNotBenchmark(), message(err));
-    } finally {
-      this.markBenchmarking(libraryId, rendition, false);
-    }
-  }
-
-  @action.bound
-  private markBenchmarking(libraryId: string, rendition: RenderedRendition, running: boolean): void {
-    const key = benchmarkKey(libraryId, rendition);
-    if (running) this.store.benchmarking.add(key);
-    else this.store.benchmarking.delete(key);
   }
 
   // Automatic photo stacking (§19.4). None of the three is retroactive: they

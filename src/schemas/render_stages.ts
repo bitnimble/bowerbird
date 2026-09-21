@@ -54,13 +54,34 @@ export const RenderTimingSchema = z.object({
 });
 export type RenderTiming = z.infer<typeof RenderTimingSchema>;
 
-/** What a benchmark has measured of one library, by rendition. Absent is nothing measured yet. */
+/** What a benchmark has measured on this machine, by rendition. Absent is nothing measured yet. */
 export const RenderTimingsSchema = z.partialRecord(RenderedRenditionSchema, RenderTimingSchema);
 export type RenderTimings = z.infer<typeof RenderTimingsSchema>;
 
+/** The frame every figure here is expressed against: 6000x4000, a common full-frame mirrorless. */
+export const REFERENCE_PIXELS = 6000 * 4000;
+
+/**
+ * A measurement of a frame of `pixels` as the same render of {@link REFERENCE_PIXELS} would read.
+ *
+ * One machine has one answer, so what a stage costs cannot also depend on which photograph the
+ * benchmark happened to find. A stage is a pass over the frame, so its cost goes with the frame's
+ * area - true of the decode, the denoise, the demosaic and the encode, and roughest on the camera
+ * match, whose fit is over a fixed number of pairs however large the sensor.
+ */
+export function scaledToReference(timing: RenderTiming, pixels: number): RenderTiming {
+  const scale = REFERENCE_PIXELS / pixels;
+  return {
+    ...timing,
+    total: Math.round(timing.total * scale),
+    stages: Object.fromEntries(Object.entries(timing.stages).map(([stage, ms]) => [stage, Math.round(ms * scale)])),
+  };
+}
+
 /**
  * What a stage costs before anybody has measured one here: `bench.budget.json`'s DSC02981 on the
- * discrete adapter, the optional rows from a `full` benchmark of that frame.
+ * discrete adapter, the optional rows from a `full` benchmark of that frame - which is 6000x4000,
+ * so these are already on {@link REFERENCE_PIXELS} and a measurement replaces them like for like.
  *
  * Wrong on any machine but that one, which is what the Measure button exists to fix, so a number
  * here is worth no more than the one it replaces. `dust` and `sharpen` read as nothing on that

@@ -1,13 +1,21 @@
-import { runInAction } from 'mobx';
+import { action, runInAction } from 'mobx';
+import { type RenderedRendition } from '../../../../src/schemas/render_stages';
 import { type Settings, type UpdateSettingsRequest, type ViewerRendition, type ViewerRenditionMode } from '../../../../src/schemas/settings';
 import { settingsApi } from '../../api/settings';
+import { ApiError } from '../../api/request';
+import type { ToastsPresenter } from '../toasts/toasts_presenter';
+import { AppSettingsPresenterStrings } from './app_settings_presenter.strings';
 import type { AppSettingsStore } from './app_settings_store';
 
 export class AppSettingsPresenter {
-  constructor(private readonly store: AppSettingsStore) {}
+  constructor(
+    private readonly store: AppSettingsStore,
+    private readonly toasts: ToastsPresenter,
+  ) {}
 
   private loaded = false;
   private inFlight: Promise<void> | null = null;
+  private loadedTimings = false;
 
   async load(): Promise<void> {
     if (this.loaded) return;
@@ -32,6 +40,45 @@ export class AppSettingsPresenter {
       // opening at its own rendition is better than not opening. Without the
       // defaults the settings page simply offers nothing to reset.
     }
+  }
+
+  /**
+   * Once per session, not once per library: the panel is drawn under every library in the list and
+   * what it reads belongs to the machine, so each of those mounting would otherwise ask again.
+   */
+  async loadRenderTimings(): Promise<void> {
+    if (this.loadedTimings) return;
+    this.loadedTimings = true;
+    try {
+      const timings = await settingsApi.renderTimings();
+      runInAction(() => (this.store.renderTimings = timings));
+    } catch {
+      // Non-fatal for `fetch`'s reason: the panel quotes estimates until it has a measurement.
+      this.loadedTimings = false;
+    }
+  }
+
+  /** Times a render here, so the panel stops quoting one machine's estimates. Minutes on a `max`. */
+  async benchmarkRender(rendition: RenderedRendition): Promise<void> {
+    if (this.store.isBenchmarking(rendition)) return;
+    this.markBenchmarking(rendition, true);
+    try {
+      const timing = await settingsApi.benchmarkRender(rendition);
+      runInAction(() => (this.store.renderTimings = { ...this.store.renderTimings, [rendition]: timing }));
+    } catch (err) {
+      this.toasts.showError(
+        AppSettingsPresenterStrings.couldNotBenchmark(),
+        err instanceof ApiError ? err.message : (err as Error).message,
+      );
+    } finally {
+      this.markBenchmarking(rendition, false);
+    }
+  }
+
+  @action.bound
+  private markBenchmarking(rendition: RenderedRendition, running: boolean): void {
+    if (running) this.store.benchmarking.add(rendition);
+    else this.store.benchmarking.delete(rendition);
   }
 
   async update(patch: UpdateSettingsRequest): Promise<void> {

@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Timer } from 'lucide-react';
 import { type Library } from '../../../../src/schemas/libraries';
 import {
@@ -11,7 +11,7 @@ import {
   type RenderStage,
   type RenderedRendition,
 } from '../../../../src/schemas/render_stages';
-import { useLibrariesStore, usePresenters } from '../../app/stores_context';
+import { useAppSettingsStore, usePresenters } from '../../app/stores_context';
 import { renditionLabel } from '../photos/renditions';
 import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
 import { Button } from '../../ui/button';
@@ -66,15 +66,19 @@ const RENDITION_TABS: Option<RenderedRendition>[] = RENDERED_RENDITIONS.map((ren
  * Per rendition because the two are looked at differently: `full` is what the viewer opens and
  * `max` is what gets pixel-peeped, so a library may keep the camera match on one and trade it away
  * on the other. A stage with no checkbox is one a render cannot do without.
+ *
+ * What the stages run is this library's; what they cost is the machine's, measured once against a
+ * full-frame sensor rather than once per catalogue.
  */
 export const RenderStagesPanel = observer(function RenderStagesPanel({ library }: { library: Library }): JSX.Element {
   const [rendition, setRendition] = useState<RenderedRendition>('full');
-  const store = useLibrariesStore();
-  const measured = library.render_timings[rendition];
-  const { libraries } = usePresenters();
+  const settings = useAppSettingsStore();
+  const { appSettings, libraries } = usePresenters();
+  useEffect(() => void appSettings.loadRenderTimings(), [appSettings]);
+  const measured = settings.renderTimings[rendition];
   const ms = stageMs(rendition, measured);
   const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
-  const busy = store.isBenchmarking(library.id, rendition);
+  const busy = settings.isBenchmarking(rendition);
 
   return (
     <Panel title={SettingsStrings.renderStages()}>
@@ -113,7 +117,7 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
           disabled={busy}
           aria-busy={busy}
           title={busy ? SettingsStrings.measureStagesBusy() : undefined}
-          onClick={() => void libraries.benchmarkRender(library.id, rendition)}
+          onClick={() => void appSettings.benchmarkRender(rendition)}
         >
           <Timer size={ICON} />
           {busy ? SettingsStrings.measuringStages() : SettingsStrings.measureStages()}

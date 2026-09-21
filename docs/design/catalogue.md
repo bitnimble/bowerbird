@@ -461,7 +461,6 @@ export const LibrarySchema = z.object({
   rendition_hdr: z.boolean(),
   render_skip_full: OptionalStagesSchema,      // stages left out of each render (§10.1)
   render_skip_max: OptionalStagesSchema,
-  render_timings: RenderTimingsSchema,         // read-only: what a benchmark measured here
   include_subfolders: z.boolean(),
   include_non_raw: z.boolean(),
   last_synced_at: z.string().nullable(),
@@ -645,15 +644,20 @@ Generated files live **outside every library root**, under `DATA_DIR` (§15), on
 ### Structure
 
 ```
-<DATA_DIR>/<library id>/
-├── renditions/         # Derived copies of a photo (§10.1)
-│   ├── grid/           # 800px AVIF, the library grid; always SDR
-│   ├── full/           # 3840px AVIF, the photo view
-│   ├── full-hdr/       # the same, PQ
-│   ├── max/            # native-resolution AVIF (§10.5)
-│   └── max-hdr/
-│       └── <photo id>.avif   # every rendition is named by photo id
+<DATA_DIR>/
+├── render_timings.json       # What a render costs on this machine, stage by stage (§10.1)
+└── <library id>/
+    └── renditions/           # Derived copies of a photo (§10.1)
+        ├── grid/             # 800px AVIF, the library grid; always SDR
+        ├── full/             # 3840px AVIF, the photo view
+        ├── full-hdr/         # the same, PQ
+        ├── max/              # native-resolution AVIF (§10.5)
+        └── max-hdr/
+            └── <photo id>.avif   # every rendition is named by photo id
 ```
+
+The timings file is the one thing in here that is not a library's: it describes this machine, so it
+sits beside the subtrees rather than inside one.
 
 ### Path Resolution
 

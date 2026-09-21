@@ -81,6 +81,7 @@ export const PathSegment = {
   refreshMetadata: segment('refresh-metadata'),
   remove: segment('remove'),
   removal: segment('removal'),
+  renderTimings: segment('render-timings'),
   rendition: segment('rendition'),
   renditions: segment('renditions'),
   replicas: segment('replicas'),

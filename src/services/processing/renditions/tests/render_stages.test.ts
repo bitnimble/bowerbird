@@ -1,11 +1,14 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, afterEach, beforeEach } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Database } from '../../../../db/driver';
 import { runMigrations } from '../../../../db/migrate';
 import { AS_METERED } from '../../pipeline/developed';
 import { LibrariesRepository } from '../../../libraries/libraries_repository';
-import { ESTIMATED_MS, stageMs } from '../../../../schemas/render_stages';
+import { ESTIMATED_MS, REFERENCE_PIXELS, scaledToReference, stageMs } from '../../../../schemas/render_stages';
 import { readStages, renditionSkips, withStagesOff, writeStages } from '../render_stages';
-import { RenderTimingsRepository } from '../render_timings_repository';
+import { RenderTimingsFile } from '../render_timings_file';
 
 const LIB = 'lib';
 
@@ -75,14 +78,31 @@ describe('what a stage is said to cost', () => {
   });
 });
 
+// One machine has one answer, so a figure cannot also depend on which body the photograph the
+// benchmark found came from: measured on half the reference sensor, a stage reads as twice what it
+// took. Without this, the same machine would quote a different cost per catalogue.
+describe('scaling a measurement to the reference sensor', () => {
+  const measured = { total: 800, stages: { match: 400, denoise: 30 }, measured_at: '2026-01-01T00:00:00.000Z' };
+
+  it('leaves a frame that is already the reference sensor alone', () => {
+    expect(scaledToReference(measured, REFERENCE_PIXELS)).toEqual(measured);
+  });
+
+  it('carries the total and every stage together', () => {
+    const scaled = scaledToReference(measured, REFERENCE_PIXELS / 2);
+    expect(scaled.total).toBe(1600);
+    expect(scaled.stages.match).toBe(800);
+    expect(scaled.stages.denoise).toBe(60);
+    expect(scaled.measured_at).toBe(measured.measured_at);
+  });
+});
+
 describe('the column the library holds them in', () => {
   let db: Database;
   let libraries: LibrariesRepository;
 
   beforeEach(() => {
     db = new Database(':memory:');
-    // The timings cascade off the library, which SQLite only enforces when asked.
-    db.exec('PRAGMA foreign_keys = ON;');
     runMigrations(db);
     db.query(`INSERT INTO libraries (id, root_path, name) VALUES (?, '/nowhere', 'Library')`).run(LIB);
     libraries = new LibrariesRepository(db);
@@ -98,26 +118,41 @@ describe('the column the library holds them in', () => {
     expect(libraries.getById(LIB)?.render_skip_max).toEqual(['denoise', 'match']);
     expect(libraries.getById(LIB)?.render_skip_full).toEqual([]);
   });
+});
 
-  // Filed per library and per rendition rather than merged into one stored value, so a benchmark
-  // that takes minutes cannot come back and overwrite what another one settled while it ran.
-  it('files a measurement beside the others rather than over them', () => {
-    const timings = new RenderTimingsRepository(db);
-    timings.put(LIB, 'full', { total: 800, stages: { match: 400 }, measured_at: '2026-01-01T00:00:00.000Z' });
-    timings.put(LIB, 'max', { total: 3000, stages: { denoise: 90 }, measured_at: '2026-01-02T00:00:00.000Z' });
-    timings.put(LIB, 'full', { total: 750, stages: { match: 380 }, measured_at: '2026-01-03T00:00:00.000Z' });
+describe('the file the measurements are kept in', () => {
+  let scratch: string;
+  let file: RenderTimingsFile;
 
-    expect(libraries.getById(LIB)?.render_timings).toEqual({
+  beforeEach(() => {
+    scratch = mkdtempSync(join(tmpdir(), 'bowerbird-timings-'));
+    file = new RenderTimingsFile(join(scratch, 'nested', 'render_timings.json'));
+  });
+
+  afterEach(() => rmSync(scratch, { recursive: true, force: true }));
+
+  it('reads as nothing measured before anything has been', () => {
+    expect(file.read()).toEqual({});
+  });
+
+  // Merged with what is on disk rather than with anything read at the start: a benchmark takes
+  // minutes, and the other rendition's may well land while it runs.
+  it('files a measurement beside the other rendition rather than over it', () => {
+    file.put('full', { total: 800, stages: { match: 400 }, measured_at: '2026-01-01T00:00:00.000Z' });
+    file.put('max', { total: 3000, stages: { denoise: 90 }, measured_at: '2026-01-02T00:00:00.000Z' });
+    file.put('full', { total: 750, stages: { match: 380 }, measured_at: '2026-01-03T00:00:00.000Z' });
+
+    expect(file.read()).toEqual({
       full: { total: 750, stages: { match: 380 }, measured_at: '2026-01-03T00:00:00.000Z' },
       max: { total: 3000, stages: { denoise: 90 }, measured_at: '2026-01-02T00:00:00.000Z' },
     });
   });
 
-  // The rows hang off the library, so removing one takes its measurements with it rather than
-  // leaving them for whichever library is minted with that id next.
-  it('loses the timings with the library they describe', () => {
-    new RenderTimingsRepository(db).put(LIB, 'full', { total: 800, stages: {}, measured_at: '2026-01-01T00:00:00.000Z' });
-    libraries.delete(LIB);
-    expect(db.query('SELECT COUNT(*) AS left FROM render_timings').get()).toEqual({ left: 0 });
+  // What it holds is an estimate shown in place of a measurement, so a file this build cannot
+  // parse must not be the reason a settings page will not open.
+  it('reads a file it cannot parse as nothing measured', () => {
+    file.put('full', { total: 800, stages: {}, measured_at: '2026-01-01T00:00:00.000Z' });
+    writeFileSync(join(scratch, 'nested', 'render_timings.json'), 'not json');
+    expect(file.read()).toEqual({});
   });
 });

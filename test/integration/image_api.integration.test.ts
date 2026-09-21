@@ -31,7 +31,6 @@ function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) 
     rendition_hdr: renditionHdr,
     render_skip_full: [],
     render_skip_max: [],
-    render_timings: {},
     include_subfolders: true,
     include_non_raw: false,
     auto_stack: true,

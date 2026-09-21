@@ -2,8 +2,7 @@ import type { Database } from '../../db/driver';
 import type { Ordering, RenditionSource } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
 import { readStages, writeStages } from '../processing/renditions/render_stages';
-import { RenderTimingsRepository } from '../processing/renditions/render_timings_repository';
-import type { OptionalStage, RenderedRendition, RenderTimings } from '../../schemas/render_stages';
+import type { OptionalStage, RenderedRendition } from '../../schemas/render_stages';
 import { stamp } from '../replication/stamps';
 
 /** The bin folder's identity, which is not on `Library` (§4.1). */
@@ -43,11 +42,7 @@ const SELECT = `SELECT l.id, l.root_path, l.bin_name, l.read_only, l.name, l.ord
   FROM libraries l`;
 
 export class LibrariesRepository {
-  private readonly timings: RenderTimingsRepository;
-
-  constructor(private readonly db: Database) {
-    this.timings = new RenderTimingsRepository(db);
-  }
+  constructor(private readonly db: Database) {}
 
   insert(
     library: Pick<
@@ -90,20 +85,17 @@ export class LibrariesRepository {
 
   getById(id: string): Library | null {
     const row = this.db.query(`${SELECT} WHERE l.id = ?`).get(id) as LibraryRow | null;
-    return row ? mapRow(row, this.timings.forLibrary(row.id)) : null;
+    return row ? mapRow(row) : null;
   }
 
   getByRootPath(rootPath: string): Library | null {
     const row = this.db.query(`${SELECT} WHERE l.root_path = ?`).get(rootPath) as LibraryRow | null;
-    return row ? mapRow(row, this.timings.forLibrary(row.id)) : null;
+    return row ? mapRow(row) : null;
   }
 
   list(): Library[] {
     const rows = this.db.query(`${SELECT} ORDER BY l.root_path`).all() as LibraryRow[];
-    // One query for every library's timings rather than one per row: a settings page reads the
-    // whole list, and most libraries have none at all.
-    const measured = this.timings.byLibrary();
-    return rows.map((row) => mapRow(row, measured.get(row.id) ?? {}));
+    return rows.map(mapRow);
   }
 
   setName(id: string, name: string): boolean {
@@ -201,7 +193,7 @@ export class LibrariesRepository {
   }
 }
 
-function mapRow(row: LibraryRow, timings: RenderTimings): Library {
+function mapRow(row: LibraryRow): Library {
   return {
     id: row.id,
     root_path: row.root_path,
@@ -213,7 +205,6 @@ function mapRow(row: LibraryRow, timings: RenderTimings): Library {
     rendition_hdr: row.rendition_hdr === 1,
     render_skip_full: readStages(row.render_skip_full),
     render_skip_max: readStages(row.render_skip_max),
-    render_timings: timings,
     include_subfolders: row.include_subfolders === 1,
     include_non_raw: row.include_non_raw === 1,
     auto_stack: row.auto_stack === 1,

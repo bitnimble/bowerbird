@@ -62,7 +62,7 @@ describe('PhotoMutationService.delete', () => {
       const lib: Library = { id: 'photos-delete', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], render_timings: {},
+  render_skip_full: [], render_skip_max: [],
   include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       // getBasicByIds, not getById: the delete reads the four columns it needs
@@ -107,7 +107,7 @@ describe('PhotoMutationService.delete', () => {
       const lib: Library = { id: 'lib', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], render_timings: {},
+  render_skip_full: [], render_skip_max: [],
   include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
       const markDeleted = jest.fn();
       const setFilePath = jest.fn();
@@ -143,7 +143,7 @@ describe('PhotoMutationService.delete', () => {
       const lib: Library = { id: 'lib', root_path: root, bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'added_asc',
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
-  render_skip_full: [], render_skip_max: [], render_timings: {},
+  render_skip_full: [], render_skip_max: [],
   include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, recipe: fileRecipe('a.arw') };
       const { service } = build({
@@ -194,7 +194,6 @@ describe('PhotoMutationService.delete', () => {
         rendition_hdr: false,
         render_skip_full: [],
         render_skip_max: [],
-        render_timings: {},
         include_subfolders: true,
         include_non_raw: false,
         auto_stack: true,

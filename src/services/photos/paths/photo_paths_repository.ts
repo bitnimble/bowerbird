@@ -89,22 +89,25 @@ export class PhotoPathsRepository {
       return row == null ? null : withRecipe(row);
     }
   /**
-     * A photograph of this library to time a render against (`render_benchmark.ts`).
+     * A photograph to time a render against (`render_benchmark.ts`), from whichever library has one.
      *
      * One file rather than a composite, because what is being timed is the pipeline a rendition
      * takes and a canvas is several of those with an assembly on top. The first by id rather than a
-     * sampled one, so running the benchmark twice measures the same photograph and the second answer
-     * is comparable with the first - a library of mixed bodies would otherwise report a different
-     * decode each time and read as noise.
+     * sampled one, so running the benchmark twice measures the same photograph and the second
+     * answer is comparable with the first.
+     *
+     * Its size comes with it because the answer is scaled to one reference sensor
+     * (`scaledToReference`), which is what lets a catalogue of mixed bodies have a single figure
+     * for what this machine costs.
      */
-    firstFileIn(libraryId: string): BasicPhoto | null {
+    aFileToBenchmark(): (BasicPhoto & { width: number; height: number }) | null {
       const row = this.db
         .query(
-          `SELECT ${BASIC_COLS} FROM photos
-           WHERE library_id = ? AND is_deleted = 0 AND is_missing = 0 AND ${IS_A_FILE}
+          `SELECT ${BASIC_COLS}, width, height FROM photos
+           WHERE is_deleted = 0 AND is_missing = 0 AND width > 0 AND height > 0 AND ${IS_A_FILE}
            ORDER BY id LIMIT 1`,
         )
-        .get(libraryId) as BasicPhoto | null;
+        .get() as (BasicPhoto & { width: number; height: number }) | null;
       return row == null ? null : withRecipe(row);
     }
   /** Which library a stack is in, for the paths a panorama's own files sit under. */

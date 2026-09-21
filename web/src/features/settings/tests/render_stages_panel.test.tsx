@@ -1,10 +1,11 @@
 // What the panel offers: a row per stage, a checkbox only on the ones a render can do without,
-// and a cost beside each. The tab decides which rendition's list the checkboxes read.
-import { afterEach, expect, test } from 'bun:test';
+// and a cost beside each. The tab decides which rendition's list the checkboxes read, and what a
+// stage costs is the machine's rather than this library's.
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { type Library } from '../../../../../src/schemas/libraries';
 import { type RenderTimings } from '../../../../../src/schemas/render_stages';
 import { ESTIMATED_MS } from '../../../../../src/schemas/render_stages';
-import { librariesApi } from '../../../api/libraries';
+import { settingsApi } from '../../../api/settings';
 import { restoreApiAfterTests } from '../../../test_api';
 import { registerDom } from '../../../test_dom';
 
@@ -22,13 +23,17 @@ const LIBRARY = {
   root_path: '/nowhere/reef',
   render_skip_full: ['match'],
   render_skip_max: [],
-  render_timings: {},
 } as unknown as Library;
 
+beforeEach(() => {
+  settingsApi.renderTimings = () => Promise.resolve({});
+});
+
 async function open(timings: RenderTimings = {}): Promise<void> {
+  settingsApi.renderTimings = () => Promise.resolve(timings);
   render(
     <StoresProvider>
-      <RenderStagesPanel library={{ ...LIBRARY, render_timings: timings }} />
+      <RenderStagesPanel library={LIBRARY} />
     </StoresProvider>,
   );
   await act(async () => {});
@@ -78,14 +83,12 @@ test('a measurement displaces the estimate, and says so', async () => {
 test('the button says it is working and refuses a second run while one is in flight', async () => {
   let finish = (): void => {};
   const runs: string[] = [];
-  librariesApi.benchmarkRender = (id, rendition) => {
-    runs.push(`${id}:${rendition}`);
+  settingsApi.benchmarkRender = (rendition) => {
+    runs.push(rendition);
     return new Promise((resolve) => {
       finish = () => resolve({ total: 1, stages: {}, measured_at: new Date().toISOString() });
     });
   };
-  librariesApi.list = () => Promise.resolve([LIBRARY]);
-  librariesApi.getDefaults = () => Promise.resolve({} as never);
   await open();
 
   await act(async () => {
@@ -98,7 +101,7 @@ test('the button says it is working and refuses a second run while one is in fli
   await act(async () => {
     fireEvent.click(measuring);
   });
-  expect(runs).toEqual(['lib:full']);
+  expect(runs).toEqual(['full']);
 
   await act(async () => {
     finish();
