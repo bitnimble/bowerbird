@@ -89,10 +89,22 @@ export class PhotoRenditionService {
       return updated;
     }
   async buildRendition(photoId: string, rendition: Rendition, force = false): Promise<void> {
+      const fields = { photo: photoId, rendition, forced: force };
+      log.info('rendition requested', fields);
       const key = `${photoId}:${rendition}:${force}`;
       const running = this.building.get(key);
-      if (running != null) return running;
-      const build = this.renderRendition(photoId, rendition, force).finally(() => this.building.delete(key));
+      if (running != null) {
+        log.info('rendition already building', fields);
+        return running;
+      }
+      const started = performance.now();
+      const build = this.renderRendition(photoId, rendition, force)
+        .then(() => log.info('rendition finished', { ...fields, ms: Math.round(performance.now() - started) }))
+        .catch((err: unknown) => {
+          log.error('rendition failed', { ...fields, ms: Math.round(performance.now() - started), err });
+          throw err;
+        })
+        .finally(() => this.building.delete(key));
       this.building.set(key, build);
       return build;
     }
@@ -148,13 +160,16 @@ export class PhotoRenditionService {
       // Nothing queues a `max`, so a rendition asked for by name is the one path where a
       // stale one is noticed at all.
       const rebuild = force || this.stale(photo.id, rendition, hdr);
-      if (!rebuild && existsSync(output)) return;
+      const cached = existsSync(output);
+      log.info('rendition cache', { photo: photo.id, rendition, hdr, cache: force ? 'forced' : rebuild ? 'stale' : cached ? 'hit' : 'miss' });
+      if (!rebuild && cached) return;
   
       // The arm of the camera view that passes through: the bytes are inside the file this row
       // names and nothing builds them (§10.2), so "make sure it is there" is answered by the file
       // being there. Built instead it would be a render of the RAW filed under the one name that
       // promises it is not one.
       if (rendition === 'embedded' && !isComposite(photo.recipe)) {
+        log.info('rendition opening original', { photo: photo.id, rendition, source: 'embedded' });
         if ((await this.originals.open(library, photo)) == null) {
           throw new AppError('NOT_FOUND', `nothing on this device can build ${photo.id}`);
         }
@@ -171,6 +186,7 @@ export class PhotoRenditionService {
       // The rebuild's delete is in here rather than shared with the file path below, which must not
       // reach one until after the peer fall-back has had its go.
       if (isComposite(photo.recipe)) {
+        log.info('rendition opening originals', { photo: photo.id, rendition, source: 'composite' });
         // Every frame back on this disk before the merge is asked for: the renderer takes paths,
         // and one frame offloaded would otherwise be a decode failure rather than a picture.
         await this.originals.openAll(library, photo);
@@ -188,6 +204,7 @@ export class PhotoRenditionService {
   
       // Fetched back from the backup if this device has given its copy up (§14.4), which is what
       // makes an offloaded photograph open at all - slowly, once, and then as any other does.
+      log.info('rendition opening original', { photo: photo.id, rendition, source: 'original' });
       const raw = await this.originals.open(library, photo);
       if (raw == null) {
         // No original to build from: a peer's built copy is the §7.9 fall-back, cached at
@@ -195,6 +212,7 @@ export class PhotoRenditionService {
         // device that cannot rebuild still holds what it had: deleting first and asking a
         // peer second is how the one stale-but-real copy became a hole when no peer answered.
         if (this.fetchThrough != null) {
+          log.info('rendition fetching from peer', { photo: photo.id, rendition });
           await this.fetchThrough.ensureCurrent(photo.id, rendition);
           if (existsSync(output)) return;
         }
@@ -203,11 +221,10 @@ export class PhotoRenditionService {
       // The file *is* the cache, so rebuilding means removing it: the builder returns early
       // on a file that already exists, and would otherwise hand back the copy being rejected.
       if (rebuild) await deleteGeneratedFile(getDataPath(library), output);
-      const startedAt = Date.now();
+      log.info('rendition rendering', { photo: photo.id, rendition, hdr, source: 'original' });
       // The analysis lives outside the rendition cache, so without this a forced build is
       // re-encoded from the measurements the pipeline change under test was meant to move.
       await this.processing.renderOne(raw, photo.id, library, rendition, hdr, 'render', force);
-      log.info('rendition built on demand', { photo: photo.id, rendition, hdr, forced: force, ms: Date.now() - startedAt });
     }
   /**
      * Queues the rebuild an editor that never said it had closed would have asked for.

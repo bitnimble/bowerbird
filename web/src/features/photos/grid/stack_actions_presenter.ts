@@ -1,6 +1,7 @@
 import { action, runInAction } from 'mobx';
 import { type Ordering } from '../../../../../src/schemas/common';
 import { type CompositeKind, type PhotoSelection, type PhotoSummary, type PhotoTarget } from '../../../../../src/schemas/photos';
+import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import { compositesApi } from '../../../api/composites';
 import { photosApi } from '../../../api/photos';
 import { stacksApi } from '../../../api/stacks';
@@ -263,7 +264,7 @@ export class StackActionsPresenter {
    * server is asked for every band in one call: numbering rows costs an ordered
    * pass over the collection, and ten open bands must not mean ten of them.
    */
-  async replaceBands(): Promise<void> {
+  async replaceBands(activity: RequestActivity = 'interactive'): Promise<void> {
     const source = this.listing.source;
     const scope = this.bandScope();
     if (source == null || scope == null || this.store.expansions.size === 0) return;
@@ -277,7 +278,9 @@ export class StackActionsPresenter {
         // a stack stay drawn in its band until it is closed and opened again.
         Promise.all(
           keys.map((key) =>
-            (this.store.expansions.get(key)?.composite != null ? compositesApi.listFrames(key) : stacksApi.listPhotos(key, scope))
+            (this.store.expansions.get(key)?.composite != null
+              ? compositesApi.listFrames(key, undefined, activity)
+              : stacksApi.listPhotos(key, scope, undefined, activity))
               .then((photos) => [key, photos] as const)
               .catch(() => [key, null] as const),
           ),

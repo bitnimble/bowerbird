@@ -2,6 +2,7 @@ import { action, reaction, type IReactionDisposer } from 'mobx';
 import { type EvictResult, type Transfer } from '../../../../src/schemas/blobs';
 import { type EditConflict } from '../../../../src/schemas/photo_edits';
 import { type PhotoTarget } from '../../../../src/schemas/photos';
+import type { RequestActivity } from '../../../../src/schemas/request_activity';
 import { type AllPeersResponse, type BrowsedRemote, type PairedPeer, type PeersResponse, type ReachableAddress } from '../../../../src/schemas/replication';
 import { blobsApi } from '../../api/blobs';
 import { photoEditsApi } from '../../api/photo_edits';
@@ -47,7 +48,7 @@ export class ReplicationPresenter {
       // by every re-read, and an array is a new one each time whether or not a
       // library came or went.
       () => this.librariesStore.libraries.map((library) => library.id).join('\n'),
-      () => void this.reload(),
+      () => void this.reload('background'),
       { fireImmediately: true },
     );
   }
@@ -63,27 +64,27 @@ export class ReplicationPresenter {
     // A library this page does not have is one it has forgotten, or one it was
     // never shown; asking for its peers answers 404 into an error toast.
     if (!this.librariesStore.byId.has(libraryId)) return;
-    await this.loadPeers(libraryId);
+    await this.loadPeers(libraryId, 'background');
     // A divergence is made by a session another device started, so it is
     // announced rather than asked for - and the sidebar is where it lands (§5.3).
-    await this.loadConflicts();
+    await this.loadConflicts('background');
   }
 
   /** Every library that replicates, in one request, plus what they have diverged over. */
-  async reload(): Promise<void> {
+  async reload(activity: RequestActivity = 'interactive'): Promise<void> {
     try {
-      this.putAllPeers((await replicationApi.listAllPeers()).libraries);
+      this.putAllPeers((await replicationApi.listAllPeers(activity)).libraries);
     } catch (err) {
       this.toasts.showError(ReplicationPresenterStrings.couldNotReadDevices(), message(err));
       return;
     }
-    await this.loadConflicts();
+    await this.loadConflicts(activity);
   }
 
-  async loadPeers(libraryId: string): Promise<void> {
+  async loadPeers(libraryId: string, activity: RequestActivity = 'interactive'): Promise<void> {
     let answer: PeersResponse;
     try {
-      answer = await replicationApi.listPeers(libraryId);
+      answer = await replicationApi.listPeers(libraryId, activity);
     } catch (err) {
       this.toasts.showError(ReplicationPresenterStrings.couldNotReadDevices(), message(err));
       return;
@@ -206,9 +207,9 @@ export class ReplicationPresenter {
     }
   }
 
-  async loadConflicts(): Promise<void> {
+  async loadConflicts(activity: RequestActivity = 'interactive'): Promise<void> {
     try {
-      this.putConflicts(await photoEditsApi.listConflicts());
+      this.putConflicts(await photoEditsApi.listConflicts(undefined, activity));
     } catch (err) {
       this.toasts.showError(ReplicationPresenterStrings.couldNotReadConflicts(), message(err));
     }
@@ -369,7 +370,7 @@ export class ReplicationPresenter {
       const was = before.get(t.id);
       return t.direction === 'pull' && t.state === 'done' && was != null && was !== 'done';
     });
-    if (landed) await this.photos.reload();
+    if (landed) await this.photos.reload('background');
 
     if (transfers.some((t) => t.state === 'queued' || t.state === 'active')) {
       this.timer = setTimeout(() => void this.refreshTransfers(), POLL_MS);

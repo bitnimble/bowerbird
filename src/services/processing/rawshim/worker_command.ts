@@ -1,6 +1,6 @@
 import { readPhotoAnalysis } from '../analysis/photo_analysis_store';
 import type { CompositeWant, Job, JobTarget } from '../../../schemas/jobs';
-import type { CompositeJob, RenditionJob, RenditionTarget } from '../workers/processing_types';
+import type { CompositeJob, ProcessingStarted, RenditionJob, RenditionTarget } from '../workers/processing_types';
 
 // The job as the native side reads it.
 //
@@ -12,12 +12,14 @@ import type { CompositeJob, RenditionJob, RenditionTarget } from '../workers/pro
 // The analysis blobs are read *here*, in the worker, rather than passed in: they are 5kB a
 // photograph, and a path's worth of nothing crosses `postMessage` instead.
 
-export function toCommand(job: RenditionJob): Job {
+export function toCommand(job: RenditionJob, onAnalysis?: (cache: ProcessingStarted['analysisCache']) => void): Job {
+  const photoAnalysis = job.remeasure ? undefined : readPhotoAnalysis(job.dataPath, job.photoId);
+  onAnalysis?.(job.remeasure ? 'refresh' : photoAnalysis == null ? 'missing' : 'supplied');
   return {
     rawFilePath: job.rawFilePath,
     cameraMatch: job.cameraMatch,
     preserveSourceOrientation: job.preserveSourceOrientation,
-    photoAnalysis: job.remeasure ? undefined : readPhotoAnalysis(job.dataPath, job.photoId),
+    photoAnalysis,
     denoiseLuminance: job.denoiseLuminance,
     denoiseColour: job.denoiseColour,
     denoiser: job.denoiser,

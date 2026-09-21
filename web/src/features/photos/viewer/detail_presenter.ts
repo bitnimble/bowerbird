@@ -1,6 +1,7 @@
 import { photoEditsApi } from '../../../api/photo_edits';
 import { photosApi } from '../../../api/photos';
 import { newId } from '../../../../../src/schemas/id';
+import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import type { AppSettingsPresenter } from '../../settings/app_settings_presenter';
 import { sourceKey, type PhotoSource } from '../photos_store';
 import type { ListingStore } from '../grid/listing_store';
@@ -153,10 +154,10 @@ export class DetailPresenter {
   }
 
 
-  async refresh(): Promise<void> {
+  async refresh(activity: RequestActivity = 'interactive'): Promise<void> {
     const open = this.store.open;
     if (open == null) return;
-    const detail = await photosApi.get(open.id).catch(() => null);
+    const detail = await photosApi.get(open.id, activity).catch(() => null);
     // The re-read is of whatever was open when it started, which a step during
     // the round trip has already replaced.
     if (detail != null && this.isCurrent(detail.id)) this.viewer.rememberDetail(detail);

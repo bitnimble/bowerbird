@@ -1,5 +1,6 @@
 import { action, observable, runInAction } from 'mobx';
 import { type PhotoListResponse, type PhotoSummary } from '../../../../../src/schemas/photos';
+import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import { albumsApi } from '../../../api/albums';
 import { type PhotoListParams, photosApi } from '../../../api/photos';
 import { shootsApi } from '../../../api/shoots';
@@ -50,6 +51,7 @@ export class ListingPresenter {
   // is pending is answered by the one already coming rather than by another pass
   // (`refresh`).
   private queuedRefresh: Promise<void> | null = null;
+  private queuedRefreshActivity: RequestActivity = 'background';
   // The photo the run in hand was asked for. Observable, because the reaction
   // above compares against it.
   @observable accessor neighboursFor: string | null = null;
@@ -189,21 +191,24 @@ export class ListingPresenter {
   // cull key in the grid on the Active filter queues one verdict per keystroke,
   // and each of those was a full re-read of the same collection; a triage session
   // does the same thing once per round and again per closing write.
-  refresh(): Promise<void> {
+  refresh(activity: RequestActivity = 'interactive'): Promise<void> {
+    if (activity === 'interactive') this.queuedRefreshActivity = activity;
     const queued = this.queuedRefresh;
     if (queued != null) return queued;
     const next = this.refreshing.then(() => {
       // Cleared as this one starts, so a request arriving *during* it queues the
       // next pass rather than being answered by the one already reading.
       this.queuedRefresh = null;
-      return this.readAgain();
+      const nextActivity = this.queuedRefreshActivity;
+      this.queuedRefreshActivity = 'background';
+      return this.readAgain(nextActivity);
     });
     this.queuedRefresh = next.catch(() => undefined);
     this.refreshing = next.catch(() => undefined);
     return next;
   }
 
-  private async readAgain(): Promise<void> {
+  private async readAgain(activity: RequestActivity): Promise<void> {
     if (this.listing.source == null) return;
     // Where every row this client can name sat before the re-read. A scan
     // inserting under an open gallery renumbers positions, and the selection and
@@ -219,7 +224,7 @@ export class ListingPresenter {
     this.stackActions.clearStackMembers();
     this.invalidate();
     const blocks = this.refreshBlocks(held);
-    await this.ensureBlocks(blocks);
+    await this.ensureBlocks(blocks, activity);
     // Only the blocks that came back. A request that failed, or that a newer
     // generation overtook, left its old rows sitting where they were - sampling
     // those would report a move of zero that never happened.
@@ -229,7 +234,7 @@ export class ListingPresenter {
     // re-order or an import moves where a band is drawn instead of closing it
     // (§19.6.1). After the rebase, since both answer the same question about the
     // same re-read and the selection's is the one with a local answer.
-    await this.stackActions.replaceBands();
+    await this.stackActions.replaceBands(activity);
   }
 
   // What to re-read: what is on screen, plus the blocks the selection covers
@@ -280,15 +285,15 @@ export class ListingPresenter {
 
   // Requests whatever of these blocks is missing and drops what nothing needs
   // any more. Idempotent: a block already loading is left to its own request.
-  async ensureBlocks(blocks: number[]): Promise<void> {
+  async ensureBlocks(blocks: number[], activity?: RequestActivity): Promise<void> {
     if (this.listing.source == null) return;
     const needed = new Set(blocks);
     this.recent = [...blocks, ...this.recent.filter((block) => !needed.has(block))];
     this.evict(needed);
-    await Promise.all(blocks.filter((block) => !this.blocks.has(block)).map((block) => this.fetchBlock(block)));
+    await Promise.all(blocks.filter((block) => !this.blocks.has(block)).map((block) => this.fetchBlock(block, activity)));
   }
 
-  private async fetchBlock(block: number): Promise<void> {
+  private async fetchBlock(block: number, requestedActivity?: RequestActivity): Promise<void> {
     const source = this.listing.source;
     // Set before the first await, so two callers arriving in the same tick - the
     // reaction and whoever changed the filter it fired for - make one request.
@@ -309,7 +314,8 @@ export class ListingPresenter {
     this.needsCount = false;
 
     try {
-      const page = await this.fetchFor(source, this.params(block * BLOCK, BLOCK, counting), controller.signal);
+      const activity = requestedActivity ?? (counting && this.listing.rows.size === 0 ? 'interactive' : 'background');
+      const page = await this.fetchFor(source, this.params(block * BLOCK, BLOCK, counting), controller.signal, activity);
       if (controller.signal.aborted || generation !== this.generation) return;
       runInAction(() => {
         this.merge(block, page.photos);
@@ -435,22 +441,22 @@ export class ListingPresenter {
     this.rail.reset();
   }
 
-  fetchFor(source: PhotoSource, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> {
+  fetchFor(source: PhotoSource, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> {
     switch (source.kind) {
       case 'library':
-        return photosApi.listLibrary(source.libraryId, params, signal);
+        return photosApi.listLibrary(source.libraryId, params, signal, activity);
       case 'shoot':
-        return shootsApi.listPhotos(source.shootId, params, signal);
+        return shootsApi.listPhotos(source.shootId, params, signal, activity);
       case 'album':
-        return albumsApi.listPhotos(source.albumId, params, signal);
+        return albumsApi.listPhotos(source.albumId, params, signal, activity);
       case 'missing':
-        return photosApi.listMissing(source.libraryId, params, signal);
+        return photosApi.listMissing(source.libraryId, params, signal, activity);
       case 'no_shoot':
-        return photosApi.listLibrary(source.libraryId, { ...params, no_shoot: true }, signal);
+        return photosApi.listLibrary(source.libraryId, { ...params, no_shoot: true }, signal, activity);
       case 'bin':
         // include_deleted lifts the default exclusion, is_deleted narrows it back
         // to *only* the soft-deleted rows.
-        return photosApi.listLibrary(source.libraryId, { ...params, include_deleted: true, is_deleted: true }, signal);
+        return photosApi.listLibrary(source.libraryId, { ...params, include_deleted: true, is_deleted: true }, signal, activity);
     }
   }
 

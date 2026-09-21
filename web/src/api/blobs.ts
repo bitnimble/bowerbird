@@ -35,6 +35,8 @@ export const blobsApi = {
       TransfersSchema,
       'GET',
       `${route(PathSegment.api(), PathSegment.blobs(), PathSegment.transfers())}${libraryId == null ? '' : `?library_id=${libraryId}`}`,
+      undefined,
+      { activity: 'background' },
     ),
   pauseTransfer: (id: string): Promise<void> =>
     request(NothingSchema, 'POST', route(PathSegment.api(), PathSegment.blobs(), PathSegment.transfers(), id, PathSegment.pause())),

@@ -889,6 +889,7 @@ export function PhotoStage({
                   state={stateOf(source)}
                   zoomed={zoomed}
                   shown={source === visible}
+                  requested={source === chosen}
                   whole={zoomed && group.key === shownKey}
                   onDecoded={promote}
                   // Only a frame still being asked for. A retiring one is on its

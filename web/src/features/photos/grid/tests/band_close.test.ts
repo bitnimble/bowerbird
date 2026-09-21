@@ -5,6 +5,7 @@
 import { runInAction } from 'mobx';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { type PhotoSummary } from '../../../../../../src/schemas/photos';
+import type { RequestActivity } from '../../../../../../src/schemas/request_activity';
 import { photosApi } from '../../../../api/photos';
 import { stacksApi } from '../../../../api/stacks';
 import { PhotosPresenter } from '../../photos_presenter';
@@ -69,6 +70,23 @@ describe('a band whose row has stopped standing for a stack', () => {
     await presenter.replaceBands();
 
     expect(store.expansions.size).toBe(0);
+  });
+
+  test('an automatic re-read keeps band requests in the background', async () => {
+    const { store, presenter } = build(3);
+    const activities: (RequestActivity | undefined)[] = [];
+    photosApi.positions = () => Promise.resolve({ s1: [AT] });
+    stacksApi.listPhotos = (_id, _options, _signal, activity?: RequestActivity) => {
+      activities.push(activity);
+      return Promise.resolve(MEMBERS);
+    };
+    runInAction(() => {
+      store.expansions = new Map([['s1', { stackId: 's1', position: AT, photos: MEMBERS }]]);
+    });
+
+    await (presenter.replaceBands as (activity: RequestActivity) => Promise<void>)('background');
+
+    expect(activities).toEqual(['background']);
   });
 
   test('stays open when the reader opened it from that row themselves', async () => {

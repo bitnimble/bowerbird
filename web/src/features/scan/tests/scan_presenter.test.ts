@@ -45,6 +45,29 @@ test('the library list is re-read as the scan places its photos, not only once t
   expect(await loadsWhile('processing')).toBe(1);
 });
 
+test('scan polling marks grid reloads as background work', async () => {
+  const reload = jest.fn(async (_activity?: string) => {});
+  const presenter = new ScanPresenter(new ScanStore(), { reload }, { load: async () => {} });
+  try {
+    reporting('processing');
+    await presenter.watch('lib');
+    expect(reload).toHaveBeenCalledWith('background');
+    reporting('idle');
+    await presenter.watch('lib');
+    expect(reload.mock.calls).toEqual([['background'], ['background']]);
+  } finally { presenter.stop(); }
+});
+
+test('scan polling marks library refreshes as background work', async () => {
+  const load = jest.fn(async (_activity?: string) => {});
+  const presenter = new ScanPresenter(new ScanStore(), { reload: async () => {} }, { load });
+  try {
+    reporting('processing');
+    await presenter.watch('lib');
+    expect(load).toHaveBeenCalledWith('background');
+  } finally { presenter.stop(); }
+});
+
 // The long half, where the row set is settled and nothing the sidebar shows moves.
 test('the library list is left alone through the rendition phase', async () => {
   expect(await loadsWhile('rendition')).toBe(0);

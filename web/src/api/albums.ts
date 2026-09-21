@@ -9,6 +9,7 @@ import {
 } from '../../../src/schemas/albums';
 import { type PhotoListResponse, PhotoListResponseSchema, type PhotoTarget, PhotoTargetSchema } from '../../../src/schemas/photos';
 import { PathSegment, route } from '../../../src/schemas/route';
+import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { photoListQuery, type PhotoListParams } from './photos';
 import { NothingSchema, request } from './request';
 
@@ -34,12 +35,12 @@ export const albumsApi = {
       route(PathSegment.api(), PathSegment.albums(), id, PathSegment.photos()),
       PhotoTargetSchema.parse(target),
     ),
-  listPhotos: (id: string, params: PhotoListParams, signal?: AbortSignal): Promise<PhotoListResponse> =>
+  listPhotos: (id: string, params: PhotoListParams, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoListResponse> =>
     request(
       PhotoListResponseSchema,
       'GET',
       `${route(PathSegment.api(), PathSegment.albums(), id, PathSegment.photos())}${photoListQuery(params)}`,
       undefined,
-      signal,
+      { signal, activity: activity ?? (params.count === false ? 'background' : 'interactive') },
     ),
 };

@@ -37,7 +37,7 @@ export class EventsPresenter {
       open: (reconnect) => {
         if (!reconnect) return;
         this.photos.serverReachable();
-        void this.replication.reload();
+        void this.replication.reload('background');
       },
       rendition: (payload) => {
         // The announcement carries the row's new value rather than a bare "it changed", so

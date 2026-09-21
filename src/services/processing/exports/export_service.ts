@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AppError } from '../../../errors';
+import { Logger } from '../../../logger';
 import { EXPORT_FORMATS, exportFilename, honoured, type ExportOptions } from '../../../schemas/export';
 import { soleInputOf } from '../../../schemas/recipes';
 import { deleteScratchDirectory } from '../../../utils/deletions';
@@ -25,6 +26,7 @@ const SHARE_QUALITY = 90;
 // arms written as one file. Small beside a render, and never nothing - a bar that reaches the
 // end and then waits reads as a hung export.
 const ENCODE_SHARE = 0.1;
+const log = new Logger('export');
 
 // One photograph, rendered to the reader's own settings rather than the viewer's (§10.5).
 //
@@ -78,6 +80,28 @@ export class ExportService {
     onProgress?: (fraction: number) => void,
   ): Promise<ExportedFile> {
     const options = honoured(requested);
+    const started = performance.now();
+    log.info('export started', {
+      photo: photoId, format: options.format, longEdge: options.longEdge, quality: options.quality,
+      hdr: options.exportHdr, gainMap: options.gainMap, edits: options.includeEdits,
+      halfSize: options.halfSize, thumbnail: withThumbnail,
+    });
+    try {
+      const exported = await this.render(photoId, options, withThumbnail, onProgress);
+      log.info('export finished', { photo: photoId, format: options.format, bytes: exported.bytes.byteLength, ms: Math.round(performance.now() - started) });
+      return exported;
+    } catch (err) {
+      log.error('export failed', { photo: photoId, format: options.format, ms: Math.round(performance.now() - started), err });
+      throw err;
+    }
+  }
+
+  private async render(
+    photoId: string,
+    options: ExportOptions,
+    withThumbnail: boolean,
+    onProgress?: (fraction: number) => void,
+  ): Promise<ExportedFile> {
     const format = EXPORT_FORMATS[options.format];
     // Refused before the render rather than after it: the dialog only offers what this build
     // writes, so reaching here means a request that did not come from it.
@@ -88,6 +112,7 @@ export class ExportService {
     // Fetched back from a backup where this device has given its copy up (§14.4). Before the
     // panorama below as well as for the ordinary arm: what `renderable` answers is whether the
     // frames are on this disk, and an export is worth the wait for them.
+    log.info('export opening originals', { photo: photoId });
     await this.originals.openAll(library, photo);
     const original = this.originals.here(library, photo);
     // A panorama exports the picture it composes, framed as its row is: the crop the align found
@@ -99,6 +124,7 @@ export class ExportService {
     // for it means, the composite being a row of its own to ask for.
     const panorama = this.panoramas?.renderable(photoId) ?? null;
     const render = (outputPath: string, settings: ExportOptions, tile?: string): Promise<void> => {
+      log.info('export rendering', { photo: photoId, source: panorama == null ? 'original' : 'composite', hdr: settings.exportHdr, longEdge: settings.longEdge });
       if (panorama != null) {
         return this.processing.renderCompositeExport(
           photoId,
@@ -133,12 +159,14 @@ export class ExportService {
       // rather than the whole of it.
       const share = (1 - ENCODE_SHARE) / (options.gainMap ? 2 : 1);
       await this.watched(0, share, onProgress, () => render(rendered, options, tile));
+      if (!options.gainMap) log.info('export encoding', { photo: photoId, format: options.format, gainMap: false });
       const bytes = options.gainMap
         ? await this.withGainMap(
             scratch,
             rendered,
             (outputPath, settings) => this.watched(share, share, onProgress, () => render(outputPath, settings)),
             options,
+            photoId,
           )
         : await this.encode(rendered, options);
       return {
@@ -195,6 +223,7 @@ export class ExportService {
     alternate: string,
     render: (outputPath: string, settings: ExportOptions) => Promise<void>,
     options: ExportOptions,
+    photoId: string,
   ): Promise<Uint8Array> {
     const base = path.join(scratch, 'base.avif');
     await render(base, { ...options, exportHdr: false });
@@ -202,6 +231,7 @@ export class ExportService {
       throw new AppError('VALIDATION_ERROR', `a gain map in ${options.format} is not built yet`);
     }
     const quality = encoderQuality(options.format === 'avif' ? 'avif-sdr' : 'jpeg', options.quality);
+    log.info('export encoding', { photo: photoId, format: options.format, gainMap: true });
     return new Uint8Array(writeGainMap(base, alternate, options.format, quality, EXPORT_SPEED));
   }
 

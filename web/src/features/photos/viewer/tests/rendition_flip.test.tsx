@@ -14,7 +14,7 @@ import { registerDom } from '../../../../test_dom';
 
 registerDom();
 const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
-const { arriveDetailAt, fileOf, forgetFrames, holdDetailOf, released } = await import('./stage_frames');
+const { activityOf, arriveDetailAt, fileOf, forgetFrames, holdDecodeOf, holdDetailOf, released } = await import('./stage_frames');
 const { PhotoStage } = await import('../photo_stage');
 const { PhotoStageStrings } = await import('../photo_stage.strings');
 
@@ -59,6 +59,16 @@ const shown = (container: HTMLElement, source: string): boolean => {
   const frame = frameOf(container, source);
   return frame?.getAttribute('aria-hidden') === 'false' && frame.parentElement?.getAttribute('aria-hidden') !== 'true';
 };
+
+test('the requested frame is interactive while its uncached sibling is prefetched', async () => {
+  holdDecodeOf(RAW);
+  holdDecodeOf(JPEG);
+  render(stage(PHOTO, [RAW, JPEG], RAW, null));
+  await act(async () => {});
+
+  expect(activityOf(RAW)).toBe('interactive');
+  expect(activityOf(JPEG)).toBe('background');
+});
 
 test('a rendition flipped back to does not replay the step the photo arrived by', async () => {
   // A photo before this one, so the next arrival is a step rather than the

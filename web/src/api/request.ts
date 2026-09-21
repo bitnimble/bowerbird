@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { type ErrorEnvelope, ErrorEnvelopeSchema } from '../../../src/schemas/error';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { describe } from '../errors';
-import { type Reply, send } from './transport';
+import { type Reply, type RequestOptions, send } from './transport';
 
 // Every URL below is same-origin: the web server proxies /api and /image through
 // to the API, which the browser cannot reach itself once the web server is the
@@ -32,11 +32,11 @@ export async function request<S extends z.ZodType>(
   method: string,
   path: string,
   body?: unknown,
-  signal?: AbortSignal,
+  options?: RequestOptions,
 ): Promise<z.output<S>> {
   let reply: Reply;
   try {
-    reply = await send(commandName(method, path), method, path, body, signal);
+    reply = await send(commandName(method, path), method, path, body, options);
   } catch (err) {
     // A transport only rejects when it never got an answer, so this is "API unreachable",
     // which is a different thing for the UI to say than any HTTP status.

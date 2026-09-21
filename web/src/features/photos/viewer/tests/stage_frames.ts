@@ -5,6 +5,7 @@
 // Imported for its side effect, and imported *before* `photo_stage`: the module registry is
 // replaced as this evaluates, so anything already holding the real one keeps it.
 import { mock } from 'bun:test';
+import type { RequestActivity } from '../../../../../../src/schemas/request_activity';
 
 const real = await import('../stage_bitmaps');
 
@@ -24,6 +25,7 @@ const slow = new Set<string>();
 const files = new Map<string, { width: number; height: number }>();
 const pendingDetail = new Map<string, () => void>();
 const slowDetail = new Set<string>();
+const activities = new Map<string, RequestActivity>();
 /** Every source a detail layer has given its frame up for, in order. */
 export const released: string[] = [];
 
@@ -57,6 +59,10 @@ export function wasDecoded(source: string): boolean {
   return decoded.has(source);
 }
 
+export function activityOf(source: string): RequestActivity | undefined {
+  return activities.get(source);
+}
+
 export function forgetFrames(): void {
   decoded.clear();
   pending.clear();
@@ -64,13 +70,15 @@ export function forgetFrames(): void {
   files.clear();
   pendingDetail.clear();
   slowDetail.clear();
+  activities.clear();
   released.length = 0;
 }
 
 void mock.module('../stage_bitmaps', () => ({
   ...real,
-  decodeFrame: (source: string): Promise<Frame> =>
+  decodeFrame: (source: string, _whole = false, activity: RequestActivity = 'interactive'): Promise<Frame> =>
     new Promise<Frame>((resolve) => {
+      activities.set(source, activity);
       const settle = (): void => {
         const file = files.get(source) ?? { width: 4, height: 3 };
         const frame: Frame = {

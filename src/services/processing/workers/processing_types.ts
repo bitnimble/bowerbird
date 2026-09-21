@@ -101,6 +101,7 @@ export interface Developed {
 
 export interface RenditionJob extends Developed {
   kind: 'rendition';
+  observe?: true;
   photoId: string;
   rawFilePath: string;
   /** The library's generated-data directory, which the targets sit under. */
@@ -187,6 +188,14 @@ interface CompositeJobBase extends Developed {
 }
 
 export type WorkerJob = RenditionJob | CompositeJob;
+
+export interface ProcessingStarted {
+  kind: 'started';
+  photoId: string;
+  analysisCache: 'supplied' | 'missing' | 'refresh';
+}
+
+export type ProcessingMessage = ProcessingStarted | ProcessingResult;
 
 export type ProcessingResult =
   // `descriptor` rides back with the grid tile that produced it (§19.3). Computed

@@ -8,6 +8,7 @@ import {
   StepEditsRequestSchema,
 } from '../../../src/schemas/photo_edits';
 import { PathSegment, route } from '../../../src/schemas/route';
+import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { NothingSchema, request } from './request';
 
 export const photoEditsApi = {
@@ -47,11 +48,13 @@ export const photoEditsApi = {
     request(NothingSchema, 'POST', route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.done())),
 
   // The divergences waiting on a person (§5.3), and the choice that ends one.
-  listConflicts: (libraryId?: string): Promise<EditConflict[]> =>
+  listConflicts: (libraryId?: string, activity: RequestActivity = 'interactive'): Promise<EditConflict[]> =>
     request(
       EditConflictsSchema,
       'GET',
       `${route(PathSegment.api(), PathSegment.edits(), PathSegment.conflicts())}${libraryId == null ? '' : `?library_id=${libraryId}`}`,
+      undefined,
+      { activity },
     ),
   keepCandidate: (photoId: string, sessionId: string): Promise<void> =>
     request(

@@ -14,6 +14,7 @@ import { ListingStore } from '../../grid/listing_store';
 import { MarksStore } from '../../grid/marks_store';
 import { StacksStore } from '../../grid/stacks_store';
 import { ViewerStore } from '../viewer_store';
+import type { RequestActivity } from '../../../../../../src/schemas/request_activity';
 
 restoreApiAfterTests();
 
@@ -21,13 +22,17 @@ const PHOTO = 'p0';
 
 const builds: { rendition: Rendition; force: boolean }[] = [];
 let finish = (): void => undefined;
+const activities: (RequestActivity | undefined)[] = [];
 
 // `api` is a module singleton, so this is the seam.
 renditionsApi.build = (_photoId: string, rendition: Rendition, force = false): Promise<void> => {
   builds.push({ rendition, force });
   return new Promise((resolve) => (finish = () => resolve()));
 };
-photosApi.get = (): Promise<PhotoDetail> => Promise.resolve({ id: PHOTO } as PhotoDetail);
+photosApi.get = (_id, activity): Promise<PhotoDetail> => {
+  activities.push(activity);
+  return Promise.resolve({ id: PHOTO } as PhotoDetail);
+};
 
 const absent = new Proxy({}, { get: () => () => undefined }) as never;
 
@@ -59,6 +64,18 @@ function open(built: ViewerRendition[] = ['full', 'max']): { store: ViewerStore;
 
 beforeEach(() => {
   builds.length = 0;
+  activities.length = 0;
+});
+
+test('a rendition event refreshes detail in the background while an explicit build stays interactive', async () => {
+  const { presenter } = open();
+  const running = presenter.rerenderRenditions(PHOTO);
+  finish();
+  await running;
+  expect(activities).toEqual(['interactive']);
+  presenter.renditionsRebuilt(PHOTO, 'renditions', 'version');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(activities).toEqual(['interactive', 'background']);
 });
 
 // The bug this pins: it rebuilt `full` whatever was on screen, so a reader on the

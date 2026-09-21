@@ -1,6 +1,7 @@
 import { PhotoIdListSchema, type Ordering } from '../../../src/schemas/common';
 import { type PhotoSummary, PhotoSummaryListSchema, type PhotoTarget, PhotoTargetSchema } from '../../../src/schemas/photos';
 import { PathSegment, route } from '../../../src/schemas/route';
+import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { type Stack, StackSchema, UnstackedCountSchema } from '../../../src/schemas/stacks';
 import { NothingSchema, request } from './request';
 
@@ -16,6 +17,7 @@ export const stacksApi = {
     id: string,
     options: { ordering: Ordering; albumId?: string; shootId?: string; deleted?: boolean },
     signal?: AbortSignal,
+    activity?: RequestActivity,
   ): Promise<PhotoSummary[]> => {
     const search = new URLSearchParams({ ordering: options.ordering });
     if (options.albumId != null) search.set('album_id', options.albumId);
@@ -27,7 +29,7 @@ export const stacksApi = {
       'GET',
       `${route(PathSegment.api(), PathSegment.stacks(), id, PathSegment.photos())}?${search.toString()}`,
       undefined,
-      signal,
+      { signal, activity },
     );
   },
   // Every stack a selection touches, by the photographs in it: a client holding

@@ -1,4 +1,5 @@
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
+import { REQUEST_ACTIVITY_HEADER } from '../../../../../src/schemas/request_activity';
 import { photosApi } from '../../../api/photos';
 import type { ToastsPresenter } from '../../toasts/toasts_presenter';
 import type { ViewerStore } from './viewer_store';
@@ -60,7 +61,7 @@ export class SharePresenter {
   }
 
   private async shareableFile(photoId: string, rendition: ViewerRendition): Promise<File> {
-    const response = await fetch(photosApi.shareUrl(photoId, rendition));
+    const response = await fetch(photosApi.shareUrl(photoId, rendition), { headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' } });
     if (!response.ok) throw new Error(`${response.status}`);
     const name = this.store.photoFor(photoId)?.file_path?.split('/').pop() ?? photoId;
     return new File([await response.blob()], `${name.replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' });

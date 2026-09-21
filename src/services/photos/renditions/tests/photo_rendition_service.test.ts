@@ -24,6 +24,7 @@ import type { PhotoNavigationRepository } from '../../listing/photo_navigation_r
 import type { PhotoListResult, PhotoListingRepository } from '../../listing/photo_listing_repository';
 import { PhotoReadService } from '../../listing/photo_read_service';
 import { PhotoRenditionService } from '../photo_rendition_service';
+import { Logger } from '../../../../logger';
 
 const emptyResult: PhotoListResult = { photos: [], total: 0 };
 
@@ -186,6 +187,7 @@ const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve,
 
 describe('PhotoRenditionService.buildRendition', () => {
   it('shares one render between the requests that arrive while it runs', async () => {
+    const logged = jest.spyOn(Logger.prototype, 'info').mockImplementation(() => {});
     const root = mkdtempSync(path.join(tmpdir(), 'bb-build-'));
     const lib = { ...library, id: 'photos-build', root_path: root };
     try {
@@ -205,6 +207,8 @@ describe('PhotoRenditionService.buildRendition', () => {
       expect(processing.renderOne).toHaveBeenCalledTimes(1);
       pending.forEach((resolve) => resolve());
       await both;
+      expect(logged.mock.calls).toContainEqual(['rendition already building', { photo: 'p1', rendition: 'full', forced: false }]);
+      expect(logged.mock.calls).toContainEqual(['rendition cache', { photo: 'p1', rendition: 'full', hdr: false, cache: 'miss' }]);
 
       // And the next one renders again: the guard is for the overlap, not a cache.
       // Nothing was written here, so there is no file to stop it.
@@ -214,6 +218,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       pending.forEach((resolve) => resolve());
       await again;
     } finally {
+      logged.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
   });

@@ -18,22 +18,31 @@ import {
   SyncOriginalsResponseSchema,
 } from '../../../src/schemas/replication';
 import { PathSegment, route } from '../../../src/schemas/route';
+import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { NothingSchema, request } from './request';
 
 export const replicationApi = {
   // Replication (docs/replication.md §6.5, §10): the peers a synced library
   // replicates with, and what this device keeps of it.
-  listPeers: (libraryId: string): Promise<PeersResponse> =>
+  listPeers: (libraryId: string, activity: RequestActivity = 'interactive'): Promise<PeersResponse> =>
     request(
       PeersResponseSchema,
       'GET',
       route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), libraryId, PathSegment.peers()),
+      undefined,
+      { activity },
     ),
   // The same for the whole install, which is what a page opens with: the gate on
   // every piece of replication UI is "does this library have a peer", and asking
   // it per library is a request each to be told no.
-  listAllPeers: (): Promise<AllPeersResponse> =>
-    request(AllPeersResponseSchema, 'GET', route(PathSegment.api(), PathSegment.replication(), PathSegment.peers())),
+  listAllPeers: (activity: RequestActivity = 'interactive'): Promise<AllPeersResponse> =>
+    request(
+      AllPeersResponseSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.replication(), PathSegment.peers()),
+      undefined,
+      { activity },
+    ),
   // §7.10: whether this device keeps this library's RAW files, or lives on the
   // catalogue and the renditions its peers build.
   setSyncOriginals: (libraryId: string, syncOriginals: boolean): Promise<{ cancelled: number }> =>

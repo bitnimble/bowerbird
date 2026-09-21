@@ -17,6 +17,7 @@ import {
 import { type CompositePhoto, CompositePhotoSchema } from '../../../src/schemas/composition';
 import { type PhotoSummary, PhotoSummaryListSchema, type PhotoTarget, PhotoTargetSchema } from '../../../src/schemas/photos';
 import { PathSegment, route } from '../../../src/schemas/route';
+import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { NothingSchema, request } from './request';
 import { assetUrl } from './transport';
 
@@ -44,8 +45,14 @@ export const compositesApi = {
       PhotoTargetSchema.parse(target),
     ),
   /** The frames a panorama is composed from, in the order its recipe names them. */
-  listFrames: (id: string, signal?: AbortSignal): Promise<PhotoSummary[]> =>
-    request(PhotoSummaryListSchema, 'GET', route(PathSegment.api(), PathSegment.photos(), id, PathSegment.frames()), undefined, signal),
+  listFrames: (id: string, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoSummary[]> =>
+    request(
+      PhotoSummaryListSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.photos(), id, PathSegment.frames()),
+      undefined,
+      { signal, activity },
+    ),
   /** Starts analysing a set of frames into an assembly, answering the job at once. */
   startAssembly: (photoIds: string[]): Promise<AssemblyJobStarted> =>
     request(
@@ -55,7 +62,7 @@ export const compositesApi = {
       PhotoTargetSchema.parse({ photo_ids: photoIds }),
     ),
   getAssemblyJob: (jobId: string, signal?: AbortSignal): Promise<AssemblyJob> =>
-    request(AssemblyJobSchema, 'GET', assemblyJob(jobId), undefined, signal),
+    request(AssemblyJobSchema, 'GET', assemblyJob(jobId), undefined, { signal, activity: 'background' }),
   /** Stops a job's carve at its next boundary, letting go of the device (§3.9). */
   cancelAssembly: (jobId: string): Promise<void> =>
     request(NothingSchema, 'POST', `${assemblyJob(jobId)}${route(PathSegment.cancel())}`),
@@ -65,7 +72,7 @@ export const compositesApi = {
    * read-only state.
    */
   getAssembly: (photoId: string, signal?: AbortSignal): Promise<ReopenedAssembly> =>
-    request(ReopenedAssemblySchema, 'GET', assemblyOf(photoId), undefined, signal),
+    request(ReopenedAssemblySchema, 'GET', assemblyOf(photoId), undefined, { signal }),
   /** Done: the recipe is the whole request, and it names its own frames by id. */
   commitAssembly: (recipe: AssemblyRecipe): Promise<CompositePhoto> =>
     request(
@@ -84,7 +91,7 @@ export const compositesApi = {
       'POST',
       route(PathSegment.api(), PathSegment.assemblies(), PathSegment.seams()),
       SeamsRequestSchema.parse({ recipe, picks }),
-      signal,
+      { signal },
     ),
   /** §4.2's settled preview: this recipe through the render, at the layers' size. */
   previewAssembly: (recipe: AssemblyRecipe, signal?: AbortSignal): Promise<AssemblyPreview> =>
@@ -93,7 +100,7 @@ export const compositesApi = {
       'POST',
       route(PathSegment.api(), PathSegment.assemblies(), PathSegment.preview()),
       PreviewRequestSchema.parse({ recipe }),
-      signal,
+      { signal },
     ),
   /** Done on a reopened assembly: updates the row's recipe in place rather than inserting a
    * second photograph. */

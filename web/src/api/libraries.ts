@@ -16,6 +16,7 @@ import {
   UpdateLibraryRequestSchema,
 } from '../../../src/schemas/libraries';
 import { PathSegment, route } from '../../../src/schemas/route';
+import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { NothingSchema, request } from './request';
 
 export const librariesApi = {
@@ -28,10 +29,17 @@ export const librariesApi = {
       'GET',
       `${route(PathSegment.api(), PathSegment.libraries(), libraryId, PathSegment.folders())}${includeHidden ? '?include_hidden=true' : ''}`,
     ),
-  list: (): Promise<Library[]> => request(LibrariesSchema, 'GET', route(PathSegment.api(), PathSegment.libraries())),
+  list: (activity: RequestActivity = 'interactive'): Promise<Library[]> =>
+    request(LibrariesSchema, 'GET', route(PathSegment.api(), PathSegment.libraries()), undefined, { activity }),
   /** The per-library knobs a new library is created with, for the same reason as `getSettingsDefaults`. */
-  getDefaults: (): Promise<LibrarySettings> =>
-    request(LibrarySettingsSchema, 'GET', route(PathSegment.api(), PathSegment.libraries(), PathSegment.defaults())),
+  getDefaults: (activity: RequestActivity = 'interactive'): Promise<LibrarySettings> =>
+    request(
+      LibrarySettingsSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.libraries(), PathSegment.defaults()),
+      undefined,
+      { activity },
+    ),
   get: (id: string): Promise<Library> => request(LibrarySchema, 'GET', route(PathSegment.api(), PathSegment.libraries(), id)),
   create: (body: CreateLibraryRequest): Promise<Library> =>
     request(LibrarySchema, 'POST', route(PathSegment.api(), PathSegment.libraries()), CreateLibraryRequestSchema.parse(body)),
@@ -48,6 +56,8 @@ export const librariesApi = {
       LibraryScanStatusSchema,
       'GET',
       route(PathSegment.api(), PathSegment.libraries(), id, PathSegment.sync(), PathSegment.status()),
+      undefined,
+      { activity: 'background' },
     ),
   rebuildTiles: (id: string): Promise<LibraryScanStatus> =>
     request(
