@@ -13,8 +13,8 @@
 // landed (`BOWERBIRD_NATIVE_LIB`).
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
-import { elfClosure, machNames, machSearchPath } from './native_closure';
+import { basename, join } from 'node:path';
+import { elfClosure, machNames } from './native_closure';
 import { assertReferenceFrame, REFERENCE_FRAME } from '../src/services/processing/renditions/reference_frame';
 
 const ROOT = join(import.meta.dir, '..');
@@ -188,10 +188,9 @@ function underLoaderPath(): void {
   const pending = [shippedLibrary()];
   while (pending.length > 0) {
     const at = pending.pop()!;
-    const search = machSearchPath(walk('otool', at, '-l'));
     for (const dependency of machNames(walk('otool', at, '-L'), basename(at))) {
       if (carried.has(dependency)) continue;
-      const from = locate(dependency, at, search);
+      const from = locate(dependency, at);
       // One directory, so a filename is the whole name: two *different* libraries sharing one
       // would overwrite each other and both be rewritten to the survivor, which is a missing
       // symbol at first use rather than anything the checks below could see.
@@ -202,10 +201,6 @@ function underLoaderPath(): void {
       carried.set(dependency, from);
       if (seen) continue;
       carry(from, NATIVE);
-      // The original, not the copy that was just made of it: a name relative to `@loader_path`
-      // means the directory of whichever file asks for it, and a copy asks from ours. Walking
-      // the copy resolves brotli's `@rpath/libbrotlicommon.1.dylib` against this tree, where it
-      // has never been, rather than against the prefix it was installed into.
       pending.push(from);
     }
   }
@@ -223,26 +218,52 @@ function underLoaderPath(): void {
 }
 
 /**
- * The file a Mach-O dependency names, wherever the name is relative to.
+ * The file a Mach-O dependency names, asked of `pkg-config` rather than worked out.
+ *
+ * **A Mach-O names what to load, not where it is**, and half of what this walk meets is written
+ * `@rpath/libbrotlicommon.1.dylib` - a name the loader resolves against a search path that is
+ * itself relative to whichever file is asking. Following that by hand means reading `LC_RPATH`
+ * out of every library, expanding `@loader_path` against the right one of two copies of the file,
+ * and getting the same answer the loader would. Every part of that is a chance to be subtly wrong,
+ * and there is no `ldd` here to check it against.
+ *
+ * So it is not followed. The six libraries under libavif and libjxl are packages, `pkg-config`
+ * says where each one put its files, and `build.rs` already told the linker the same thing - so
+ * the directory the loader bound against is the directory pkg-config names, by construction.
  *
  * Refused by name rather than skipped: an unresolved dependency that reached the end would be a
  * library still asking the reader's machine for something, which is what carrying a closure is
  * for.
  */
-function locate(named: string, from: string, search: readonly string[]): string {
+function locate(named: string, from: string): string {
   if (named.startsWith('/')) return named;
-  const beside = (at: string): string => at.replace(/^@(loader|executable)_path/, dirname(from));
-  if (named.startsWith('@loader_path/') || named.startsWith('@executable_path/')) {
-    return beside(named);
-  }
-  if (named.startsWith('@rpath/')) {
-    const tail = named.slice('@rpath/'.length);
-    const found = search.map((at) => join(beside(at), tail)).find(existsSync);
-    if (found != null) return found;
-    throw new Error(`${from} wants ${named} and none of ${search.join(', ')} holds it`);
-  }
-  throw new Error(`${from} names ${named}, which is neither a path nor relative to one`);
+  const file = basename(named);
+  const found = codecDirectories()
+    .map((at) => join(at, file))
+    .find(existsSync);
+  if (found != null) return found;
+  throw new Error(`${from} wants ${named} and no directory pkg-config names holds ${file}`);
 }
+
+/**
+ * Where the packages under libavif and libjxl are installed, each asked for once.
+ *
+ * The same six `build.rs` names to the linker. A module `pkg-config` has never heard of is not an
+ * error here: it is a library that was linked some other way, and `locate` refuses by name if
+ * nothing holds the file.
+ */
+function codecDirectories(): readonly string[] {
+  if (CODEC_DIRECTORIES != null) return CODEC_DIRECTORIES;
+  const modules = ['aom', 'dav1d', 'libsharpyuv', 'libhwy', 'libbrotlienc', 'libbrotlidec', 'libbrotlicommon', 'lcms2'];
+  const directories = modules.flatMap((module) => {
+    const asked = spawnSync('pkg-config', ['--variable=libdir', module], { encoding: 'utf8' });
+    return asked.status === 0 ? [asked.stdout.trim()] : [];
+  });
+  CODEC_DIRECTORIES = [...new Set(directories.filter((at) => at !== ''))];
+  return CODEC_DIRECTORIES;
+}
+
+let CODEC_DIRECTORIES: readonly string[] | null = null;
 
 /**
  * Nothing the app opens may come from outside the tree it carries.

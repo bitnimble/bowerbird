@@ -63,14 +63,3 @@ export function machNames(listing: string, self: string): string[] {
     .filter((path) => !path.startsWith('/usr/lib/') && !path.startsWith('/System/'));
 }
 
-/**
- * The directories an `@rpath` name is looked for in, out of `otool -l`.
- *
- * Homebrew links its dylibs by `@rpath/<name>` and leaves an `LC_RPATH` pointing at its prefix,
- * so a library's own dependencies are unreachable without reading these: `libbrotlienc` asks for
- * `@rpath/libbrotlicommon.1.dylib` and nothing else says where that is.
- */
-export function machSearchPath(listing: string): string[] {
-  const blocks = listing.matchAll(/cmd LC_RPATH\s+cmdsize \d+\s+path (.+?) \(offset \d+\)/g);
-  return [...blocks].map((found) => found[1]!.trim());
-}
