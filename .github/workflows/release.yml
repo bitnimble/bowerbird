@@ -227,29 +227,21 @@ jobs:
         shell: bash
 
       # The editor's decoder, which the web build imports by path - so it has to exist
-      # before vite resolves anything. Through bun rather than `cargo install wasm-pack`,
-      # which builds it from source and costs minutes for a tool that publishes a binary.
-      - run: bun x wasm-pack@0.13.1 build native/rawshim --target web --out-dir pkg --no-opt -- --no-default-features
-      - run: bun run scripts/hash-pkg.ts
+      # before vite resolves anything.
+      - run: bun run build:wasm
+        shell: bash
 
       # The server the app carries, and the pixel library behind it. One triple on every
       # platform: the shell, the library and the Bun runtime beside them are all the same build.
       - name: The bundled server
         run: |
           set -eu
-          bun run scripts/cargo.ts build --release --manifest-path native/rawshim/Cargo.toml --target ${{ matrix.target }}
-          bun run scripts/build-sidecar.ts --target ${{ matrix.target }}
-        shell: bash
-
-      # Drawn rather than committed (`src-tauri/.gitignore`), so a checkout has none and
-      # `generate_context!` reads them at compile time - a build without this fails inside a proc
-      # macro naming `icons/icon.png`. Every path that builds this app locally calls the same
-      # script; this job drives the Tauri CLI itself and so has to call it too.
-      - run: bun run scripts/make-icons.ts
+          bun run build:native:release --target ${{ matrix.target }}
+          bun run build:sidecar --target ${{ matrix.target }}
         shell: bash
 
       - name: Build the app
-        run: bun x @tauri-apps/cli build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        run: bun run build:app --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         shell: bash
 
       - name: Assemble the payload and collect the installer
@@ -297,10 +289,7 @@ jobs:
       - name: Stamp the version the tag names
         if: env.TAG != ''
         run: bun run scripts/set-version.ts "$TAG"
-      # Pinned, and through bun rather than `cargo install`, which builds it from source
-      # and costs minutes for a tool that publishes a binary.
-      - run: bun x wasm-pack@0.13.1 build native/rawshim --target web --out-dir pkg --no-opt -- --no-default-features
-      - run: bun run scripts/hash-pkg.ts
+      - run: bun run build:wasm
       # `NDK_HOME` is left to the script, which takes the highest under `$ANDROID_HOME/ndk` -
       # the one installed above, there being only one.
       - run: bun run android:build
