@@ -64,6 +64,7 @@ export const PhotoDetailStrings = {
   sectionRendition: () => 'Rendition',
   sectionActions: () => 'Actions',
   sectionSend: () => 'Share and download',
+  sectionHelp: () => 'Help',
 
   rating: () => 'Rating',
   setRatingTo: (stars: number) => `Set rating to ${stars}`,

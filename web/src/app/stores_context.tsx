@@ -2,6 +2,8 @@ import { createContext, useContext, useState, type ReactNode } from 'react';
 import { AlbumsPresenter } from '../features/albums/albums_presenter';
 import { AlbumsStore } from '../features/albums/albums_store';
 import { EventsPresenter } from '../features/events/events_presenter';
+import { FeedbackPresenter } from '../features/feedback/feedback_presenter';
+import { FeedbackStore } from '../features/feedback/feedback_store';
 import { ExportPresenter } from '../features/export/export_presenter';
 import { ExportStore } from '../features/export/export_store';
 import { ExportHistoryPresenter } from '../features/exports/export_history_presenter';
@@ -51,6 +53,7 @@ const AppSettingsStoreContext = createContext<AppSettingsStore | null>(null);
 const DeviceSettingsStoreContext = createContext<DeviceSettingsStore | null>(null);
 const StackTriageStoreContext = createContext<StackTriageStore | null>(null);
 const ExportStoreContext = createContext<ExportStore | null>(null);
+const FeedbackStoreContext = createContext<FeedbackStore | null>(null);
 const ExportHistoryStoreContext = createContext<ExportHistoryStore | null>(null);
 const UpdatesStoreContext = createContext<UpdatesStore | null>(null);
 const SidebarStoreContext = createContext<SidebarStore | null>(null);
@@ -70,6 +73,7 @@ interface Presenters {
   stackTriage: StackTriagePresenter;
   export: ExportPresenter;
   exportHistory: ExportHistoryPresenter;
+  feedback: FeedbackPresenter;
   updates: UpdatesPresenter;
   sidebar: SidebarPresenter;
 }
@@ -108,6 +112,8 @@ function build(): { stores: Stores; presenters: Presenters } {
     export: new ExportStore(),
     // What those runs left behind, which the server holds and this only lists.
     exportHistory: new ExportHistoryStore(),
+    // Whether the bug report form is open, and over which photograph.
+    feedback: new FeedbackStore(),
     updates: new UpdatesStore(),
     // Which sections are open is about this browser, and the shoots it lists arrive from
     // whoever read them last. The settings say whether the viewer hides it.
@@ -167,6 +173,8 @@ function build(): { stores: Stores; presenters: Presenters } {
     stackTriage,
     export: exportPhotos,
     exportHistory: new ExportHistoryPresenter(stores.exportHistory, toasts),
+    // Reports through the toasts like every other action that finishes off screen.
+    feedback: new FeedbackPresenter(stores.feedback, toasts),
     updates: new UpdatesPresenter(stores.updates),
     sidebar,
   };
@@ -190,6 +198,7 @@ interface Stores {
   stackTriage: StackTriageStore;
   export: ExportStore;
   exportHistory: ExportHistoryStore;
+  feedback: FeedbackStore;
   updates: UpdatesStore;
   sidebar: SidebarStore;
 }
@@ -216,7 +225,9 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                     <UpdatesStoreContext.Provider value={stores.updates}>
                                       <SidebarStoreContext.Provider value={stores.sidebar}>
                                         <BackupStoreContext.Provider value={stores.backup}>
-                                          {children}
+                                          <FeedbackStoreContext.Provider value={stores.feedback}>
+                                            {children}
+                                          </FeedbackStoreContext.Provider>
                                         </BackupStoreContext.Provider>
                                       </SidebarStoreContext.Provider>
                                     </UpdatesStoreContext.Provider>
@@ -263,5 +274,6 @@ export const useStackTriageStore = (): StackTriageStore => required(useContext(S
 export const useExportStore = (): ExportStore => required(useContext(ExportStoreContext), 'ExportStore');
 export const useExportHistoryStore = (): ExportHistoryStore => required(useContext(ExportHistoryStoreContext), 'ExportHistoryStore');
 export const useUpdatesStore = (): UpdatesStore => required(useContext(UpdatesStoreContext), 'UpdatesStore');
+export const useFeedbackStore = (): FeedbackStore => required(useContext(FeedbackStoreContext), 'FeedbackStore');
 export const useSidebarStore = (): SidebarStore => required(useContext(SidebarStoreContext), 'SidebarStore');
 export const usePresenters = (): Presenters => required(useContext(PresentersContext), 'Presenters');

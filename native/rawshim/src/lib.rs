@@ -219,6 +219,7 @@ pub mod repair_solve;
 pub mod resident;
 pub mod retouched_frame;
 pub mod rgb;
+pub mod scrub;
 #[cfg(feature = "renditions")]
 pub mod stacks;
 pub mod tca;

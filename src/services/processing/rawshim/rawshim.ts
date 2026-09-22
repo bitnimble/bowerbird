@@ -76,6 +76,9 @@ const SYMBOLS = {
   },
   // The camera's own preview, the same way.
   bb_extract_embedded: { args: [FFIType.cstring, FFIType.u16, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
+  // The one call that writes into the caller's buffer instead of filling it: a scrub is
+  // length-preserving, so the file goes in and comes back the same size (DESIGN §18.8).
+  bb_scrub_exif: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
   // An SDR base and its HDR twin as one file with the map between them (§10.5), and a
   // response body like the two above.
   bb_write_gain_map: {

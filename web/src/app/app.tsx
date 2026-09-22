@@ -3,6 +3,7 @@ import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, type NavLinkProps } from 'react-router-dom';
 import {
+  Bug,
   ChevronDown,
   ChevronRight,
   CloudOff,
@@ -47,6 +48,9 @@ import { ShootsPageStrings } from '../features/shoots/shoots_page.strings';
 import { ExportDialog } from '../features/export/export_dialog';
 import { ExportsPage } from '../features/exports/exports_page';
 import { ExportsPageStrings } from '../features/exports/exports_page.strings';
+import { bugReporter } from '../features/feedback/report_bug';
+import { ReportBugDialog } from '../features/feedback/report_bug_dialog';
+import { ReportBugStrings } from '../features/feedback/report_bug_dialog.strings';
 import { Toasts } from '../features/toasts/toasts';
 import { UpdateBadge } from '../features/updates/update_badge';
 import { UpdateDialog } from '../features/updates/update_dialog';
@@ -650,6 +654,17 @@ export const SidebarResizer = observer(function SidebarResizer(): JSX.Element {
   );
 });
 
+// Absent in a build with no DSN, which has nowhere to send a report (§18.8).
+function ReportBugEntry(): JSX.Element | null {
+  const { feedback } = usePresenters();
+  if (!bugReporter.canSend()) return null;
+  return (
+    <SidebarButton icon={Bug} onClick={feedback.open}>
+      {ReportBugStrings.reportABug()}
+    </SidebarButton>
+  );
+}
+
 function SectionLabel({ children }: { children: ReactNode }): JSX.Element {
   return (
     <Text variant="label" as="div" style={styles.sectionLabel}>
@@ -718,6 +733,7 @@ export function Sidebar({
           {HdrPageStrings.title()}
         </SidebarLink>
         <ShortcutHelp />
+        <ReportBugEntry />
         <UpdateBadge />
       </div>
     </nav>
@@ -918,6 +934,9 @@ export const App = observer(function App(): JSX.Element {
         <ExportDialog />
         {/* Opened from the sidebar's badge and from Settings, so it hangs off neither. */}
         <UpdateDialog />
+        {/* The same, for the sidebar's entry and the photo menu's: only one of the two knows
+            a photograph, and the form is the same form either way. */}
+        <ReportBugDialog />
         <main {...stylex.props(styles.content)}>
           <PageLeadRoom.Provider value={!sidebarOpen}>
             <Routes>

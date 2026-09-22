@@ -20,17 +20,20 @@ export function TextArea({
   onBlur,
   placeholder,
   label,
+  required = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
   placeholder?: string;
   label: string;
+  required?: boolean;
 }): JSX.Element {
   return (
     <textarea
       {...stylex.props(fieldStyles.bed, fieldStyles.autofill, styles.area, focusRing.ring)}
       aria-label={label}
+      required={required}
       placeholder={placeholder}
       value={value}
       onBlur={onBlur}

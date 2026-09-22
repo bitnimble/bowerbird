@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import {
   ArrowLeft,
+  Bug,
   ChevronLeft,
   ChevronRight,
   Eye,
@@ -44,6 +45,8 @@ import type { EditStore } from '../../raw_edit/edit/edit_store';
 import type { LoupeStore } from '../../raw_edit/loupe/loupe_store';
 import type { RawEditPresenter } from '../../raw_edit/stage/raw_edit_presenter';
 import type { StageStore } from '../../raw_edit/stage/stage_store';
+import { bugReporter } from '../../feedback/report_bug';
+import { ReportBugStrings } from '../../feedback/report_bug_dialog.strings';
 import { BulkBarStrings } from '../grid/bulk_bar.strings';
 import { isComposite, mergeEditPath, triagePath } from '../photos_store';
 import { renditionLabel } from '../renditions';
@@ -197,7 +200,7 @@ export const DetailNav = observer(function DetailNav({
 }): JSX.Element {
   const listing = useListingStore();
   const store = useViewerStore();
-  const { photos, export: exportPhotos } = usePresenters();
+  const { photos, export: exportPhotos, feedback } = usePresenters();
   const step = useStep();
   const navigate = useNavigate();
   const mobile = useIsMobile();
@@ -342,6 +345,23 @@ export const DetailNav = observer(function DetailNav({
         exportPhotos.openFor({ photo_ids: [photoId] }, 1, frame);
       },
     }),
+    // Here as well as in the sidebar, which the viewer hides: this is the one screen where a
+    // report can carry the photograph it is about (§18.8).
+    ...(bugReporter.canSend()
+      ? [
+          menuSection({
+            label: PhotoDetailStrings.sectionHelp(),
+            options: [
+              {
+                value: 'report' as const,
+                label: ReportBugStrings.reportABug(),
+                icon: <Bug size={ICON} />,
+              },
+            ],
+            onSelect: () => feedback.openFor(photoId),
+          }),
+        ]
+      : []),
   ];
 
   // A phone cannot hold the grade's bar on one line - the tools, the turns and the zoom are

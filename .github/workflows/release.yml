@@ -15,6 +15,10 @@ permissions:
 env:
   # Empty unless a tag push started the run; release-only steps key off it.
   TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+  # Where the app's bug report form sends a report (§18.8). Compiled into the web bundle,
+  # so every job that builds one needs it. Not a secret: a DSN is write-only ingest, and
+  # `web/.env.example` carries the same value for a dev server.
+  VITE_SENTRY_DSN: https://80ef14dcd05cf6dc84d567cbbcdef1d2@o4512127315869696.ingest.de.sentry.io/4512127325044816
 
 jobs:
   # The container, and the payload an installed one replaces itself with. Both come out
@@ -77,6 +81,10 @@ jobs:
           platforms: linux/amd64
           push: true
           load: true
+          # The web bundle is built inside the image, where the workflow's environment
+          # does not reach.
+          build-args: |
+            VITE_SENTRY_DSN=${{ env.VITE_SENTRY_DSN }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

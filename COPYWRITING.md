@@ -52,6 +52,29 @@ Every string states a fact or names an action.
 In the app, aim for 10 words or fewer per string. An obvious label gets no sublabel. Ranges
 and units go on the field as its min, max, and suffix, and stay out of the label.
 
+### The sublabel is the default that has to be argued for
+
+Writing copy makes it tempting to explain, and the explanation lands under the control as a
+sublabel: what the field is for, what happens if you tick it, what we do with it afterwards.
+Each line reads as helpful on its own. A screen of them reads as a form that does not trust
+the reader, and the words that matter, the label and the button, are buried among words that
+do not.
+
+**So a sublabel starts out unjustified.** Write the label, then ask what a reader would get
+wrong with no sublabel at all. Nothing? Then there is no sublabel. These all shipped in a
+review and all came out again:
+
+| Cut | Why it went |
+|---|---|
+| **Your email** / "We'll reply here if we need more detail." | Everybody knows what an email field in a form is for. |
+| **Strip identifying EXIF data** / "We remove your name and where the photo was taken, and keep the camera settings." | The label says it. The sentence restates it at three times the length. |
+| **Include current photo in report** / "The photo, its renders, and what we measured about it." | Nobody ticking this wants the manifest. |
+
+**A sublabel earns its place when the reader cannot see the consequence**, and then it names
+that consequence and stops: a control that deletes something, costs money, or sends data
+somewhere they would not expect. One line, on the one control that needs it; if two controls
+on a screen both have one, at least one of them is explaining itself for nothing.
+
 ## Buttons and actions
 
 - **Put the verb first and name the object.** Write "Export photo" when there's more than 1

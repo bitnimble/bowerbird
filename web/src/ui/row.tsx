@@ -28,6 +28,8 @@ export function Row({
   children: ReactNode;
   role?: 'group';
   'aria-label'?: string;
+  /** Why a control in this row is unavailable, which a disabled control cannot say itself. */
+  title?: string;
   onMouseLeave?: () => void;
 }): JSX.Element {
   return (

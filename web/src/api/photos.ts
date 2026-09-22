@@ -39,7 +39,7 @@ import { PathSegment, route } from '../../../src/schemas/route';
 import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../src/schemas/request_activity';
 import type { ViewerRendition } from '../../../src/schemas/settings';
 import { assetUrl } from './transport';
-import { NothingSchema, request } from './request';
+import { NothingSchema, request, requestFile } from './request';
 
 export interface PhotoListParams {
   offset?: number;
@@ -87,6 +87,19 @@ type AskedPicture =
 
 function downloadUrl(photoId: string, form: 'original'): string {
   return assetUrl(route(PathSegment.image(), photoId, PathSegment.download(), form));
+}
+
+/** One of the photograph's own files, as a bug report attaches them (DESIGN §18.8). */
+export type AttachableForm = 'embedded' | 'original' | 'full' | 'analysis';
+
+function attachmentPath(photoId: string, form: AttachableForm, scrub: boolean): string {
+  const image = (...parts: string[]): string => route(PathSegment.image(), photoId, ...parts);
+  // Only the two that come out of the camera's own file carry anything to scrub; a rendition
+  // and a measurement are this pipeline's own and were never written with EXIF.
+  if (form === 'embedded' || form === 'original') {
+    return `${image(PathSegment.download(), form)}${scrub ? '?scrub=1' : ''}`;
+  }
+  return form === 'full' ? image(PathSegment.renditions(), form) : image(PathSegment.analysis());
 }
 
 function shownQuery(asked?: AskedPicture): string[] {
@@ -253,6 +266,19 @@ export const photosApi = {
   // The file the camera wrote, handed over as it is. No extension in the URL - the catalogue
   // holds several RAW formats, and the server names the download off the file it served.
   downloadUrl,
+
+  /**
+   * One of the photograph's own files, as bytes, for a bug report to attach (§18.8).
+   *
+   * Through `send` rather than as a URL, because these are read rather than shown: what the
+   * report carries has to be in hand before it can be weighed against Sentry's ceiling.
+   */
+  attachment: (
+    photoId: string,
+    form: AttachableForm,
+    scrub = false,
+  ): Promise<{ bytes: Uint8Array; mediaType: string; filename: string | null }> =>
+    requestFile('GET', attachmentPath(photoId, form, scrub)),
 
   // The rendition the viewer is showing, as a JPEG for the platform's share sheet: an HDR one
   // carries a gain map, so what a receiving application shows is the picture on screen rather

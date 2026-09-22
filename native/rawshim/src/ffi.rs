@@ -507,6 +507,26 @@ pub unsafe extern "C" fn bb_gpu_adapter(out: *mut u8, out_cap: usize) -> isize {
     unsafe { reply(gpu.adapter.as_bytes(), out, out_cap) }
 }
 
+/// Blanks the tags that name a person or a place, in the caller's own buffer (`scrub.rs`).
+///
+/// 1 where the file was scrubbed, 0 for a container this cannot read - which is a refusal rather
+/// than a failure, and the caller has to answer it by not sending the file at all.
+///
+/// In place, and so with no reply buffer: what a bug report attaches is a whole RAW, the edit
+/// never changes its length, and a copy would be another sixty megabytes to hold the same bytes.
+///
+/// # Safety
+/// `bytes` must be readable and writable for `len`.
+#[expect(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bb_scrub_exif(bytes: *mut u8, len: usize) -> i32 {
+    if bytes.is_null() {
+        return 0;
+    }
+    let file = unsafe { std::slice::from_raw_parts_mut(bytes, len) };
+    i32::from(crate::guard("bb_scrub_exif", false, || crate::scrub::scrub_in_place(file)))
+}
+
 /// Answers a question about pixels, for the tests and pins.
 ///
 /// Same shape as `bb_run_job` and the same rule: JSON in, JSON out, into a buffer the caller
