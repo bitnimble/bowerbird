@@ -1,4 +1,4 @@
-import { extractEmbedded, readHeaderFields } from './rawshim_ops';
+import { extractEmbedded, readHeaderFields, scrubExif } from './rawshim_ops';
 
 // The RAW file's own metadata and its embedded preview, both by way of
 // `native/rawshim` (DESIGN §10.4 / §11.1).
@@ -25,6 +25,16 @@ export type OutputSpace = 'srgb' | 'rec2020-linear';
  */
 export function readEmbeddedJpeg(filePath: string, rotate = 0): Buffer | null {
   return extractEmbedded(filePath, rotate);
+}
+
+/**
+ * Blanks the tags that name a person or a place, in `bytes` itself, keeping everything the
+ * camera recorded about itself (DESIGN §18.8).
+ *
+ * False for a container the library cannot read, whose bytes are untouched and must not be sent.
+ */
+export function scrubIdentifying(bytes: Buffer): boolean {
+  return scrubExif(bytes);
 }
 
 export interface RawHeader {

@@ -143,6 +143,16 @@ export function stackGroups(
 }
 
 /**
+ * Blanks every tag that names a person or a place, in `bytes` itself.
+ *
+ * False for a container the library cannot read, which leaves the bytes exactly as they were:
+ * the caller has to answer that by not sending the file rather than by sending it anyway.
+ */
+export function scrubExif(bytes: Buffer): boolean {
+  return shim().bb_scrub_exif(ptr(bytes), bytes.byteLength) === 1;
+}
+
+/**
  * The camera's embedded JPEG preview, as bytes. Null when the file has none.
  *
  * The one call besides a finished rendition that hands bytes over, because its

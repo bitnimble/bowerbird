@@ -525,13 +525,18 @@ never reports, which is why there is no allowlist to keep.
 
 The section above is where a string lives. `COPYWRITING.md` is how it reads, and it governs
 every word a reader sees - a button, a heading, an error, a toast, a tooltip, alt text, the
-landing site's prose, a feature list. **Read it before writing or changing a string, and hold
-the result against its checklist.** It is not a polish pass for later: a string ships in the
-shape it was first written in, and the review that would have caught it never happens.
+landing site's prose, a feature list. **Hold every string you write against its checklist.**
+It is not a polish pass for later: a string ships in the shape it was first written in, and
+the review that would have caught it never happens.
+
+Imported here rather than cited, so it is in context whether or not anyone thought to open
+it - which is the failure this guards against, a guide nobody reads governing nothing:
+
+@COPYWRITING.md
 
 Nothing here fails a build. `bun run lint` checks where a string lives and never how it reads.
 
-Four that get skipped, because each reads as ordinary writing rather than as a rule:
+Five that get skipped, because each reads as ordinary writing rather than as a rule:
 
 - **Sentence case everywhere**, headings and buttons included, with capitals for proper nouns
   and the named features the glossary marks with one, and nothing else.
@@ -541,6 +546,10 @@ Four that get skipped, because each reads as ordinary writing rather than as a r
 - **The banned structures stay banned however good they sound.** Correction framing ("X, never
   Y"), stacked fragments, caption fragments ("Similar photos, grouped into 1 thumbnail"),
   question-then-answer. They are how a feature list comes out reading like a template.
+- **A sublabel is unjustified until argued for.** Writing copy makes it tempting to explain,
+  and the explanation lands under the control: what the field is for, what ticking it does.
+  Each line reads as helpful alone, and a screen of them reads as a form that does not trust
+  the reader. Write the label, then ask what a reader gets wrong with no sublabel at all.
 - **No dash as punctuation, no exclamation mark, British spelling, numerals for every number.**
   This file's own prose uses the first of those freely, and so does every doc in the repo;
   copy does not, so a sentence moved from a doc into the app is rewritten on the way.

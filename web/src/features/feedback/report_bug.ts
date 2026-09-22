@@ -1,4 +1,5 @@
 import { adapterName } from '../../adapter_name';
+import { type Attached, REQUEST_CEILING } from './photo_attachments';
 
 export interface BugReport {
   message: string;
@@ -6,6 +7,8 @@ export interface BugReport {
   email: string;
   /** What this build calls itself, as the server reports it. */
   version: string | undefined;
+  /** The photograph's own files, where the reader asked for them (`photo_attachments.ts`). */
+  attachments: Attached[];
 }
 
 class BugReporter {
@@ -40,14 +43,22 @@ class BugReporter {
       this.started = true;
     }
 
+    // Refused here rather than by the ingest, which answers a request over its ceiling with a
+    // 413 and no event at all - so a report with one file too many would simply not arrive.
+    const carried = report.attachments.reduce((total, part) => total + part.data.byteLength, 0);
+    if (carried > REQUEST_CEILING) throw new Error('this report is larger than Sentry will take');
+
     sentry.setContext('bowerbird', await this.diagnostics());
-    await sentry.sendFeedback({
-      message: report.message,
-      email: report.email === '' ? undefined : report.email,
-      url: window.location.href,
-      source: 'report-bug-dialog',
-      tags: { version: report.version ?? 'unknown' },
-    });
+    await sentry.sendFeedback(
+      {
+        message: report.message,
+        email: report.email === '' ? undefined : report.email,
+        url: window.location.href,
+        source: 'report-bug-dialog',
+        tags: { version: report.version ?? 'unknown' },
+      },
+      { attachments: report.attachments },
+    );
   }
 
   // Read on each call rather than once as the module loads, so it is the environment the

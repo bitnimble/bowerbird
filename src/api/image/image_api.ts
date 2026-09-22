@@ -10,7 +10,7 @@ import { PathSegment, route } from '../../schemas/route';
 import { getDataPath, getRenditionPath } from '../../utils/paths';
 import type { Originals } from '../../services/blobs/originals';
 import { originalMediaType } from '../../utils/scan';
-import { readEmbeddedJpeg } from '../../services/processing/rawshim/raw_decoder';
+import { readEmbeddedJpeg, scrubIdentifying } from '../../services/processing/rawshim/raw_decoder';
 import {
   readPhotoAnalysis,
   writePhotoAnalysis,
@@ -455,6 +455,10 @@ export class ImageApi {
   // minutes would look like a hung browser.
   private async serveDownload(c: Context): Promise<Response> {
     const form = c.req.param('form') ?? '';
+    // What a bug report attaches (§18.8). Not a download's default: a reader taking their own
+    // photograph away wants the file the camera wrote, coordinates and all.
+    const scrub = c.req.query('scrub') === '1';
+    if (form === 'original' && scrub) return this.serveScrubbedOriginal(c);
     // The RAW goes out through the file path every other stored file takes, so a
     // client can still seek inside a 25MB download (§13.5). No extension assumed
     // in the URL: a catalogue holds more than one RAW format, so both the media
@@ -478,6 +482,11 @@ export class ImageApi {
       const original = await this.originals.open(library, photo);
       const jpeg = original == null ? null : readEmbeddedJpeg(original, this.photoRead.editOrientation(photoId));
       if (jpeg == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG: ${photoId}`);
+      // Refused rather than sent as it is, for `serveScrubbedOriginal`'s reason: a preview
+      // carries the same coordinates the original does.
+      if (scrub && !scrubIdentifying(jpeg)) {
+        throw new AppError('VALIDATION_ERROR', `identifying data cannot be removed from the preview of ${stem}`);
+      }
       return download(new Uint8Array(jpeg), 'image/jpeg', `${stem}-embedded.jpg`);
     }
 
@@ -500,6 +509,30 @@ export class ImageApi {
     // is held between calls, so there is no handle to free on the way out.
     const jpeg = transcodeJpeg(renditionPath, 0, JPEG_QUALITY);
     return download(new Uint8Array(jpeg), 'image/jpeg', `${name}.jpg`);
+  }
+
+  /**
+   * The RAW with every identifying tag blanked, for a bug report to attach (§18.8).
+   *
+   * Read whole rather than streamed, unlike the download beside it: the scrub walks the file's
+   * directories and its previews, so there is nothing to send until all of it has been seen.
+   *
+   * **A container the library cannot read is refused.** Handing back the file unscrubbed would
+   * answer a request to remove somebody's coordinates by sending them.
+   */
+  private async serveScrubbedOriginal(c: Context): Promise<Response> {
+    const photoId = c.req.param('photoId');
+    if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
+    const { photo, library } = this.photoRenditions.locate(photoId);
+    const original = await this.originals.open(library, photo);
+    if (original == null) throw new AppError('NOT_FOUND', `${photoId} has no file of its own`);
+
+    const name = soleInputOf(photo.recipe)?.split('/').pop() ?? photo.id;
+    const bytes = Buffer.from(await Bun.file(original).arrayBuffer());
+    if (!scrubIdentifying(bytes)) {
+      throw new AppError('VALIDATION_ERROR', `identifying data cannot be removed from ${name}`);
+    }
+    return download(new Uint8Array(bytes), originalMediaType(soleInputOf(photo.recipe) ?? ''), name);
   }
 
   // 404s go through AppError (not c.notFound()) so every not-available response
