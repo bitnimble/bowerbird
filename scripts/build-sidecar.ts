@@ -195,7 +195,12 @@ function underLoaderPath(): void {
       // Keyed by the name as written, since that is the string `install_name_tool -change` has
       // to be given, and it is not the path the file was found at.
       carried.set(dependency, basename(from));
-      pending.push(carry(from, NATIVE));
+      carry(from, NATIVE);
+      // The original, not the copy that was just made of it: a name relative to `@loader_path`
+      // means the directory of whichever file asks for it, and a copy asks from ours. Walking
+      // the copy resolves brotli's `@rpath/libbrotlicommon.1.dylib` against this tree, where it
+      // has never been, rather than against the prefix it was installed into.
+      pending.push(from);
     }
   }
   const shipped = [...carried.values()].map((name) => join(NATIVE, name));
