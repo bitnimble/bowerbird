@@ -58,6 +58,9 @@ export const TRIAGE_PHOTOS_DIR = path.join(E2E_ROOT, 'triage-photos');
 // than leaving another spec's frames edited behind it.
 export const EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'edit-photos');
 export const MOBILE_EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'mobile-edit-photos');
+// The viewer's print mockup opens the same editor session the grade does, so it gets a
+// root of its own rather than reading whatever the editor's spec left behind on its frames.
+export const PRINT_PHOTOS_DIR = path.join(E2E_ROOT, 'print-photos');
 // The read-only spec bins and restores, and its whole point is that the tree it
 // does that over is untouched afterwards - which another spec's frames moving
 // around in it would make unassertable.
@@ -260,6 +263,7 @@ export function prepareFixture(): void {
     TRIAGE_PHOTOS_DIR,
     EDIT_PHOTOS_DIR,
     MOBILE_EDIT_PHOTOS_DIR,
+    PRINT_PHOTOS_DIR,
     ARCHIVE_PHOTOS_DIR,
     DECODE_PHOTOS_DIR,
     FALLBACK_PHOTOS_DIR,

@@ -5,9 +5,12 @@ const BindGroupLayoutSchema = z.custom<GPUBindGroupLayoutDescriptor>(
 );
 
 const PipelineRecipeSchema = z.object({
-  code: z.string(),
-  entryPoint: z.string().optional(),
-  constants: z.record(z.string(), z.number()).optional(),
+  /** The `GPUDevice` method that built it, whose `…Async` twin is what warms it. */
+  build: z.string(),
+  /** The descriptor less its layout and its modules, which are objects rather than data. */
+  descriptor: z.record(z.string(), z.unknown()),
+  /** The code of each stage's module, by the descriptor field it sat in. */
+  stages: z.record(z.string(), z.string()),
   groups: z.array(BindGroupLayoutSchema.nullable()),
   lastBuilt: z.number(),
 });
@@ -21,14 +24,28 @@ export type RecipeStore = {
   save: (recipes: Recipes) => Promise<void>;
 };
 
+type PipelineDescriptor = { layout: GPUPipelineLayout | GPUAutoLayoutMode };
+type Build = (this: GPUDevice, descriptor: PipelineDescriptor) => object;
+type BuildAsync = (this: GPUDevice, descriptor: PipelineDescriptor) => Promise<object>;
+type Builder = GPUDevice & Record<string, Build | BuildAsync>;
+type Setter = { setPipeline: (pipeline: object) => void };
+type Class<T> = { prototype: T };
+
+type Created = Pick<GPUDevice, 'createShaderModule' | 'createBindGroupLayout' | 'createPipelineLayout'>;
+
+const BUILDS = /^create\w*Pipeline$/;
 const KEPT_FOR_SESSIONS = 3;
 const SAVE_QUIET_MS = 2000;
 
 /**
- * Compiles, with `createComputePipelineAsync`, the pipelines recent sessions dispatched, before the
- * device reaches wgpu - whose own pipeline creation is synchronous on Chrome's GPU main thread and
- * freezes every frame the page draws, unless Chrome already holds an identical pipeline - and
- * defers each of wgpu's own to its first dispatch.
+ * Compiles, asynchronously, the pipelines recent sessions drew with, before the device reaches
+ * wgpu - whose own pipeline creation is synchronous on the browser's GPU main thread, where it
+ * blocks every page being drawn until it returns - and defers each of wgpu's own to its first use.
+ *
+ * It finds its surface rather than being told it, so a pipeline nobody here has heard of is
+ * covered on the day it is written: every `create…Pipeline` on `GPUDevice` is deferred, every
+ * `GPU…` class that takes one through `setPipeline` unwraps it, and the recipe names the method
+ * that built it so the warm-up can call that method's `…Async` twin.
  */
 export class PipelineWarmth {
   private readonly modules = new WeakMap<GPUShaderModule, string>();
@@ -43,18 +60,19 @@ export class PipelineWarmth {
 
   constructor(private readonly store: RecipeStore) {}
 
-  install(adapter: GPUAdapter, device: GPUDevice, pass: GPUComputePassEncoder): void {
+  /** The global scope the WebGPU classes live on, which is `self` outside a test. */
+  install(scope: object): void {
+    const devices = classIn<Builder>(scope, 'GPUDevice');
+    const adapters = classIn<GPUAdapter>(scope, 'GPUAdapter');
+    if (devices == null || adapters == null) return;
+    const device = devices.prototype;
+    const adapter = adapters.prototype;
     const { createShaderModule, createBindGroupLayout, createPipelineLayout } = device;
-    const { createComputePipeline, createComputePipelineAsync } = device;
     const { requestDevice } = adapter;
-    const { setPipeline } = pass;
-    const created = { createShaderModule, createBindGroupLayout, createPipelineLayout, createComputePipelineAsync };
+    const created: Created = { createShaderModule, createBindGroupLayout, createPipelineLayout };
     const { modules, groups, layouts } = this;
-    const deferred = new WeakMap<
-      object,
-      { device: GPUDevice; descriptor: GPUComputePipelineDescriptor; pipeline?: GPUComputePipeline }
-    >();
-    const built = (descriptor: GPUComputePipelineDescriptor): void => this.built(descriptor);
+    const deferred = new WeakMap<object, { build: () => object; pipeline?: object }>();
+    const built = (build: string, descriptor: PipelineDescriptor): void => this.built(build, descriptor);
     const warm = (opened: GPUDevice): Promise<void> => this.warm(opened, created);
 
     device.createShaderModule = function (this: GPUDevice, descriptor) {
@@ -75,22 +93,33 @@ export class PipelineWarmth {
       );
       return layout;
     };
-    // wgpu only ever hands a compute pipeline back to `setPipeline`, so it can hold a stand-in
-    // until then, and a variant this photograph never dispatches is never compiled.
-    device.createComputePipeline = function (this: GPUDevice, descriptor) {
-      const standIn = {} as GPUComputePipeline;
-      deferred.set(standIn, { device: this, descriptor });
-      return standIn;
-    };
-    pass.setPipeline = function (this: GPUComputePassEncoder, standIn) {
-      const held = deferred.get(standIn);
-      if (held == null) return setPipeline.call(this, standIn);
-      if (held.pipeline == null) {
-        held.pipeline = createComputePipeline.call(held.device, held.descriptor);
-        built(held.descriptor);
-      }
-      return setPipeline.call(this, held.pipeline);
-    };
+    // wgpu only ever hands a pipeline back to `setPipeline`, so it can hold a stand-in until then,
+    // and a variant this photograph never draws with is never compiled. A pipeline laid out
+    // automatically is the exception: its layout is read back off the object itself.
+    for (const name of methodsOf(device).filter((name) => BUILDS.test(name))) {
+      const build = device[name] as Build;
+      device[name] = function (this: GPUDevice, descriptor: PipelineDescriptor) {
+        if (descriptor.layout === 'auto') return build.call(this, descriptor);
+        const standIn = {};
+        deferred.set(standIn, {
+          build: () => {
+            const pipeline = build.call(this, descriptor);
+            built(name, descriptor);
+            return pipeline;
+          },
+        });
+        return standIn;
+      };
+    }
+    for (const pass of settersIn(scope)) {
+      const { setPipeline } = pass.prototype;
+      pass.prototype.setPipeline = function (this: Setter, standIn: object) {
+        const wait = deferred.get(standIn);
+        if (wait == null) return setPipeline.call(this, standIn);
+        wait.pipeline ??= wait.build();
+        return setPipeline.call(this, wait.pipeline);
+      };
+    }
     adapter.requestDevice = async function (this: GPUAdapter, descriptor) {
       const opened = await requestDevice.call(this, descriptor);
       await warm(opened);
@@ -98,30 +127,31 @@ export class PipelineWarmth {
     };
   }
 
-  private built(descriptor: GPUComputePipelineDescriptor): void {
+  private built(build: string, descriptor: PipelineDescriptor): void {
     if (descriptor.layout === 'auto') return;
-    const code = this.modules.get(descriptor.compute.module);
     const groups = this.layouts.get(descriptor.layout);
-    if (code == null || groups == null) return;
-    const recipe: PipelineRecipe = {
-      code,
-      entryPoint: descriptor.compute.entryPoint,
-      constants: descriptor.compute.constants == null ? undefined : { ...descriptor.compute.constants },
-      groups,
-      lastBuilt: this.session,
-    };
+    if (groups == null) return;
+    const stages: Record<string, string> = {};
+    const kept: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(descriptor)) {
+      if (field === 'layout') continue;
+      const stage = value as { module?: GPUShaderModule } | null;
+      if (stage?.module == null) {
+        kept[field] = JSON.parse(JSON.stringify(value));
+        continue;
+      }
+      const code = this.modules.get(stage.module);
+      if (code == null) return;
+      stages[field] = code;
+      kept[field] = JSON.parse(JSON.stringify({ ...stage, module: undefined }));
+    }
+    const recipe: PipelineRecipe = { build, descriptor: kept, stages, groups, lastBuilt: this.session };
     this.recipes.set(keyOf(recipe), recipe);
     if (this.saveTimer != null) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => void this.save(), SAVE_QUIET_MS);
   }
 
-  private async warm(
-    device: GPUDevice,
-    created: Pick<
-      GPUDevice,
-      'createShaderModule' | 'createBindGroupLayout' | 'createPipelineLayout' | 'createComputePipelineAsync'
-    >,
-  ): Promise<void> {
+  private async warm(device: GPUDevice, created: Created): Promise<void> {
     const stored = await this.store.load().catch(() => null);
     this.session = (stored?.session ?? 0) + 1;
     for (const recipe of stored?.recipes ?? []) {
@@ -134,24 +164,25 @@ export class PipelineWarmth {
     const modules = new Map<string, GPUShaderModule>();
     const compiling: Promise<unknown>[] = [];
     for (const recipe of this.recipes.values()) {
-      let module = modules.get(recipe.code);
-      if (module == null) {
-        module = created.createShaderModule.call(device, { code: recipe.code });
-        modules.set(recipe.code, module);
-        // Module parsing stays synchronous on the GPU main thread: a flush each, drawn between.
-        await new Promise((resolve) => setTimeout(resolve, 0));
+      const build = (device as Builder)[`${recipe.build}Async`] as BuildAsync | undefined;
+      if (build == null) continue;
+      const descriptor: Record<string, unknown> = { ...recipe.descriptor };
+      for (const [field, code] of Object.entries(recipe.stages)) {
+        let module = modules.get(code);
+        if (module == null) {
+          module = created.createShaderModule.call(device, { code });
+          modules.set(code, module);
+          // Module parsing stays synchronous on the GPU main thread: a flush each, drawn between.
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        descriptor[field] = { ...(recipe.descriptor[field] as object | undefined), module };
       }
-      const layout = created.createPipelineLayout.call(device, {
+      descriptor.layout = created.createPipelineLayout.call(device, {
         bindGroupLayouts: recipe.groups.map((group) =>
           group == null ? null : created.createBindGroupLayout.call(device, group),
         ),
       });
-      compiling.push(
-        created.createComputePipelineAsync.call(device, {
-          layout,
-          compute: { module, entryPoint: recipe.entryPoint, constants: recipe.constants },
-        }),
-      );
+      compiling.push(build.call(device, descriptor as unknown as PipelineDescriptor));
     }
     const refused = device.popErrorScope();
     await Promise.allSettled([refused, ...compiling]);
@@ -165,8 +196,30 @@ export class PipelineWarmth {
   }
 }
 
-function keyOf({ code, entryPoint, constants, groups }: PipelineRecipe): string {
-  return JSON.stringify([code, entryPoint, constants, groups]);
+function methodsOf(prototype: object): string[] {
+  const names = new Set<string>();
+  for (let held: object | null = prototype; held != null && held !== Object.prototype; ) {
+    for (const name of Object.getOwnPropertyNames(held)) names.add(name);
+    held = Object.getPrototypeOf(held) as object | null;
+  }
+  return [...names];
+}
+
+function classIn<T>(scope: object, name: string): Class<T> | null {
+  const held = (scope as Record<string, unknown>)[name];
+  return typeof held === 'function' ? (held as unknown as Class<T>) : null;
+}
+
+/** Every WebGPU class in the scope that takes a pipeline, found rather than listed. */
+function settersIn(scope: object): Class<Setter>[] {
+  return Object.getOwnPropertyNames(scope)
+    .filter((name) => name.startsWith('GPU'))
+    .map((name) => classIn<Setter>(scope, name))
+    .filter((held): held is Class<Setter> => typeof held?.prototype.setPipeline === 'function');
+}
+
+function keyOf({ build, descriptor, stages, groups }: PipelineRecipe): string {
+  return JSON.stringify([build, descriptor, stages, groups]);
 }
 
 export function cachedRecipes(): RecipeStore {

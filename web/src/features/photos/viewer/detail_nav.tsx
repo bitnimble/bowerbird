@@ -9,6 +9,7 @@ import {
   EyeOff,
   FileType,
   FolderOpen,
+  Frame,
   GalleryThumbnails,
   HardDriveDownload,
   Info,
@@ -56,6 +57,7 @@ import { BulkBarStrings } from '../grid/bulk_bar.strings';
 import { isComposite, mergeEditPath, triagePath } from '../photos_store';
 import { renditionLabel } from '../renditions';
 import { DetailRating } from './detail_rating';
+import type { DetailMode } from './detail_mode';
 import { nameOf, useStep } from './detail_navigation';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { styles } from './photo_detail_page.stylex';
@@ -119,7 +121,7 @@ function offered<T extends 'original' | ViewerRendition>(
   return options.filter((option) => option.value !== 'embedded');
 }
 
-type ViewAction = 'fullscreen' | 'rotateLeft' | 'rotateRight';
+type ViewAction = 'fullscreen' | 'print' | 'rotateLeft' | 'rotateRight';
 
 const VIEW_ACTIONS: Option<ViewAction>[] = [
   { value: 'fullscreen', label: PhotoStageStrings.fullscreen(), icon: <Maximize size={ICON} />, hint: 'F' },
@@ -194,9 +196,10 @@ export const DetailNav = observer(function DetailNav({
   onToggleStrip,
   onEdit,
   onDone,
+  onTogglePrint,
   onFullscreen,
   zoomRef,
-  editing,
+  mode,
   edit,
 }: {
   photoId: string;
@@ -212,9 +215,10 @@ export const DetailNav = observer(function DetailNav({
   onToggleStrip: () => void;
   onEdit: () => void;
   onDone: () => void;
+  onTogglePrint: () => void;
   onFullscreen: () => void;
-  editing: boolean;
-  /** Null until the editor's own layout effect has built the pair, one render behind `editing`. */
+  mode: DetailMode;
+  /** Null until the editor's own layout effect has built the pair, one render behind `mode`. */
   edit: { edit: EditStore; stage: StageStore; loupe: LoupeStore; print: PrintStore; presenter: RawEditPresenter } | null;
 }): JSX.Element {
   const listing = useListingStore();
@@ -226,6 +230,10 @@ export const DetailNav = observer(function DetailNav({
   const touch = useIsTouch();
   const photo = store.detailFor(photoId);
   const editable = isComposite(store.photoFor(photoId)) || (photo?.has_original ?? true);
+  const editing = mode === 'edit';
+  // The print mockup renders through the editor's session, so it takes the editor's chrome
+  // rules - no filmstrip, no rendition choice - while leaving the grade's own controls out.
+  const previewing = mode !== 'view';
   const prevId = store.prevPhotoId;
   const nextId = store.nextPhotoId;
   // The grid this photo was opened from - the shoot, the album, the Bin - rather
@@ -238,7 +246,7 @@ export const DetailNav = observer(function DetailNav({
   // construction (§19.6).
   // Under the same collection the viewer is, so the way back out of a triage
   // session lands in the grid the reader entered it from.
-  const stackPath = editing || photo?.stack_id == null ? null : triagePath(photo.stack_id, listing.source);
+  const stackPath = previewing || photo?.stack_id == null ? null : triagePath(photo.stack_id, listing.source);
   // A row composed rather than imported has no path to show, so the bar names it the way
   // every other view does rather than going blank.
   const path = photo == null ? '' : (photo.file_path ?? nameOf(store, photoId));
@@ -248,8 +256,25 @@ export const DetailNav = observer(function DetailNav({
   // either what the reader is already doing or a way of leaving the photograph in the
   // middle of one. How the photograph is looked at is the same question in both modes, so
   // the zoom and the fullscreen are the same controls in the same place.
+  const viewActions: Option<ViewAction>[] = [
+    ...(document.fullscreenEnabled ? VIEW_ACTIONS : []),
+    {
+      value: 'print',
+      label: mode === 'print' ? PhotoDetailStrings.viewPhoto() : PhotoDetailStrings.viewPrintMockup(),
+      icon: <Frame size={ICON} />,
+      active: mode === 'print',
+      disabled: mode !== 'print' && !editable,
+    },
+    // A turn in the mockup would rotate the photograph rather than the sheet on screen,
+    // so it is not offered there.
+    ...(mode === 'print' ? [] : ROTATE_ACTIONS.map((option) => ({
+      ...option,
+      disabled: editing ? !edit?.stage.editable : !editable,
+    }))),
+  ];
+
   const sections = [
-    ...(mobile && !editing && path !== ''
+    ...(mobile && !previewing && path !== ''
       ? [
           menuSection({
             label: PhotoDetailStrings.path(),
@@ -266,14 +291,14 @@ export const DetailNav = observer(function DetailNav({
       content: <div ref={zoomRef} />,
       // iPhone Safari has no element fullscreen, and a row that does nothing when
       // pressed is worse than one that is not offered.
-      options: [...(document.fullscreenEnabled ? VIEW_ACTIONS : []), ...ROTATE_ACTIONS].map((option) => ({
-        ...option,
-        disabled: option.value !== 'fullscreen' && (editing
-          ? !edit?.stage.editable : !editable),
-      })),
+      options: viewActions,
       onSelect: (action) => {
         if (action === 'fullscreen') {
           onFullscreen();
+          return;
+        }
+        if (action === 'print') {
+          onTogglePrint();
           return;
         }
         const by = action === 'rotateLeft' ? -90 : 90;
@@ -281,7 +306,7 @@ export const DetailNav = observer(function DetailNav({
         else void photos.turn(photoId, by);
       },
     }),
-    ...(editing
+    ...(previewing
       ? []
       : [
           // Which of the three files is on screen: the comparison the detail view
@@ -506,7 +531,7 @@ export const DetailNav = observer(function DetailNav({
       {/* Judging lives in the bar so it survives hiding the metadata column: a cull
           with the panels away is the common case, and the verdict has to stay under
           the same fingers that step between frames. */}
-      {!mobile && !editing && <PhotoTriage photoId={photoId} compact />}
+      {!mobile && !previewing && <PhotoTriage photoId={photoId} compact />}
 
       {stackPath != null && (
         <Button
@@ -534,7 +559,7 @@ export const DetailNav = observer(function DetailNav({
 
       {/* Forced open while editing (the exposure panel has nowhere else to live),
           so the toggle would only confuse. */}
-      {panelsOpen != null && !editing && (
+      {panelsOpen != null && !previewing && (
         <Button
           iconOnly
           aria-label={panelsOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()}

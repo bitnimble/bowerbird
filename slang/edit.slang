@@ -58,7 +58,9 @@ public struct Edit {
     public float2 canvas_size;
     /// The coarsest mip the frame has, which is how far out the draw can average.
     public uint max_lod;
-    public uint pad;
+    /// Which operator the print fits highlights into paper with (`print_signal`). It took the
+    /// spare word this struct already carried, so no offset moved.
+    public uint print_tone;
 
     /// The photographer's own adjustments, on Camera Raw's -100..100 scales
     /// (`EditDocSchema`). Zero is no change, which is what an unedited photo carries.

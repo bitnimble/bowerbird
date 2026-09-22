@@ -43,6 +43,15 @@ const styles = stylex.create({
     color: color.bone,
     boxShadow: `inset 0 -2px 0 ${color.satin}`,
   },
+  backdrop: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 18,
+    borderWidth: 0,
+    padding: 0,
+    backgroundColor: 'transparent',
+    touchAction: 'none',
+  },
   overlay: {
     position: 'fixed',
     insetInline: 0,
@@ -113,6 +122,13 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({ panels, no
         presenter.close();
         if (selected != null) buttons.current.get(selected.id)?.focus();
       }}>
+        {expanded && <button
+          type="button"
+          aria-label={S.close()}
+          tabIndex={-1}
+          onClick={presenter.close}
+          {...stylex.props(styles.backdrop, focusRing.ring)}
+        />}
         <div {...stylex.props(styles.footer)}>
           <div role="tablist" aria-label={S.tabs()} {...stylex.props(styles.tabs)}>
             {panels.map((panel) => (

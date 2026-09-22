@@ -371,6 +371,7 @@ impl<'a> SceneGrade<'a> {
             window: None,
             surround_window: None,
             canvas: None,
+            print_tone: crate::gpu::Tonemap::Neutral,
         }
     }
 }

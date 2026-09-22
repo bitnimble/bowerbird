@@ -74,6 +74,28 @@ fn print_texture_derivatives_follow_the_curved_tangent() {
     }
 }
 
+#[test]
+fn frame_mat_has_the_same_width_on_every_side_of_a_rectangular_photo() {
+    for shape in [[300.0, 200.0], [200.0, 300.0], [800.0, 200.0]] {
+        let long = f64::max(shape[0], shape[1]);
+        let scene = Scene { framed: true, yaw_degrees: 0.0, pitch_degrees: 0.0,
+            paper_long_edge_mm: Extent::measured(long), ..Scene::default() };
+        let half_mm = long * 0.5;
+        for axis in 0..2 {
+            for side in [-1.0, 1.0] {
+                for (margin_mm, depth_mm) in [(10.0, 1.4), (22.0, 9.0)] {
+                    let mut point = [0.0, 0.0, depth_mm / half_mm];
+                    point[axis] = side * (shape[axis] / long + margin_mm / half_mm);
+                    let hit = probe(&scene, &[sample(project(point, &scene), shape.map(|value| value as f32))])[0];
+                    assert_eq!(hit[3], 1.0, "frame missing at {point:?}");
+                    assert!((f64::from(hit[2]) * half_mm - depth_mm).abs() < 0.001,
+                        "unequal border at {point:?}: {hit:?}");
+                }
+            }
+        }
+    }
+}
+
 fn sample(pixel: [f32; 2], shape: [f32; 2]) -> [f32; 8] {
     [pixel[0], pixel[1], 512.0, 512.0, shape[0], shape[1], 0.0, 0.0]
 }
@@ -83,7 +105,8 @@ fn project(point: [f64; 3], scene: &Scene) -> [f32; 2] {
     let (pitch_sin, pitch_cos) = scene.pitch_degrees.to_radians().sin_cos();
     let yawed = [yaw_cos * point[0] + yaw_sin * point[2], point[1], -yaw_sin * point[0] + yaw_cos * point[2]];
     let world = [yawed[0], pitch_cos * yawed[1] - pitch_sin * yawed[2], pitch_sin * yawed[1] + pitch_cos * yawed[2]];
-    let scale = 1.45 * 512.0 / (3.4 - world[2]);
+    let camera = if scene.framed { 4.25 } else { 3.4 };
+    let scale = 1.45 * 512.0 / (camera - world[2]);
     [(256.0 + world[0] * scale) as f32, (256.0 - world[1] * scale) as f32]
 }
 

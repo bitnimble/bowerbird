@@ -215,6 +215,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
                 window: None,
                 surround_window: None,
                 canvas: None,
+                print_tone: rawshim::gpu::Tonemap::Neutral,
             },
             &colour,
         )
@@ -647,6 +648,7 @@ fn the_encode_pass_reproduces_the_recorded_frame() {
                     window: None,
                     surround_window: None,
                     canvas: None,
+                    print_tone: rawshim::gpu::Tonemap::Neutral,
                 },
             );
 
@@ -711,6 +713,7 @@ fn the_rolled_arm_reproduces_the_recorded_grade() {
                     window: None,
                     surround_window: None,
                     canvas: None,
+                    print_tone: rawshim::gpu::Tonemap::Neutral,
                 },
             );
 
@@ -941,6 +944,7 @@ fn graded_frame(
             window: None,
             surround_window: None,
             canvas: None,
+            print_tone: rawshim::gpu::Tonemap::Neutral,
         },
     )
 }
@@ -1856,6 +1860,7 @@ fn the_encode_pass_reproduces_the_recorded_sdr_frame() {
             window: None,
             surround_window: None,
             canvas: None,
+            print_tone: rawshim::gpu::Tonemap::Neutral,
         };
         let peak = gpu.scene_peak();
         let up = gpu.upload(&prepared.samples, &described, &peak);
@@ -1936,6 +1941,7 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
         window: None,
         surround_window: None,
         canvas: None,
+        print_tone: rawshim::gpu::Tonemap::Neutral,
     };
 
     let whole = gpu.encode(&coded, &grading(rawshim::image::Geometry::none()));

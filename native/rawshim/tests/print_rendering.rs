@@ -1,6 +1,7 @@
-use rawshim::gpu::{Adjust, Canvas, Grade, Output};
+use rawshim::gpu::{Adjust, Canvas, Grade, Output, Tonemap};
+use rawshim::hdr_fit::HdrColour;
 use rawshim::image::Geometry;
-use rawshim::light::{DisplayNits, Light, SceneNits, Stops};
+use rawshim::light::{DisplayNits, Gain, Light, SceneNits, Stops};
 use rawshim::print::Scene;
 use rawshim::px::{Size, Span};
 
@@ -142,17 +143,78 @@ fn light_temperature_changes_colour_without_changing_illuminance() {
     assert!((luminance(warm).raw() / luminance(cool).raw() - 1.0).abs() < 0.01);
 }
 
+/// A sheen is a reflection of the room, so it follows what the sheet is turned towards.
 #[test]
-fn ambient_only_gloss_gains_a_broad_grazing_reflection() {
+fn ambient_only_gloss_mirrors_the_room_rather_than_washing_the_sheet() {
     let mut scene = Scene {
         yaw_degrees: 0.0, pitch_degrees: 0.0, key_lux: Light::ZERO,
         fill_lux: Light::exactly(500.0), roughness: 0.08, surface_texture: 0.0,
         ..Scene::default()
     };
-    let face = luminance(draw([0.03; 3], scene)).raw();
+    // Off the deepest black the paper has, where what is read is the reflection and not the pigment.
+    let face = luminance(draw([0.0; 3], scene)).raw();
     scene.yaw_degrees = 85.0;
-    let grazing = luminance(draw([0.03; 3], scene)).raw();
-    assert!(grazing > face * 4.0 && grazing > 80.0, "missing ambient reflection: {face} vs {grazing}");
+    let grazing = luminance(draw([0.0; 3], scene)).raw();
+    assert!(grazing > face * 3.0, "the grazing wall went missing: {face} vs {grazing}");
+    // Half the angle to the ceiling and half the angle to the floor: the same Fresnel either way,
+    // so what is left between them is the room - halved again by the camera metering the room it
+    // is shown, which is the same adaptation the key light is metered through.
+    let ceiling = luminance(draw([0.0; 3], Scene { yaw_degrees: 0.0, pitch_degrees: -45.0, ..scene })).raw();
+    let floor = luminance(draw([0.0; 3], Scene { yaw_degrees: 0.0, pitch_degrees: 45.0, ..scene })).raw();
+    assert!(ceiling > floor * 2.0, "the sheen is a wash rather than a reflection: {floor} vs {ceiling}");
+}
+
+/// A print faced square on mirrors the reader, who is darker than the wall behind them.
+#[test]
+fn a_sheet_faced_square_on_reflects_the_reader_rather_than_the_room() {
+    let scene = Scene {
+        yaw_degrees: 0.0, pitch_degrees: 0.0, key_lux: Light::ZERO,
+        fill_lux: Light::exactly(500.0), roughness: 0.08, surface_texture: 0.0,
+        // Off the pigment, so what is read is the reflection alone.
+        black_reflectance: Gain::of_ratio(0.001), ..Scene::default()
+    };
+    // Twice the yaw in the mirror, so twenty degrees turns the reflection forty off the reader and
+    // leaves it on the same wall at the same elevation: what differs between the two is the body.
+    let facing = luminance(draw([0.0; 3], scene)).raw();
+    let past = luminance(draw([0.0; 3], Scene { yaw_degrees: 20.0, ..scene })).raw();
+    assert!(past > facing * 1.3, "the reader casts no silhouette: {facing} facing, {past} past them");
+}
+
+/// The blacks a room leaves a print, which is what an ambient of uniform radiance takes away.
+#[test]
+fn a_lit_room_leaves_a_gloss_black_where_a_print_keeps_it() {
+    let scene = Scene {
+        yaw_degrees: 0.0, pitch_degrees: 0.0, key_lux: Light::ZERO,
+        fill_lux: Light::exactly(500.0), roughness: 0.08, surface_texture: 0.0,
+        ..Scene::default()
+    };
+    let black = luminance(draw([0.0; 3], scene)).raw();
+    let white = luminance(draw([1.0; 3], scene)).raw();
+    // Most of what is left is the paper's own black rather than the room's reflection, which is
+    // the point: an ambient of uniform radiance leaves this at 24 to one.
+    assert!(white / black > 55.0, "the room washed the print out: {black} against {white} nits");
+}
+
+#[test]
+fn the_tone_operators_trade_saturation_for_highlight_detail() {
+    let colour = HdrColour::identity();
+    let paper = |tonemap| Scene {
+        key_lux: Light::ZERO,
+        fill_lux: Light::exactly(500.0),
+        refractive_index: 1.0,
+        tonemap,
+        ..Scene::default()
+    };
+    let operators = [Tonemap::Neutral, Tonemap::Filmic, Tonemap::Channel];
+    let neutrals = operators.map(|tonemap| luminance(matched([0.5; 3], paper(tonemap), &colour)).raw());
+    assert!(neutrals.iter().all(|level| (level - neutrals[0]).abs() < 0.5),
+        "the operators moved a neutral the paper can already hold: {neutrals:?}");
+    let purity = operators.map(|tonemap| {
+        let drawn = matched([6.0, 1.2, 0.4], paper(tonemap), &colour).map(|light| light.raw());
+        drawn.into_iter().fold(f64::MAX, f64::min) / drawn.into_iter().fold(0.0f64, f64::max)
+    });
+    assert!(purity[2] > purity[1] + 0.02 && purity[1] > purity[0] + 0.02,
+        "the operators failed to separate on a saturated highlight: {purity:?}");
 }
 
 fn luminance(color: [Light<DisplayNits>; 3]) -> Light<DisplayNits> {
@@ -165,14 +227,28 @@ fn draw(source: [f64; 3], scene: Scene) -> [Light<DisplayNits>; 3] {
 }
 
 fn sample(source: [f64; 3], scene: Scene, pixel_at: [usize; 2]) -> [Light<DisplayNits>; 3] {
+    sample_as(source, scene, pixel_at, None)
+}
+
+fn matched(source: [f64; 3], scene: Scene, colour: &HdrColour) -> [Light<DisplayNits>; 3] {
+    sample_as(source, scene, [16, 16], Some(colour))
+}
+
+fn sample_as(
+    source: [f64; 3],
+    scene: Scene,
+    pixel_at: [usize; 2],
+    colour: Option<&HdrColour>,
+) -> [Light<DisplayNits>; 3] {
     let gpu = rawshim::gpu::device().expect("print requires Vulkan");
     let base = rawshim::base::device(gpu).expect("source pyramid");
     let size = 32;
     let grade = Grade {
-        width: size, height: size, photograph_long: Span::measured(size), colour: None,
+        width: size, height: size, photograph_long: Span::measured(size), colour,
         white: Light::measured(10000.0), source_level: Light::measured(10000.0), floor: None,
         reference_nits: Light::exactly(203.0), peak_nits: Light::exactly(1000.0),
         exposure: Stops::ZERO, adjust: Adjust::none(), as_shot: None, output: Output::Pq,
+        print_tone: Tonemap::Neutral,
         geometry: Geometry::none(), window: None, surround_window: None,
         canvas: Some(Canvas { region: (0.0, 0.0, size as f64, size as f64),
             size: Size::measured(size, size), max_lod: 5 }),

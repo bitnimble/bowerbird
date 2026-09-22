@@ -129,9 +129,7 @@ export const RawEditStage = observer(function RawEditStage({
     return () => presenter.attach(null);
   }, [presenter]);
 
-  // The *picture*, not the frame: a cropped photo is a different shape, and fitting the stage
-  // to the frame would letterbox the crop inside it.
-  const natural = stageStore.width === 0 ? NO_SIZE : keystone.output;
+  const natural = stageStore.width === 0 ? NO_SIZE : presenter.displaySize;
   /**
    * Whether the view has to be *fitted*, which only the geometry tools need.
    *

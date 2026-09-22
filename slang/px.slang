@@ -27,6 +27,7 @@
 //   exists: written as a count of the frame's pixels they mean a different picture at every
 //   rendition size, which is what the colour smoothing did - and what the descriptor window did
 //   the moment a burst began searching on half the plane a pan does.
+//   Print frame borders use a share of the photo's short edge, identical on all four sides.
 // - *Absolute, on the mosaic.* `rcd.slang`'s `REACH_*`, `galosh`'s windows, `defocus.slang`'s
 //   `STRIDE`. A photosite is a photosite, so a count of them is a quantity and `exact` takes it.
 // - *Scale-exact by construction.* `chroma_smooth`'s `SIGMA` and `REACH` in texels of a grid that
@@ -44,7 +45,7 @@
 //   of the loop the reader drew, so a dust spot and a person are searched alike. They reach a
 //   shader only resolved, as `repair.slang`'s `cell` and `feather`.
 //   Print geometry and lighting use `PrintUnit`, half the paper's long edge, for camera, bend and emitter distances.
-//   Stock thickness and coating texture use millimetres resolved from the physical long edge.
+//   Stock thickness, coating texture, frame rails, mat and glass depths use millimetres resolved from the physical long edge.
 //
 // **A struct constant used inside a loop wants its number hoisted first.** Slang synthesises an
 // initializer per use site, and a struct returned by value under a loop is a call Metal drops

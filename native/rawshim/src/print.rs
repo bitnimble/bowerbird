@@ -4,6 +4,7 @@ use crate::px::{Extent, Millimetre, PrintUnit, Share, Span};
 pub(crate) const ALBEDO_VIEWS: u32 = 128;
 pub(crate) const ALBEDO_ROUGHNESSES: u32 = 64;
 pub(crate) const ALBEDO_BYTES: u64 = (ALBEDO_VIEWS as u64 + 1) * ALBEDO_ROUGHNESSES as u64 * 4;
+const FRAME_BORDER: Share = Share::of(1, 8);
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -24,7 +25,11 @@ pub enum Presentation {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Scene {
     pub paper: Paper,
+    #[serde(default)]
+    pub tonemap: crate::gpu::Tonemap,
     pub presentation: Presentation,
+    #[serde(default)]
+    pub framed: bool,
     pub yaw_degrees: f64,
     pub pitch_degrees: f64,
     pub key_lux: Light<Illuminance>,
@@ -48,13 +53,15 @@ impl Default for Scene {
     fn default() -> Self {
         Self {
             paper: Paper::Satin,
+            tonemap: crate::gpu::Tonemap::Neutral,
             presentation: Presentation::Scene,
+            framed: false,
             yaw_degrees: -12.0,
             pitch_degrees: 8.0,
             key_lux: Light::exactly(1000.0),
             light_azimuth_degrees: 0.0,
             light_elevation_degrees: 75.0,
-            light_angular_degrees: 30.0,
+            light_angular_degrees: 1.0,
             fill_lux: Light::exactly(500.0),
             light_temperature_kelvin: 6500.0,
             roughness: 0.28,
@@ -82,7 +89,7 @@ impl Scene {
             ("keyLux", self.key_lux.raw(), 0.0, 10000.0),
             ("lightAzimuthDegrees", self.light_azimuth_degrees, -180.0, 180.0),
             ("lightElevationDegrees", self.light_elevation_degrees, -85.0, 85.0),
-            ("lightAngularDegrees", self.light_angular_degrees, 1.0, 90.0),
+            ("lightAngularDegrees", self.light_angular_degrees, 0.1, 90.0),
             ("fillLux", self.fill_lux.raw(), 0.0, 10000.0),
             ("lightTemperatureKelvin", self.light_temperature_kelvin, 2000.0, 10000.0),
             ("roughness", self.roughness, 0.03, 1.0),
@@ -138,7 +145,24 @@ impl Scene {
             self.key_lux.raw(), self.light_temperature_kelvin, self.fill_lux.raw(),
             if matches!(self.presentation, Presentation::Surface) { 1.0 } else { 0.0 },
             distance.raw(), half_width.raw(), half_paper.raw(), self.surface_texture,
+            if self.framed { 1.0 } else { 0.0 }, if self.framed { FRAME_BORDER.raw() } else { 0.0 }, 0.0, 0.0,
         ].into_iter().flat_map(|word| (word as f32).to_le_bytes()).collect()
+    }
+
+    pub fn display_size(&self, shape: (usize, usize)) -> (f64, f64) {
+        let border = self.frame_border(shape).raw();
+        (shape.0 as f64 + 2.0 * border, shape.1 as f64 + 2.0 * border)
+    }
+
+    pub(crate) fn photo_region(&self, shape: (usize, usize), region: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
+        if !self.framed || !matches!(self.presentation, Presentation::Surface) { return region; }
+        let border = self.frame_border(shape).raw();
+        (region.0 - border, region.1 - border, region.2, region.3)
+    }
+
+    fn frame_border(&self, shape: (usize, usize)) -> Extent<crate::px::Output> {
+        let share = if self.framed { FRAME_BORDER } else { Share::of(0, 1) };
+        share.across(Span::measured(shape.0.min(shape.1)))
     }
 }
 
@@ -161,6 +185,27 @@ mod geometry_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn framing_maps_surface_windows_to_the_complete_photo() {
+        let region = (200.0, 150.0, 400.0, 300.0);
+        let scene = Scene { framed: true, presentation: Presentation::Surface, ..Scene::default() };
+        assert_eq!(scene.photo_region((800, 600), region), (125.0, 75.0, 400.0, 300.0));
+        assert_eq!(Scene { framed: false, ..scene }.photo_region((800, 600), region), region);
+        assert_eq!(Scene { presentation: Presentation::Scene, ..scene }.photo_region((800, 600), region), region);
+    }
+
+    #[test]
+    fn frame_size_agrees_with_the_browser_and_has_equal_borders() {
+        let scene = Scene { framed: true, ..Scene::default() };
+        for line in include_str!("../../../test/fixtures/tables/print-frame-size.txt").lines() {
+            let values: Vec<usize> = line.split_whitespace().map(|value| value.parse().expect("dimension")).collect();
+            let shape = (values[0], values[1]);
+            assert_eq!(scene.display_size(shape), (values[2] as f64, values[3] as f64));
+            assert_eq!(values[2] - values[0], values[3] - values[1]);
+            assert_eq!(Scene::default().display_size(shape), (shape.0 as f64, shape.1 as f64));
+        }
+    }
 
     fn probe(scene: &Scene, entry: &str, probes: &[[f32; 8]]) -> Vec<[f32; 8]> {
         let gpu = crate::gpu::device().expect("print requires Vulkan");
@@ -269,7 +314,7 @@ mod tests {
             light_azimuth_degrees: 0.0, light_elevation_degrees: 0.0,
             fill_lux: Light::ZERO, refractive_index: 1.0, ..Scene::default()
         };
-        for angle in [1.0, 30.0, 90.0] {
+        for angle in [0.1, 1.0, 30.0, 90.0] {
             let meter = calibrated(&Scene { light_angular_degrees: angle, ..scene });
             assert!((meter[1] - 1.0).abs() < 1e-6, "aligned {angle}° emitter: {meter:?}");
         }
@@ -348,7 +393,7 @@ mod tests {
         assert!((luminance(results[1]) - 219.74997).abs() < 0.05, "off-axis flux: {results:?}");
         assert!((luminance(results[2]) - 85.36209).abs() < 0.05, "finite distance: {results:?}");
         assert!((results[0][3] - 1.5).abs() < 1e-5, "rectangle solid-angle PDF: {results:?}");
-        for angular_degrees in [1.0, 25.0, 60.0, 90.0] {
+        for angular_degrees in [0.1, 1.0, 25.0, 60.0, 90.0] {
             let scene = Scene { light_angular_degrees: angular_degrees, ..scene };
             let results = probe(&scene, "lighting", &[[0.28, 0.0, 1.0, 32768.0, 0.0, 0.0, 0.0, 0.0]]);
             assert!((luminance(results[0]) - 1000.0 / std::f64::consts::PI).abs() < 0.05,
@@ -477,6 +522,7 @@ mod tests {
                 size: Size::measured(128, 96),
                 max_lod: 6,
             }),
+            print_tone: crate::gpu::Tonemap::Neutral,
         };
         let peak = gpu.scene_peak();
         let uploaded = gpu.upload(&frame, &grade, &peak);

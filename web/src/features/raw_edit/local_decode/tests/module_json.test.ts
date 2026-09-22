@@ -20,7 +20,11 @@ describe('what a tick carries', () => {
     const wire: unknown = await Bun.file(
       new URL('../../../../../../test/fixtures/tables/module-json.json', import.meta.url).pathname,
     ).json();
-    expect(z.object({ print: PrintSceneSchema }).parse(wire).print).toEqual(DEFAULT_PRINT_SCENE);
+    expect(z.object({ print: PrintSceneSchema }).parse(wire).print).toEqual({
+      ...DEFAULT_PRINT_SCENE,
+      framed: true,
+      tonemap: 'filmic',
+    });
   });
   test('names the region as the module reads it', () => {
     const region: Region = { x: 12.5, y: 34.25, width: 640, height: 480 };

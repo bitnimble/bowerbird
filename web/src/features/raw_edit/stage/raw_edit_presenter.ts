@@ -27,7 +27,7 @@ import type { KeystoneStore } from '../keystone/keystone_store';
 import { LoupePresenter } from '../loupe/loupe_presenter';
 import type { LoupeStore } from '../loupe/loupe_store';
 import { PreparePresenter } from './prepare_presenter';
-import { stageResolution } from './stage_resolution';
+import { SUPERSAMPLE, stageResolution } from './stage_resolution';
 import { type PreparedHeader, readPreparedHeader } from '../../../../../src/schemas/prepared';
 import type { EditAdjust, Region, SoftProof } from '../edits';
 import type { EditTool } from '../edit_tool';
@@ -36,6 +36,7 @@ import type { RepairStore } from '../repair/repair_store';
 import type { StageStore } from './stage_store';
 import type { PrintStore } from '../print/print_store';
 import { PrintPresenter } from '../print/print_presenter';
+import { printDisplaySize } from '../print/print_scene';
 
 const SOFT_PROOF_KEY = 'bowerbird.edit.softProof';
 
@@ -136,7 +137,7 @@ export class RawEditPresenter {
     loupeStore: LoupeStore,
     private readonly printStore: PrintStore,
   ) {
-    this.print = new PrintPresenter(printStore, () => this.request(this.editStore.exposureEv));
+    this.print = new PrintPresenter(printStore, () => this.showGeometry());
     stage.softProof = readSetting(SOFT_PROOF_KEY) === 'srgb' ? 'srgb' : 'hdr';
     this.crop = new CropPresenter(stage, editStore, cropStore, {
       preview: (patch) => this.preview(patch),
@@ -259,6 +260,13 @@ export class RawEditPresenter {
     this.request(this.editStore.exposureEv);
   }
 
+  get displaySize(): { width: number; height: number } {
+    return printDisplaySize(
+      this.keystoneStore.output,
+      this.printStore.open && this.printStore.surface && this.printStore.scene.framed,
+    );
+  }
+
   /**
    * Sizes the canvas backing store for the viewport and the region about to be drawn.
    *
@@ -280,7 +288,12 @@ export class RawEditPresenter {
     if (box.width === 0 || box.height === 0) return null;
 
     const scenePrint = this.printStore.open && !this.printStore.surface;
-    const size = stageResolution(box, scenePrint ? { x: 0, y: 0, ...box } : region, this.maxTexture);
+    const size = stageResolution(
+      box,
+      scenePrint ? { x: 0, y: 0, ...box } : region,
+      this.maxTexture,
+      scenePrint ? 1 : SUPERSAMPLE,
+    );
     if (size.width === this.sized?.width && size.height === this.sized?.height) return null;
     this.sized = size;
     this.stage.stage = size;
@@ -298,9 +311,7 @@ export class RawEditPresenter {
    */
   @action.bound
   showRegion(region: Region): void {
-    // Held to the *picture*, not the frame: with a crop the two are different sizes, and a
-    // region clamped to the frame would let a zoomed-out view sit outside what is drawn.
-    const picture = this.keystoneStore.output;
+    const picture = this.displaySize;
     const width = Math.min(Math.max(region.width, 1), picture.width);
     const height = Math.min(Math.max(region.height, 1), picture.height);
     const next = {
@@ -578,7 +589,7 @@ export class RawEditPresenter {
   followGeometry(): void {
     // The geometry rides on the next tick, which is requested below: sending it now would be a
     // second message the draw does not wait for.
-    const { width, height } = this.keystoneStore.output;
+    const { width, height } = this.displaySize;
     if (width === this.shown.width && height === this.shown.height) return;
     this.shown = { width, height };
     // The whole of it, which is what the stage's own refit settles on: it resets the view
@@ -708,7 +719,7 @@ export class RawEditPresenter {
       // origin, a turn swaps the axes and a straighten rotates, so a fraction of the output is not
       // a fraction of the picture - and a panorama framed off-centre by its own align is enough to
       // see the difference.
-      const [x = 0, y = 0, width = 1, height = 1] = await source.decoder.picturePart(region);
+      const [x = 0, y = 0, width = 1, height = 1] = await source.decoder.picturePart(this.atTheLevel(region));
       if (!mine() || width <= 0 || height <= 0) return;
       const part = { x, y, width, height };
       const shown = { region: part, stage: Math.max(stage.width, stage.height) };
@@ -917,7 +928,14 @@ export class RawEditPresenter {
         // `live` over a canvas that is black or confidently wrong. The module keeps the first one
         // and hands it back on the next tick (`gpu::refusal`); this is what puts it on screen.
         if (error != null) this.fail(describe(error));
-        else if (next != null) this.drew(print == null ? 'photo' : 'print');
+        else {
+          if (next != null) this.drew(print == null ? 'photo' : 'print');
+          const framed = print?.presentation === 'surface' && print.framed;
+          if (framed !== this.framedSurface) {
+            this.framedSurface = framed;
+            this.wantWindow();
+          }
+        }
         this.pump();
       };
       // One message carrying both draws and the size they read: the worker applies them in the
@@ -929,7 +947,7 @@ export class RawEditPresenter {
         .tick({
           ev: next ?? this.editStore.exposureEv,
           drawStage: next != null,
-          region: this.atTheLevel(this.stage.region),
+          region: this.stage.region == null ? null : this.atTheLevel(this.stage.region),
           loupe,
           adjust: this.adjust,
           geometry: this.keystoneStore.geometry,
@@ -954,9 +972,9 @@ export class RawEditPresenter {
    * window; the draw reads it against the level it holds. Identity for a tab's own open and for a
    * whole level, which is every picture that is not a window of a canvas.
    */
-  private atTheLevel(region: Region | null): Region | null {
+  private atTheLevel(region: Region): Region {
     const scale = this.levelScale;
-    if (region == null || scale === 1) return region;
+    if (scale === 1) return region;
     return {
       x: region.x * scale,
       y: region.y * scale,
@@ -970,6 +988,7 @@ export class RawEditPresenter {
 
   /** Whether a tick is on the GPU and has not come back. */
   private drawing = false;
+  private framedSurface = false;
 
   /**
    * The window the glass is asking for while a frame is already in flight.

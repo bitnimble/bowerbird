@@ -1,20 +1,23 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { Button } from '../../../ui/button';
+import { CheckLabel } from '../../../ui/check_label';
+import { focusRing } from '../../../ui/focus_ring';
 import { Panel } from '../../../ui/panel';
 import { Select } from '../../../ui/select';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
 import type { Option } from '../../../ui/option';
 import { PrintPanelStrings as strings } from './print_panel.strings';
-import type { Paper, PrintControl } from './print_scene';
+import type { Paper, PrintControl, Tonemap } from './print_scene';
 import type { PrintStore } from './print_store';
 import type { PrintPresenter } from './print_presenter';
 
 const styles = stylex.create({
-  group: { gap: '12px' },
+  group: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '12px' },
   control: { display: 'flex', flexDirection: 'column', gap: '8px' },
   head: { display: 'flex', justifyContent: 'space-between', gap: '8px' },
+  slider: { width: '100%' },
 });
 
 const PAPERS: Option<Paper>[] = [
@@ -23,13 +26,25 @@ const PAPERS: Option<Paper>[] = [
   { value: 'matte', label: strings.matte() },
 ];
 
+const TONEMAPS: Option<Tonemap>[] = [
+  { value: 'neutral', label: strings.neutral() },
+  { value: 'filmic', label: strings.filmic() },
+  { value: 'channel', label: strings.channel() },
+];
+
 type Control = {
   key: PrintControl;
   min: number;
   max: number;
   step: number;
   format: (value: number) => string;
+  /** Slide in decades instead of degrees, so a lamp and a softbox both get a usable stretch of track. */
+  log?: true;
 };
+
+const decades = (spec: Control, value: number): number => spec.log === true ? Math.log10(value) : value;
+const degrees = (spec: Control, position: number): number =>
+  spec.log === true ? Math.min(spec.max, Math.max(spec.min, 10 ** position)) : position;
 
 const PAPER: Control[] = [
   { key: 'paperLongEdgeMm', min: 50, max: 1000, step: 10, format: strings.millimetres },
@@ -45,7 +60,7 @@ const LIGHT: Control[] = [
   { key: 'lightTemperatureKelvin', min: 2000, max: 10000, step: 100, format: strings.kelvin },
   { key: 'lightAzimuthDegrees', min: -180, max: 180, step: 1, format: strings.degrees },
   { key: 'lightElevationDegrees', min: -85, max: 85, step: 1, format: strings.degrees },
-  { key: 'lightAngularDegrees', min: 1, max: 90, step: 1, format: strings.degrees },
+  { key: 'lightAngularDegrees', min: 0.1, max: 90, step: 0.01, format: strings.lightSize, log: true },
   { key: 'lightDistance', min: 1, max: 20, step: 0.1, format: strings.printLengths },
 ];
 const ROTATION: Control[] = [
@@ -67,13 +82,14 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
       </div>
       <Slider
         label={strings[spec.key]()}
-        value={store.scene[spec.key]}
-        valueText={spec.format}
-        min={spec.min}
-        max={spec.max}
+        value={decades(spec, store.scene[spec.key])}
+        valueText={(position) => spec.format(degrees(spec, position))}
+        min={decades(spec, spec.min)}
+        max={decades(spec, spec.max)}
         step={spec.step}
-        onChange={(value) => presenter.setControl(spec.key, value)}
+        onChange={(value) => presenter.setControl(spec.key, degrees(spec, value))}
         disabled={disabled}
+        style={styles.slider}
       />
     </div>
   ));
@@ -81,7 +97,18 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
   return <>
     {(section == null || section === 'paper') && <Panel title={strings.paper()} style={styles.group}>
       <Select label={strings.paper()} options={PAPERS} value={store.scene.paper} onChange={presenter.setPaper} />
+      <Select label={strings.tonemap()} options={TONEMAPS} value={store.scene.tonemap} onChange={presenter.setTonemap} />
       <Text as="p" variant="muted">{strings.simulation()}</Text>
+      <CheckLabel>
+        <input
+          type="checkbox"
+          {...stylex.props(focusRing.ring)}
+          checked={store.scene.framed}
+          disabled={disabled}
+          onChange={(event) => presenter.setFramed(event.currentTarget.checked)}
+        />
+        <Text as="span">{strings.addFrame()}</Text>
+      </CheckLabel>
       {controls(PAPER)}
     </Panel>}
     {(section == null || section === 'lighting') && <Panel title={strings.lighting()} style={styles.group}>{controls(LIGHT)}</Panel>}

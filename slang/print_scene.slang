@@ -5,11 +5,37 @@ import print_material;
 import print_light;
 import print_parameters;
 import print_geometry;
+import print_glass;
+import print_environment;
 import prelude;
 [vk::binding(1, 1)] StructuredBuffer<float> print_albedo;
 [vk::binding(2, 1)] public StructuredBuffer<float> print_light_calibration;
 
 public static const uint LIGHT_SAMPLES = 128;
+
+/// Whether sampling the lobe is worth anything beside sampling the emitter.
+///
+/// **Two strategies are one strategy and a source of noise when the emitter is the smaller of the
+/// two.** A lamp a degree across under a paper lobe ten times that is found exactly by sampling the
+/// emitter, where sampling the lobe hits it once in a hundred tries for a hundred times the value -
+/// the mean is the same either way and the variance is not, and that variance is what the cached
+/// field and the per-pixel draw then disagree by.
+public bool print_lobe_sampled(float roughness)
+{
+    return print.surface.y > 0.5 * roughness * roughness * print.surface.x;
+}
+
+/// How many samples of the emitter a draw is worth.
+///
+/// **This is the whole of the print's cost**, paid per canvas pixel on the scene path and per field
+/// texel on the surface one, and a reader whose device is slow enough for a frame of it to outrun a
+/// driver's watchdog loses the tab rather than the frame rate. The count is what the noisier of the
+/// strategies in play needs: where the lobe is sampled as well, that is the emitter's own ceiling;
+/// where the emitter alone is, a quarter of them land within a thousand-sample render.
+public uint light_samples(float roughness)
+{
+    return print_lobe_sampled(roughness) ? LIGHT_SAMPLES : 64;
+}
 
 public float3 print_illuminant()
 {
@@ -18,7 +44,10 @@ public float3 print_illuminant()
 
 public Gain print_exposure()
 {
-    let received = measured<Illuminance>(print.illumination.z + print.illumination.x * print_light_calibration[1]);
+    // The room's illuminance on the sheet as it is turned, so that turning it towards the ceiling
+    // moves its reflections rather than its exposure - the camera meters what it is shown.
+    let surround = room_illuminance(paper_rotation(float3(0.0, 0.0, 1.0)));
+    let received = measured<Illuminance>(surround.v + print.illumination.x * print_light_calibration[1]);
     let minimum = exactly<Illuminance>(50.0);
     let white = exactly<DisplayNits>(203.0);
     return gain(PRINT_PI * white.v / max(received.v, minimum.v));
@@ -28,6 +57,26 @@ public Colour<DisplayNits> print_background()
 {
     let ambient = measured<Illuminance>(print.illumination.z);
     return measured<DisplayNits>(0.18 * ambient.v / PRINT_PI * print_illuminant() * print_exposure().g);
+}
+
+/// The room's radiance along a world direction, read by a lobe of the given roughness from a
+/// surface the reader is looking at along `world_view`.
+public Light<DisplayNits> room_radiance(float3 world_direction, float3 world_view, float roughness)
+{
+    let ambient = measured<Illuminance>(print.illumination.z);
+    let spread = min(2.0 * roughness * roughness, 1.0);
+    return measured<DisplayNits>(ambient.v * print_light_calibration[6]
+        * room_profile(world_direction.y, spread)
+        * reader_share(dot(world_direction, world_view), spread));
+}
+
+/// The room's illuminance on a surface facing a world direction.
+public Light<Illuminance> room_illuminance(float3 world_normal)
+{
+    let ambient = measured<Illuminance>(print.illumination.z);
+    let up = world_normal.y;
+    return measured<Illuminance>(ambient.v * (print_light_calibration[7] + print_light_calibration[8] * up
+        + print_light_calibration[9] * 0.5 * (3.0 * up * up - 1.0)));
 }
 
 public float paper_albedo(float cosine, float roughness)
@@ -101,8 +150,15 @@ public float3 softbox_hit(float3 position, float3 direction, float3 tangent, flo
     return float3(along * along * SOFTBOX_ASPECT / (4.0 * half_width.d * half_width.d * cosine), at);
 }
 
-public float2 print_direct_coefficients(PrintHit hit, float roughness, uint count)
+public float4 print_direct_coefficients(PrintHit hit, float roughness, uint count)
 {
+    let aperture = frame_aperture(hit.half);
+    if (print.framing.x > 0.5 && print.illumination.w > 0.5) {
+        hit.position = float3(clamp(hit.position.xy, -aperture, aperture), 0.0);
+        hit.normal = float3(0.0, 0.0, 1.0);
+        hit.material = PHOTO;
+        hit.view = normalize(paper_inverse(float3(0.0, 0.0, print_camera_distance())) - hit.position);
+    }
     let world_normal = paper_rotation(hit.normal);
     let world_view = paper_rotation(hit.view);
     let position = paper_rotation(hit.position);
@@ -118,8 +174,14 @@ public float2 print_direct_coefficients(PrintHit hit, float roughness, uint coun
     let distance = exactly<PrintUnit>(print.surface.x);
     let half_width = exactly<PrintUnit>(print.surface.y);
     let alpha = roughness * roughness;
+    // Balance-weighted while both strategies run, and weighted against the emitter alone where only
+    // that one does, so the estimate is the same on either side of the gate.
+    let mixed = print_lobe_sampled(roughness);
     let body = (1.0 - albedo) / (PRINT_PI * (1.0 - paper_average_albedo(roughness)));
-    var direct = float2(0.0);
+    let front = frame_front_depth();
+    let mat_position = float3(hit.position.xy, hit.material == PHOTO ? frame_mat_depth() : hit.position.z);
+    let world_mat = paper_rotation(mat_position);
+    var direct = float4(0.0);
     for (uint i = 0; i < count; i += 1) {
         let sample = quadrature(i, count);
         let emitter_at = 2.0 * sample - 1.0;
@@ -133,16 +195,43 @@ public float2 print_direct_coefficients(PrintHit hit, float roughness, uint coun
             let pdf = dot(delta, delta) * SOFTBOX_ASPECT / (4.0 * half_width.d * half_width.d * emitter_cosine);
             let specular = specular_brdf(local_view, incident, alpha, print.material.w);
             let diffuse = body * (1.0 - paper_albedo(incident.z, roughness));
-            direct += softbox_profile(emitter_at) * incident.z
-                * float2(diffuse / pdf, specular / (pdf + normal_pdf(local_view, incident, alpha)));
+            var transmission = 1.0;
+            if (print.framing.x > 0.5) {
+                let local_direction = paper_inverse(direction);
+                transmission = frame_occluded(hit.position, local_direction, aperture, front)
+                    ? 0.0 : glass_transmittance(local_direction.z);
+            }
+            let lobe_pdf = mixed ? normal_pdf(local_view, incident, alpha) : 0.0;
+            direct.xy += softbox_profile(emitter_at) * incident.z
+                * float2(transmission * diffuse / pdf, transmission * specular / (pdf + lobe_pdf));
+            if (print.framing.x > 0.5) {
+                direct.w += softbox_profile(emitter_at) * incident.z / (PRINT_PI * pdf);
+            }
+        }
+        if (print.framing.x > 0.5) {
+            let mat_delta = point - world_mat;
+            let mat_direction = normalize(mat_delta);
+            let cosine = dot(mat_direction, world_normal);
+            let emitter_cosine = dot(light, mat_direction);
+            let local_direction = paper_inverse(mat_direction);
+            if (cosine > 0.0 && emitter_cosine > 0.0 && !frame_occluded(mat_position, local_direction, aperture, front)) {
+                let pdf = dot(mat_delta, mat_delta) * SOFTBOX_ASPECT / (4.0 * half_width.d * half_width.d * emitter_cosine);
+                direct.z += softbox_profile(emitter_at) * cosine * glass_transmittance(local_direction.z) / (PRINT_PI * pdf);
+            }
         }
         let half = visible_normal(local_view, alpha, sample);
         let reflected = reflect(-local_view, half);
-        if (reflected.z > 0.0) {
+        if (mixed && reflected.z > 0.0) {
             let world_direction = tangent * reflected.x + bitangent * reflected.y + world_normal * reflected.z;
             let emitter = softbox_hit(position, world_direction, light_tangent, light_bitangent, distance, half_width);
             if (emitter.x > 0.0) {
-                direct.y += softbox_profile(emitter.yz) * reflected.z
+                var transmission = 1.0;
+                if (print.framing.x > 0.5) {
+                    let local_direction = paper_inverse(world_direction);
+                    transmission = frame_occluded(hit.position, local_direction, aperture, front)
+                        ? 0.0 : glass_transmittance(local_direction.z);
+                }
+                direct.y += transmission * softbox_profile(emitter.yz) * reflected.z
                     * specular_brdf(local_view, reflected, alpha, print.material.w)
                     / (emitter.x + normal_pdf(local_view, reflected, alpha));
             }
@@ -151,21 +240,93 @@ public float2 print_direct_coefficients(PrintHit hit, float roughness, uint coun
     return direct / float(count);
 }
 
-public float3 print_from_coefficients(float3 reflectance, PrintHit hit, float roughness, float2 direct)
+public float3 print_from_coefficients(float3 reflectance, PrintHit hit, float roughness, float4 direct)
 {
     let albedo = paper_albedo(max(dot(hit.view, hit.normal), 1e-5), roughness);
-    let ambient = print.illumination.z / PRINT_PI * (albedo + reflectance * (1.0 - albedo));
-    return (ambient + print.illumination.x * print_light_calibration[0]
+    let diffuse_transmission = print.framing.x > 0.5 ? print_light_calibration[5] : 1.0;
+    let specular_transmission = print.framing.x > 0.5 ? glass_transmittance(hit.view.z) : 1.0;
+    let mirrored = paper_rotation(reflect(-hit.view, hit.normal));
+    let sheen = albedo * room_radiance(mirrored, paper_rotation(hit.view), roughness).v * specular_transmission;
+    let body = reflectance * (1.0 - albedo) * diffuse_transmission
+        * room_illuminance(paper_rotation(hit.normal)).v / PRINT_PI;
+    return (sheen + body + print.illumination.x * print_light_calibration[0]
         * (direct.x * reflectance + direct.y)) * print_illuminant();
+}
+
+float frame_rectangle_coverage(float2 point, float2 half, float2 footprint)
+{
+    let covered = saturate((half - abs(point)) / max(footprint, float2(1e-6)) + 0.5);
+    return covered.x * covered.y;
+}
+
+float3 glass_reflected_light(PrintHit hit)
+{
+    if (hit.view.z <= 0.0) { return float3(0.0); }
+    let at = hit.position + hit.view * ((frame_glass_depth() - hit.position.z) / hit.view.z);
+    let direction = float3(-hit.view.xy, hit.view.z);
+    if (frame_occluded(at, direction, frame_aperture(hit.half), frame_front_depth())) { return float3(0.0); }
+    let light = print.light.xyz;
+    let tangent = normalize(abs(light.z) < 0.99 ? cross(float3(0.0, 0.0, 1.0), light)
+        : cross(float3(0.0, 1.0, 0.0), light));
+    let bitangent = cross(light, tangent);
+    let world = paper_rotation(direction);
+    let distance = exactly<PrintUnit>(print.surface.x);
+    let half_width = exactly<PrintUnit>(print.surface.y);
+    let source = print.illumination.x * print_light_calibration[0];
+    let front = glass_front_reflectance(hit.view.z);
+    let total = glass_reflectance(hit.view.z);
+    // The second surface's image of the lamp, a glass thickness to the side of the first: two
+    // reflections of one lamp is what tells a reader they are looking through glass at all.
+    let lateral = glass_ghost_offset(hit.view.z, print.surface.z);
+    let sideways = length(hit.view.xy) > 1e-6 ? normalize(hit.view.xy) : float2(0.0);
+    var direct = 0.0;
+    let emitter = softbox_hit(paper_rotation(at), world, tangent, bitangent, distance, half_width);
+    if (emitter.x > 0.0) { direct += front * softbox_profile(emitter.yz) * source; }
+    let ghost_at = float3(at.xy - sideways * lateral, at.z);
+    let ghost = softbox_hit(paper_rotation(ghost_at), world, tangent, bitangent, distance, half_width);
+    if (ghost.x > 0.0) { direct += (total - front) * softbox_profile(ghost.yz) * source; }
+    let radiance = measured<DisplayNits>(total * room_radiance(world, paper_rotation(hit.view), 0.0).v + direct);
+    return radiance.v * print_illuminant();
+}
+
+public float3 framed_from_coefficients(float3 reflectance, PrintHit hit, float roughness,
+    float4 direct, float2 footprint)
+{
+    let source = measured<DisplayNits>(print.illumination.x * print_light_calibration[0]);
+    let ambient = measured<DisplayNits>(room_illuminance(paper_rotation(hit.normal)).v / PRINT_PI);
+    let rim = float3(0.018) * (ambient.v + source.v * direct.w) * print_illuminant();
+    if (hit.material == BACK) {
+        return float3(0.12, 0.085, 0.055) * (ambient.v + source.v * direct.w) * print_illuminant();
+    }
+    if (hit.material == RIM && (print.illumination.w < 0.5 || hit.normal.z < 0.5)) { return rim; }
+    let glass_coverage = print.illumination.w < 0.5 ? 1.0
+        : frame_rectangle_coverage(hit.position.xy, frame_aperture(hit.half), footprint);
+    if (glass_coverage == 0.0) { return rim; }
+    let photo_coverage = print.illumination.w < 0.5 ? float(hit.material == PHOTO)
+        : (hit.normal.z < 0.5 ? 0.0 : frame_rectangle_coverage(hit.position.xy, hit.half, footprint));
+    let mat = float3(0.86, 0.845, 0.81)
+        * (ambient.v * print_light_calibration[5] + source.v * direct.z) * print_illuminant();
+    var substrate = mat;
+    if (photo_coverage > 0.0) {
+        substrate = lerp(mat, print_from_coefficients(reflectance, hit, roughness, direct), photo_coverage);
+    }
+    let transmitted = substrate * glass_transmittance(hit.view.z);
+    return lerp(rim, transmitted + glass_reflected_light(hit), glass_coverage);
 }
 
 public Colour<DisplayNits> reflected_print_samples(float3 reflectance, PrintHit hit, float roughness, uint count)
 {
-    let direct = print.illumination.x == 0.0 ? float2(0.0) : print_direct_coefficients(hit, roughness, count);
+    let direct = print.illumination.x == 0.0 ? float4(0.0) : print_direct_coefficients(hit, roughness, count);
     return measured<DisplayNits>(print_from_coefficients(reflectance, hit, roughness, direct));
 }
 
 public Colour<DisplayNits> reflected_print(float3 reflectance, PrintHit hit, float2 footprint)
 {
-    return reflected_print_samples(reflectance, hit, paper_roughness(hit.position, footprint), LIGHT_SAMPLES);
+    let roughness = paper_roughness(hit.position, footprint);
+    if (print.framing.x > 0.5) {
+        let direct = print.illumination.x == 0.0 ? float4(0.0)
+            : print_direct_coefficients(hit, roughness, light_samples(roughness));
+        return measured<DisplayNits>(framed_from_coefficients(reflectance, hit, roughness, direct, footprint));
+    }
+    return reflected_print_samples(reflectance, hit, roughness, light_samples(roughness));
 }

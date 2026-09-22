@@ -2,13 +2,15 @@ import { z } from 'zod';
 
 export const PrintSceneSchema = z.object({
   paper: z.enum(['gloss', 'satin', 'matte']),
+  tonemap: z.enum(['neutral', 'filmic', 'channel']),
   presentation: z.enum(['scene', 'surface']),
+  framed: z.boolean().default(false),
   yawDegrees: z.number().min(-180).max(180),
   pitchDegrees: z.number().min(-85).max(85),
   keyLux: z.number().min(0).max(10000),
   lightAzimuthDegrees: z.number().min(-180).max(180),
   lightElevationDegrees: z.number().min(-85).max(85),
-  lightAngularDegrees: z.number().min(1).max(90),
+  lightAngularDegrees: z.number().min(0.1).max(90),
   fillLux: z.number().min(0).max(10000),
   lightTemperatureKelvin: z.number().min(2000).max(10000),
   roughness: z.number().min(0.03).max(1),
@@ -22,7 +24,16 @@ export const PrintSceneSchema = z.object({
 
 export type PrintScene = z.infer<typeof PrintSceneSchema>;
 export type Paper = PrintScene['paper'];
-export type PrintControl = Exclude<keyof PrintScene, 'paper' | 'presentation'>;
+export type Tonemap = PrintScene['tonemap'];
+export type PrintControl = Exclude<keyof PrintScene, 'paper' | 'tonemap' | 'presentation' | 'framed'>;
+
+export const PRINT_FRAME_BORDER_SHARE = 0.125;
+
+export function printDisplaySize(photo: { width: number; height: number }, framed: boolean): { width: number; height: number } {
+  if (!framed) return photo;
+  const border = Math.min(photo.width, photo.height) * PRINT_FRAME_BORDER_SHARE;
+  return { width: photo.width + 2 * border, height: photo.height + 2 * border };
+}
 
 export const PAPER_MATERIALS = {
   gloss: { roughness: 0.08, whiteReflectance: 0.92, blackReflectance: 0.004, surfaceTexture: 0.15 },
@@ -32,13 +43,15 @@ export const PAPER_MATERIALS = {
 
 export const DEFAULT_PRINT_SCENE: PrintScene = {
   paper: 'satin',
+  tonemap: 'neutral',
   presentation: 'scene',
+  framed: false,
   yawDegrees: -12,
   pitchDegrees: 8,
   keyLux: 1000,
   lightAzimuthDegrees: 0,
   lightElevationDegrees: 75,
-  lightAngularDegrees: 30,
+  lightAngularDegrees: 1,
   fillLux: 500,
   lightTemperatureKelvin: 6500,
   refractiveIndex: 1.5,

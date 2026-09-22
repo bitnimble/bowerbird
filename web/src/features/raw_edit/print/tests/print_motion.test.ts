@@ -315,14 +315,14 @@ describe('print surface motion', () => {
     presenter.close();
   });
 
-  test('requests permission from the explicit action and remembers a grant across visibility changes', async () => {
+  test('requests tilt permission immediately on opening and remembers the grant', async () => {
     const permission = jest.fn(async () => 'granted');
     harness = new MotionHarness(permission);
     harness.open();
-    expect(permission).not.toHaveBeenCalled();
-    expect(harness.store.tiltStatus).toBe('permission');
+    expect(permission).toHaveBeenCalledTimes(1);
+    expect(harness.store.tiltStatus).toBe('waiting');
     expect(harness.events.count('deviceorientation')).toBe(0);
-    await harness.presenter.enableTilt();
+    await Promise.resolve();
     expect(permission).toHaveBeenCalledTimes(1);
     harness.orient(0, 90, 0);
     harness.visibility.setHidden(true);
@@ -340,11 +340,11 @@ describe('print surface motion', () => {
     expect(harness.store.scene).toMatchObject({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });
   });
 
-  test('a rejected permission request remains a usable static surface', async () => {
+  test('a browser requiring another gesture keeps the explicit tilt action available', async () => {
     harness = new MotionHarness(async () => { throw new Error('permission unavailable'); });
     harness.open();
     await harness.presenter.enableTilt();
-    expect(harness.store.tiltStatus).toBe('denied');
+    expect(harness.store.tiltStatus).toBe('permission');
     expect(harness.events.count('deviceorientation')).toBe(0);
     expect(harness.store.surface).toBe(true);
   });

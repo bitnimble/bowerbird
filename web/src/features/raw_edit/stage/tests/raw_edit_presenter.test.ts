@@ -15,6 +15,7 @@ import type { KeystoneStore } from '../../keystone/keystone_store';
 import type { LoupeStore } from '../../loupe/loupe_store';
 import { StageStore } from '../stage_store';
 import type { LocalPrepare } from '../../local_decode/local_open';
+import type { Region } from '../../edits';
 import type { PreparedHeader } from '../../../../../../src/schemas/prepared';
 import { neutralEdits } from '../../../../../../src/schemas/photo_edits';
 import { type EditCheckpoint, type EditState } from '../../../../../../src/schemas/photo_edits';
@@ -715,6 +716,7 @@ describe('the level a zoom is served at', () => {
     });
     stage.preparedElsewhere = true;
     stage.stage = { width: 1600, height: 900 };
+    decoder.pictureSize = { width: 4000, height: 3000 };
   });
 
   /** Runs whatever the pan or zoom left owed, which the presenter debounces. */
@@ -724,6 +726,30 @@ describe('the level a zoom is served at', () => {
 
   /** A quarter of the picture, off-centre, which the coarse level can only magnify. */
   const QUARTER = { x: 2000, y: 1500, width: 2000, height: 1500 };
+
+  test('maps a framed zoom into the held level before asking for picture coverage', async () => {
+    opened({
+      photoId: 'pan001',
+      local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true },
+      level: { number: 2, canvas: [2000, 1500] },
+      levelScale: 0.25,
+    });
+    const mapped: Region[] = [];
+    decoder.picturePart = (region) => {
+      mapped.push(region);
+      return Promise.resolve([0.25, 0.2, 0.2, 0.2]);
+    };
+    presenter.print.setSurface(true);
+    presenter.print.setFramed(true);
+    presenter.setTool('print');
+    presenter.showRegion({ x: 2750, y: 1950, width: 1600, height: 1200 });
+    await drawn();
+    await settled();
+
+    expect(mapped).toEqual([{ x: 687.5, y: 487.5, width: 400, height: 300 }]);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.searchParams.get('region')?.split(',').map(Number)).toEqual([0.25, 0.2, 0.2, 0.2]);
+  });
 
   test('a zoom past what the held picture resolves asks for a window of it', async () => {
     presenter.showRegion(QUARTER);

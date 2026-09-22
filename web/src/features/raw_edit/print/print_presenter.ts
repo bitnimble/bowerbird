@@ -1,5 +1,5 @@
 import { action } from 'mobx';
-import { DEFAULT_PRINT_SCENE, PAPER_MATERIALS, PrintSceneSchema, type Paper, type PrintControl } from './print_scene';
+import { DEFAULT_PRINT_SCENE, PAPER_MATERIALS, PrintSceneSchema, type Paper, type PrintControl, type Tonemap } from './print_scene';
 import { browserPrintMotion, PrintMotion, type PrintMotionEnvironment, type PrintTilt } from './print_motion';
 import type { PrintStore } from './print_store';
 
@@ -37,6 +37,7 @@ export class PrintPresenter {
     this.endDrag();
     this.store.open = open;
     this.syncTilt();
+    if (open && this.permission === 'unknown') void this.enableTilt();
     this.redraw();
   };
 
@@ -54,6 +55,7 @@ export class PrintPresenter {
       ...(surface ? { yawDegrees: 0, pitchDegrees: 0 } : this.desktopRotation),
     };
     this.syncTilt();
+    if (surface && this.permission === 'unknown') void this.enableTilt();
     this.redraw();
   };
 
@@ -70,7 +72,7 @@ export class PrintPresenter {
     try {
       this.permissionResult(epoch, await this.motion.requestPermission());
     } catch {
-      this.permissionResult(epoch, 'denied');
+      this.permissionResult(epoch, 'prompt');
     }
   };
 
@@ -78,7 +80,7 @@ export class PrintPresenter {
   private permissionResult = (epoch: number, permission: unknown): void => {
     if (epoch !== this.permissionEpoch) return;
     this.awaitingPermission = false;
-    this.permission = permission === 'granted' ? 'granted' : 'denied';
+    this.permission = permission === 'granted' ? 'granted' : permission === 'denied' ? 'denied' : 'unknown';
     this.syncTilt();
   };
 
@@ -222,6 +224,18 @@ export class PrintPresenter {
   @action.bound
   setPaper = (paper: Paper): void => {
     this.store.scene = { ...this.store.scene, paper, ...PAPER_MATERIALS[paper] };
+    this.redraw();
+  };
+
+  @action.bound
+  setTonemap = (tonemap: Tonemap): void => {
+    this.store.scene = { ...this.store.scene, tonemap };
+    this.redraw();
+  };
+
+  @action.bound
+  setFramed = (framed: boolean): void => {
+    this.store.scene = { ...this.store.scene, framed };
     this.redraw();
   };
 

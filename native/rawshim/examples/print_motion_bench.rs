@@ -5,10 +5,14 @@ use rawshim::px::{Size, Span};
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), String> {
-    let mut args = std::env::args().skip(1);
+    let framed = std::env::args().any(|arg| arg == "--framed");
+    // The desktop presentation, which draws every light sample per canvas pixel instead of reading
+    // a cached field, and so is the one whose cost follows the reader's window.
+    let direct = std::env::args().any(|arg| arg == "--scene");
+    let mut args = std::env::args().skip(1).filter(|arg| arg != "--framed" && arg != "--scene");
     let path = args
         .next()
-        .ok_or("usage: print_motion_bench <photograph> [long-edge] [frames]")?;
+        .ok_or("usage: print_motion_bench <photograph> [long-edge] [frames] [--framed] [--scene]")?;
     let long: usize = args.next().map_or(Ok(1920), |value| {
         value.parse().map_err(|_| "invalid long edge")
     })?;
@@ -22,7 +26,7 @@ fn main() -> Result<(), String> {
     let prepared = rawshim::edit::prepare_bytes(
         &bytes,
         &rawshim::edit::EditRequest {
-            long_edge: 1920,
+            long_edge: long as u32,
             grade: rawshim::hdr::Grade {
                 peak_nits: Light::exactly(1000.0),
                 reference_white_nits: Light::exactly(203.0),
@@ -47,10 +51,11 @@ fn main() -> Result<(), String> {
     let pyramid =
         rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
             .ok_or("source pyramid")?;
-    let scale = long as f64 / header.width.max(header.height) as f64;
+    let display = Scene { framed, ..Scene::default() }.display_size((header.width, header.height));
+    let scale = long as f64 / display.0.max(display.1);
     let size = Size::measured(
-        (header.width as f64 * scale).round() as usize,
-        (header.height as f64 * scale).round() as usize,
+        (display.0 * scale).round() as usize,
+        (display.1 * scale).round() as usize,
     );
     let (width, height) = size.raw();
     let grade = Grade {
@@ -74,10 +79,11 @@ fn main() -> Result<(), String> {
         window: None,
         surround_window: None,
         canvas: Some(Canvas {
-            region: (0.0, 0.0, header.width as f64, header.height as f64),
+            region: (0.0, 0.0, display.0, display.1),
             size,
             max_lod: pyramid.levels,
         }),
+        print_tone: rawshim::gpu::Tonemap::Neutral,
     };
     let peak = gpu.scene_peak();
     let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
@@ -105,7 +111,8 @@ fn main() -> Result<(), String> {
         ("matte", Paper::Matte, 0.65, 1000.0),
     ] {
         let mut scene = Scene {
-            presentation: Presentation::Surface,
+            presentation: if direct { Presentation::Scene } else { Presentation::Surface },
+            framed,
             paper,
             roughness,
             key_lux: Light::exactly(key),

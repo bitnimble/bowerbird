@@ -16,6 +16,10 @@ export const styles = stylex.create({
   // One line: a wrapped bar pushes the photo down and moves every control out from under the
   // thumb. The path gives up its width first, then the menus fold into one button.
   nav: {
+    // Above the mobile panels' dismissing backdrop (z-index 18), so a tool or Done still
+    // takes the tap that closes an open panel instead of spending it on the backdrop.
+    position: 'relative',
+    zIndex: 21,
     marginBottom: '8px',
     flexGrow: 0,
     flexShrink: 0,

@@ -49,6 +49,22 @@ describe('mobile edit panels', () => {
     expect(document.activeElement).toBe(color);
   });
 
+  test('an outside tap closes the panel after the pointer is released and leaves tabs usable', () => {
+    render(<MobileEditPanels scope="photo" panels={panels} />);
+    const light = screen.getByRole('tab', { name: 'Light' });
+    fireEvent.click(light);
+    const dismiss = screen.getByRole('button', { name: 'Close edit panel' });
+    fireEvent.pointerDown(dismiss);
+    expect(light.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.pointerUp(dismiss);
+    fireEvent.click(dismiss);
+    expect(light.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'Close edit panel' })).toBeNull();
+    expect(screen.queryByRole('tabpanel')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Colour' }));
+    expect(screen.getByRole('tabpanel', { name: 'Colour' }).contains(screen.getByRole('textbox', { name: 'Saturation' }))).toBe(true);
+  });
+
   test('a new photo or tool resets the footer to collapsed', () => {
     const view = render(<MobileEditPanels scope="photo" panels={panels} />);
     fireEvent.click(screen.getByRole('tab', { name: 'Light' }));

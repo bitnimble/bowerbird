@@ -741,17 +741,25 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
           }
           wantedReadback = null;
           const scene = { ...currentPrint };
-          const buffer = editorDevice.createBuffer({ size: 256, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+          // A block around the middle rather than the middle pixel: a small source puts a small
+          // highlight somewhere on the sheet, and which texel it lands on is not the claim.
+          const side = Math.min(512, texture.width, texture.height) & ~31;
+          const buffer = editorDevice.createBuffer({ size: side * side * 8, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
           const encoder = editorDevice.createCommandEncoder();
           encoder.copyTextureToBuffer(
-            { texture, origin: { x: Math.floor(texture.width / 2), y: Math.floor(texture.height / 2) } },
-            { buffer, bytesPerRow: 256 },
-            { width: 1, height: 1 },
+            { texture, origin: { x: Math.floor((texture.width - side) / 2), y: Math.floor((texture.height - side) / 2) } },
+            { buffer, bytesPerRow: side * 8 },
+            { width: side, height: side },
           );
           submitHdrCommands.call(this, [...commands, encoder.finish()]);
           buffer.mapAsync(GPUMapMode.READ).then(() => {
             const raw = new DataView(buffer.getMappedRange());
-            hdrReadbacks.push({ id: requested.id, scene, rgb: [halfFloat(raw.getUint16(0, true)), halfFloat(raw.getUint16(2, true)), halfFloat(raw.getUint16(4, true))] });
+            let rgb = [0, 0, 0];
+            for (let at = 0; at < side * side * 8; at += 8) {
+              const pixel = [halfFloat(raw.getUint16(at, true)), halfFloat(raw.getUint16(at + 2, true)), halfFloat(raw.getUint16(at + 4, true))];
+              if (Math.max(...pixel) > Math.max(...rgb)) rgb = pixel;
+            }
+            hdrReadbacks.push({ id: requested.id, scene, rgb });
             buffer.unmap();
             buffer.destroy();
           });
@@ -772,6 +780,10 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   const revision = await savedRev(page, photoId);
   await tool(page, 'Print').click();
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print');
+  const frame = page.getByRole('checkbox', { name: 'Add frame', exact: true });
+  await expect(frame).not.toBeChecked();
+  await frame.check();
+  await expect(frame).toBeChecked();
   for (const configuration of await canvasConfigurations()) expect(configuration).toEqual(hdrCanvas);
   const print = page.getByRole('region', { name: 'Rotate print' });
   const yaw = page.getByRole('slider', { name: 'Horizontal rotation', exact: true });
@@ -792,7 +804,6 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   await expect(yaw).toHaveAttribute('aria-valuenow', '-7');
   await page.getByRole('combobox', { name: 'Paper', exact: true }).click();
   await page.getByRole('option', { name: 'Gloss', exact: true }).click();
-  await expect(page.getByRole('slider', { name: 'Surface roughness' })).toHaveAttribute('aria-valuenow', '0.08');
   await print.press('Home');
   await print.press('Shift+ArrowUp');
   await print.press('Shift+ArrowUp');

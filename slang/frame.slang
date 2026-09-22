@@ -317,6 +317,45 @@ float3 print_filtered(float2 source, float2 dx, float2 dy)
     return sum / float(count);
 }
 
+/// How the print fits the scene's highlights into what paper can reflect.
+///
+/// The display has one answer to this and no reason to offer another: `rolled` compresses on
+/// whichever channel reaches the ceiling first and scales the colour by what that channel gave
+/// up, so a blown cloud stays neutral. Paper is not a display. Its dyes saturate, so a bright
+/// saturated patch bleaches toward the sheet rather than holding its hue at full purity, and a
+/// printer driver reaching the same ceiling per channel is a look people print for on purpose.
+/// Which of the three a photograph wants is a judgement about that photograph.
+static const uint PRINT_TONE_NEUTRAL = 0;
+static const uint PRINT_TONE_FILMIC = 1;
+static const uint PRINT_TONE_CHANNEL = 2;
+
+/// The graded colour as a share of paper white, compressed by whichever operator is chosen.
+float3 print_signal(Colour<SceneNits> nits, float2 at)
+{
+    let peak = measured<DisplayNits>(edit.peak);
+    // Unmatched frames never reach the roll-off on the display path either: there is no scene
+    // peak measured to roll from.
+    if (edit.matched == 0) { return within(neutral_nits(nits, at), peak).v / edit.peak; }
+    let scene_peak = measured<DisplayNits>(peak_out[0]);
+    let graded = within(matched_nits(nits, at), scene_peak);
+    let knee = rolloff(scene_peak, peak);
+    if (edit.print_tone == PRINT_TONE_CHANNEL) {
+        let apart = float3(roll(measured<DisplayNits>(graded.v.r), knee).v,
+            roll(measured<DisplayNits>(graded.v.g), knee).v,
+            roll(measured<DisplayNits>(graded.v.b), knee).v);
+        return min(apart, float3(edit.peak)) / edit.peak;
+    }
+    let together = within(rolled(graded, knee), peak);
+    if (edit.print_tone == PRINT_TONE_NEUTRAL) { return together.v / edit.peak; }
+    let top = max(graded.v.r, max(graded.v.g, graded.v.b));
+    let held = max(together.v.r, max(together.v.g, together.v.b));
+    let kept = top <= 0.0 ? 1.0 : saturate(held / top);
+    // Squared, so a stop of compression tints rather than bleaches and only a highlight several
+    // stops past the paper arrives white.
+    let bleach = (1.0 - kept) * (1.0 - kept);
+    return lerp(together.v, float3(dot(LUMA, together.v)), bleach) / edit.peak;
+}
+
 Colour<SrgbLinear> print_gamut(Colour<SrgbLinear> colour)
 {
     let luma = saturate(dot(LUMA709, colour.v));
@@ -333,11 +372,12 @@ Colour<SrgbLinear> print_gamut(Colour<SrgbLinear> colour)
 
 float3 print_pigment(float2 pixel, float2 dx, float2 dy)
 {
-    let source = geometry_at(pixel);
-    let source_dx = geometry_at(pixel + dx) - source;
-    let source_dy = geometry_at(pixel + dy) - source;
-    let nits = display_nits(measured<SceneNits>(print_filtered(source, source_dx, source_dy)), source);
-    return print_gamut(measured<SrgbLinear>(mul(R2020_TO_SRGB, nits.v / edit.peak))).v;
+    let bounded = clamp(pixel, float2(0.0), float2(float(edit.output_width), float(edit.output_height)));
+    let source = geometry_at(bounded);
+    let source_dx = geometry_at(bounded + dx) - source;
+    let source_dy = geometry_at(bounded + dy) - source;
+    let signal = print_signal(measured<SceneNits>(print_filtered(source, source_dx, source_dy)), source);
+    return print_gamut(measured<SrgbLinear>(mul(R2020_TO_SRGB, signal))).v;
 }
 
 [shader("fragment")]
@@ -346,6 +386,42 @@ float4 fs_print_pigment(float4 pos : SV_Position) : SV_Target
     let scale = edit.region_size / edit.canvas_size;
     let pixel = edit.region_origin + pos.xy * scale;
     return float4(print_pigment(pixel, float2(scale.x, 0.0), float2(0.0, scale.y)), 1.0);
+}
+
+float3 print_hit_reflected(PrintHit hit, float2 pixel, float2 dx, float2 dy, float2 footprint)
+{
+    var reflectance = float3(print.material.y);
+    if (hit.normal.z > 0.5 && (print.framing.x < 0.5 || print.illumination.w > 0.5 || hit.material == PHOTO)) {
+        let pigment = print_pigment(pixel, dx, dy);
+        reflectance = mul(SRGB_TO_R2020, lerp(float3(print.material.z), float3(print.material.y), pigment));
+    }
+    return reflected_print(reflectance, hit, footprint).v;
+}
+
+bool print_near_frame_edge(float2 point, float2 half, float2 footprint)
+{
+    let reach = max(footprint, float2(1e-7));
+    return all(abs(point) <= half + reach) && any(abs(abs(point) - half) <= reach);
+}
+
+bool print_internal_edge(PrintHit hit, float2 footprint)
+{
+    if (hit.material == BACK || hit.view.z <= 0.0) { return false; }
+    let mat_point = hit.position.xy + hit.view.xy * ((frame_mat_depth() - hit.position.z) / hit.view.z);
+    let rim_point = hit.position.xy + hit.view.xy * ((frame_front_depth() - hit.position.z) / hit.view.z);
+    let aperture = frame_aperture(hit.half);
+    return print_near_frame_edge(hit.position.xy, hit.half, footprint)
+        || print_near_frame_edge(mat_point, hit.half, footprint)
+        || print_near_frame_edge(hit.position.xy, aperture, footprint)
+        || print_near_frame_edge(rim_point, aperture, footprint);
+}
+
+float3 print_scene_sample(float2 pos, float2 shape, float2 dx, float2 dy, float2 footprint,
+    float exposure, float3 background)
+{
+    let hit = paper_hit(pos, edit.canvas_size, shape);
+    if (!hit.hit) { return background; }
+    return print_hit_reflected(hit, hit.uv * shape, dx, dy, footprint) * exposure;
 }
 
 Colour<DisplayNits> print_nits(float2 pos)
@@ -377,15 +453,24 @@ Colour<DisplayNits> print_nits(float2 pos)
         dx = paper_dx * shape;
         dy = paper_dy * shape;
     }
-    let coverage = hit.coverage;
-    var reflectance = float3(print.material.y);
-    if (hit.normal.z > 0.5) {
-        let pigment = print_pigment(pixel, dx, dy);
-        reflectance = mul(SRGB_TO_R2020, lerp(float3(print.material.z), float3(print.material.y), pigment));
-    }
     let footprint = 2.0 * (abs(paper_dx) + abs(paper_dy)) * shape / max(shape.x, shape.y);
-    let reflected = reflected_print(reflectance, hit, footprint);
-    return measured<DisplayNits>(lerp(background, reflected.v * print_exposure().g, coverage));
+    let exposure = print_exposure().g;
+    if (print.framing.x > 0.5 && print.illumination.w < 0.5 && hit.coverage == 1.0 && print_internal_edge(hit, footprint)) {
+        var photo_plane = hit;
+        photo_plane.normal = float3(0.0, 0.0, 1.0);
+        photo_plane.position.z = 0.0;
+        let center_uv = paper_uv(pos, edit.canvas_size, shape, photo_plane);
+        let sample_dx = (paper_uv(pos + float2(1.0, 0.0), edit.canvas_size, shape, photo_plane) - center_uv) * shape;
+        let sample_dy = (paper_uv(pos + float2(0.0, 1.0), edit.canvas_size, shape, photo_plane) - center_uv) * shape;
+        let sample_footprint = 2.0 * (abs(sample_dx) + abs(sample_dy)) / max(shape.x, shape.y);
+        let first = print_scene_sample(pos + float2(-0.25, -0.25), shape, sample_dx, sample_dy, sample_footprint, exposure, background);
+        let second = print_scene_sample(pos + float2(0.25, -0.25), shape, sample_dx, sample_dy, sample_footprint, exposure, background);
+        let third = print_scene_sample(pos + float2(-0.25, 0.25), shape, sample_dx, sample_dy, sample_footprint, exposure, background);
+        let fourth = print_scene_sample(pos + float2(0.25, 0.25), shape, sample_dx, sample_dy, sample_footprint, exposure, background);
+        return measured<DisplayNits>((first + second + third + fourth) * 0.25);
+    }
+    let reflected = print_hit_reflected(hit, pixel, dx, dy, footprint);
+    return measured<DisplayNits>(lerp(background, reflected * exposure, hit.coverage));
 }
 
 [shader("fragment")]

@@ -57,10 +57,9 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
   await expect.poll(async () => editPreview(page).evaluate((canvas: HTMLCanvasElement) => canvas.width / canvas.height))
     .toBeCloseTo(aspect, 2);
   expect(await scene()).toEqual({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });
-  expect(await page.evaluate(() => Reflect.get(globalThis, 'motionPermissionRequests'))).toBe(0);
-  await page.getByRole('tab', { name: 'Device tilt', exact: true }).click();
-  await page.getByRole('button', { name: 'Enable tilt', exact: true }).click();
   expect(await page.evaluate(() => Reflect.get(globalThis, 'motionPermissionRequests'))).toBe(1);
+  await page.getByRole('tab', { name: 'Device tilt', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Enable tilt', exact: true })).toHaveCount(0);
   await page.evaluate(async () => {
     window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 90, gamma: 0 }));
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
@@ -92,11 +91,27 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await expect(tabs).toBeVisible();
   await expect(page.getByRole('tabpanel')).toHaveCount(0);
   const initial = await photoStage(page).boundingBox();
+  await photoStage(page).evaluate((stage) => {
+    const events: string[] = [];
+    Object.defineProperty(stage, 'panelGestureEvents', { value: events });
+    for (const type of ['pointerdown', 'pointermove', 'pointerup', 'click', 'wheel']) {
+      stage.addEventListener(type, () => events.push(type));
+    }
+  });
   await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
   const panel = page.getByRole('tabpanel', { name: 'Light', exact: true });
   await expect(panel).toHaveCSS('opacity', '1');
   await expect(panel).toHaveCSS('position', 'fixed');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
+  const canvas = await editPreview(page).boundingBox();
+  if (canvas == null) throw new Error('The photo has no layout box');
+  const outside = { x: canvas.x + canvas.width / 2, y: canvas.y + 20 };
+  await page.touchscreen.tap(outside.x, outside.y);
+  await expect(panel).not.toBeVisible();
+  expect(await photoStage(page).evaluate((stage) => Reflect.get(stage, 'panelGestureEvents'))).toEqual([]);
+  await tabs.getByRole('tab', { name: 'Colour', exact: true }).click();
+  await expect(page.getByRole('tabpanel', { name: 'Colour', exact: true })).toBeVisible();
+  await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
   const slider = panel.getByRole('slider', { name: 'Exposure', exact: true });
   await page.keyboard.press('Tab');
   await expect(slider).toBeFocused();
@@ -109,6 +124,7 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   const isolated = page.getByRole('region', { name: 'Adjusting Exposure', exact: true });
   await expect(isolated).toBeVisible();
   await expect(panel).toHaveCSS('opacity', '0');
+  await expect(page.getByRole('button', { name: 'Close edit panel' })).toBeVisible();
   await expect(isolated).toContainText('EV');
   await expect(isolated).toHaveCSS('position', 'fixed');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
@@ -121,6 +137,7 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await expect(isolated).toHaveCount(0);
   await expect(panel).toHaveCSS('opacity', '1');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
+  expect(await photoStage(page).evaluate((stage) => Reflect.get(stage, 'panelGestureEvents'))).toEqual([]);
   await page.screenshot({ path: '/tmp/bowerbird-mobile-panel-open.png' });
   await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
   await expect(panel).not.toBeVisible();
@@ -129,6 +146,40 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await page.screenshot({ path: '/tmp/bowerbird-mobile-footer.png' });
   await cdp.detach();
 });
+
+for (const { device, viewport, hasTouch, isMobile } of [
+  { device: 'mobile', viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true },
+  { device: 'desktop', viewport: { width: 1280, height: 900 }, hasTouch: false, isMobile: false },
+]) {
+  test.describe(`${device} print controls`, () => {
+    test.use({ viewport, hasTouch, isMobile });
+    test('every slider spans the panel width', async ({ page }) => {
+      await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
+      await waitForEditorLive(page);
+      await editTools(page).getByRole('radio', { name: 'Print', exact: true }).click();
+      for (const { name, count } of [
+        { name: 'Paper', count: 6 },
+        { name: 'Lighting', count: 7 },
+        ...(!isMobile ? [{ name: 'Rotation', count: 2 }] : []),
+      ]) {
+        if (isMobile) await page.getByRole('tab', { name, exact: true }).click();
+        const group = page.getByRole('group', { name, exact: true });
+        await expect(group).toBeVisible();
+        const widths = await group.getByRole('slider').evaluateAll((sliders) => sliders.map((slider) => {
+          const panel = slider.closest('[role="group"]');
+          const track = slider.parentElement?.parentElement;
+          if (panel == null || track == null) throw new Error('The print slider has no track or panel');
+          const style = getComputedStyle(panel);
+          const contentWidth = panel.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+            - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+          return track.getBoundingClientRect().width / contentWidth;
+        }));
+        expect(widths).toHaveLength(count);
+        for (const width of widths) expect(width).toBeCloseTo(1, 2);
+      }
+    });
+  });
+}
 
 test.describe('zoom on a high density phone display', () => {
   test.use({ deviceScaleFactor: 3 });
@@ -180,6 +231,12 @@ test.describe('zoom on a high density phone display', () => {
       const worker = page.workers().find((worker) => worker.url().includes('local_open_worker'));
       if (worker == null) throw new Error('The editor worker was not created');
       await editTools(page).getByRole('radio', { name: tool, exact: true }).click();
+      if (tool === 'Print') {
+        const paper = page.getByRole('tab', { name: 'Paper', exact: true });
+        await paper.click();
+        await page.getByRole('checkbox', { name: 'Add frame', exact: true }).check();
+        await paper.click();
+      }
       const drawnWindows = async (): Promise<string[]> => z.array(z.string()).parse(
         await worker.evaluate(() => Reflect.get(globalThis, 'drawnPhotoWindows')),
       );

@@ -141,7 +141,7 @@ Two things in that build are silent when wrong and cost an afternoon each. libao
 
 ### 21.4 Where the state lives
 
-`EditStore` holds what every tool reads - the document, its revision, undo and save - and `StageStore`, `CropStore`, `KeystoneStore`, `RepairStore` and `LoupeStore` hold their own, each taking a one-way reference to the peers it reads. A presenter per domain is the only writer of its store, and `RawEditPresenter` owns the worker, the track and every object URL. They are constructed when edit mode is entered on the photo detail page, and torn down when it is left or the photo changes - never for an ordinary viewer visit - rather than in the app's provider (§18.2), because the presenter owns a worker and a few hundred MB of wasm heap. A new route rebuilds them, since the route is fixed at decode.
+`EditStore` holds what every tool reads - the document, its revision, undo and save - and `StageStore`, `CropStore`, `KeystoneStore`, `RepairStore` and `LoupeStore` hold their own, each taking a one-way reference to the peers it reads. A presenter per domain is the only writer of its store, and `RawEditPresenter` owns the worker, the track and every object URL. They are constructed when edit mode or the viewer's print mockup is entered on the photo detail page, and torn down when it is left or the photo changes - never for an ordinary viewer visit - rather than in the app's provider (§18.2), because the presenter owns a worker and a few hundred MB of wasm heap. A new route rebuilds them, since the route is fixed at decode.
 
 A drag emits far more pointer positions than the grade can serve, so requests **coalesce rather than queue**: only the latest position is ever outstanding, and queueing them would replay the drag in slow motion after the user let go.
 
@@ -149,8 +149,12 @@ Print mode holds its paper, lighting and orientation in a separate `PrintStore`,
 `PrintPresenter`. These are viewing settings and leave the photo document and its history alone.
 The same worker and HDR canvas draw a suspended sheet through the shared Slang renderer. The photo
 is graded to a bounded print reflectance before illumination, with smooth chroma compression
-into the generic sRGB paper gamut that preserves luminance and neutral whites. Surface reflections
-can exceed diffuse white. Dragging or arrow keys rotate the sheet, and the panel controls its material and light.
+into the generic sRGB paper gamut that preserves luminance and neutral whites. Highlights past
+what paper can hold roll off against diffuse white, under one of three operators the paper panel
+selects: neutral rolls the max channel so ratios and hue survive, filmic bleaches a colour towards
+its own luminance in proportion to how far that channel was compressed, and per channel rolls each
+channel alone, which desaturates a saturated highlight most and keeps the most detail in it.
+Surface reflections can exceed diffuse white. Dragging or arrow keys rotate the sheet, and the panel controls its material and light.
 The camera rays intersect a slightly bowed sheet, lit by a finite softbox whose illuminance is specified at
 the print centre facing the light. Its diffuser has a smooth spatial radiance profile, shared by
 light samples and reflected rays. Surface reflection uses dielectric Fresnel and GGX; its
@@ -159,27 +163,79 @@ GPU-tabulated directional albedo couples it to the diffuse body through the reci
 This conserves reflected energy while approximating scattering inside the paper. Surface
 texture varies roughness in paper coordinates, with its physical scale set by the print's
 long edge and its visible detail filtered against the camera-ray footprint.
+The ambient light is a room rather than a surround of one radiance: its ceiling and the luminaires
+in it carry the light, and the wall opposite, the floor and the reader in front of the print sit at
+a twentieth of that. The ambient setting is the illuminance an upright print stands in, and the
+room is scaled to deliver exactly that, so the shape above only decides which direction it arrives
+from. A sheen is then a reflection of the room and follows what the sheet is turned towards: the
+wall, where it leaves a gloss black at a hundredth of paper white, or the ceiling, ten times
+brighter. The reader is in that room too: a body at arm's length covers a quarter of a steradian around the
+one direction a square-on sheet mirrors into the eye, and it is darker than the wall behind it, so a
+print faced straight reflects a silhouette rather than a room and reaches its paper's own black. The
+silhouette washes out as the lobe reading it opens, in the ratio the two solid angles stand in, so
+it belongs to gloss and barely to matte. Nothing shadows the diffuse side, where the same cone is a
+twelfth of a hemisphere in the room's dim band and worth under a percent of the illuminance.
+The diffuse side reads the same room through zonal harmonics to the second band, which is
+all a Lambert cosine keeps of any surround. A surround of one radiance instead puts the whole
+room's illuminance in the direction the reader's own reflection comes from, which lifts that black
+four times over and leaves every off-axis reflection a flat wash.
 Camera exposure meters ambient and direct illuminance reaching the visible sheet's centre.
 The GPU integrates the finite light against the sheet's orientation, including light crossing
 its horizon. One exposure gain applies to the whole scene, anchored to 203-nit diffuse white
 and bounded in dark rooms; coating reflections retain their HDR headroom.
 The featureless background follows ambient illumination and is black at zero ambient. Defaults
-use 500 lux ambient, a 1000-lux overhead light and 6500 K illumination; the light temperature
-uses the same Robertson chromaticity model as white balance. Gloss reflects the uniform ambient
-field through its directional Fresnel response, producing a broad sheen at grazing angles.
+use 500 lux ambient, a 1000-lux overhead light one degree across - a ceiling downlight, near the
+sun's half degree - and 6500 K illumination. The source spans a tenth of a degree to ninety, slid
+in decades so a lamp and a softbox each get a usable stretch of track. Below about a degree the
+highlight stops following the source: the paper's own roughness is wider than the lamp, and the
+roughness control is what narrows it from there. The light temperature
+uses the same Robertson chromaticity model as white balance. Gloss reflects the room through its
+directional Fresnel response, producing a broad sheen at grazing angles.
+A framed print stands flat behind 2mm glass, above a mat and inside a moulding that casts its own
+shadow. The glass mirrors the room and the lamp twice, once off each of its surfaces, with the
+second image offset by the thickness it crossed and refracted on the way - which is what makes it
+read as glass rather than as a light painted on the picture. The paper's own sheen reaches the
+reader through that glass twice over and under the glass's own reflection of the same room, so
+half of what separates satin from gloss goes behind it, the way it does on a wall.
+**What the print costs is the emitter's integral, and it is paid per canvas pixel on the desktop
+path and per field texel on the touch one.** Three things keep it in proportion. The emitter is
+sampled against how much of the sky it covers, from 64 for a lamp to 128 for a softbox, since a
+source a degree across hardly varies over its own solid angle. Sampling the lobe as well is dropped
+where the emitter is the smaller of the two: balance-weighted MIS is unbiased either way, and the
+lobe's strategy finds a one-degree lamp once in a hundred tries for a hundred times the value, which
+is variance and not signal - held against a thousand-sample render, the pair costs a third of the
+frame and lands closer than the old estimator did. And the scene path's canvas is one pixel per
+device pixel rather than supersampled, the photograph arriving there through the pyramid's
+anisotropic taps and every edge carrying its own subpixel coverage, so the 2.25x bought nothing.
+The mockup also opens the photograph at half the sensor where the editor takes all of it: a 61MP
+frame is 366MB of samples and 650MB of pyramid to draw a sheet two thousand pixels across, and the
+mockup has no loupe to spend it on. The sheet's fragment shaders are also the longest thing here
+to compile, and a pipeline is built synchronously on the browser's GPU thread, where it blocks
+every page the browser is drawing - so `pipeline_warmth.ts` hands wgpu a stand-in for each one and
+builds it at the pass that sets it, leaving an editor open that never shows a print compiling none
+of the print's, and compiles whatever recent sessions did draw with asynchronously ahead of wgpu's
+device, so the wait is paid once per shader rather than once per open. Nothing in the crate
+arranges that: the shim finds every `create…Pipeline` the device offers and every class that takes
+one, so a pipeline added tomorrow is covered without being told about.
 Edge pixels integrate subpixel coverage of the curved sheet, with denser sampling for thin silhouettes.
 The photo uses up to 16 anisotropic taps along the projected footprint, with trilinear mip
 sampling in decoded light, so a tilted sheet preserves detail along its less compressed axis.
 Touch devices use a surface presentation: the print fills the editor's canvas with its normal
 crop, zoom and pan mapping, while device orientation changes material lighting without rotating
-the image. Motion permission is requested through an explicit control where the browser requires
-it. Tilt is relative to the device's initial pose, recentres across screen orientation changes,
+the image. Motion permission is requested as Print opens, inside the click that opened it, since a
+browser that gates the sensors only grants them under a user gesture; a control offers the prompt
+again where that gesture was spent. Tilt is relative to the device's initial pose, recentres across screen orientation changes,
 and stops while the tab is hidden or Print is closed. Without motion access the surface remains
 usable with the lighting controls.
 Mobile editing controls sit in footer tabs. A tab opens one panel over the photograph without
-resizing it. During a slider drag the panel fades away and a floating readout keeps the active
+resizing it, and a tap outside the panel closes it rather than reaching the stage beneath.
+During a slider drag the panel fades away and a floating readout keeps the active
 slider visible at the same position; its original control keeps pointer capture and commits
 the edit on release. Panels support keyboard navigation, Escape and reduced motion.
+The viewer reaches the same mockup outside the editor: a `View print mockup` row in its overflow
+menu puts the page on the photograph's `/mockup`, which builds the editor's session, replaces the photo stage with
+the print renderer and shows the paper, lighting and orientation panels alone. It saves nothing,
+and `View photo` or Escape returns.
 Gloss, satin and matte are generic simulations. Predicting a specific print requires its
 printer, ink and paper colour profile, measured surface reflectance and calibrated viewing conditions.
 

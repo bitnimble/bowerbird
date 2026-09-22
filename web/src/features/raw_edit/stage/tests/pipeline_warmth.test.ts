@@ -4,7 +4,7 @@ import { PipelineWarmth, type Recipes, type RecipeStore } from '../pipeline_warm
 /** Hands back tokens for what it is asked to create, and remembers what it compiled and how. */
 class FakeDevice {
   static compiled: string[] = [];
-  static compiledAsync: GPUComputePipelineDescriptor[] = [];
+  static compiledAsync: Record<string, unknown>[] = [];
   createShaderModule(descriptor: GPUShaderModuleDescriptor): unknown {
     return { code: descriptor.code };
   }
@@ -15,17 +15,27 @@ class FakeDevice {
     return { descriptor };
   }
   createComputePipeline(descriptor: GPUComputePipelineDescriptor): unknown {
-    const { code } = descriptor.compute.module as unknown as { code: string };
-    FakeDevice.compiled.push(code);
-    return { compiled: code };
+    return FakeDevice.compile(descriptor.compute.module);
+  }
+  createRenderPipeline(descriptor: GPURenderPipelineDescriptor): unknown {
+    return FakeDevice.compile(descriptor.vertex.module);
   }
   createComputePipelineAsync(descriptor: GPUComputePipelineDescriptor): Promise<unknown> {
-    FakeDevice.compiledAsync.push(descriptor);
+    FakeDevice.compiledAsync.push(descriptor as unknown as Record<string, unknown>);
+    return Promise.resolve({});
+  }
+  createRenderPipelineAsync(descriptor: GPURenderPipelineDescriptor): Promise<unknown> {
+    FakeDevice.compiledAsync.push(descriptor as unknown as Record<string, unknown>);
     return Promise.resolve({});
   }
   pushErrorScope(): void {}
   popErrorScope(): Promise<null> {
     return Promise.resolve(null);
+  }
+  private static compile(module: GPUShaderModule): unknown {
+    const { code } = module as unknown as { code: string };
+    FakeDevice.compiled.push(code);
+    return { compiled: code };
   }
 }
 
@@ -36,23 +46,45 @@ class FakePass {
   }
 }
 
+type Scope = {
+  GPUAdapter: unknown;
+  GPUDevice: unknown;
+  GPUComputePassEncoder: unknown;
+  GPURenderPassEncoder: unknown;
+  GPURenderBundleEncoder: unknown;
+};
+
+type Installed = {
+  adapter: GPUAdapter;
+  pass: GPUComputePassEncoder;
+  drawing: GPURenderPassEncoder;
+  bundling: GPURenderBundleEncoder;
+};
+
 /** Fresh classes per install, so each wraps prototypes no earlier install has wrapped. */
-function installed(store: RecipeStore): { adapter: GPUAdapter; pass: GPUComputePassEncoder } {
+function installed(store: RecipeStore): Installed {
   class Device extends FakeDevice {}
   class Pass extends FakePass {}
+  class Drawing extends FakePass {}
+  class Bundling extends FakePass {}
   class Adapter {
     requestDevice(): Promise<unknown> {
       return Promise.resolve(new Device());
     }
   }
-  new PipelineWarmth(store).install(
-    Adapter.prototype as unknown as GPUAdapter,
-    Device.prototype as unknown as GPUDevice,
-    Pass.prototype as unknown as GPUComputePassEncoder,
-  );
+  const scope: Scope = {
+    GPUAdapter: Adapter,
+    GPUDevice: Device,
+    GPUComputePassEncoder: Pass,
+    GPURenderPassEncoder: Drawing,
+    GPURenderBundleEncoder: Bundling,
+  };
+  new PipelineWarmth(store).install(scope);
   return {
     adapter: new Adapter() as unknown as GPUAdapter,
     pass: new Pass() as unknown as GPUComputePassEncoder,
+    drawing: new Drawing() as unknown as GPURenderPassEncoder,
+    bundling: new Bundling() as unknown as GPURenderBundleEncoder,
   };
 }
 
@@ -68,13 +100,27 @@ function memory(): RecipeStore & { kept: Recipes | null } {
   return store;
 }
 
-function build(device: GPUDevice, code: string): GPUComputePipeline {
+function layoutOf(device: GPUDevice): GPUPipelineLayout {
   const group = device.createBindGroupLayout({
     entries: [{ binding: 0, visibility: 4, buffer: { type: 'storage' } }],
   });
+  return device.createPipelineLayout({ bindGroupLayouts: [group] });
+}
+
+function build(device: GPUDevice, code: string): GPUComputePipeline {
   return device.createComputePipeline({
-    layout: device.createPipelineLayout({ bindGroupLayouts: [group] }),
+    layout: layoutOf(device),
     compute: { module: device.createShaderModule({ code }), entryPoint: 'main', constants: { 0: 1 } },
+  });
+}
+
+function draw(device: GPUDevice, code: string): GPURenderPipeline {
+  const module = device.createShaderModule({ code });
+  return device.createRenderPipeline({
+    layout: layoutOf(device),
+    vertex: { module, entryPoint: 'vs' },
+    fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
+    primitive: { topology: 'triangle-list' },
   });
 }
 
@@ -98,6 +144,32 @@ test('a pipeline compiles at its first dispatch, once, and never if it is not di
   expect(FakePass.set).toEqual([{ compiled: 'fn used() {}' }, { compiled: 'fn used() {}' }]);
 });
 
+test('every pass that takes a pipeline waits for it, drawn or bundled as well as dispatched', async () => {
+  reset();
+  const { adapter, drawing, bundling } = installed(memory());
+  const device = await adapter.requestDevice();
+  const sheet = draw(device, 'fn sheet() {}');
+  const bundled = draw(device, 'fn bundled() {}');
+  draw(device, 'fn never() {}');
+
+  expect(FakeDevice.compiled).toEqual([]);
+  drawing.setPipeline(sheet);
+  bundling.setPipeline(bundled);
+  expect(FakeDevice.compiled).toEqual(['fn sheet() {}', 'fn bundled() {}']);
+});
+
+test('a pipeline laid out automatically is built as it is asked for, so its layout can be read back', async () => {
+  reset();
+  const { adapter } = installed(memory());
+  const device = await adapter.requestDevice();
+  device.createComputePipeline({
+    layout: 'auto',
+    compute: { module: device.createShaderModule({ code: 'fn loose() {}' }), entryPoint: 'main' },
+  });
+
+  expect(FakeDevice.compiled).toEqual(['fn loose() {}']);
+});
+
 test('the next session compiles in the background what the last one dispatched', async () => {
   reset();
   const store = memory();
@@ -113,10 +185,11 @@ test('the next session compiles in the background what the last one dispatched',
   expect(FakeDevice.compiledAsync).toHaveLength(1);
   const [warmed] = FakeDevice.compiledAsync;
   if (warmed == null) throw new Error('nothing was warmed');
-  expect((warmed.compute.module as unknown as { code: string }).code).toBe('fn a() {}');
-  expect(warmed.compute.entryPoint).toBe('main');
-  expect(warmed.compute.constants).toEqual({ 0: 1 });
-  const layout = warmed.layout as unknown as { descriptor: GPUPipelineLayoutDescriptor };
+  const compute = warmed.compute as { module: { code: string }; entryPoint: string; constants: unknown };
+  expect(compute.module.code).toBe('fn a() {}');
+  expect(compute.entryPoint).toBe('main');
+  expect(compute.constants).toEqual({ 0: 1 });
+  const layout = warmed.layout as { descriptor: GPUPipelineLayoutDescriptor };
   const [group] = [...layout.descriptor.bindGroupLayouts] as unknown as {
     descriptor: GPUBindGroupLayoutDescriptor;
   }[];
@@ -125,19 +198,39 @@ test('the next session compiles in the background what the last one dispatched',
   });
 });
 
+test('a warmed draw goes to the drawing builder with the targets and primitive it had', async () => {
+  reset();
+  const store = memory();
+  const first = installed(store);
+  const device = await first.adapter.requestDevice();
+  first.drawing.setPipeline(draw(device, 'fn sheet() {}'));
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+
+  await installed(store).adapter.requestDevice();
+  const [warmed] = FakeDevice.compiledAsync;
+  if (warmed == null) throw new Error('nothing was warmed');
+  expect(warmed.primitive).toEqual({ topology: 'triangle-list' });
+  const vertex = warmed.vertex as { module: { code: string }; entryPoint: string };
+  const fragment = warmed.fragment as { module: { code: string }; targets: unknown };
+  expect(vertex.entryPoint).toBe('vs');
+  expect(fragment.targets).toEqual([{ format: 'rgba16float' }]);
+  // One module for both stages, or the browser parses the same source twice on the GPU thread.
+  expect(vertex.module).toBe(fragment.module);
+});
+
 test('a recipe no session has dispatched for three sessions is dropped', async () => {
   reset();
   const store = memory();
   store.kept = {
     session: 5,
     recipes: [
-      { code: 'stale', groups: [], lastBuilt: 3 },
-      { code: 'recent', groups: [], lastBuilt: 4 },
+      { build: 'createComputePipeline', descriptor: {}, stages: { compute: 'stale' }, groups: [], lastBuilt: 3 },
+      { build: 'createComputePipeline', descriptor: {}, stages: { compute: 'recent' }, groups: [], lastBuilt: 4 },
     ],
   };
   await installed(store).adapter.requestDevice();
 
   expect(
-    FakeDevice.compiledAsync.map((d) => (d.compute.module as unknown as { code: string }).code),
+    FakeDevice.compiledAsync.map((d) => (d.compute as { module: { code: string } }).module.code),
   ).toEqual(['recent']);
 });

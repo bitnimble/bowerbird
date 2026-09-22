@@ -235,6 +235,7 @@ impl Drawing {
             window,
             surround_window: None,
             canvas: None,
+            print_tone: crate::gpu::Tonemap::Neutral,
         }
     }
 }
@@ -496,8 +497,17 @@ impl HeldRaw {
     /// is not linear and a bowed edge can reach past every corner.
     #[wasm_bindgen(js_name = picturePart)]
     pub fn picture_part(&self, region: &str) -> Result<String, JsValue> {
-        let region: crate::gpu::Region = serde_json::from_str(region)
+        let mut region: crate::gpu::Region = serde_json::from_str(region)
             .map_err(|e| JsValue::from_str(&format!("rawshim: this region is malformed: {e}")))?;
+        if let Some(scene) = self.print.get() {
+            let held = self.drawing.borrow();
+            if let Some(drawing) = held.as_ref() {
+                let picture = drawing.picture();
+                let shape = crate::hdr::cropped_size(picture.0, picture.1, self.geometry.get());
+                (region.x, region.y, region.width, region.height) = scene.photo_region(
+                    shape, (region.x, region.y, region.width, region.height));
+            }
+        }
         let [x, y, wide, deep] = self.part_of(&region)?;
         Ok(format!("[{x},{y},{wide},{deep}]"))
     }
@@ -892,6 +902,7 @@ impl HeldRaw {
             window: placed,
             surround_window: None,
             canvas: None,
+            print_tone: crate::gpu::Tonemap::Neutral,
         };
         let uploaded = opened.frame.upload(&grade, &peak);
         // **The brightest of the sampled million, kept so a tick can re-measure without a sweep.**
@@ -1194,6 +1205,7 @@ impl HeldRaw {
             window: drawing.placed,
             surround_window: None,
             canvas: None,
+            print_tone: crate::gpu::Tonemap::Neutral,
         };
         drawing.uploaded = drawing.frame.upload(&grade, &drawing._peak);
         // Re-collected against the pixels that are there now: the threshold the open left still
@@ -1896,6 +1908,9 @@ impl HeldRaw {
             window,
             surround_window: None,
             canvas: Some(shown),
+            // The print scene's own operator reaches the draw through `draw_with_print`, which
+            // overrides this for the pigment it grades.
+            print_tone: crate::gpu::Tonemap::Neutral,
         };
         // **Before the draw, and every tick.** The peak is measured *after* the exposure
         // (`peak.slang`), so it is not a property of the photograph the way the levels are: read

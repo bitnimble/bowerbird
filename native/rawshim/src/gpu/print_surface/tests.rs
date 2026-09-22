@@ -27,6 +27,7 @@ impl Comparison {
             geometry: crate::image::Geometry::none(), window: None, surround_window: None,
             canvas: Some(Canvas { region: (0.0, 0.0, width as f64, height as f64),
                 size: Size::measured(width, height), max_lod: 0 }),
+            print_tone: gpu::Tonemap::Neutral,
         };
         let pyramid = crate::base::pyramid(gpu, base, &frame, (width, height)).expect("source pyramid");
         let resident = crate::resident::Resident::upload(gpu, &frame, width, height);
@@ -48,6 +49,17 @@ impl Comparison {
             compilation_options: Default::default(), cache: None,
         });
         Self { gpu, uploaded, pyramid, grade, targets, pipeline }
+    }
+
+    fn pattern(&self) {
+        let bands = [0.2, 0.4, 0.7, 1.0].map(|value| {
+            (crate::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round() as u16
+        });
+        let pattern: Vec<u8> = (0..self.grade.width * self.grade.height).flat_map(|at| {
+            let band = at % self.grade.width * 4 / self.grade.width;
+            [bands[band]; 3].into_iter().flat_map(u16::to_le_bytes)
+        }).collect();
+        self.gpu.queue.write_buffer(&self.uploaded.samples, 0, &pattern);
     }
 
     fn draw(&self, scene: &Scene) -> [f32; 12] {
@@ -120,14 +132,7 @@ fn print_surface_cache_preserves_lighting_and_hdr_peaks() {
 #[test]
 fn print_surface_pigment_cache_tracks_photo_changes_and_source_writes() {
     let mut comparison = Comparison::new();
-    let bands = [0.2, 0.4, 0.7, 1.0].map(|value| {
-        (crate::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round() as u16
-    });
-    let pattern: Vec<u8> = (0..comparison.grade.width * comparison.grade.height).flat_map(|at| {
-        let band = at % comparison.grade.width * 4 / comparison.grade.width;
-        [bands[band]; 3].into_iter().flat_map(u16::to_le_bytes)
-    }).collect();
-    comparison.gpu.queue.write_buffer(&comparison.uploaded.samples, 0, &pattern);
+    comparison.pattern();
     let scene = Scene { presentation: Presentation::Surface, key_lux: Light::ZERO, ..Scene::default() };
     let original = comparison.draw(&scene);
     comparison.grade.exposure = Stops::measured(-1.0);
@@ -152,6 +157,42 @@ fn print_surface_pigment_cache_tracks_photo_changes_and_source_writes() {
         "mutated source left stale pigment: {black:?}, exposed {exposed:?}");
     let lit = Scene { key_lux: Light::exactly(1000.0), pitch_degrees: -37.5, roughness: 0.08, ..scene };
     assert!(comparison.draw(&lit)[1] < 0.03, "ambient-only cache hid direct light");
+}
+
+#[test]
+fn print_surface_cache_tracks_frame_toggle() {
+    let mut comparison = Comparison::new();
+    comparison.pattern();
+    for framed in [false, true, false] {
+        let scene = Scene { framed, presentation: Presentation::Surface, key_lux: Light::ZERO, ..Scene::default() };
+        let display = scene.display_size(comparison.grade.output_size());
+        comparison.grade.canvas.as_mut().expect("canvas").region = (0.0, 0.0, display.0, display.1);
+        let metrics = comparison.draw(&scene);
+        assert!(metrics[1] < 0.003, "frame toggle retained the wrong photo mapping: {framed}, {metrics:?}");
+    }
+}
+
+#[test]
+fn framed_lighting_cache_keeps_glass_and_mat_reflections() {
+    let mut comparison = Comparison::new();
+    for (roughness, millimetres) in [(0.08, 300.0), (0.28, 300.0), (0.65, 300.0), (0.28, 50.0), (0.28, 1000.0)] {
+        for angular in [0.1, 1.0, 30.0] {
+            let scene = Scene { framed: true, presentation: Presentation::Surface,
+                paper_long_edge_mm: Extent::exactly(millimetres), light_angular_degrees: angular,
+                roughness, yaw_degrees: -15.0, pitch_degrees: -37.5, ..Scene::default() };
+            let display = scene.display_size(comparison.grade.output_size());
+            comparison.grade.canvas.as_mut().expect("canvas").region = (0.0, 0.0, display.0, display.1);
+            let metrics = comparison.draw(&scene);
+            assert!(metrics[2].sqrt() < 0.015, "framed lighting changed: {angular}°, {metrics:?}");
+            // A source under a degree throws a hard rail shadow across the mat, and the field is
+            // sampled, not analytic: its penumbra is a texel wide wherever the light is narrower
+            // than one. The picture is still the same picture - the miss is a frame edge - so the
+            // sampled error is what holds here and the worst pixel is only bounded above a degree.
+            if angular >= 1.0 {
+                assert!(metrics[1] < 0.05, "framed lighting changed: {angular}°, {metrics:?}");
+            }
+        }
+    }
 }
 
 #[test]

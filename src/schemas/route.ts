@@ -60,6 +60,7 @@ export const PathSegment = {
   mark: segment('mark'),
   merge: segment('merge'),
   missing: segment('missing'),
+  mockup: segment('mockup'),
   models: segment('models'),
   neighbours: segment('neighbours'),
   noShoot: segment('no-shoot'),

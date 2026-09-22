@@ -3450,6 +3450,115 @@ mod pictures {
                 .check(&format!("{name}-mosaic"), tolerance);
         }
     }
+
+    /// Every other print test reads one physical quantity out of one place. What none of them can
+    /// see is the parts drawn together - the mat and the rim under the glass, the emitter's image
+    /// on it, the room falling off the sheet - which is where the failures a reader reports live.
+    #[test]
+    fn a_print_is_the_sheet_the_reader_is_shown() {
+        use crate::gpu::{Canvas, Grade, Tonemap};
+        use crate::light::{Gain, Light, Stops};
+        use crate::print::{Paper, Presentation, Scene};
+
+        const CANVAS: (u32, u32) = (320, 240);
+        // Wider than the pins beside it and on one adapter's evidence only: the scene path
+        // faults on SwiftShader, so there is no second reading of it to narrow this against.
+        const SHEET: Tolerance = Tolerance { worst: 768, mean: 1.5 };
+
+        let bytes = std::fs::read(sony()).expect("the fixture");
+        let prepared = crate::edit::prepare_bytes(
+            &bytes,
+            &crate::edit::EditRequest {
+                long_edge: SHRUNK,
+                grade: crate::hdr::Grade {
+                    peak_nits: Light::exactly(1000.0),
+                    reference_white_nits: Light::exactly(203.0),
+                    white_quantile: 0.995,
+                },
+                defringe: 1.0,
+                photo_analysis: None,
+                denoise_luminance: Some(0.0),
+                denoise_colour: Some(0.0),
+                denoiser: crate::galosh::Denoiser::Galosh,
+                dust: Default::default(),
+                repairs: Vec::new(),
+            },
+            40.0,
+        )
+        .expect("the prepared frame");
+        let gpu = adapter();
+        let base = crate::base::device(gpu).expect("the source pyramid");
+        let header = &prepared.header;
+        let pyramid =
+            crate::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
+                .expect("the source pyramid");
+        let peak = gpu.scene_peak();
+        for (name, surface, scene) in [
+            ("print/gloss-glare", false, Scene {
+                paper: Paper::Gloss,
+                roughness: 0.08,
+                white_reflectance: Gain::of_ratio(0.92),
+                black_reflectance: Gain::of_ratio(0.004),
+                surface_texture: 0.15,
+                yaw_degrees: -15.0,
+                pitch_degrees: -12.0,
+                light_azimuth_degrees: -32.0,
+                light_elevation_degrees: 25.0,
+                ..Scene::default()
+            }),
+            ("print/framed-satin", true, Scene {
+                paper: Paper::Satin,
+                framed: true,
+                presentation: Presentation::Surface,
+                roughness: 0.28,
+                white_reflectance: Gain::of_ratio(0.9),
+                black_reflectance: Gain::of_ratio(0.008),
+                surface_texture: 0.5,
+                yaw_degrees: -8.0,
+                pitch_degrees: -14.0,
+                ..Scene::default()
+            }),
+        ] {
+            // The surface presentation maps the whole sheet into the canvas, so its canvas takes
+            // the sheet's shape; the scene one draws the sheet inside a canvas of its own.
+            let display = scene.display_size((header.width, header.height));
+            let canvas = if surface {
+                let scale = f64::from(CANVAS.0) / display.0.max(display.1);
+                ((display.0 * scale).round() as usize, (display.1 * scale).round() as usize)
+            } else {
+                (CANVAS.0 as usize, CANVAS.1 as usize)
+            };
+            let grade = Grade {
+                width: header.width,
+                height: header.height,
+                photograph_long: Span::measured(header.width.max(header.height)),
+                colour: None,
+                white: header.white,
+                source_level: header.peak,
+                floor: header.floor,
+                reference_nits: header.grade.reference_white_nits,
+                peak_nits: Light::at_diffuse_white(header.grade.reference_white_nits),
+                exposure: Stops::ZERO,
+                adjust: crate::gpu::Adjust::none(),
+                as_shot: header.as_shot,
+                output: crate::gpu::Output::Pq,
+                geometry: crate::image::Geometry::none(),
+                window: None,
+                surround_window: None,
+                canvas: Some(Canvas {
+                    region: (0.0, 0.0, display.0, display.1),
+                    size: Size::measured(canvas.0, canvas.1),
+                    max_lod: pyramid.levels,
+                }),
+                print_tone: Tonemap::Neutral,
+            };
+            let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
+            uploaded.collect_candidates(&grade);
+            let samples = uploaded.print_pq(&grade, &pyramid, &scene);
+            Snapshot::pq(&samples, Size::<crate::px::Canvas>::measured(canvas.0, canvas.1))
+                .check(name, SHEET);
+        }
+    }
 }
 
 /// What bounds the editor's open, which is the only thing that can: it cannot be cancelled.
@@ -3817,6 +3926,7 @@ mod tone_domain {
             window: None,
             surround_window: None,
             canvas: None,
+            print_tone: crate::gpu::Tonemap::Neutral,
         })
     }
 

@@ -89,11 +89,20 @@ impl Uploaded<'_> {
         &self, recording: &mut Recording<'_>, grade: &Grade<'_>, pyramid: &crate::base::Pyramid,
         target: &wgpu::TextureView, scene: &Scene, pq: bool,
     ) {
-        let grade = Grade { peak_nits: Light::at_diffuse_white(grade.reference_nits), ..*grade };
-        let pigment = self.print_pigment(recording, &grade, pyramid);
+        let grade = Grade {
+            peak_nits: Light::at_diffuse_white(grade.reference_nits),
+            // The pigment pass carries no print group, so the operator travels with the grade -
+            // which is also what keys the pigment cache, so choosing another one redraws it.
+            print_tone: scene.tonemap,
+            ..*grade
+        };
         let shown = grade.canvas.expect("print surface canvas");
         let size = shown.size;
         let shape = grade.output_size();
+        let pigment_grade = Grade { canvas: Some(super::Canvas {
+            region: scene.photo_region(shape, shown.region), ..shown
+        }), ..grade };
+        let pigment = self.print_pigment(recording, &pigment_grade, pyramid);
         let view = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("print surface view"),
             contents: &[shown.region.0, shown.region.1, shown.region.2, shown.region.3,
@@ -185,6 +194,7 @@ impl Uploaded<'_> {
         let long = if scene.light_angular_degrees <= 5.0 { 512 }
             else if scene.light_angular_degrees <= 10.0 { 256 }
             else if scene.light_angular_degrees < 30.0 { 128 } else { 64 };
+        let long = if scene.framed { long.max(96) } else { long };
         let extent = if dark { wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 } } else { wgpu::Extent3d {
             width: (long * shape.0 / shape.0.max(shape.1)).max(2) as u32,
             height: (long * shape.1 / shape.0.max(shape.1)).max(2) as u32,

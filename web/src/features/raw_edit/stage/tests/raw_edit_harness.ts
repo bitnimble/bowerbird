@@ -12,6 +12,7 @@ import { PrintStore } from '../../print/print_store';
 import type { PrintScene } from '../../print/print_scene';
 import { StageStore } from '../stage_store';
 import { neutralEdits } from '../../../../../../src/schemas/photo_edits';
+import { readPreparedHeader } from '../../../../../../src/schemas/prepared';
 import type { Repair } from '../../../../../../src/schemas/stored_grid';
 import { MemoryStorage } from '../../../../test_storage';
 
@@ -111,6 +112,8 @@ export class FakeDecoder {
     return Promise.resolve();
   }
 
+  pictureSize: { width: number; height: number } | null = null;
+
   /**
    * What part of the picture a region reads from, as the module answers it.
    *
@@ -119,7 +122,7 @@ export class FakeDecoder {
    * its own.
    */
   picturePart: (region: Region) => Promise<[number, number, number, number]> = (region) => {
-    const { width, height } = this.keystone.output;
+    const { width, height } = this.pictureSize ?? this.keystone.output;
     return Promise.resolve([
       region.x / width,
       region.y / height,
@@ -164,7 +167,11 @@ export class FakeDecoder {
     // window sits out of it, and the module has nothing to add.
     const view = new DataView(framed.buffer, framed.byteOffset, framed.byteLength);
     const length = view.getUint32(0, true);
-    return Promise.resolve(new TextDecoder().decode(framed.subarray(4, 4 + length)));
+    const json = new TextDecoder().decode(framed.subarray(4, 4 + length));
+    const header = readPreparedHeader(json);
+    const [width = header.width, height = header.height] = header.window?.canvas ?? [];
+    this.pictureSize = { width, height };
+    return Promise.resolve(json);
   }
 
   releaseLoupe(): Promise<void> {

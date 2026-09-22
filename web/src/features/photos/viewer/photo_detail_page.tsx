@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
   GalleryThumbnails,
   Info,
@@ -22,12 +23,14 @@ import { Panel } from '../../../ui/panel';
 import { Row } from '../../../ui/row';
 import { Text } from '../../../ui/text';
 import { RawEditPanel } from '../../raw_edit/raw_edit_panel';
+import { RawEditPanelStrings } from '../../raw_edit/raw_edit_panel.strings';
 import { CropStore } from '../../raw_edit/crop/crop_store';
 import { EditStore } from '../../raw_edit/edit/edit_store';
 import { KeystoneStore } from '../../raw_edit/keystone/keystone_store';
 import { LoupeStore } from '../../raw_edit/loupe/loupe_store';
 import { RepairStore } from '../../raw_edit/repair/repair_store';
 import { PrintStore } from '../../raw_edit/print/print_store';
+import { PrintControls } from '../../raw_edit/print/print_controls';
 import { RawEditPresenter } from '../../raw_edit/stage/raw_edit_presenter';
 import { RawEditStage } from '../../raw_edit/stage/raw_edit_stage';
 import { StageStore } from '../../raw_edit/stage/stage_store';
@@ -51,8 +54,21 @@ import {
   RenditionPanel,
 } from './detail_panels';
 import { DetailKeys } from './detail_keys';
+import { detailMode, detailPath, mockupPath, type DetailMode } from './detail_mode';
 
 const EDIT_LONG_EDGE = 0;
+
+/**
+ * What the print mockup opens the photograph at, where the editor takes the whole sensor.
+ *
+ * **The mockup is a sheet on a screen, and the editor's open is sized for a loupe it does not
+ * have.** A 61MP frame is 366MB of samples and 650MB of pyramid to draw a print two thousand pixels
+ * across, which is most of what a browser will hand a tab before it stops handing it anything. Half
+ * the sensor is still more than the sheet can show at any angle, and the decode asks for the
+ * smallest long edge it may answer with rather than a size, so a photograph too small to halve
+ * arrives whole.
+ */
+const PRINT_LONG_EDGE = 3000;
 
 const PANELS_KEY = 'bowerbird.detail.panels';
 
@@ -112,9 +128,17 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // photograph and back re-enters an editor nobody asked for, each re-entry another
   // full-sensor decode.
   //
-  // `?edit` still lands a deep link (and e2e) straight in.
-  const editing = new URLSearchParams(search).has('edit');
-  const [session, setSession] = useState<{
+  // `?edit` still lands a deep link (and e2e) straight in, and so does `/mockup`.
+  const mode = detailMode(pathname, search);
+  // The photograph's own path, so the controls below build from it rather than from
+  // whatever mode is open: `?edit` under `/mockup` is a URL for nothing.
+  const photoPathname = detailPath(pathname);
+  const editing = mode === 'edit';
+  const previewing = mode !== 'view';
+  const [heldSession, setSession] = useState<{
+    photoId: string;
+    mode: Exclude<DetailMode, 'view'>;
+    touch: boolean;
     edit: EditStore;
     stage: StageStore;
     crop: CropStore;
@@ -124,6 +148,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     print: PrintStore;
     presenter: RawEditPresenter;
   } | null>(null);
+  const session = heldSession?.photoId === photoId && heldSession.mode === mode ? heldSession : null;
 
   useEffect(() => {
     void photos.openDetail(photoId, sourceOfPath(pathname));
@@ -151,7 +176,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // Layout effect so the stage mounts before paint - otherwise Edit shows one
   // frame of the stored rendition beside empty panels.
   useLayoutEffect(() => {
-    if (!editing) return;
+    if (mode === 'view') return;
     const edit = new EditStore();
     const stage = new StageStore(edit);
     const crop = new CropStore(stage, edit);
@@ -160,9 +185,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     const loupe = new LoupeStore(crop, keystone, repair);
     const print = new PrintStore();
     const presenter = new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print);
-    setSession({ edit, stage, crop, keystone, repair, loupe, print, presenter });
+    if (mode === 'print') {
+      presenter.print.setSurface(touch);
+      presenter.setTool('print');
+    }
+    setSession({ photoId, mode, touch, edit, stage, crop, keystone, repair, loupe, print, presenter });
     let startingRotation: number | null = null;
-    void presenter.open(photoId, EDIT_LONG_EDGE).then(() => {
+    void presenter.open(photoId, mode === 'print' ? PRINT_LONG_EDGE : EDIT_LONG_EDGE).then(() => {
       startingRotation = edit.doc?.rotate ?? 0;
     });
     return () => {
@@ -170,9 +199,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       setSession(null);
       // The editor saves through its own store, so the copy the Edits panel holds is behind
       // by however much was changed here.
-      photos.forgetEdits(photoId, startingRotation != null && startingRotation !== edit.doc?.rotate);
+      if (mode === 'edit') photos.forgetEdits(photoId, startingRotation != null && startingRotation !== edit.doc?.rotate);
     };
-  }, [editing, photoId, photos]);
+  }, [mode, photoId, photos, touch]);
 
   // Both replace, so opening and closing the editor leaves the history where it found it:
   // one entry for this photograph, and Back goes wherever the photograph was reached from.
@@ -182,13 +211,17 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // press: the entry the way out replaces is then identical to the one already behind it, so
   // the first Back after Done or Escape does nothing at all.
   const startEdit = useCallback(
-    () => navigate(`${pathname}?edit`, { replace: true }),
-    [navigate, pathname],
+    () => navigate(`${photoPathname}?edit`, { replace: true }),
+    [navigate, photoPathname],
   );
-  const stopEdit = useCallback(
-    () => navigate(pathname, { replace: true }),
-    [navigate, pathname],
+  const stopPreview = useCallback(
+    () => navigate(photoPathname, { replace: true }),
+    [navigate, photoPathname],
   );
+  const togglePrint = useCallback(() => {
+    // Motion permission must be requested before this click's user activation ends.
+    flushSync(() => navigate(mode === 'print' ? photoPathname : mockupPath(photoPathname), { replace: true }));
+  }, [navigate, photoPathname, mode]);
 
   function togglePanels(): void {
     setPanelsOpen((was) => {
@@ -214,7 +247,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // Edit mode is exempt: e2e opens a missing id under `?edit` so the editor's
   // own failure path (not the detail fetch's) is what surfaces the reason.
   const open = store.open;
-  if (open?.id === photoId && open.status === 'missing' && !editing) {
+  if (open?.id === photoId && open.status === 'missing' && !previewing) {
     return (
       <Page>
         <EmptyState title={PhotoDetailStrings.photoUnavailable()}>
@@ -242,19 +275,37 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const stripAxis = aspect == null ? 'below' : stripEdge(aspect, store.detailWidth, store.detailHeight, strip.view.thickness);
   // The phone's strip is inside the detail grid rather than around it, and its panels
   // are a sheet: neither takes a slice off the other there.
-  const stripTaken = !mobile && stripOpen && !editing ? { edge: stripAxis, thickness: strip.view.thickness } : null;
+  const stripTaken = !mobile && stripOpen && !previewing ? { edge: stripAxis, thickness: strip.view.thickness } : null;
   const edge = aspect == null ? 'beside' : panelEdge(aspect, store.detailWidth, store.detailHeight, stripTaken);
   // Beside, the column runs the full height of the page, so every row fits
   // without scrolling; below, it is a 34vh strip and does not, and neither does
   // a phone's sheet.
   const expanded = !mobile && edge === 'beside';
-  const mobileStrip = mobile && stripOpen && !editing;
-  const mobileEditor = editing && (mobile || touch);
-  const layout = mobile || mobileEditor ? 'sheet' : !panelsOpen && !editing ? 'only' : edge;
+  const mobileStrip = mobile && stripOpen && !previewing;
+  const mobilePreview = previewing && (mobile || touch);
+  const layout = mobile || mobilePreview ? 'sheet' : !panelsOpen && !previewing ? 'only' : edge;
   // The panels' grid gap is all the spacing between them beside and below the stage.
   const panelStyle = mobile ? undefined : styles.panelFlush;
 
-  const metaPanels = editing ? (
+  const printNotice = session != null && session.stage.status !== 'live' ? (
+    <Panel>
+      <Text as="p" variant={session.stage.status === 'failed' ? 'muted' : 'mono'}>
+        {session.stage.message === '' ? RawEditPanelStrings.status(session.stage.status) :
+          RawEditPanelStrings.statusWithMessage(RawEditPanelStrings.status(session.stage.status), session.stage.message)}
+      </Text>
+    </Panel>
+  ) : null;
+  const metaPanels = mode === 'print' ? (
+    session != null && (
+      <PrintControls
+        store={session.print}
+        presenter={session.presenter.print}
+        disabled={!session.stage.live}
+        mobile={mobile || touch}
+        notice={printNotice}
+      />
+    )
+  ) : editing ? (
     session != null && (
       <RawEditPanel
         key={photoId}
@@ -284,7 +335,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // and the metadata is a fold above it rather than a column stealing the
   // screen. Desktop keeps the verdict in the header instead, so hiding the
   // panels never takes the cull controls with them.
-  const panels = mobileEditor ? metaPanels : mobile ? (
+  const panels = mobilePreview ? metaPanels : mobile ? (
     <div
       {...stylex.props(styles.sheetBar)}
       role="region"
@@ -339,7 +390,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
   return (
     <Page style={styles.page}>
-      <DetailKeys photoId={photoId} editing={editing} onExitEdit={stopEdit} />
+      <DetailKeys photoId={photoId} mode={mode} onExitPreview={stopPreview} />
       <DetailNav
         photoId={photoId}
         toolsRef={setToolsSlot}
@@ -348,13 +399,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         // A phone's toggle is in the sheet beside the verdict, where its thumb
         // already is; none in the editor, where stepping away mid-grade is not
         // something to leave one press from.
-        stripOpen={mobile || editing ? null : stripOpen}
+        stripOpen={mobile || previewing ? null : stripOpen}
         onToggleStrip={toggleStrip}
         onEdit={startEdit}
-        onDone={stopEdit}
+        onDone={stopPreview}
+        onTogglePrint={togglePrint}
         onFullscreen={() => void toggleFullscreenOf(stage)}
         zoomRef={setZoomSlot}
-        editing={editing}
+        mode={mode}
         edit={session}
       />
 
@@ -369,7 +421,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             layout === 'sheet' && mobileStrip && styles.sheetStrip,
           )}
         >
-          {editing ? (
+          {previewing ? (
             // Nothing until the pair exists, rather than the viewer's stage for the render
             // before the layout effect runs: its elements ask for this photograph's rendition
             // with nothing painted, and mount both neighbours' as soon as one of them decodes.
@@ -384,7 +436,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             // worker already owns, and the editor would open failed for good.
             session != null && (
               <RawEditStage
-                key={photoId}
+                key={`${session.photoId}:${session.mode}:${session.touch}`}
                 stageStore={session.stage}
                 crop={session.crop}
                 keystone={session.keystone}
@@ -405,12 +457,12 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
               A row of the grid rather than part of the sheet above it, so the photograph
               shrinks to make room instead of being covered. */}
           {mobileStrip && <DetailFilmstrip photoId={photoId} strip={strip} edge="below" />}
-          {(mobile || panelsOpen || editing) && panels}
+          {(mobile || panelsOpen || previewing) && panels}
         </div>
 
         {/* Outside the panels, so it spans them: whichever axis still has room
             once they have taken theirs is the one to spend on the strip. */}
-        {stripOpen && !mobile && !editing && <DetailFilmstrip photoId={photoId} strip={strip} edge={stripAxis} />}
+        {stripOpen && !mobile && !previewing && <DetailFilmstrip photoId={photoId} strip={strip} edge={stripAxis} />}
       </div>
     </Page>
   );

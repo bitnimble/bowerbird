@@ -5,15 +5,16 @@ import { usePresenters, useViewerStore } from '../../../app/stores_context';
 import { POPUP } from '../../../ui/menu_styles';
 import { TRIAGE_KEYS } from '../stack_triage/triage_control';
 import { useJudge, useStep } from './detail_navigation';
+import type { DetailMode } from './detail_mode';
 
 export const DetailKeys = observer(function DetailKeys({
   photoId,
-  editing,
-  onExitEdit,
+  mode,
+  onExitPreview,
 }: {
   photoId: string;
-  editing: boolean;
-  onExitEdit: () => void;
+  mode: DetailMode;
+  onExitPreview: () => void;
 }): null {
   const store = useViewerStore();
   const { photos } = usePresenters();
@@ -33,11 +34,13 @@ export const DetailKeys = observer(function DetailKeys({
 
       // Edit mode owns Escape: discard the grade and return to the viewer, rather than
       // leaving the photo the way the ordinary viewer does.
-      if (e.key === 'Escape' && document.fullscreenElement == null && editing) {
-        onExitEdit();
+      if (e.key === 'Escape' && document.fullscreenElement == null && mode !== 'view') {
+        onExitPreview();
         e.preventDefault();
         return;
       }
+
+      if (mode === 'print' && ['i', 'o', 'p'].includes(e.key)) return;
 
       const verdict = TRIAGE_KEYS[e.key];
       if (verdict != null) judge(verdict);
@@ -62,7 +65,7 @@ export const DetailKeys = observer(function DetailKeys({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [step, judge, navigate, back, photoId, photos, editing, onExitEdit]);
+  }, [step, judge, navigate, back, photoId, photos, mode, onExitPreview]);
 
   return null;
 });

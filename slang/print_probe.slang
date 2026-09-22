@@ -76,6 +76,8 @@ void lighting(uint3 group : SV_GroupID)
     hit.view = normalize(float3(probe.material.y, 0.0, 1.0));
     hit.position = probe.position.xyz;
     hit.uv = float2(0.5);
+    hit.material = PHOTO;
+    hit.half = float2(1.0);
     let value = reflected_print_samples(float3(probe.material.z), hit, probe.material.x, uint(probe.material.w));
     let distance = exactly<PrintUnit>(print.surface.x);
     let half_width = exactly<PrintUnit>(print.surface.y);

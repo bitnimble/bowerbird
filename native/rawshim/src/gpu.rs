@@ -837,7 +837,7 @@ impl Gpu {
     pub(crate) fn print_light_calibration(&self, parameters: [f32; 4], temperature: f32) -> Buffer {
         let mut recording = self.record();
         let buffer = self.own_buffer(&wgpu::BufferDescriptor {
-            label: Some("print light calibration"), size: 32,
+            label: Some("print light calibration"), size: 48,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
         });
         recording.holding(&buffer);
@@ -1837,6 +1837,25 @@ pub struct Grade<'a> {
     /// None everywhere a rendition runs - `encode` reads none of these fields - and the words go
     /// out as zeroes there.
     pub canvas: Option<Canvas>,
+    /// Which operator fits the scene's highlights into paper, read only by the print's pigment
+    /// (`print_signal`). Every other draw rolls off to its display and never looks at this.
+    pub print_tone: Tonemap,
+}
+
+/// How a print compresses what the paper cannot reflect. `frame.slang` reads these by number.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Tonemap {
+    /// BT.2390 on whichever channel reaches paper white first, scaling the colour by what it gave
+    /// up. Hue and saturation survive exactly, which is what the display's own roll-off promises.
+    #[default]
+    Neutral,
+    /// The same curve, with chroma given up as the tone is compressed, so a highlight several
+    /// stops past the paper arrives white the way a dye that has run out of range does.
+    Filmic,
+    /// The curve per channel, which is what a printer driver reaching its ceiling one ink at a
+    /// time does: the most gradation left in a saturated highlight, and a hue that drifts with it.
+    Channel,
 }
 
 /// The reader's view: which rectangle of the output is on screen, and how large the screen is.
@@ -3593,12 +3612,19 @@ impl Uploaded<'_> {
         let grade = if print.is_some() || pigment {
             print_grade = Grade {
                 peak_nits: crate::light::Light::at_diffuse_white(grade.reference_nits),
+                print_tone: print.map_or(grade.print_tone, |scene| scene.tonemap),
                 ..*grade
             };
             &print_grade
         } else {
             grade
         };
+        let canvas = grade.canvas.map(|mut canvas| {
+            if let Some(scene) = print { canvas.region = scene.photo_region(grade.output_size(), canvas.region); }
+            canvas
+        });
+        let view_grade = Grade { canvas, ..*grade };
+        let grade = &view_grade;
         let shown = grade.canvas.expect("a draw needs a canvas to draw onto");
         let described = grade.colour.unwrap_or(&self.identity);
         // What this binds belongs to the upload and the pyramid rather than to the recording, so
@@ -3784,7 +3810,7 @@ const EDIT_FIELDS: &[&str] = &[
     "region_size",
     "canvas_size",
     "max_lod",
-    "pad",
+    "print_tone",
     "contrast",
     "highlights",
     "shadows",
@@ -3925,9 +3951,9 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
         f(&mut w, value); // region_origin, region_size, canvas_size
     }
     w.push(shown.max_lod);
-    w.push(0); // pad
-    // The reader's sliders, in `struct Edit`'s order. Appended after `pad` there, so nothing
-    // above this line moved when they were added.
+    w.push(grade.print_tone as u32);
+    // The reader's sliders, in `struct Edit`'s order. Appended after the scalars there, so
+    // nothing above this line moved when they were added.
     f(&mut w, grade.adjust.contrast);
     f(&mut w, grade.adjust.highlights);
     f(&mut w, grade.adjust.shadows);
@@ -4391,6 +4417,7 @@ mod tests {
             window: None,
             surround_window: None,
             canvas: None,
+            print_tone: super::Tonemap::Neutral,
         };
         assert_eq!(super::uniform(&grade, &colour).len(), expected);
     }
@@ -4476,6 +4503,7 @@ mod tests {
             window: None,
             surround_window: None,
             canvas: Some(shown),
+            print_tone: super::Tonemap::Neutral,
         };
 
         let peak = gpu.scene_peak();
@@ -4596,6 +4624,7 @@ mod tests {
             window: None,
             surround_window: None,
             canvas: Some(canvas),
+            print_tone: super::Tonemap::Neutral,
         };
 
         let pyramid = crate::base::pyramid(gpu, base, &frame, (width, height)).expect("a pyramid");
@@ -4740,6 +4769,7 @@ mod tests {
             window: None,
             surround_window: None,
             canvas: None,
+            print_tone: super::Tonemap::Neutral,
         };
 
         let peak = gpu.scene_peak();
@@ -4868,6 +4898,7 @@ mod tests {
             window: None,
             surround_window: None,
             canvas: None,
+            print_tone: super::Tonemap::Neutral,
         };
 
         let cast = |exposure: f64| {
@@ -4931,6 +4962,7 @@ mod tests {
             window: None,
             surround_window: None,
             canvas: Some(shown),
+            print_tone: super::Tonemap::Neutral,
         };
 
         let peak = gpu.scene_peak();
@@ -5009,6 +5041,7 @@ mod tests {
             window: None,
             surround_window: None,
             canvas,
+            print_tone: super::Tonemap::Neutral,
         };
         let rest = super::Adjust::none();
 
@@ -5147,6 +5180,7 @@ mod tests {
             window: None,
             surround_window: None,
             canvas: None,
+            print_tone: super::Tonemap::Neutral,
         };
 
         let rest = super::Adjust::none();
@@ -5228,6 +5262,7 @@ mod tests {
                 size: crate::px::Size::measured(width, height),
                 max_lod: 0,
             }),
+            print_tone: super::Tonemap::Neutral,
         };
         let matched = super::Adjust::none();
         let neutral =
@@ -5338,6 +5373,7 @@ mod tests {
                     window: None,
                     surround_window: None,
                     canvas: None,
+                    print_tone: super::Tonemap::Neutral,
                 };
                 let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("probe_xy"),
@@ -5549,6 +5585,7 @@ mod tests {
                 },
                 surround_window: None,
                 canvas: None,
+                print_tone: super::Tonemap::Neutral,
             };
             assert_eq!(grade.output_size(), out, "the probe's grid is not what the grade writes");
             let words = super::uniform_words(&grade, &colour);

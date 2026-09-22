@@ -56,6 +56,7 @@ mod tests {
     /// value, they all write a fixed run of words - so the length is the whole of what is asked.
     #[test]
     fn every_uniform_is_the_size_its_shader_reads() {
+        assert_eq!(crate::print::Scene::default().uniform().len(), 96);
         // The blocks whose bytes a function returns. `base.rs` builds its other four inline into
         // the buffer they go to, so there is nothing to call and no length to take; extract them
         // the same way when one is next touched and add a line here.

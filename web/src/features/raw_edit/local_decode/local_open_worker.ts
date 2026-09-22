@@ -31,13 +31,7 @@ let weights: Promise<void> | null = null;
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 
-if ('GPUAdapter' in worker) {
-  new PipelineWarmth(cachedRecipes()).install(
-    GPUAdapter.prototype,
-    GPUDevice.prototype,
-    GPUComputePassEncoder.prototype,
-  );
-}
+new PipelineWarmth(cachedRecipes()).install(worker);
 
 const AskIdSchema = z.object({ id: z.number() });
 

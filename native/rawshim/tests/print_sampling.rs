@@ -35,6 +35,7 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
             size: Size::measured(canvas, canvas),
             max_lod: 10,
         }),
+        print_tone: rawshim::gpu::Tonemap::Neutral,
     };
     let scene = Scene {
         yaw_degrees: 80.0,

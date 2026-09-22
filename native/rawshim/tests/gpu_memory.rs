@@ -142,6 +142,7 @@ fn every_stage_hands_its_working_planes_back() {
         window: None,
         surround_window: None,
         canvas: None,
+        print_tone: rawshim::gpu::Tonemap::Neutral,
     };
     let peak = gpu.scene_peak();
     gives_it_back("upload", || {

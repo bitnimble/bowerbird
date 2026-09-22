@@ -32,6 +32,7 @@ fn main() -> Result<(), String> {
             region: (0.0, 0.0, header.width as f64, header.height as f64),
             size: Size::measured(1280, 960), max_lod: pyramid.levels,
         }),
+        print_tone: rawshim::gpu::Tonemap::Neutral,
     };
     let peak = gpu.scene_peak();
     let uploaded = gpu.upload(&prepared.samples, &grade, &peak);

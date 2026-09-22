@@ -15,6 +15,12 @@ import type { Region } from '../edits';
  * letting the compositor's own downscale do the smoothing is the cheap version of an
  * antialiased draw, and it is cheap because the cost is per canvas pixel: 1.5 costs 2.25x a
  * pass that does not scale with the frame at all.
+ *
+ * **The print's scene path is the one draw that pays for it and gets nothing.** There the photograph
+ * arrives through the pyramid's anisotropic taps rather than a point sample, the sheet's silhouette
+ * and the frame's own edges carry their subpixel coverage out of the intersection, and every canvas
+ * pixel costs an integration over the light. 2.25 times the pixels for edges that were already
+ * smooth is where a mockup outruns a reader's device.
  */
 export const SUPERSAMPLE = 1.5;
 
@@ -54,11 +60,12 @@ export function stageResolution(
   css: { width: number; height: number },
   region: Region,
   maxTexture: number,
+  supersample: number = SUPERSAMPLE,
 ): { width: number; height: number } {
   const dpr = globalThis.devicePixelRatio || 1;
   const contain = Math.min(css.width / region.width, css.height / region.height);
   const scale = Math.min(
-    contain * dpr * SUPERSAMPLE,
+    contain * dpr * supersample,
     Math.max(contain * dpr, 1),
     maxTexture / region.width,
     maxTexture / region.height,

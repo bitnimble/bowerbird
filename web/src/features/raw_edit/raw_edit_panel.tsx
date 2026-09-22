@@ -24,8 +24,7 @@ import type { StageStore } from './stage/stage_store';
 import { RepairPanel } from './repair/repair_panel';
 import type { RepairStore } from './repair/repair_store';
 import type { PrintStore } from './print/print_store';
-import { PrintPanel } from './print/print_panel';
-import { PrintPanelStrings } from './print/print_panel.strings';
+import { PrintControls } from './print/print_controls';
 import { EditToolsStrings } from './edit_tools.strings';
 import { MobileEditPanels, type MobileEditPanel } from './mobile_edit_panels';
 
@@ -468,20 +467,11 @@ export const RawEditPanel = observer(function RawEditPanel({ edit, stage, crop, 
       {stage.status !== 'live' && <Text as="p" variant={stage.status === 'failed' ? 'muted' : 'mono'} style={styles.status}>{status}</Text>}
     </Panel>
   );
+  if (print.open) return <PrintControls store={print} presenter={presenter.print}
+    disabled={!stage.editable} mobile={mobile} notice={notice} />;
   let scope: string;
   let panels: MobileEditPanel[];
-  if (print.open) {
-    scope = 'print';
-    const titles = {
-      paper: PrintPanelStrings.paper(),
-      lighting: PrintPanelStrings.lighting(),
-      orientation: print.surface ? PrintPanelStrings.deviceTilt() : PrintPanelStrings.rotation(),
-    };
-    panels = (['paper', 'lighting', 'orientation'] as const).map((section) => ({
-      id: section, title: titles[section],
-      content: <PrintPanel store={print} presenter={presenter.print} disabled={!stage.editable} section={section} />,
-    }));
-  } else if (crop.cropping) {
+  if (crop.cropping) {
     scope = 'crop';
     panels = [
       { id: 'aspect', title: RawEditPanelStrings.aspectRatio(), content:
