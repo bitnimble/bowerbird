@@ -71,6 +71,30 @@ function main(): void {
   console.log(`libjxl ${VERSION} at ${HOME}`);
 }
 
+/**
+ * Where lcms2 is, on the one target libjxl cannot work it out for itself.
+ *
+ * highway it finds through vcpkg's own cmake config and brotli through `pkg-config`, but lcms2 it
+ * looks for with a find module of its own, which comes back with neither the library nor the
+ * header on a Windows runner - where `pkg-config --modversion lcms2`, a few lines above, answered.
+ * So it is handed both. Off Windows this is empty and the distribution's own search is what runs.
+ *
+ * The file is looked for rather than named, since which of these vcpkg writes is the port's to
+ * decide, and an absent one is worth saying before a cmake configure says it less clearly.
+ */
+function lcms2(): string[] {
+  const root = process.env.VCPKG_INSTALLATION_ROOT;
+  const triplet = process.env.VCPKG_TARGET_TRIPLET;
+  if (root == null || triplet == null) return [];
+  const installed = resolve(root, 'installed', triplet);
+  const names = ['lcms2.lib', 'liblcms2.lib', 'lcms2_static.lib'];
+  const library = names.map((name) => resolve(installed, 'lib', name)).find(existsSync);
+  if (library == null) {
+    throw new Error(`none of ${names.join(', ')} is under ${resolve(installed, 'lib')}`);
+  }
+  return [`-DLCMS2_LIBRARY=${library}`, `-DLCMS2_INCLUDE_DIR=${resolve(installed, 'include')}`];
+}
+
 function build(): void {
   for (const dependency of ['libhwy', 'libbrotlienc', 'libbrotlidec', 'lcms2']) {
     if (installedVersion(dependency) == null) {
@@ -87,7 +111,15 @@ function build(): void {
   unpack(HOME, name, ['*/tools/benchmark/metrics/*']);
   rmSync(tarball, { force: true });
 
-  run('cmake', ['-S', SOURCE, '-B', resolve(SOURCE, 'build'), `-DCMAKE_INSTALL_PREFIX=${HOME}`, ...CMAKE]);
+  run('cmake', [
+    '-S',
+    SOURCE,
+    '-B',
+    resolve(SOURCE, 'build'),
+    `-DCMAKE_INSTALL_PREFIX=${HOME}`,
+    ...CMAKE,
+    ...lcms2(),
+  ]);
   run('cmake', ['--build', resolve(SOURCE, 'build'), '--parallel', ...CMAKE_CONFIG]);
   run('cmake', ['--install', resolve(SOURCE, 'build'), ...CMAKE_CONFIG]);
   rmSync(SOURCE, { recursive: true, force: true });
