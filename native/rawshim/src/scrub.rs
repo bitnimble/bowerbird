@@ -34,11 +34,22 @@ const IDENTIFYING: &[u16] = &[
     0x83bb, // IPTC/NAA
     0x8649, // Photoshop image resources, which is where IPTC usually ends up
     0x9286, // UserComment
+    0x9c9b, // XPTitle, and the four below it, which Windows writes as UTF-16
+    0x9c9c, // XPComment
+    0x9c9d, // XPAuthor
+    0x9c9e, // XPKeywords
+    0x9c9f, // XPSubject
     0xa420, // ImageUniqueID
     0xa430, // CameraOwnerName
     0xa431, // BodySerialNumber
     0xa435, // LensSerialNumber
 ];
+
+/// The tags above reach XMP and IPTC where a TIFF directory holds them. A JPEG carries the same
+/// two as segments of its own instead, which no directory names and so no walk of one reaches.
+const XMP: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+const XMP_EXTENSION: &[u8] = b"http://ns.adobe.com/xmp/extension/\0";
+const PHOTOSHOP: &[u8] = b"Photoshop 3.0\0";
 
 const EXIF_IFD: u16 = 0x8769;
 const GPS_IFD: u16 = 0x8825;
@@ -86,6 +97,16 @@ impl Block<'_> {
         if let Some(slot) = self.bytes.get_mut(at..end) {
             slot.fill(0);
         }
+    }
+}
+
+/// Queued only while the walk below could still reach it. The ceiling has to bound the queue and
+/// not just the walk: an entry's own SubIFD list is already bounded by the block, but a directory
+/// may repeat the tag once per twelve bytes of itself, and the product of the two is a queue
+/// quadratic in the size of the file that asked for it - grown whole before the first pop.
+fn queue(pending: &mut Vec<(usize, bool)>, at: Option<u32>, is_gps: bool) {
+    if pending.len() < IFD_CEILING {
+        pending.push((at.unwrap_or(0) as usize, is_gps));
     }
 }
 
@@ -140,8 +161,8 @@ pub fn scrub_tiff(bytes: &mut [u8]) -> bool {
                 continue;
             }
             match tag {
-                EXIF_IFD | INTEROP_IFD => pending.push((block.long(at + 8).unwrap_or(0) as usize, false)),
-                GPS_IFD => pending.push((block.long(at + 8).unwrap_or(0) as usize, true)),
+                EXIF_IFD | INTEROP_IFD => queue(&mut pending, block.long(at + 8), false),
+                GPS_IFD => queue(&mut pending, block.long(at + 8), true),
                 // One SubIFD sits in the entry; several are a list of addresses it points at.
                 //
                 // Bounded by what the block could actually hold rather than by the count the tag
@@ -151,8 +172,11 @@ pub fn scrub_tiff(bytes: &mut [u8]) -> bool {
                 SUBIFDS => {
                     let slots = (count as usize).min(block.bytes.len().saturating_sub(value_at) / 4);
                     for slot in 0..slots {
+                        if pending.len() >= IFD_CEILING {
+                            break;
+                        }
                         let address = if count == 1 { block.long(at + 8) } else { block.long(value_at + slot * 4) };
-                        pending.push((address.unwrap_or(0) as usize, false));
+                        queue(&mut pending, address, false);
                     }
                 }
                 _ => {}
@@ -164,36 +188,56 @@ pub fn scrub_tiff(bytes: &mut [u8]) -> bool {
             block.clear_short(ifd);
             continue;
         }
-        if let Some(next) = block.long(ifd + 2 + usize::from(entries) * 12) {
-            pending.push((next as usize, false));
-        }
+        queue(&mut pending, block.long(ifd + 2 + usize::from(entries) * 12), false);
     }
     true
 }
 
-/// Every `Exif\0\0` APP1 in the file, blanked, and how many there were.
+/// Every segment a JPEG hides identity in, blanked, and how many EXIF directories there were.
 ///
 /// A RAW's previews are whole JPEGs with EXIF of their own, so a walk of the container's
 /// directories alone leaves a second copy of the coordinates sitting inside the thumbnail. This
 /// is also the whole of the work for a Fuji RAF, which keeps its EXIF in the preview - and the
-/// count is how that case knows it understood the file at all.
+/// count is how that case knows it understood the file at all. Only the EXIF is counted: the
+/// other two are text a file may simply not carry, so finding none of either says nothing.
 fn scrub_app1(bytes: &mut [u8]) -> usize {
     let mut at = 0;
     let mut found = 0;
     while at + 14 < bytes.len() {
-        if bytes[at] != 0xff || bytes[at + 1] != 0xe1 {
+        let app1 = bytes[at + 1] == 0xe1;
+        let app13 = bytes[at + 1] == 0xed;
+        if bytes[at] != 0xff || !(app1 || app13) {
             at += 1;
             continue;
         }
         let length = usize::from(u16::from_be_bytes([bytes[at + 2], bytes[at + 3]]));
         let end = at + 2 + length;
-        if length < 8 || end > bytes.len() || &bytes[at + 4..at + 10] != b"Exif\0\0" {
+        if length < 8 || end > bytes.len() {
             at += 2;
             continue;
         }
-        if scrub_tiff(&mut bytes[at + 10..end]) {
-            found += 1;
+        if app1 && bytes[at + 4..end].starts_with(b"Exif\0\0") {
+            if scrub_tiff(&mut bytes[at + 10..end]) {
+                found += 1;
+            }
+            at = end;
+            continue;
         }
+        // The packet blanked whole rather than read. Its coordinates and its creator are a dozen
+        // properties of text, and the tags above have already established that a bug report wants
+        // none of what lives beside them.
+        let signature = match (app1, app13) {
+            (true, _) if bytes[at + 4..end].starts_with(XMP) => XMP.len(),
+            (true, _) if bytes[at + 4..end].starts_with(XMP_EXTENSION) => XMP_EXTENSION.len(),
+            // Every 8BIM resource, not only IPTC's `0x0404`: what else is in there is a clipping
+            // path and a thumbnail, and neither is what the reader ticked the box to keep.
+            (_, true) if bytes[at + 4..end].starts_with(PHOTOSHOP) => PHOTOSHOP.len(),
+            _ => {
+                at += 2;
+                continue;
+            }
+        };
+        bytes[at + 4 + signature..end].fill(0);
         at = end;
     }
     found
@@ -234,7 +278,14 @@ fn scrub_bmff(bytes: &mut [u8], from: usize, to: usize, depth: usize) -> bool {
             b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" | b"uuid" => {
                 let inner = at + header + if &kind == b"uuid" { 16 } else { 0 };
                 if inner <= at + size {
-                    found |= scrub_bmff(bytes, inner, at + size, depth + 1);
+                    // The other `uuid` a CR3 carries is the XMP packet, which is XML rather than
+                    // boxes: recursing into it finds nothing and leaves the creator and the place
+                    // an editor wrote there sitting in the file.
+                    if bytes[inner..at + size].starts_with(b"<?xpacket") {
+                        bytes[inner..at + size].fill(0);
+                    } else {
+                        found |= scrub_bmff(bytes, inner, at + size, depth + 1);
+                    }
                 }
             }
             _ => {}
@@ -376,15 +427,23 @@ mod fixtures {
     /// claim is made on a synthetic file with a latitude in it instead.
     ///
     /// **The Canon is the interesting one.** Its EXIF is reached - `scrubbed` would answer None
-    /// otherwise, since a CR3 whose `CMT1` was never found is refused - and there is nothing in
-    /// it to blank, because Canon writes the body's identity into the maker note, which is kept
-    /// on purpose. A build that starts changing bytes here is either reaching further than it
-    /// was asked to or has found something new, and either is worth a look.
+    /// otherwise, since a CR3 whose `CMT1` was never found is refused - and its directories hold
+    /// nothing to blank, because Canon writes the body's identity into the maker note, which is
+    /// kept on purpose. What it loses is the XMP packet it carries as a `uuid` box of its own,
+    /// which no directory names and which is where an editor writes a creator and a place.
     #[test]
     fn what_each_fixture_has_to_lose() {
         assert!(blanked(&sony()) > 0, "the Sony carries standard tags worth removing");
         assert!(blanked(&fuji()) > 0, "and so does the Fuji, in the preview it keeps its EXIF in");
-        assert_eq!(blanked(&canon()), 0, "the Canon keeps its identity in the maker note");
+
+        let before = std::fs::read(canon()).expect("the fixture reads");
+        let after = scrubbed(&before).expect("a container this reads");
+        let at = before
+            .windows(9)
+            .position(|window| window == b"<?xpacket")
+            .expect("the Canon carries an XMP packet to begin with");
+        assert_eq!(&after[at..at + 9], &[0u8; 9], "which goes");
+        assert_eq!(before[..at], after[..at], "and nothing before it moves");
     }
 
     fn blanked(path: &std::path::Path) -> usize {
@@ -484,6 +543,29 @@ mod tests {
         assert!(scrub_tiff(&mut bytes));
     }
 
+    /// The count above is bounded per entry, which a directory defeats by carrying the tag again:
+    /// a list per twelve bytes of a file, each as long as the file over four, is a queue of
+    /// billions grown from under a megabyte. Unbounded, this does not return.
+    #[test]
+    fn a_directory_of_nothing_but_subifd_lists_does_not_run_away() {
+        let entries: u16 = 20_000;
+        let mut bytes = vec![0u8; 12 + usize::from(entries) * 12 + 4];
+        bytes[..2].copy_from_slice(b"II");
+        bytes[2..4].copy_from_slice(&42u16.to_le_bytes());
+        bytes[4..8].copy_from_slice(&8u32.to_le_bytes());
+        bytes[8..10].copy_from_slice(&entries.to_le_bytes());
+        for i in 0..usize::from(entries) {
+            let at = 10 + i * 12;
+            bytes[at..at + 2].copy_from_slice(&SUBIFDS.to_le_bytes());
+            bytes[at + 2..at + 4].copy_from_slice(&TYPE_LONG.to_le_bytes());
+            bytes[at + 4..at + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+            // Zero addresses the block's own start, so every entry's list is the whole file.
+            bytes[at + 8..at + 12].copy_from_slice(&0u32.to_le_bytes());
+        }
+
+        assert!(scrub_tiff(&mut bytes));
+    }
+
     /// A download that stopped short is the plausible way to meet this, and answering it with
     /// "scrubbed" would send a CR3 whose EXIF was never reached.
     #[test]
@@ -522,6 +604,36 @@ mod tests {
         jpeg.extend_from_slice(b"Exif\0\0");
         jpeg.extend_from_slice(exif);
         jpeg
+    }
+
+    /// A segment of its own, named by no directory, so the walk that finds every tag above never
+    /// goes near it. A phone writes a fix here and nowhere else, and the tick that promised to
+    /// remove one would have sent it.
+    #[test]
+    fn a_jpeg_keeps_neither_the_xmp_packet_nor_the_photoshop_block() {
+        let packet = b"<x:xmpmeta><exif:GPSLatitude>51,30.0N</exif:GPSLatitude></x:xmpmeta>";
+        let block = b"8BIM\x04\x04\0\0\0\0\0\x08Declan\0\0";
+
+        let mut jpeg = with_exif(&synthetic());
+        let xmp_at = jpeg.len() + 4 + XMP.len();
+        jpeg.extend_from_slice(&segment(0xe1, XMP, packet));
+        let iptc_at = jpeg.len() + 4 + PHOTOSHOP.len();
+        jpeg.extend_from_slice(&segment(0xed, PHOTOSHOP, block));
+
+        let scrubbed = scrubbed(&jpeg).expect("a JPEG is a container this reads");
+
+        assert_eq!(&scrubbed[xmp_at..xmp_at + packet.len()], &vec![0u8; packet.len()][..]);
+        assert_eq!(&scrubbed[iptc_at..iptc_at + block.len()], &vec![0u8; block.len()][..]);
+        assert_eq!(&scrubbed[APP1_AT + 200..APP1_AT + 206], b"A7 IV\0", "the camera still stays");
+    }
+
+    fn segment(marker: u8, signature: &[u8], payload: &[u8]) -> Vec<u8> {
+        let length = u16::try_from(signature.len() + payload.len() + 2).expect("a segment fits");
+        let mut bytes = vec![0xff, marker];
+        bytes.extend_from_slice(&length.to_be_bytes());
+        bytes.extend_from_slice(signature);
+        bytes.extend_from_slice(payload);
+        bytes
     }
 
     #[test]

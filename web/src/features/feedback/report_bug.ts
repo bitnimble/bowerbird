@@ -53,12 +53,19 @@ class BugReporter {
       {
         message: report.message,
         email: report.email === '' ? undefined : report.email,
-        url: window.location.href,
+        url: this.page(),
         source: 'report-bug-dialog',
         tags: { version: report.version ?? 'unknown' },
       },
       { attachments: report.attachments },
     );
+  }
+
+  private page(): string {
+    const here = new URL(window.location.href);
+    // The path only. The grid keeps the reader's search text in `?q=` (`grid_url.ts`), so the
+    // whole href would carry whatever they last typed into a box to a report that never said so.
+    return `${here.origin}${here.pathname}`;
   }
 
   // Read on each call rather than once as the module loads, so it is the environment the

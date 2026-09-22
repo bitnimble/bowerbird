@@ -37,6 +37,9 @@ type PathFor = (library: Library, photo: BasicPhoto) => string | null | Promise<
 
 const JPEG_QUALITY = 92;
 
+// Sentry's own ceiling on a report, which is the only thing that asks for a scrubbed original.
+const SCRUBBED_ORIGINAL_CEILING = 40 * 1024 * 1024;
+
 /**
  * What the prepare's query says a client can show, or undefined for the whole picture.
  *
@@ -528,7 +531,14 @@ export class ImageApi {
     if (original == null) throw new AppError('NOT_FOUND', `${photoId} has no file of its own`);
 
     const name = soleInputOf(photo.recipe)?.split('/').pop() ?? photo.id;
-    const bytes = Buffer.from(await Bun.file(original).arrayBuffer());
+    const file = Bun.file(original);
+    // Bounded before the read, not after: the download beside this one streams, so it is this
+    // route alone that holds a whole RAW in memory, and a request per photograph in a library
+    // of 60MB files is the server out of memory rather than a slow response.
+    if (file.size > SCRUBBED_ORIGINAL_CEILING) {
+      throw new AppError('VALIDATION_ERROR', `${name} is too large to have its identifying data removed`);
+    }
+    const bytes = Buffer.from(await file.arrayBuffer());
     if (!scrubIdentifying(bytes)) {
       throw new AppError('VALIDATION_ERROR', `identifying data cannot be removed from ${name}`);
     }

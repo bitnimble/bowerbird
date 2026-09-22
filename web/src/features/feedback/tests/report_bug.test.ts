@@ -75,6 +75,14 @@ test('the photograph rides in the envelope beside what was written', async () =>
   expect(carried.at(-1)?.attachments?.map((part) => part.filename)).toEqual(['DSC00853.ARW']);
 });
 
+test('the page a report was filed from carries no search text', async () => {
+  window.history.replaceState(null, '', '/photos?q=a%20name%20she%20searched%20for&from=2026-01-01');
+
+  await bugReporter.send({ message: 'here', email: '', version: '1.2.3', attachments: [] });
+
+  expect(sent.at(-1)?.url).toBe(`${window.location.origin}/photos`);
+});
+
 test('a report larger than Sentry will take is refused rather than posted', async () => {
   const huge = { filename: 'big.ARW', data: new Uint8Array(41 * 1024 * 1024), contentType: 'image/x-sony-arw' };
   const before = sent.length;
