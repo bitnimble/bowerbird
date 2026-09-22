@@ -9,6 +9,7 @@
 // to guess when they disagree, which is its way of saying the build would be
 // irreproducible.
 import { spawnSync } from 'node:child_process';
+import { cli } from './get-tauri-cli.ts';
 import { ensureIcons } from './make-icons.ts';
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -50,15 +51,12 @@ ensureIcons();
 // is generated rather than committed and a fresh checkout has none.
 const repoRoot = resolve(import.meta.dir, '..');
 if (!existsSync(join(repoRoot, 'src-tauri', 'gen', 'android'))) {
-  const started = spawnSync('bun', ['x', '@tauri-apps/cli', 'android', 'init'], {
-    stdio: 'inherit',
-    env,
-  });
+  const started = spawnSync(cli(), ['android', 'init'], { stdio: 'inherit', env });
   if (started.status !== 0) process.exit(started.status ?? 1);
 }
 
 const args = ['android', 'build', '--target', 'aarch64', '--apk', ...process.argv.slice(2)];
-const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
+const built = spawnSync(cli(), args, { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
 
 // Gradle leaves the APK under the generated project; copy it somewhere a phone can reach.

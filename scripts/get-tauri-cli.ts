@@ -11,7 +11,7 @@
 // it. The revision is read out of the manifest rather than written twice, so bumping the crates
 // moves the CLI with them.
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { makeOnce, pin, pinnedHome } from './pinned';
 
@@ -35,7 +35,7 @@ const HOME = pinnedHome(NAME, RECIPE);
 
 function main(): void {
   // No symlink beside the crate as the other trees get: nothing here is a build input, and the
-  // one caller asks for the binary by calling `binary()`.
+  // scripts that drive it ask by calling `cli()`.
   makeOnce(HOME, RECIPE, process.env.BOWERBIRD_REBUILD_TAURI_CLI != null, build);
   console.log(`tauri-cli ${REV.slice(0, 8)} at ${binary()}`);
 }
@@ -51,8 +51,17 @@ function build(): void {
 }
 
 /** Where `cargo install` puts it, which is the name cargo subcommands take. */
-export function binary(): string {
+function binary(): string {
   return resolve(HOME, 'bin', process.platform === 'win32' ? 'cargo-tauri.exe' : 'cargo-tauri');
+}
+
+/** The pinned CLI, for a script about to drive it, or a refusal naming the command that builds it. */
+export function cli(): string {
+  const at = binary();
+  if (!existsSync(at)) {
+    throw new Error(`${at}: no Tauri CLI here. \`bun run get:tauri\` builds the pinned one.`);
+  }
+  return at;
 }
 
 if (import.meta.main) main();

@@ -9,6 +9,7 @@
 //
 // `BOWERBIRD_MAC_DIST_DIR` says where to leave the bundle; the target dir otherwise.
 import { spawnSync } from 'node:child_process';
+import { cli } from './get-tauri-cli.ts';
 import { ensureIcons } from './make-icons.ts';
 import {
   chmodSync,
@@ -76,7 +77,7 @@ const env: Record<string, string> = {
 ensureIcons();
 
 const args = ['build', '--target', TARGET, '--no-bundle', ...process.argv.slice(2)];
-const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
+const built = spawnSync(cli(), args, { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
 
 const repoRoot = resolve(import.meta.dir, '..');

@@ -5,18 +5,12 @@
 // and a job that spells the CLI out itself is a job that can forget to. Every argument is passed
 // through, so `--target` and `--bundles` read as the CLI's own.
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { binary } from './get-tauri-cli.ts';
+import { cli } from './get-tauri-cli.ts';
 import { ensureIcons } from './make-icons.ts';
 
 // `generate_context!` reads them at compile time and they are generated, not committed, so a
 // clean checkout fails inside a proc macro naming a missing file rather than at a build step.
 ensureIcons();
-
-const cli = binary();
-if (!existsSync(cli)) {
-  throw new Error(`${cli}: no Tauri CLI here. \`bun run get:tauri\` builds the pinned one.`);
-}
 
 /**
  * The runtime Linux draws with, named to the bundler rather than left to the manifest.
@@ -27,5 +21,7 @@ if (!existsSync(cli)) {
  */
 const runtime = process.platform === 'linux' ? ['--features', 'cef'] : [];
 
-const built = spawnSync(cli, ['build', ...runtime, ...process.argv.slice(2)], { stdio: 'inherit' });
+const built = spawnSync(cli(), ['build', ...runtime, ...process.argv.slice(2)], {
+  stdio: 'inherit',
+});
 if (built.status !== 0) process.exit(built.status ?? 1);
