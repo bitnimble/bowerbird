@@ -15,11 +15,13 @@ mod export;
 mod server;
 
 // `#[default_runtime(crate::Wry, wry)]` only defaults `AppHandle`'s generic while the `wry`
-// feature is on, and the Linux build turns it off to get CEF - so every `AppHandle` has to
-// name the runtime rather than rely on the default.
-#[cfg(target_os = "linux")]
-pub type Runtime = tauri::Cef;
-#[cfg(not(target_os = "linux"))]
+// feature is on, so every `AppHandle` names the runtime rather than relying on the default -
+// which is what lets a platform draw with something else without touching any of them.
+//
+// Linux drew with CEF and is paused (§23.7); `Cargo.toml` says what that pause is made of.
+//
+// #[cfg(target_os = "linux")]
+// pub type Runtime = tauri::Cef;
 pub type Runtime = tauri::Wry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

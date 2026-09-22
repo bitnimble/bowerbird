@@ -9,9 +9,12 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c" }
+# The empty list is not noise: the CLI rewrites this file before every build and writes one in if
+# it is not there, so stating it is what keeps a build from leaving the tree dirty.
+tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = [] }
 
 [dependencies]
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The shell proxies for the hosted server, so it needs a client. `rustls` rather than the
@@ -37,27 +40,26 @@ launcher = { path = "../native/launcher" }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 
-# `default-features = false` is load-bearing. Nothing emits a compile_error when both
-# runtimes are on: build.rs would report `cef` (so the build takes the CEF manifest and
-# rpath) while `Builder::default()` still resolves to `Builder<Wry>`, because
-# `#[default_runtime(crate::Wry, wry)]` keeps defaulting the generic to Wry whenever the
-# `wry` feature is present. A silently mismatched build.
-[target.'cfg(target_os = "linux")'.dependencies]
-tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", default-features = false, features = [
-  "cef",
-] }
-
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = [] }
-
-# Named here so that the bundler can be told about it, which is the only way it carries CEF.
-# `tauri-bundler` copies `libcef.so`, the `.pak` files and the locales into a deb, and assembles an
-# AppImage with `sharun` rather than `linuxdeploy`, only when its `cef_path` is set - and the CLI
-# sets that from the features it was passed, resolved against *this* table. A dependency's own
-# features are not in it, target-specific ones least of all, so `--features tauri/cef` resolves to
-# nothing and the app bundles as though it drew with Wry.
-[features]
-cef = ["tauri/cef"]
+# **`tauri` is one entry above, and that is what the Linux desktop's pause is made of** (§23.7).
+# Two
+# would be CEF here and Wry elsewhere, which cannot be stated: the Tauri CLI rewrites this file
+# before every build and unions a dependency's features across target tables, so `cef` lands on
+# the Wry entry too and both runtimes come on at once. Nothing emits a compile_error for that -
+# `build.rs` would report `cef`, taking the CEF manifest and rpath, while `Builder::default()`
+# still resolves to `Builder<Wry>`, since `#[default_runtime(crate::Wry, wry)]` defaults the
+# generic to Wry whenever the `wry` feature is present. macOS and Windows would carry it.
+#
+# The `cef` feature below is what the bundler is told, and is the only way it carries CEF:
+# `tauri-bundler` copies `libcef.so`, the pak files and the locales into a deb, and assembles an
+# AppImage with `sharun` rather than `linuxdeploy`, only when its `cef_path` is set - which the
+# CLI sets from the features it was passed, resolved against this table rather than a
+# dependency's. Both come back together, with `release.yml`'s Linux row.
+#
+# [target.'cfg(target_os = "linux")'.dependencies]
+# tauri = { git = "...", rev = "...", default-features = false, features = ["cef"] }
+#
+# [features]
+# cef = ["tauri/cef"]
 
 [profile.release]
 # The symbol table is 9MB of the Windows binary and 3MB of the macOS one, for builds

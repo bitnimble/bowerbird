@@ -12,16 +12,11 @@ import { ensureIcons } from './make-icons.ts';
 // clean checkout fails inside a proc macro naming a missing file rather than at a build step.
 ensureIcons();
 
-/**
- * The runtime Linux draws with, named to the bundler rather than left to the manifest.
- *
- * **This is what carries CEF, and nothing else does.** Unnamed, the deb installs an app whose
- * `libcef.so` is nowhere on the machine and the AppImage fails assembling it. `src-tauri`'s own
- * `[features]` says what the name means and why it has to be one of ours.
- */
-const runtime = process.platform === 'linux' ? ['--features', 'cef'] : [];
+// The runtime Linux draws with, named to the bundler rather than left to the manifest, which is
+// the only thing that makes it carry CEF - and paused with the rest of that platform (§23.7), the
+// feature it names no longer being declared. Back with `release.yml`'s Linux row.
+//
+// const runtime = process.platform === 'linux' ? ['--features', 'cef'] : [];
 
-const built = spawnSync(cli(), ['build', ...runtime, ...process.argv.slice(2)], {
-  stdio: 'inherit',
-});
+const built = spawnSync(cli(), ['build', ...process.argv.slice(2)], { stdio: 'inherit' });
 if (built.status !== 0) process.exit(built.status ?? 1);
