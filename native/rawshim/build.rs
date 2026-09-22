@@ -335,9 +335,13 @@ fn libjxl() -> PathBuf {
         println!("cargo:rustc-link-lib={lib}");
     }
     // libjxl is C++, so whichever standard library the toolchain that built it carries comes with
-    // it - except under MSVC, where the C++ runtime is the linker's own and naming one is an error.
-    if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
-        println!("cargo:rustc-link-lib=stdc++");
+    // it, and the three targets here do not agree. Apple's clang is libc++ and ships no linkable
+    // libstdc++ at all, so asking for one there is a missing-library error rather than a slower
+    // path; MSVC's C++ runtime is the linker's own and naming any is an error.
+    match (target_os().as_str(), env::var("CARGO_CFG_TARGET_ENV").as_deref()) {
+        (_, Ok("msvc")) => {}
+        ("macos" | "ios", _) => println!("cargo:rustc-link-lib=c++"),
+        _ => println!("cargo:rustc-link-lib=stdc++"),
     }
     println!("cargo:rerun-if-changed={}/include/jxl/encode.h", home.display());
     // The archive too, for the reason libavif's is watched: a rebuilt library under an unchanged
@@ -372,6 +376,10 @@ fn codec_search_path() {
         lib.display(),
     );
     println!("cargo:rustc-link-search=native={}", lib.display());
+}
+
+fn target_os() -> String {
+    env::var("CARGO_CFG_TARGET_OS").unwrap_or_default()
 }
 
 /// A static library as the target's linker names it on disk.

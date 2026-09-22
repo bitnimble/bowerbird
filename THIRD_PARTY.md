@@ -38,8 +38,11 @@ Server only: `rawshim`'s `renditions` feature is the one build that links C at a
 
 - **libaom**, **dav1d**, **sharpyuv** - libavif's codecs, the system's copies.
 - **Highway**, **Brotli**, **Little-CMS** - libjxl's, likewise (`JPEGXL_FORCE_SYSTEM_*`).
-- **libstdc++** - GPL-3 with the GCC Runtime Library Exception, which is what makes linking
-  it from a non-GPL binary permitted.
+- **The C++ standard library libjxl was built against**, which is whichever the target's own
+  toolchain carries: **libstdc++** on Linux, GPL-3 with the GCC Runtime Library Exception,
+  which is what makes linking it from a non-GPL binary permitted; **libc++** on macOS,
+  Apache-2.0 with an LLVM exception; and on Windows the MSVC runtime, which is the linker's
+  own and is named nowhere.
 
 **Static**, both pinned by `scripts/get-lib*.ts` rather than taken from the distribution,
 because a rendition and an export are bytes a reader keeps and which machine wrote them must
