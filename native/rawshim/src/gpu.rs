@@ -288,6 +288,7 @@ static GPU: std::sync::OnceLock<Option<Gpu>> = std::sync::OnceLock::new();
 #[cfg(not(target_arch = "wasm32"))]
 pub fn device() -> Option<&'static Gpu> {
     let open = GPU.get_or_init(Gpu::new).as_ref();
+    #[cfg(target_os = "linux")]
     if open.is_some() {
         leave::through_exit();
     }
@@ -318,7 +319,11 @@ pub fn device() -> Option<&'static Gpu> {
 /// `cargo run --example` and a bench are covered and a deployment is not. A test binary invoked
 /// by hand is not covered either, and still faults; `bun run test:native` is the supported way to
 /// run one.
-#[cfg(not(target_arch = "wasm32"))]
+///
+/// **Linux only, on both counts.** `on_exit` is a glibc extension that no Apple or MSVC toolchain
+/// carries, so asking for one there is `ld: symbol(s) not found` rather than a slower path - and
+/// the driver being worked around is the Linux NVIDIA ICD.
+#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 mod leave {
     use std::io::Write;
