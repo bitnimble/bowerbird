@@ -10,6 +10,12 @@
 // application with no runtime beside it - and no flag makes it do otherwise, the code not being in
 // it. The revision is read out of the manifest rather than written twice, so bumping the crates
 // moves the CLI with them.
+//
+// **Nothing calls this while the Linux desktop is paused** (§23.7), and it is here for when that
+// row comes back. It is not free to keep on: its build script cross-builds a CEF helper for
+// `x86_64-apple-darwin`, which an arm64 macOS runner has no standard library for, so installing it
+// there fails with `can't find crate for core` before anything of ours is built. With CEF out, npm
+// publishes the same version with every bundler the live platforms need.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';

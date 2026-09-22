@@ -5,18 +5,23 @@
 // and a job that spells the CLI out itself is a job that can forget to. Every argument is passed
 // through, so `--target` and `--bundles` read as the CLI's own.
 import { spawnSync } from 'node:child_process';
-import { cli } from './get-tauri-cli.ts';
 import { ensureIcons } from './make-icons.ts';
 
 // `generate_context!` reads them at compile time and they are generated, not committed, so a
 // clean checkout fails inside a proc macro naming a missing file rather than at a build step.
 ensureIcons();
 
-// The runtime Linux draws with, named to the bundler rather than left to the manifest, which is
-// the only thing that makes it carry CEF - and paused with the rest of that platform (§23.7), the
-// feature it names no longer being declared. Back with `release.yml`'s Linux row.
+// npm's CLI, which is the stock Tauri: the only thing it cannot bundle is CEF, and the platform
+// that drew with CEF is paused (§23.7). `get-tauri-cli.ts` builds the one that can, for when that
+// comes back - it is not kept in the loop meanwhile because it does not install on an arm64 macOS
+// runner at all.
+//
+// The runtime Linux draws with was named here for the same pause, the feature it named no longer
+// being declared:
 //
 // const runtime = process.platform === 'linux' ? ['--features', 'cef'] : [];
 
-const built = spawnSync(cli(), ['build', ...process.argv.slice(2)], { stdio: 'inherit' });
+const built = spawnSync('bun', ['x', '@tauri-apps/cli', 'build', ...process.argv.slice(2)], {
+  stdio: 'inherit',
+});
 if (built.status !== 0) process.exit(built.status ?? 1);

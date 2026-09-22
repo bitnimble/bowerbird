@@ -213,16 +213,15 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: web
 
-      # Three of the five are built from source, which is most of the time this job spends before
-      # it compiles anything of ours. A tree is named by the hash of its recipe
-      # (`scripts/pinned.ts`), so the getters' own sources are the whole of the key - plus the
-      # shell's manifest, which is where the Tauri CLI's revision is read from. A version or a
-      # flag moving misses the cache and rebuilds, which is exactly what it should do.
+      # Two of the four are a cmake build from source, which is most of the time this job
+      # spends before it compiles anything of ours. A tree is named by the hash of its recipe
+      # (`scripts/pinned.ts`), so the getters' own sources are the whole of the key: a version
+      # or a flag moving misses the cache and rebuilds, which is exactly what it should do.
       - name: The pinned trees, from last time
         uses: actions/cache@v4
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'src-tauri/Cargo.toml') }}
+          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
 
       # The pinned compiler and the pinned codecs, fetched through the same scripts a
       # development machine runs so the version is stated once (`scripts/pinned.ts`).
@@ -302,9 +301,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'src-tauri/Cargo.toml') }}
+          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
       - run: bun run get:shell
-      - run: bun run get:tauri
       - name: Stamp the version the tag names
         if: env.TAG != ''
         run: bun run scripts/set-version.ts "$TAG"
