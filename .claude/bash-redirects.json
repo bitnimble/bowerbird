@@ -15,10 +15,6 @@
       "reason": "Run the package.json scripts instead of the raw tools (TypeScript has no wrapper script): `bun run typecheck` (tsc --noEmit), `bun run test` (bun test; trailing args pass through, e.g. `bun run test src/editing/store.test.ts`), `bun run lint:design` (stylelint), or `bun run build` (lint:design + tsc + vite). See AGENTS.md §3."
     },
     {
-      "commands": ["Bash(gh *)"],
-      "reason": "Use the GitHub API via Fetch() instead of invoking gh directly"
-    },
-    {
       "commands": [
         "Bash(find *)",
         "Bash(awk *)",
