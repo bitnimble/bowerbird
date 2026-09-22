@@ -179,6 +179,11 @@ function underOrigin(): void {
  * Apple silicon will not map a library whose signature does not hold.
  */
 function underLoaderPath(): void {
+  // Every name written anywhere in the closure, to the file it resolves to. **Keyed by the name
+  // rather than by the file, because one library is regularly asked for under several.** brotli's
+  // common half is `/opt/homebrew/...` to `rawshim`, which linked against it by path, and
+  // `@rpath/libbrotlicommon.1.dylib` to brotli's own siblings - and each of those strings is one
+  // `install_name_tool -change` has to be given.
   const carried = new Map<string, string>();
   const pending = [shippedLibrary()];
   while (pending.length > 0) {
@@ -187,14 +192,15 @@ function underLoaderPath(): void {
     for (const dependency of machNames(walk('otool', at, '-L'), basename(at))) {
       if (carried.has(dependency)) continue;
       const from = locate(dependency, at, search);
-      // One directory, so a filename is the whole name: two libraries sharing one would
-      // overwrite each other and both be rewritten to the survivor, which is a missing symbol
-      // at first use rather than anything the checks below could see.
-      const clash = [...carried].find(([, name]) => name === basename(from));
-      if (clash != null) throw new Error(`${dependency} and ${clash[0]} share a filename`);
-      // Keyed by the name as written, since that is the string `install_name_tool -change` has
-      // to be given, and it is not the path the file was found at.
-      carried.set(dependency, basename(from));
+      // One directory, so a filename is the whole name: two *different* libraries sharing one
+      // would overwrite each other and both be rewritten to the survivor, which is a missing
+      // symbol at first use rather than anything the checks below could see.
+      const clash = [...carried.values()].find((it) => basename(it) === basename(from) && it !== from);
+      if (clash != null) throw new Error(`${from} and ${clash} share a filename`);
+      // Carried and walked once per file, however many names reach it.
+      const seen = [...carried.values()].includes(from);
+      carried.set(dependency, from);
+      if (seen) continue;
       carry(from, NATIVE);
       // The original, not the copy that was just made of it: a name relative to `@loader_path`
       // means the directory of whichever file asks for it, and a copy asks from ours. Walking
@@ -203,15 +209,17 @@ function underLoaderPath(): void {
       pending.push(from);
     }
   }
-  const shipped = [...carried.values()].map((name) => join(NATIVE, name));
+  const shipped = [...new Set([...carried.values()].map((file) => join(NATIVE, basename(file))))];
   for (const at of shipped) run('install_name_tool', ['-id', `@loader_path/${basename(at)}`, at]);
   const relocated = [shippedLibrary(), ...shipped];
   for (const at of relocated) {
-    for (const [was, name] of carried) run('install_name_tool', ['-change', was, `@loader_path/${name}`, at]);
+    for (const [was, file] of carried) {
+      run('install_name_tool', ['-change', was, `@loader_path/${basename(file)}`, at]);
+    }
     run('codesign', ['--force', '--sign', '-', at]);
   }
   for (const at of relocated) refuseStrangers(at, machNames(walk('otool', at, '-L'), basename(at)));
-  console.log(`closure: ${NATIVE} (${carried.size} libraries, @loader_path)`);
+  console.log(`closure: ${NATIVE} (${shipped.length} libraries, @loader_path)`);
 }
 
 /**
