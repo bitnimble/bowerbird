@@ -40,9 +40,9 @@ whatever they actually came out called:
 version: 0.2.0
 tag: v0.2.0
 assets:
-  linux-x86_64:
-    installer: Bowerbird_0.2.0_amd64.AppImage
-    payload: bowerbird-payload-linux-x86_64.tar.gz
+  macos-aarch64:
+    installer: Bowerbird_0.2.0_aarch64.dmg
+    payload: bowerbird-payload-macos-aarch64.tar.gz
     payload_sha256: 9f2…
   android-aarch64:
     installer: Bowerbird_0.2.0.apk
@@ -222,11 +222,22 @@ it was ever working.
 
 | Platform | Ships | Local server | In-place update |
 |---|---|---|---|
-| linux-x86_64 | AppImage, deb | yes | yes |
+| linux-x86_64 | nothing, paused | - | - |
 | macos-aarch64 | dmg | yes | yes |
 | windows-x86_64 | NSIS installer | yes | yes |
 | android-aarch64 | apk | no | **no** |
 | docker-x86_64 | ghcr image | yes | yes |
+
+**The Linux desktop is paused, and the container is not.** A server reaches Linux through the
+image above, which is where every Linux reader is; the desktop arm was built for completeness and
+has nobody on it. What paused it is the runtime: the shell draws with CEF on Linux and with Wry
+elsewhere, and the Tauri CLI rewrites `src-tauri/Cargo.toml` on every build, unioning a
+dependency's features across target tables - so `cef` is hoisted off the Linux `tauri` and written
+onto the other one, which still has `wry`. Both runtimes at once is the mismatch that manifest
+warns about, and it lands on macOS and Windows rather than on Linux. The row in `release.yml` is
+commented out with the same reasoning beside it; uncommenting it is the whole of turning this back
+on, once the shell draws with one runtime everywhere or the manifest can state two without the CLI
+merging them.
 
 **Every platform is one triple**, Windows included: `x86_64-pc-windows-msvc` builds the shell,
 `rawshim` and the Bun runtime beside them, exactly as the other two rows build theirs. No
