@@ -304,6 +304,11 @@ COPY --from=native /app/native/rawshim/pkg ./native/rawshim/pkg
 COPY scripts ./scripts
 COPY slang ./slang
 COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
+# Where a bug report goes (§18.8). A build argument rather than one of the runtime's
+# variables below: it is compiled into the bundle here, and a container's environment is
+# read long after that. A build given none hides the form.
+ARG VITE_SENTRY_DSN=
+ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN cd web && bun run build
 
 FROM base AS runtime

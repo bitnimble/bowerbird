@@ -47,6 +47,7 @@ import { ShootsPageStrings } from '../features/shoots/shoots_page.strings';
 import { ExportDialog } from '../features/export/export_dialog';
 import { ExportsPage } from '../features/exports/exports_page';
 import { ExportsPageStrings } from '../features/exports/exports_page.strings';
+import { ReportBug } from '../features/feedback/report_bug_dialog';
 import { Toasts } from '../features/toasts/toasts';
 import { UpdateBadge } from '../features/updates/update_badge';
 import { UpdateDialog } from '../features/updates/update_dialog';
@@ -718,6 +719,7 @@ export function Sidebar({
           {HdrPageStrings.title()}
         </SidebarLink>
         <ShortcutHelp />
+        <ReportBug />
         <UpdateBadge />
       </div>
     </nav>

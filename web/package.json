@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-rc.0",
+    "@sentry/browser": "^10.75.1",
     "@stylexjs/stylex": "^0.19.1",
     "date-fns": "^4.4.0",
     "lucide-react": "^1.27.0",

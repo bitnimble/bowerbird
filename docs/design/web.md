@@ -23,6 +23,7 @@ Every request it makes is same-origin. The web server proxies `/api` and `/image
 | Components | Base UI (unstyled primitives), wrapped once in `src/ui/`, a module per control plus the types and metrics they share |
 | Icons | lucide-react |
 | Calendar | react-day-picker, restyled through its CSS variables |
+| Bug reports | Sentry's browser SDK, loaded only when a report is sent (§18.8) |
 | E2E | Playwright, driving the real API and a temp library |
 
 Every control on screen comes from `src/ui/`, one module per control with no barrel, and each variant list is short on purpose: four button variants, four text roles, two heading levels. Uniformity is enforced in code rather than by discipline; every interactive element in the app carries the same `.ui-btn` class - `Button`, the segmented filter chips, `Select`, `TextField`, the menu triggers - so height, type size and icon size cannot drift between a filter and a toolbar button. A new fifth colour or a fifth text style should mean rethinking the screen, not adding a variant.
@@ -559,3 +560,13 @@ bun run test:e2e                  # Playwright; starts its own API + Vite on ran
 Every service picks a free port at random rather than a fixed one, so several checkouts (parallel worktrees, an agent per branch) can each run a dev server and an E2E suite without fighting over `:3000`. Each prints the port it got, and takes an override when one has to be pinned: `-p <port>` for the API, `--port <port>` for Vite. The dev server's proxy still has to be told where the API is, so a dev session either pins the API with `-p 3000` or passes the port it was given as `VITE_API_URL`.
 
 `bun run test:e2e` builds a throwaway library under `$TMPDIR/bowerbird-e2e-<checkout hash>` from the ARW fixture and drives the real stack, so it needs `librawshim.so` built. The path is keyed by checkout so two worktrees testing at once do not wipe each other's fixture, and stable across runs of one checkout so the copies are overwritten rather than piling up. `VITE_API_URL` points the dev server's proxy at a non-default API origin.
+
+### 18.8 Bug reports
+
+**There is no error tracking.** The only thing that reaches Sentry is a report a reader wrote and pressed send on, from **Report a bug** in the sidebar (`features/feedback/`), and the shape of the code is what holds that rather than a promise: `@sentry/browser` is imported inside `BugReporter.send` and nowhere else, so a session nobody files a report in never loads the SDK, let alone runs a line of it. `init` is then given `defaultIntegrations: false`, because `integrations: []` on its own leaves the global error handler, the breadcrumbs and a session ping in place. `tests/report_bug.test.ts` pins both, since a default switched back on is a silent change from a form into everything this browser threw.
+
+The DSN is `VITE_SENTRY_DSN`, compiled into the bundle, and a build without one hides the entry instead of offering a button that would drop what was written. Every build of the web client therefore has to carry it: the release workflow states it in its own environment, which covers the desktop and Android jobs that run the web build themselves, and passes it to the Docker image as a build argument, because that bundle is built inside the image, where the runtime's variables have not been read yet. `web/.env.example` carries the same value, copied to `web/.env` for a dev server.
+
+**It is a literal in both places rather than a repository secret**, because a DSN is write-only ingest and is published in the bundle regardless: what it authorises is posting an event to the project, and nothing about reading one. Keeping it secret would buy nothing and cost a release built quietly without the form every time the secret was missing - on a fork, or on a checkout of this repository by anyone but its owner. What a published DSN does expose is the quota, so events nobody filed are Sentry's own rate limits and inbound filters to refuse.
+
+A report carries what was written, an email where one was given, the version the server reports, the page it was sent from, and a `bowerbird` context of the display, the user agent and the GPU adapter. The adapter is `adapterName`, the same string the editor's own diagnostics show, because a picture that came out wrong is nearly always the driver's.

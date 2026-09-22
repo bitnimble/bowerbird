@@ -1,5 +1,6 @@
 import { action } from 'mobx';
 import { type EditDoc, type EditState } from '../../../../../src/schemas/photo_edits';
+import { adapterName } from '../../../adapter_name';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { photosApi } from '../../../api/photos';
 import { preparesOnTheBackend } from './prepare_choice';
@@ -977,9 +978,7 @@ export class RawEditPresenter {
 
   @action.bound
   private describeAdapter(adapter: GPUAdapter): void {
-    const info = adapter.info as { vendor?: string; architecture?: string; device?: string } | undefined;
-    this.stage.adapter =
-      [info?.vendor, info?.architecture, info?.device].filter(Boolean).join(' / ') || 'unreported';
+    this.stage.adapter = adapterName(adapter);
   }
 
   @action.bound
