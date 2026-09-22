@@ -270,6 +270,11 @@ jobs:
   # C at all, and what `renditions` would want here is six libraries - aom, dav1d, sharpyuv,
   # highway, brotli, lcms2 - that the two getters take from the system and that no Android
   # prefix provides.
+  #
+  # It carries no server either, there being no Bun runtime for Android to carry, so
+  # `tauri.android.conf.json` clears the `externalBin` and the resources the desktop config
+  # names - a build otherwise stops at a sidecar for a triple nothing builds one for. The app
+  # points at a hosted library instead, which `lib.rs` already treats as the ordinary case.
   android:
     runs-on: ubuntu-22.04
     steps:
