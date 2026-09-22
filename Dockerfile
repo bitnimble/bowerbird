@@ -130,6 +130,19 @@ RUN apt-get update \
 COPY scripts/pinned.ts scripts/get-slangc.ts ./scripts/
 RUN bun run scripts/get-slangc.ts
 
+# The denoiser's published weights, which `src/pmrid.rs` embeds - so this is a file the crate does
+# not compile without, on the same terms as the shaders. A stage of its own because the getter
+# unpacks a checkpoint with `fflate`, which is a dev dependency: `deps` installs `--production` and
+# so has none, and the build stage has no `node_modules` at all.
+FROM base AS pmrid
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY scripts/get-pmrid.ts ./scripts/
+RUN bun run scripts/get-pmrid.ts
+
 # What the tests and the maintainer's scripts need and the app does not
 # (`docker-compose.dev.yml`): ffprobe, to read back what an encode produced with a
 # decoder that is not ours, and the pair `scripts/demo-assets.ts` drives to build the
@@ -233,6 +246,7 @@ RUN bun run scripts/get-libavif.ts
 # current one. Built against the system highway, brotli and lcms2 installed above.
 COPY scripts/get-libjxl.ts ./scripts/get-libjxl.ts
 RUN bun run scripts/get-libjxl.ts
+COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
 # One target dir, emptied between levels. Changing target-cpu invalidates every
 # artefact, so a dir per level caches nothing that three passes over one does not -
 # it only holds all three at once, 2.5GB apiece, which a GitHub runner cannot fit.
