@@ -118,6 +118,18 @@ const DUST = 'dust';
 const DUST_CROP: [number, number, number, number] = [0.49, 0.13, 0.71, 0.35];
 
 /**
+ * The part of a scene's frame the page shows, as Camera Raw's left, top, right and bottom.
+ *
+ * A scene is only a case about headroom if the thing carrying the highlights is big enough to
+ * look at: the seabird is a tenth of its frame's width, so the lit wing that the HDR arm holds
+ * and the 8-bit one clips is a few pixels on screen. This rectangle is a quarter of the frame,
+ * cut from the raw rather than from the rendition so the picture is still 1200px of detail.
+ */
+const SCENE_CROP: Record<string, [number, number, number, number]> = {
+  saturated: [0.333, 0.25, 0.833, 0.75],
+};
+
+/**
  * Long enough to look at, short enough to ship ten of them: the page is not a
  * pixel-peeping view, and every visitor pays for both arms of every pair.
  */
@@ -138,6 +150,11 @@ const SETTINGS = SettingsSchema.parse({});
 
 /** How far above diffuse white the mastering peak sits: 1000 nits over 203, 2.3 stops. */
 const PEAK_OVER_WHITE = SETTINGS.hdr_peak_nits / SETTINGS.hdr_reference_white_nits;
+
+/** A target's size is the long edge of the whole frame, so a crop asks for what it is about to take away. */
+function croppedSize(crop: [number, number, number, number]): number {
+  return Math.round(LONG_EDGE / (crop[2] - crop[0]));
+}
 
 function outputPath(slug: string, hdr: boolean): string {
   return join(OUT, `${slug}-${hdr ? 'hdr' : 'sdr'}.avif`);
@@ -532,9 +549,7 @@ async function buildDust(): Promise<void> {
         referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
         whiteQuantile: SETTINGS.hdr_white_quantile,
       },
-      // A target's size is the long edge of the whole frame, so the crop has to ask for as much
-      // more as it is about to take away if the picture is to come out `LONG_EDGE` wide.
-      targets: [{ ...target(DUST), output: 'srgb', outputPath: out, size: Math.round(LONG_EDGE / (DUST_CROP[2] - DUST_CROP[0])) }],
+      targets: [{ ...target(DUST), output: 'srgb', outputPath: out, size: croppedSize(DUST_CROP) }],
     });
     console.error(`[demo-assets] ${slug}: ${(Bun.file(out).size / 1024).toFixed(0)}kB`);
   }
@@ -559,6 +574,7 @@ function renderSrgb(raw: string, outputPath: string, colourProfile: 'matched' | 
 }
 
 async function build(scene: string): Promise<void> {
+  const crop = SCENE_CROP[scene];
   try {
     runJob({
       rawFilePath: rawFor(scene),
@@ -567,12 +583,13 @@ async function build(scene: string): Promise<void> {
       // The page shows the shipped look, so the frames carry no develop settings - the
       // denoise included, `AS_METERED` carrying the document's own defaults for it.
       ...AS_METERED,
+      geometry: crop == null ? AS_METERED.geometry : { ...AS_METERED.geometry, crop },
       grade: {
         peakNits: SETTINGS.hdr_peak_nits,
         referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
         whiteQuantile: SETTINGS.hdr_white_quantile,
       },
-      targets: [target(scene)],
+      targets: [crop == null ? target(scene) : { ...target(scene), size: croppedSize(crop) }],
     });
     await clipToWhite(scene);
   } catch (failure) {

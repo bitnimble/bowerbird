@@ -9,7 +9,7 @@ import { swatchRegion } from './merge_mask';
 import { MergePageStrings } from './merge_page.strings';
 import type { MergePresenter } from './merge_presenter';
 import type { MergeStore } from './merge_store';
-import { StageSpinner } from '../viewer/stage_spinner';
+import { Spinner } from '../../../ui/spinner';
 import { drawInto, type Decoded } from '../viewer/stage_bitmaps';
 import { NO_SIZE, stagePointOf, type Size, type ZoomPan } from '../viewer/zoom_pan';
 
@@ -327,7 +327,7 @@ export const MergeTilePopup = observer(function MergeTilePopup({
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div {...stylex.props(styles.searching)} role="status" aria-label={MergePageStrings.searching()}>
-          <StageSpinner />
+          <Spinner />
         </div>
       </div>
     );

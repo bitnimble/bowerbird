@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { color } from '../../../ui/tokens.stylex';
 import { toggleFullscreenOf } from '../../photos/viewer/fullscreen';
 import { stageStyles } from '../../photos/viewer/photo_stage.stylex';
-import { StageSpinner } from '../../photos/viewer/stage_spinner';
+import { Spinner } from '../../../ui/spinner';
 import { PhotoStageStrings } from '../../photos/viewer/photo_stage.strings';
 import { ZoomControl, ZoomSlider } from '../../photos/viewer/zoom_control';
 import { CropOverlay } from '../crop/crop_overlay';
@@ -365,7 +365,7 @@ export const RawEditStage = observer(function RawEditStage({
       />
       {!stageStore.live && stageStore.status !== 'failed' && (
         <div {...stylex.props(stageStyles.busy)}>
-          <StageSpinner />
+          <Spinner />
         </div>
       )}
     </div>

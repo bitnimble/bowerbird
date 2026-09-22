@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { color } from '../../../ui/tokens.stylex';
+import { color } from './tokens.stylex';
 
 const spin = stylex.keyframes({ to: { transform: 'rotate(360deg)' } });
 
@@ -23,6 +23,6 @@ const styles = stylex.create({
   },
 });
 
-export function StageSpinner({ small = false }: { small?: boolean }): JSX.Element {
+export function Spinner({ small = false }: { small?: boolean }): JSX.Element {
   return <div {...stylex.props(styles.spinner, small && styles.small)} />;
 }

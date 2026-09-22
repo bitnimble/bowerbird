@@ -20,7 +20,7 @@ import { MergeStage } from './merge_stage';
 import { MergeStore } from './merge_store';
 import { MergeTilePopup } from './merge_tile_popup';
 import { stageStyles } from '../viewer/photo_stage.stylex';
-import { StageSpinner } from '../viewer/stage_spinner';
+import { Spinner } from '../../../ui/spinner';
 import { PhotoStageStrings } from '../viewer/photo_stage.strings';
 import { collectionPath, photoPath, sourceOfPath } from '../photos_store';
 import { ZoomControl } from '../viewer/zoom_control';
@@ -184,7 +184,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
   if (store.status === 'loading' || store.status === 'analysing') {
     return (
       <div {...stylex.props(styles.status)}>
-        <StageSpinner />
+        <Spinner />
         <Text variant="muted">{MergePageStrings.analysing(store.progress)}</Text>
         <Button onClick={presenter.cancel}>{MergePageStrings.cancel()}</Button>
       </div>

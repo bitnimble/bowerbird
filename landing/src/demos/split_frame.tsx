@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { useRef, useState, type ReactNode } from 'react';
 import { focusRing } from '../../../web/src/ui/focus_ring';
+import { Spinner } from '../../../web/src/ui/spinner';
 import { color } from '../../../web/src/ui/tokens.stylex';
 import { Badge } from './badge';
 
@@ -31,6 +32,26 @@ const styles = stylex.create({
     borderRadius: '4px',
     backgroundColor: '#000',
     userSelect: 'none',
+  },
+  pending: {
+    minHeight: '240px',
+    minWidth: '240px',
+  },
+  contents: {
+    display: 'contents',
+  },
+  // Hidden rather than unmounted, so the pair is still downloading while the spinner turns.
+  // On the contents rather than the frame: a hidden element leaves the accessibility tree, and
+  // the frame is what carries `aria-busy`.
+  hidden: {
+    visibility: 'hidden',
+  },
+  spinner: {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   after: {
     position: 'absolute',
@@ -104,6 +125,7 @@ export function SplitFrame({
   label,
   value,
   onChange,
+  loading = false,
 }: {
   before: ReactNode;
   after: ReactNode;
@@ -112,6 +134,7 @@ export function SplitFrame({
   label: string;
   value: number;
   onChange: (value: number) => void;
+  loading?: boolean;
 }): JSX.Element {
   const latestValue = useRef(value);
   const [dragValue, setDragValue] = useState<number | null>(null);
@@ -124,42 +147,49 @@ export function SplitFrame({
   };
 
   return (
-    <div {...stylex.props(styles.split, focusRing.within)}>
-      <div>{before}</div>
-      {/* Clipped by overflow, not clip-path or a transform: either can flatten an HDR image to SDR. */}
-      <div {...stylex.props(styles.after)} style={{ left: `${shownValue}%` }}>
-        <div {...stylex.props(styles.afterFrame)} style={{ width: `${100 / shown}%` }}>
-          {after}
+    <div {...stylex.props(styles.split, loading && styles.pending, focusRing.within)} aria-busy={loading}>
+      <div {...stylex.props(styles.contents, loading && styles.hidden)}>
+        <div>{before}</div>
+        {/* Clipped by overflow, not clip-path or a transform: either can flatten an HDR image to SDR. */}
+        <div {...stylex.props(styles.after)} style={{ left: `${shownValue}%` }}>
+          <div {...stylex.props(styles.afterFrame)} style={{ width: `${100 / shown}%` }}>
+            {after}
+          </div>
         </div>
+        <span {...stylex.props(styles.handle)} style={{ left: `${shownValue}%` }} aria-hidden />
+        <Badge style={[styles.tag, styles.tagBefore]} aria-hidden>
+          {beforeLabel}
+        </Badge>
+        <Badge style={[styles.tag, styles.tagAfter]} aria-hidden>
+          {afterLabel}
+        </Badge>
+        <input
+          {...stylex.props(styles.input)}
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={shownValue}
+          aria-label={label}
+          onPointerDown={() => {
+            latestValue.current = value;
+            setDragValue(value);
+          }}
+          onPointerUp={commit}
+          onPointerCancel={() => setDragValue(null)}
+          onChange={(event) => {
+            const next = Number(event.currentTarget.value);
+            latestValue.current = next;
+            if (dragValue == null) onChange(next);
+            else setDragValue(next);
+          }}
+        />
       </div>
-      <span {...stylex.props(styles.handle)} style={{ left: `${shownValue}%` }} aria-hidden />
-      <Badge style={[styles.tag, styles.tagBefore]} aria-hidden>
-        {beforeLabel}
-      </Badge>
-      <Badge style={[styles.tag, styles.tagAfter]} aria-hidden>
-        {afterLabel}
-      </Badge>
-      <input
-        {...stylex.props(styles.input)}
-        type="range"
-        min={0}
-        max={100}
-        step={1}
-        value={shownValue}
-        aria-label={label}
-        onPointerDown={() => {
-          latestValue.current = value;
-          setDragValue(value);
-        }}
-        onPointerUp={commit}
-        onPointerCancel={() => setDragValue(null)}
-        onChange={(event) => {
-          const next = Number(event.currentTarget.value);
-          latestValue.current = next;
-          if (dragValue == null) onChange(next);
-          else setDragValue(next);
-        }}
-      />
+      {loading && (
+        <span {...stylex.props(styles.spinner)}>
+          <Spinner />
+        </span>
+      )}
     </div>
   );
 }

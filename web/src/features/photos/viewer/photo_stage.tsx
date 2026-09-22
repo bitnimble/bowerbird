@@ -12,7 +12,7 @@ import { NO_SIZE, type Size, letterboxOf, useZoomPan } from './zoom_pan';
 import { ZoomControl, ZoomSlider } from './zoom_control';
 import { stageStyles } from './photo_stage.stylex';
 import { StageFrame, type FrameState } from './stage_frame';
-import { StageSpinner } from './stage_spinner';
+import { Spinner } from '../../../ui/spinner';
 import { styles } from './photo_stage_view.stylex';
 import { StageDetail } from './stage_detail';
 
@@ -932,7 +932,7 @@ export function PhotoStage({
             aria-busy={notice.busy}
             style={{ top: `${letterbox.y}px`, right: `${letterbox.x}px` }}
           >
-            {notice.busy && <StageSpinner small />}
+            {notice.busy && <Spinner small />}
             <Text variant="mono" style={styles.statusText}>
               {notice.label}
             </Text>
