@@ -108,32 +108,40 @@ jobs:
 
   desktop:
     strategy:
-      # One platform's toolchain failing should not cost the other three their build.
       fail-fast: false
       matrix:
         include:
           - platform: linux-x86_64
-            runs-on: ubuntu-22.04
+            runs-on: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             bundles: deb,appimage
+            shell: bash
           - platform: macos-aarch64
             runs-on: macos-14
             target: aarch64-apple-darwin
             bundles: dmg
-          - platform: macos-x86_64
-            runs-on: macos-13
-            target: x86_64-apple-darwin
-            bundles: dmg
-          # **Shell only, and lensfun is why.** The server's half of `rawshim` links
-          # lensfun, the pinned libavif and the pinned libjxl, none of which has a
-          # buildable MSVC story worth the week it would cost - so this build carries no
-          # local server and points at a hosted one (`transport.ts`). Everything the
-          # editor does is the browser's GPU and needs none of them.
+            shell: bash
+          # **Two triples, and glib is why.** The shell is MSVC like every other Windows
+          # application; the server's half of `rawshim` wants clang and eight prebuilt
+          # libraries, and CLANG64 is the only place both are. libjxl needs clang either way
+          # (`cl.exe` is unsupported upstream), but the one that decides it is lensfun, which
+          # needs glib underneath it: pacman has both in a line, where the MSVC route builds
+          # them from source and moves the version pin somewhere `scripts/pinned.ts` cannot
+          # see it.
+          #
+          # **`gnullvm` against CLANG64, and the CRT is why.** The two halves of
+          # `rawshim.dll` are one module, and rustup's `x86_64-pc-windows-gnu` std is built
+          # against msvcrt, so pairing it with a UCRT environment puts two C runtimes inside
+          # one library - which MSYS2 warns against, their internal structures differing.
+          # `gnullvm` is UCRT, libc++ and compiler-rt, which is exactly what CLANG64 is.
+          #
+          # `matrix.shell` is how a step reaches that environment.
           - platform: windows-x86_64
             runs-on: windows-latest
             target: x86_64-pc-windows-msvc
+            server_target: x86_64-pc-windows-gnullvm
             bundles: nsis
-            shell_only: true
+            shell: msys2 {0}
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v5
@@ -143,7 +151,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }},wasm32-unknown-unknown
+          targets: ${{ matrix.target }},${{ matrix.server_target || matrix.target }},wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -161,11 +169,50 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             liblensfun-dev libaom-dev libdav1d-dev libsharpyuv-dev cmake \
             libhwy-dev libbrotli-dev liblcms2-dev libclang-dev build-essential \
-            libgtk-3-dev librsvg2-dev patchelf desktop-file-utils fuse3 libfuse2
+            libgtk-3-dev librsvg2-dev patchelf desktop-file-utils fuse3 libfuse2t64
 
       - name: macOS build dependencies
         if: runner.os == 'macOS'
         run: brew install lensfun aom dav1d cmake highway brotli little-cms2 webp
+
+      # The same libraries from pacman, which is where they exist prebuilt for MinGW. The
+      # runner image already carries MSYS2, so `release: false` reuses it instead of
+      # downloading a second one, and `path-type: inherit` keeps bun, cargo and rustup
+      # visible inside the shell. glib and libpng arrive as lensfun's dependencies, libc++
+      # and libunwind as clang's.
+      - name: Windows build dependencies
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          release: false
+          # **Not optional beside `release: false`.** The action syncs the package database only
+          # when told to, and reusing the image's MSYS2 means reusing the database baked into it
+          # - against which pacman asks for a version the mirrors have already replaced, since
+          # they keep only the current one. Without this the row dies on a 404 as soon as the
+          # image is a little older than the repository, and is green again after the next roll.
+          update: true
+          path-type: inherit
+          install: >-
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-pkgconf
+            mingw-w64-clang-x86_64-lensfun
+            mingw-w64-clang-x86_64-aom
+            mingw-w64-clang-x86_64-dav1d
+            mingw-w64-clang-x86_64-libwebp
+            mingw-w64-clang-x86_64-highway
+            mingw-w64-clang-x86_64-brotli
+            mingw-w64-clang-x86_64-lcms2
+
+      # bindgen runs its own clang and finds it by this rather than by PATH. Asked of the
+      # shell, since the environment names its own prefix and nothing here should know
+      # where the runner image unpacked MSYS2.
+      - name: Where bindgen finds clang
+        if: runner.os == 'Windows'
+        run: echo "LIBCLANG_PATH=$(cygpath -w "$MSYSTEM_PREFIX/bin")" >> "$GITHUB_ENV"
+        shell: msys2 {0}
 
       # Two installs, because `web` is its own package with its own lockfile: vite, React
       # and the plugins are only in that one, and `tauri build` runs the web build.
@@ -173,16 +220,22 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: web
 
+      # Two of the four are a cmake build from source, which is most of the time this job
+      # spends before it compiles anything of ours. A tree is named by the hash of its recipe
+      # (`scripts/pinned.ts`), so the getters' own sources are the whole of the key: a version
+      # or a flag moving misses the cache and rebuilds, which is exactly what it should do.
+      - name: The pinned trees, from last time
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bowerbird
+          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
+
       # The pinned compiler and the pinned codecs, fetched through the same scripts a
       # development machine runs so the version is stated once (`scripts/pinned.ts`).
-      # slangc on every platform, because the shaders are what every picture is; libavif
-      # and libjxl only where a server is being built.
-      - run: bun run get:slangc
-      - name: The pinned image codecs
-        if: ${{ !matrix.shell_only }}
-        run: |
-          bun run get:libavif
-          bun run get:libjxl
+      # Inside MSYS2 on Windows, because two of them are a cmake build against the
+      # libraries pacman just installed.
+      - run: bun run get:all
+        shell: ${{ matrix.shell }}
 
       - name: Stamp the version the tag names
         if: env.TAG != ''
@@ -195,14 +248,13 @@ jobs:
       - run: bun x wasm-pack@0.13.1 build native/rawshim --target web --out-dir pkg --no-opt -- --no-default-features
       - run: bun run scripts/hash-pkg.ts
 
-      # The server the app carries, and the pixel library behind it. Skipped where the
-      # platform cannot build the server's half at all.
+      # The server the app carries, and the pixel library behind it. `--native-target` is
+      # the triple that library is built for, which on Windows is not the shell's.
       - name: The bundled server
-        if: ${{ !matrix.shell_only }}
         run: |
-          bun run scripts/cargo.ts build --release --manifest-path native/rawshim/Cargo.toml --target ${{ matrix.target }}
-          bun run scripts/build-sidecar.ts --target ${{ matrix.target }}
-        shell: bash
+          bun run scripts/cargo.ts build --release --manifest-path native/rawshim/Cargo.toml --target ${{ matrix.server_target || matrix.target }}
+          bun run scripts/build-sidecar.ts --target ${{ matrix.target }} --native-target ${{ matrix.server_target || matrix.target }}
+        shell: ${{ matrix.shell }}
 
       - name: Build the app
         run: bun x @tauri-apps/cli build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
@@ -211,7 +263,7 @@ jobs:
       - name: Assemble the payload and collect the installer
         run: |
           set -eu
-          bun run scripts/build-payload.ts --target ${{ matrix.target }} --out dist ${{ matrix.shell_only && '--shell-only' || '' }}
+          bun run scripts/build-payload.ts --target ${{ matrix.target }} --out dist
           find src-tauri/target/${{ matrix.target }}/release/bundle -type f \
             \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*-setup.exe' \) \
             -exec cp {} dist/${{ matrix.platform }}/ \;
@@ -247,7 +299,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun install --frozen-lockfile
         working-directory: web
-      - run: bun run get:slangc
+      - run: bun run get:shell
       - name: Stamp the version the tag names
         if: env.TAG != ''
         run: bun run scripts/set-version.ts "$TAG"

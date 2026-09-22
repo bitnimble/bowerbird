@@ -1,7 +1,7 @@
 // The tarball an installed Bowerbird unpacks over itself (DESIGN §23.4).
 //
 // `--target <triple>` for a cross build; this machine's otherwise. `--out <dir>` says
-// where to leave it. `--shell-only` for a platform that carries no server.
+// where to leave it.
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -13,9 +13,7 @@ const PLATFORMS: Record<string, string> = {
   'x86_64-unknown-linux-gnu': 'linux-x86_64',
   'aarch64-unknown-linux-gnu': 'linux-aarch64',
   'aarch64-apple-darwin': 'macos-aarch64',
-  'x86_64-apple-darwin': 'macos-x86_64',
   'x86_64-pc-windows-msvc': 'windows-x86_64',
-  'x86_64-pc-windows-gnu': 'windows-x86_64',
 };
 
 function flag(name: string): string | undefined {
@@ -54,21 +52,14 @@ const suffix = windows ? '.exe' : '';
 const sidecar = join(ROOT, 'src-tauri', 'binaries', `bowerbird-server-${triple}${suffix}`);
 const resources = join(ROOT, 'src-tauri', 'resources');
 
-// A build with no server in it, which is what Windows ships: the server's half of
-// `rawshim` links lensfun and the two pinned codecs, and that toolchain does not exist
-// for MSVC. Such an app points at a hosted Bowerbird instead (`transport.ts`).
-const shellOnly = process.argv.includes('--shell-only');
-
 function need(path: string, how: string): string {
   if (!existsSync(path)) throw new Error(`${path} is not there. ${how}`);
   return path;
 }
 
-if (!shellOnly) {
-  need(sidecar, 'Run `bun run build:sidecar` first, or pass --shell-only.');
-  need(join(resources, 'server', 'index.js'), 'Run `bun run build:sidecar` first, or pass --shell-only.');
-  need(join(resources, 'reference_frame.ARW'), 'Run `bun run build:sidecar` first, or pass --shell-only.');
-}
+need(sidecar, 'Run `bun run build:sidecar` first.');
+need(join(resources, 'server', 'index.js'), 'Run `bun run build:sidecar` first.');
+need(join(resources, 'reference_frame.ARW'), 'Run `bun run build:sidecar` first.');
 
 /**
  * The `.app` a macOS build produced, wherever the bundler left it and whatever it called
@@ -115,24 +106,25 @@ if (triple.includes('apple')) {
     );
   }
   need(join(macos, 'Bowerbird'), 'The bundle does not hold the executable the supervisor starts.');
-  if (!shellOnly) {
-    // Already inside - Tauri puts the sidecar beside the executable and the resources
-    // under `Contents/Resources` - so this is a check rather than a copy.
-    need(join(macos, 'bowerbird-server'), 'The bundle does not hold the server.');
-    need(join(app, 'Contents', 'Resources', 'resources', 'server', 'index.js'), 'The bundle does not hold the server bundle.');
-  }
+  // Already inside - Tauri puts the sidecar beside the executable and the resources
+  // under `Contents/Resources` - so this is a check rather than a copy.
+  need(join(macos, 'bowerbird-server'), 'The bundle does not hold the server.');
+  need(join(app, 'Contents', 'Resources', 'resources', 'server', 'index.js'), 'The bundle does not hold the server bundle.');
 } else {
   const app = need(join(releaseDir, `app${suffix}`), 'Run `bun run tauri build` first.');
   cpSync(app, join(staging, `bowerbird-app${suffix}`));
-  if (!shellOnly) {
-    cpSync(sidecar, join(staging, `bowerbird-server${suffix}`));
-    cpSync(resources, join(staging, 'resources'), { recursive: true });
-  }
-  // Windows resolves an import from the executable's own directory first, and a MinGW
-  // build carries its runtime beside the exe rather than expecting it on the machine.
+  cpSync(sidecar, join(staging, `bowerbird-server${suffix}`));
+  cpSync(resources, join(staging, 'resources'), { recursive: true });
+  // Windows resolves a dependent DLL from the loading process's own directory, so the
+  // shell's imports and the closure `rawshim.dll` needs both go beside the executables -
+  // the second of those being gathered under `src-tauri/dlls` rather than built here,
+  // since it comes out of MSYS2 and this runs after the MSVC bundle.
   if (windows) {
-    for (const entry of readdirSync(releaseDir)) {
-      if (entry.toLowerCase().endsWith('.dll')) cpSync(join(releaseDir, entry), join(staging, entry));
+    const gathered = need(join(ROOT, 'src-tauri', 'dlls'), 'Run `bun run build:sidecar` first.');
+    for (const from of [releaseDir, gathered]) {
+      for (const entry of readdirSync(from)) {
+        if (entry.toLowerCase().endsWith('.dll')) cpSync(join(from, entry), join(staging, entry));
+      }
     }
   }
 }

@@ -17,13 +17,14 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { linkPinned, makeOnce, pin, pinnedHome } from './pinned';
+import { CMAKE_GENERATOR, linkPinned, makeOnce, pin, pinnedHome, requireCmakeGenerator } from './pinned';
 
 const NAME = 'libjxl';
 const VERSION = '0.11.1';
 const ROOT = resolve(import.meta.dir, '..');
 
 const CMAKE = [
+  ...CMAKE_GENERATOR,
   '-DCMAKE_BUILD_TYPE=Release',
   '-DBUILD_SHARED_LIBS=OFF',
   '-DBUILD_TESTING=OFF',
@@ -70,6 +71,7 @@ function main(): void {
 }
 
 function build(): void {
+  requireCmakeGenerator();
   for (const dependency of ['libhwy', 'libbrotlienc', 'libbrotlidec', 'lcms2']) {
     if (installed(dependency) == null) {
       throw new Error(`${dependency} is not installed, and libjxl is built against the system's`);

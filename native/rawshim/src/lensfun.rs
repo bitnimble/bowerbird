@@ -57,28 +57,75 @@ struct Resolved {
     crop: f32,
 }
 
-/// The database, loaded once per process from the system directories.
+/// The variable naming the directory the database is read from.
+pub const DATA: &str = "BOWERBIRD_LENSFUN_DATA";
+
+/// The database, loaded once per process.
+///
+/// `BOWERBIRD_LENSFUN_DATA` names the directory to read it from, which is how a
+/// packaged application carries the XML it was built against - lensfun searches
+/// only the prefixes it was compiled for, and on Windows there is no such prefix at
+/// all. Unset, it searches them, so a development box needs no configuration.
 ///
 /// None when lensfun is present but its data is not, which is a deployment fault
 /// rather than a per-photo one: every caller then behaves as it did before, fitting
 /// the geometry instead.
 fn db() -> Option<&'static Db> {
-    static DB: OnceLock<Option<Db>> = OnceLock::new();
-    #[expect(unsafe_code)]
-    DB.get_or_init(|| unsafe {
-        let handle = raw::lf_db_new();
-        if handle.is_null() {
-            return None;
-        }
+    static DB: OnceLock<Loaded> = OnceLock::new();
+    match DB.get_or_init(load) {
+        Loaded::Ready(db) => Some(db),
+        Loaded::Absent => None,
+        // Outside the initialiser on purpose. A panic inside one leaves the cell empty and
+        // `ffi::guard` catches it, so raising it there would open a database, leak it and
+        // panic again for every photograph rather than once.
+        Loaded::Refused(why) => panic!("{why}"),
+    }
+}
+
+enum Loaded {
+    Ready(Db),
+    Absent,
+    Refused(String),
+}
+
+/// Opens the database once, owning the handle until it either hands it over or destroys it.
+#[expect(unsafe_code)]
+fn load() -> Loaded {
+    let handle = unsafe { raw::lf_db_new() };
+    if handle.is_null() {
+        return Loaded::Absent;
+    }
+    let Some(dir) = std::env::var_os(DATA) else {
         // Non-zero is a load failure, which would leave an empty database behind -
         // answering None for every lens instead of saying why.
-        if raw::lf_db_load(handle) != 0 {
-            raw::lf_db_destroy(handle);
-            return None;
+        if unsafe { raw::lf_db_load(handle) } != 0 {
+            unsafe { raw::lf_db_destroy(handle) };
+            return Loaded::Absent;
         }
-        Some(Db(handle))
-    })
-    .as_ref()
+        return Loaded::Ready(Db(handle));
+    };
+    let at = dir.to_string_lossy().into_owned();
+    let refuse = |why: String| {
+        unsafe { raw::lf_db_destroy(handle) };
+        Loaded::Refused(why)
+    };
+    let Ok(path) = CString::new(dir.as_encoded_bytes()) else {
+        return refuse(format!("{DATA}={at}: a path with a NUL in it"));
+    };
+    // Refused rather than answered with Absent, which is the one failure a named directory must
+    // not share with an absent lensfun: Absent is a fall-back to fitting the geometry, so a
+    // deployment that shipped the library and forgot the data would go on producing plausible
+    // pictures and saying nothing.
+    //
+    // A `cbool`, true where it found data, against `lf_db_load`'s `lfError`, zero where it did.
+    // Read as an error code this loads the database and throws it away.
+    if unsafe { raw::lf_db_load_directory(handle, path.as_ptr()) } == 0 {
+        return refuse(format!(
+            "{DATA}={at}: lensfun read no lens data here. It wants the directory of XML files \
+             itself - a database's `version_1` - rather than the one above it."
+        ));
+    }
+    Loaded::Ready(Db(handle))
 }
 
 /// Lens searches already run, negatives included.

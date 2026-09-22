@@ -142,7 +142,8 @@ administrator.
 
 | Platform | Payload |
 |---|---|
-| linux, windows | `bowerbird-app`, `bowerbird-server`, `resources/` |
+| linux | `bowerbird-app`, `bowerbird-server`, `resources/` |
+| windows | the same, plus the DLLs those two resolve out of their own directory (§23.7.1) |
 | macOS | a whole `Bowerbird.app` |
 | docker | the image's `/app/payload`: the server, `node_modules`, the three rawshim variants, `web/dist` |
 
@@ -222,20 +223,82 @@ it was ever working.
 | Platform | Ships | Local server | In-place update |
 |---|---|---|---|
 | linux-x86_64 | AppImage, deb | yes | yes |
-| macos-aarch64, macos-x86_64 | dmg | yes | yes |
-| windows-x86_64 | NSIS installer | **no** | yes |
+| macos-aarch64 | dmg | yes | yes |
+| windows-x86_64 | NSIS installer | yes | yes |
 | android-aarch64 | apk | no | **no** |
 | docker-x86_64 | ghcr image | yes | yes |
 
-**Windows ships shell-only, and lensfun is why.** The server's half of `rawshim` links
-lensfun, the pinned libavif and the pinned libjxl (§2), none of which has an MSVC story worth
-the week it would cost - so that build carries no server and points at a hosted Bowerbird
-(`transport.ts`). Everything the editor does is the browser's GPU and needs none of them.
+**Windows is built twice, and glib is why.** The shell is `x86_64-pc-windows-msvc`, like every
+other Windows application; the server's half of `rawshim` is `x86_64-pc-windows-gnullvm`, built
+in an MSYS2 CLANG64 environment on the same runner. What that half wants is clang and eight
+prebuilt libraries, and CLANG64 is the only place both are at once. libjxl needs clang either
+way, `cl.exe` being unsupported upstream, but the library that decides it is lensfun: it wants
+glib underneath it, pacman has the pair in a line, and the MSVC route builds both from source
+and records their versions in a vcpkg baseline that `scripts/pinned.ts`'s recipe hashes cannot
+see. Every Unix-shaped assumption `build.rs` already makes - `pkg-config`, a `share` directory -
+holds there as a consequence rather than as the reason. The matrix names the second triple
+`server_target` and the shell that reaches MSYS2 `shell`, so a step that builds the server asks
+for `${{ matrix.server_target || matrix.target }}` and the platforms with one triple read that.
 
-That is what `src-tauri/tauri.windows.conf.json` is for, and it is not an optimisation:
-`externalBin` and `resources` are checked by `build.rs`, so with them left in, a Windows
-build fails on a missing sidecar before it compiles a line - which is a confusing way to
-discover a platform that was never going to have one.
+**`gnullvm` against CLANG64, and the C runtime is why.** The two halves of `rawshim.dll` are
+one module, and rustup's `x86_64-pc-windows-gnu` standard library is built against msvcrt, so
+pairing it with a UCRT environment would put two C runtimes inside one library - which MSYS2
+warns against outright, their internal structures differing. `x86_64-pc-windows-gnullvm` is
+UCRT, libc++ and compiler-rt, and CLANG64 is exactly that, so the two halves agree. The one
+consequence in this repo is that `build.rs` asks for libc++ rather than libstdc++ under
+libjxl there.
+
+### 23.7.1 The app carries every library it opens
+
+**What an installed Bowerbird asks a machine for is a C library, a loader and a Vulkan driver
+(§2.1), and of `librawshim`'s own dependencies, nothing.**
+lensfun and glib for the geometry, aom, dav1d and sharpyuv under libavif, highway, brotli and
+lcms2 under libjxl, and the compiler's own runtime: `build-sidecar.ts` walks what
+`librawshim` resolved at build time and ships each one into `resources/native` beside it.
+
+That is not the same as vendoring them. Which copy the *build* links is unchanged, and
+deliberately the system's, so that what encodes a rendition is a library whose version the
+bench budget and `gpu_fixture`'s pins were recorded against rather than a fork of it. What
+changes is that the reader's machine can no longer substitute a different one, or have none -
+which it could, since nothing declared the dependency and nothing could: Tauri's deb bundler
+writes its own control file and never runs `dpkg-shlibdeps`, and the library is a resource
+rather than the executable, out of reach of a packager that did look.
+
+**What the Linux artefacts then ask of a machine is glibc, and the runner decides which.** The
+deb and the AppImage are built on Ubuntu 24.04, so `librawshim.so` and the libstdc++ beside it
+want `GLIBC_2.38` and neither will start on Ubuntu 22.04 or Debian 12. That floor follows the
+runner rather than being chosen, and raising it is what moving off a retired image costs.
+
+**Each platform finds them a different way, and only one of the three needs no rewriting.**
+An ELF names a search path of its own, so every copy gets `$ORIGIN`, not just the library the
+server opens, a search path not reaching a dependency's own dependencies. It is a `DT_RPATH`
+rather than the `DT_RUNPATH` patchelf writes by default, because the loader consults a runpath
+*after* `LD_LIBRARY_PATH`: an app launched from a shell that names an older glib would
+otherwise get that one and fail in the way carrying a copy exists to prevent.
+
+A Mach-O names each dependency by the path it was linked at, so the walk is this script's own -
+`otool` reports one file rather than a closure - and every name in every copy is rewritten to
+`@loader_path`, after which each is re-signed, an edited load command having invalidated the
+signature and Apple silicon refusing to map a library whose signature does not hold. Ad-hoc,
+which is what an unnotarised build ships anyway; were a signing identity ever configured, the
+hardened runtime's library validation would refuse these, and they would have to be signed
+with it.
+
+The C library itself is never carried on either: two of those in one process is not a mismatch
+that degrades, it is two allocators and two `errno`. What guards the rest is a check of the
+outcome rather than of each way of getting it wrong - after relocating, every object is walked
+again and anything still naming a path outside the tree fails the build, which is the only
+thing that catches a dependency Homebrew left as an `@rpath` it could not place.
+
+**Windows is the exception, because a PE resolves a dependent DLL out of the loading
+process's directory.** What `dlopen`s this one is `bowerbird-server.exe`, so its closure lands
+in the installation directory rather than under `resources/`, and nothing is rewritten, a PE
+naming its imports by filename alone. `src-tauri/tauri.windows.conf.json` maps `dlls/*.dll` to
+a destination of `""`, and NSIS writes each resource as `File /oname=<target>` under
+`SetOutPath $INSTDIR`, so an empty destination is the installation directory itself - which is
+how Tauri ships `WebView2Loader.dll` for its own gnu builds. `build-payload.ts` copies the
+same directory into the tarball's root, where the supervisor unpacks it beside the executables
+it starts, so a fresh install and an in-place update resolve alike.
 
 **Android cannot replace itself at all.** An APK is read-only and the platform will not run
 code loaded from the data directory, so the dialog offers the download and the system

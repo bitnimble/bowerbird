@@ -46,7 +46,7 @@ function main(): void {
   const name = asset();
   const recipe = pin(VERSION, [name]);
   const home = pinnedHome(NAME, recipe);
-  const binary = resolve(home, 'bin/slangc');
+  const binary = resolve(home, 'bin', process.platform === 'win32' ? 'slangc.exe' : 'slangc');
 
   makeOnce(home, recipe, process.env.BOWERBIRD_REFETCH_SLANGC != null, () => {
     const url = `https://github.com/shader-slang/slang/releases/download/v${VERSION}/${name}`;

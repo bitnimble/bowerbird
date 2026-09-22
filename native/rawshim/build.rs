@@ -128,15 +128,16 @@ fn shaders(out: &Path) {
 /// can watch and report. The bare name at the end is the one that does not exist, and it is kept
 /// only so the failure names what it looked for.
 fn slangc() -> PathBuf {
+    let binary = if cfg!(windows) { "slangc.exe" } else { "slangc" };
     env::var("BOWERBIRD_SLANGC")
         .map(PathBuf::from)
         .ok()
         .filter(|it| it.exists())
-        .or_else(|| Some(PathBuf::from(".slangc/bin/slangc")).filter(|it| it.exists()))
+        .or_else(|| Some(PathBuf::from(".slangc/bin").join(binary)).filter(|it| it.exists()))
         .or_else(|| {
-            env::split_paths(&env::var_os("PATH")?).map(|at| at.join("slangc")).find(|it| it.exists())
+            env::split_paths(&env::var_os("PATH")?).map(|at| at.join(binary)).find(|it| it.exists())
         })
-        .unwrap_or_else(|| PathBuf::from("slangc"))
+        .unwrap_or_else(|| PathBuf::from(binary))
 }
 
 /// Shader files under `root`, each with the path it keeps relative to it.
@@ -243,14 +244,14 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
 }
 
 fn server_bindings() -> bindgen::Bindings {
-    println!("cargo:rustc-link-lib=lensfun");
+    let lensfun = lensfun();
     // The library avifenc is a thin wrapper around. Linking it means the still's
     // encode stops being two child processes with the whole frame passed between
     // them, and becomes a pointer.
     let avif = libavif();
     let jxl = libjxl();
 
-    let mut builder = bindgen::Builder::default().header("wrapper.h");
+    let mut builder = bindgen::Builder::default().header("wrapper.h").clang_args(lensfun);
     for home in [avif, Some(jxl)].into_iter().flatten() {
         builder = builder.clang_arg(format!("-I{}/include", home.display()));
     }
@@ -270,6 +271,79 @@ fn server_bindings() -> bindgen::Bindings {
         .allowlist_var("LF_MODIFY_DISTORTION")
         .generate()
         .expect("bindgen failed against the installed lensfun and libavif headers")
+}
+
+/// The lensfun this build links, located by `pkg-config` rather than assumed, and returning the
+/// clang arguments `wrapper.h` needs.
+///
+/// `/usr/include` and `/usr/lib` are in the default search of both the linker and the clang
+/// bindgen runs, so a Linux build needs neither an include path nor a search path and had neither.
+/// MSYS2's MinGW prefix is in neither default, so a Windows build finds no header and no import
+/// library unless it asks where they are.
+fn lensfun() -> Vec<String> {
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
+    // `wrapper.h` asks for <lensfun/lensfun.h>, where the `.pc` puts the `lensfun` directory
+    // itself on the include path, so the prefix is what makes that spelling resolve.
+    let includedir = native(&pkg_config(&["--variable=includedir"]));
+    assert!(!includedir.is_empty(), "pkg-config named no includedir for lensfun");
+    // The header the bindings are generated from, watched for `libavif`'s reason below. A
+    // package upgrade that moves a field in `lfLens` otherwise leaves cargo reporting the crate
+    // fresh and this crate reading the old offsets, which is a geometry read from the wrong
+    // bytes with nothing pointing at the upgrade.
+    println!("cargo:rerun-if-changed={includedir}/lensfun/lensfun.h");
+    let mut clang = vec![format!("-isystem{includedir}")];
+    for token in pkg_config(&["--cflags", "--libs"]).split_whitespace() {
+        if let Some(at) = token.strip_prefix("-L") {
+            println!("cargo:rustc-link-search=native={}", native(at));
+        } else if let Some(name) = token.strip_prefix("-l") {
+            println!("cargo:rustc-link-lib={name}");
+        } else if let Some(at) = token.strip_prefix("-I") {
+            // glib's, which `lensfun.h` includes, so these are as load-bearing as the prefix
+            // above and need the same conversion.
+            clang.push(format!("-isystem{}", native(at)));
+        } else {
+            clang.push(token.to_owned());
+        }
+    }
+    clang
+}
+
+/// A path as the native tools here can open it.
+///
+/// **`pkg-config` under MSYS2 answers in its own paths**, and both the clang bindgen runs and the
+/// linker are native Windows programs that would read `/clang64/include` against the current
+/// drive. `cygpath` leaves a path it has already converted alone, so this is a no-op wherever the
+/// two are the same thing - including everywhere `cygpath` does not exist.
+fn native(path: &str) -> String {
+    if !cfg!(windows) {
+        return path.to_owned();
+    }
+    let converted = Command::new("cygpath").args(["-m", path]).output();
+    match converted {
+        Ok(run) if run.status.success() => String::from_utf8_lossy(&run.stdout).trim().to_owned(),
+        _ => path.to_owned(),
+    }
+}
+
+/// What `pkg-config` says about lensfun, refused rather than guessed at for `libavif`'s reason
+/// below: a build that linked the wrong copy, or none, is a feature quietly absent from a binary
+/// that looks complete.
+fn pkg_config(ask: &[&str]) -> String {
+    const WANTED: &str = "A `renditions` build binds lensfun for the geometry of the bodies that \
+                          record none of their own. Install it - liblensfun-dev on Debian and \
+                          Ubuntu, mingw-w64-clang-x86_64-lensfun under MSYS2 - or point \
+                          PKG_CONFIG_PATH at the directory holding its lensfun.pc.";
+    // Silent otherwise, so a failure would arrive as an exit code and nothing about which of
+    // the search path and the package was wrong.
+    let run = Command::new("pkg-config").arg("--print-errors").args(ask).arg("lensfun").output();
+    let run = run.unwrap_or_else(|e| panic!("pkg-config: {e}\n{WANTED}"));
+    assert!(
+        run.status.success(),
+        "pkg-config {} lensfun: {}\n{WANTED}",
+        ask.join(" "),
+        String::from_utf8_lossy(&run.stderr).trim(),
+    );
+    String::from_utf8_lossy(&run.stdout).trim().to_owned()
 }
 
 /// The libavif this build links, which is the pinned one and not the distribution's.
@@ -343,8 +417,14 @@ fn libjxl() -> PathBuf {
     for part in ["jxl", "jxl_threads", "jxl_cms"] {
         println!("cargo:rustc-link-lib=static={part}");
     }
-    // The dependencies it was built against, dynamic like libavif's codecs.
-    for shared in ["hwy", "brotlienc", "brotlidec", "brotlicommon", "lcms2", "stdc++"] {
+    // The dependencies it was built against, dynamic like libavif's codecs. libjxl is C++, so
+    // whichever standard library the toolchain that built it carries comes with them: `gnullvm`
+    // is clang and libc++ where every other target here is gcc and libstdc++.
+    let cxx = match env::var("TARGET").unwrap_or_default().contains("gnullvm") {
+        true => "c++",
+        false => "stdc++",
+    };
+    for shared in ["hwy", "brotlienc", "brotlidec", "brotlicommon", "lcms2", cxx] {
         println!("cargo:rustc-link-lib={shared}");
     }
     println!("cargo:rerun-if-changed={}/include/jxl/encode.h", home.display());

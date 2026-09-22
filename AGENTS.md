@@ -137,10 +137,13 @@ API arrived in 1.1 behind a compile flag and settled in 1.2, where Ubuntu 24.04 
 Debian trixie 1.1.1 with the flag off - so an HDR AVIF would open at its standard range on one
 machine and its full range on another.
 
-It links **statically**, against the **system's** libaom and libdav1d. That split is the point:
-libaom encodes every AVIF this application writes, so vendoring a copy of it would change what a
-rendition is and move both `gpu_fixture`'s pins and the bench budget. What moves here is the
-container and the colour conversion around an encoder that does not.
+It links **statically**, against the **system's** libaom and libdav1d. What moves here is the
+container and the colour conversion around an encoder that does not. **An installed app carries
+that encoder**: `build-sidecar.ts` ships what `librawshim` resolved at build time, so which libaom
+encodes a rendition is the build machine's to decide and never the reader's (DESIGN §23.7.1) -
+and the four machines that build this application do not agree, which is an argument for pinning
+aom rather than against it. What that would cost is the `encode` rows of `bench.budget.json` and a
+`BOWERBIRD_WRITE_BUDGET=1` run; no committed fixture holds an AVIF, the snapshots all being PNG.
 
 **libjxl is pinned the same way**, by `bun run get:libjxl` into `native/rawshim/.libjxl`, with
 `BOWERBIRD_LIBJXL` pointing elsewhere and a build that finds neither failing by name. Only an

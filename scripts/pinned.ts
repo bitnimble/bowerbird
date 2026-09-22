@@ -5,6 +5,7 @@
 // flag leaves the old tree exactly where the new one goes. Silent, and it reaches the application:
 // a libavif built before `AVIF_LIBSHARPYUV` was asked for stayed in `.libavif` and answered
 // `NOT_IMPLEMENTED` to every 4:2:0 encode, which is every grid tile in a library.
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
@@ -53,7 +54,27 @@ export function linkPinned(name: string, home: string): void {
   // directory the link goes in is not there to link into.
   mkdirSync(CRATE, { recursive: true });
   rmSync(pinnedLink(name), { recursive: true, force: true });
-  symlinkSync(home, pinnedLink(name));
+  // A directory symlink on Windows needs Developer Mode or elevation; a junction needs neither
+  // and is the same thing to every reader of the path.
+  symlinkSync(home, pinnedLink(name), process.platform === 'win32' ? 'junction' : undefined);
+}
+
+/**
+ * Windows' cmake defaults to Visual Studio, whose multi-config generators ignore
+ * `CMAKE_BUILD_TYPE` and want `--config` on the build and the install; MSYS2's toolchain is Ninja.
+ * Empty on every other platform deliberately: the flags are the recipe a tree is named by, so a
+ * generator named where cmake would pick one anyway rebuilds libavif on every machine that has it.
+ */
+export const CMAKE_GENERATOR: readonly string[] = process.platform === 'win32' ? ['-G', 'Ninja'] : [];
+
+/** Called from a build rather than at import: a tree already pinned needs no generator installed. */
+export function requireCmakeGenerator(): void {
+  if (process.platform !== 'win32') {
+    return;
+  }
+  if (spawnSync('ninja', ['--version'], { stdio: 'ignore' }).status !== 0) {
+    throw new Error('ninja is not installed: pacman -S mingw-w64-clang-x86_64-ninja');
+  }
 }
 
 /**

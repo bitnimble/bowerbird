@@ -11,14 +11,15 @@
 // symbols at all and an AVIF's gain map cannot be reached. Building one is what makes the two hosts
 // agree about a photograph rather than having its highlights depend on which machine read it.
 //
-// **The codecs are the system's, deliberately.** libaom encodes every AVIF this application writes,
-// so building a copy of it here would change what a rendition *is* - the fixture pins and the bench
-// budget are both measured against the encoder on the machine. This builds the container and the
-// colour conversion around the same libaom and libdav1d that are already installed.
+// **The codecs are the system's.** This builds the container and the colour conversion around the
+// libaom and libdav1d already installed. What that costs is stated rather than assumed: a rendition
+// is encoded by whichever aom the build machine had, and the four that build this application do
+// not agree, so the honest reason to pin them is the one `get-libjxl.ts` gives for libjxl and the
+// reason not to is a dozen numbers in `bench.budget.json`. No committed fixture holds an AVIF.
 import { spawnSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { linkPinned, makeOnce, pin, pinnedHome } from './pinned';
+import { CMAKE_GENERATOR, linkPinned, makeOnce, pin, pinnedHome, requireCmakeGenerator } from './pinned';
 
 const NAME = 'libavif';
 // 1.2.0 is the floor: the release that took the gain map API out of experimental and removed the
@@ -27,6 +28,7 @@ const VERSION = '1.4.2';
 const ROOT = resolve(import.meta.dir, '..');
 
 const CMAKE = [
+  ...CMAKE_GENERATOR,
   '-DCMAKE_BUILD_TYPE=Release',
   // Static, so nothing has to be on a loader path at run time and the binary this repo builds
   // does not depend on a directory inside the checkout still being there.
@@ -66,6 +68,7 @@ function main(): void {
 }
 
 function build(): void {
+  requireCmakeGenerator();
   // Named rather than vendored: a build that quietly fell back to libavif's own bundled codecs
   // would encode every rendition with a different aom than the budget was recorded against.
   for (const codec of ['aom', 'dav1d', 'libsharpyuv']) {

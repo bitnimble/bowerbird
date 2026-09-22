@@ -3337,7 +3337,7 @@ mod pictures {
     fn default_sharpening_does_not_turn_high_iso_shadow_grain_into_speckles() {
         let render = |sharpen, decode| {
             let mut job = tile_job(bayer_noisy().to_str().unwrap(), None, None);
-            job.match_embedded_jpeg = true;
+            job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
             job.denoise_luminance = None;
             job.denoise_colour = None;
             job.sharpen = sharpen;

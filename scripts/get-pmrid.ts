@@ -12,10 +12,13 @@
 // (`models/net_torch.py`), so a scan for those two strings, paired in order and checked against
 // the shape's element count, recovers the whole of it.
 
+import { type Unzipped, unzipSync } from 'fflate';
 import { mkdir, rm } from 'node:fs/promises';
 
 const CHECKPOINT = 'https://raw.githubusercontent.com/MegEngine/PMRID/main/models/torch_pretrained.ckp';
 const OUT = 'native/rawshim/.pmrid';
+const PICKLE = 'archive/data.pkl';
+const STORAGES = 'archive/data/';
 
 type Shape = number[];
 type Tensor = { name: string; shape: Shape };
@@ -104,21 +107,26 @@ function pairs(pickle: Uint8Array): { name: string; storage: string }[] {
 
 const numel = (shape: Shape) => shape.reduce((a, b) => a * b, 1);
 
-async function main() {
+function entry(entries: Unzipped, name: string): Uint8Array {
+  const bytes = entries[name];
+  if (bytes == null) {
+    throw new Error(`the checkpoint holds no ${name}`);
+  }
+  // A copy, so a `Float32Array` can be laid over it whatever offset the archive kept it at.
+  return new Uint8Array(bytes);
+}
+
+async function main(): Promise<void> {
   const response = await fetch(CHECKPOINT);
   if (!response.ok) throw new Error(`${CHECKPOINT}: ${response.status}`);
   const checkpoint = new Uint8Array(await response.arrayBuffer());
 
-  const scratch = `${OUT}/checkpoint`;
   await rm(OUT, { recursive: true, force: true });
-  await mkdir(scratch, { recursive: true });
-  const zip = `${scratch}/torch_pretrained.ckp`;
-  await Bun.write(zip, checkpoint);
-  const unzip = Bun.spawnSync(['unzip', '-q', '-o', zip, '-d', scratch]);
-  if (unzip.exitCode !== 0) throw new Error(`unzip: ${unzip.stderr.toString()}`);
+  await mkdir(OUT, { recursive: true });
 
-  const pickle = new Uint8Array(await Bun.file(`${scratch}/archive/data.pkl`).arrayBuffer());
-  const named = pairs(pickle);
+  // A checkpoint is a zip, and Windows ships no `unzip` for the other getters' `tar` to be.
+  const entries = unzipSync(checkpoint, { filter: ({ name }) => name === PICKLE || name.startsWith(STORAGES) });
+  const named = pairs(entry(entries, PICKLE));
   if (named.length !== ARCHITECTURE.length) {
     throw new Error(`the checkpoint names ${named.length} tensors, the architecture ${ARCHITECTURE.length}`);
   }
@@ -129,7 +137,7 @@ async function main() {
   for (const [index, tensor] of ARCHITECTURE.entries()) {
     const { name, storage } = named[index]!;
     if (name !== tensor.name) throw new Error(`tensor ${index} is ${name}, the architecture says ${tensor.name}`);
-    const raw = new Uint8Array(await Bun.file(`${scratch}/archive/data/${storage}`).arrayBuffer());
+    const raw = entry(entries, `${STORAGES}${storage}`);
     const values = new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4);
     if (values.length !== numel(tensor.shape)) {
       throw new Error(`${name} holds ${values.length} floats, ${tensor.shape} wants ${numel(tensor.shape)}`);
@@ -152,8 +160,9 @@ async function main() {
       2,
     )}\n`,
   );
-  await rm(scratch, { recursive: true, force: true });
   console.log(`${OUT}/weights.bin: ${ARCHITECTURE.length} tensors, ${blob.length} floats`);
 }
 
-await main();
+if (import.meta.main) {
+  await main();
+}

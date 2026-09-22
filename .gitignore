@@ -204,9 +204,11 @@ native/rawshim/.pmrid
 .baseline/
 OVERNIGHT_LOG.md
 
-# What the desktop app carries: the Bun runtime, the bundled server, and the
-# native library. All of it is built by `bun run build:sidecar`, and the runtime
-# alone is around a hundred megabytes.
+# What the desktop app carries: the Bun runtime, the bundled server, the native
+# library, and on Windows the DLLs that library needs beside the executables. All of
+# it is built by `bun run build:sidecar`, and the runtime alone is around a hundred
+# megabytes.
 src-tauri/binaries/
 src-tauri/resources/
+src-tauri/dlls/
 

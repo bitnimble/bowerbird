@@ -373,6 +373,7 @@ the server something untrue about itself.
 | `BOWERBIRD_HOME` | the supervisor | Where the versions live, and so where an update unpacks |
 | `BOWERBIRD_PLATFORM` | the Dockerfile | Which release platform this install is, where it cannot be worked out from the kernel - the image runs the same Linux a desktop build does and installs an entirely different file |
 | `BOWERBIRD_NATIVE_LIB` | the shell, the container entrypoint | The pixel library to open, named rather than searched for: a packaged app has no source tree beside it, and the container's is whichever instruction-set variant won the startup probe (§10.4) |
+| `BOWERBIRD_LENSFUN_DATA` | the shell | The directory of lens XML to load, for the same reason: lensfun searches only the prefixes it was compiled for, and a packaged app is on none of them. Unset, it searches them, which is what a development box wants. What ships the copy is `build-sidecar.ts` |
 
 Two more are genuinely optional, and say where update checks are made (§23.5):
 

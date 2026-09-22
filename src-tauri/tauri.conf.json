@@ -30,6 +30,6 @@
     "targets": ["deb", "appimage", "dmg", "nsis"],
     "icon": ["icons/icon.png"],
     "externalBin": ["binaries/bowerbird-server"],
-    "resources": ["resources/**/*"]
+    "resources": { "resources": "resources" }
   }
 }
