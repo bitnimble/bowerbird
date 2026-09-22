@@ -24,13 +24,13 @@ use crate::hdr_fit::CameraMatch;
 /// its ~3.6MB of XML, so it fits the distortion from the picture; a rendition consults the
 /// database for a recorded lens as a fourth tier on top of that.
 ///
-/// Measured before it went: over 32 Canon frames lensfun is worth 0.049 luma levels of 65535
-/// against the fitted geometry, and the gap lives almost entirely in wide and superzoom glass.
+/// Measured over 32 Canon frames, the database is worth 0.049 luma levels of 65535 against the
+/// fitted geometry, and the gap lives almost entirely in wide and superzoom glass.
 pub enum Fitting<'a> {
     None,
     /// From the file's bytes, with the geometry fitted from the picture. The editor's.
     Preview(&'a [u8]),
-    /// The same, with lensfun consulted for a recorded lens. A rendition's.
+    /// The same, with the database consulted for a recorded lens. A rendition's.
     #[cfg(feature = "renditions")]
     Profiled(&'a str),
 }

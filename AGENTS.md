@@ -186,8 +186,11 @@ else or wait for the completion notification**.
 `--test <file>`, or `--lib`; with nothing it prints how to narrow it and exits 2. The tests that
 decode a real RAW are not even compiled without `--features fixtures`.
 
-**It is also `native/rawshim` only.** The supervisor is a second crate and has its own tests:
-`bun run scripts/cargo.ts test --manifest-path native/launcher/Cargo.toml`, which takes a second.
+**It is also `native/rawshim` only.** Two crates beside it carry their own tests, and each takes a
+second: the supervisor, `bun run scripts/cargo.ts test --manifest-path native/launcher/Cargo.toml`,
+and the lens database, the same with `native/lensdb/Cargo.toml`. `lensdb`'s suite is what holds its
+scored search to the answers the C library gives (DESIGN §10.8), so a change to that crate is
+covered by nothing `test:native` runs.
 
 **Run e2e once, at the end.** It is the final check before handing work back, not a step between
 edits: nine minutes an iteration is most of an afternoon spent watching a browser start. The fast

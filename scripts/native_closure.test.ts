@@ -26,7 +26,6 @@ test('an elf closure carries the libraries but never the C library or the loader
   ]);
 });
 
-// `ldd` exits 0 on one of these, so the refusal is the only thing that sees it.
 test('an elf closure refuses a dependency the loader could not place', () => {
   expect(() => elfClosure('\tlibmissing.so.4 => not found\n')).toThrow('could not be placed');
 });

@@ -140,14 +140,14 @@ function shipTheAddon(triple: string): void {
  * machine for is the C runtime the shell already asks for.
  */
 function shipTheClosure(triple: string): void {
+  if (triple.includes('windows')) return;
   // Each arm drives the target's own loader tools, which only the target has: a macOS closure
   // assembled from Linux would reach for `otool` and fail as a missing command rather than as
   // the cross build it is.
-  const platform = triple.includes('windows') ? 'win32' : triple.includes('apple') ? 'darwin' : 'linux';
+  const platform = triple.includes('apple') ? 'darwin' : 'linux';
   if (platform !== process.platform) {
     throw new Error(`the libraries ${triple} needs can only be gathered on ${triple}: assemble that app there`);
   }
-  if (triple.includes('windows')) return;
   if (triple.includes('apple')) return underLoaderPath();
   underOrigin();
 }

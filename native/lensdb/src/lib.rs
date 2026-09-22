@@ -249,25 +249,10 @@ fn match_score(
     let mut score = 0;
 
     if entry.crop_factor > 0.0 {
-        let calibrated = entry.crop_factor;
-        // A profile measured on a smaller sensor than this body's is refused outright: it says
-        // nothing about the corners the body sees and the measurement never reached. The rest
-        // rank by how far inside the calibrated image circle the body sits.
-        let bucket = match camera.crop_factor {
-            it if it > 0.01 && it < calibrated * 0.96 => 0,
-            it if it >= calibrated * 1.41 => 2,
-            it if it >= calibrated * 1.31 => 4,
-            it if it >= calibrated * 1.21 => 6,
-            it if it >= calibrated * 1.11 => 8,
-            it if it >= calibrated * 1.01 => 10,
-            it if it >= calibrated => 5,
-            it if it >= calibrated * 0.96 => 3,
-            _ => 0,
-        };
-        if bucket == 0 {
-            return 0;
+        match crop_bucket(camera.crop_factor, entry.crop_factor) {
+            0 => return 0,
+            bucket => score += bucket,
         }
-        score += bucket;
     }
 
     for (asked, has) in [
@@ -294,13 +279,6 @@ fn match_score(
         }
     }
 
-    if !pattern.maker.is_empty() && !entry.maker.is_empty() {
-        if !pattern.maker.eq_ignore_ascii_case(&entry.maker) {
-            return 0;
-        }
-        score += 10;
-    }
-
     let named = !entry.model.is_empty() || !entry.model_localized.is_empty();
     if !pattern.model.is_empty() && named {
         match best_name(fuzzy, &entry.model, &entry.model_localized) {
@@ -310,6 +288,25 @@ fn match_score(
     }
 
     score
+}
+
+/// How well a profile's sensor format suits the body's, or zero where it cannot serve it at all.
+///
+/// A profile measured on a smaller sensor than this body's says nothing about the corners the
+/// body sees and the measurement never reached, so it is refused rather than ranked. The rest
+/// rank by how far inside the calibrated image circle the body sits.
+fn crop_bucket(camera: f32, calibrated: f32) -> i32 {
+    match camera {
+        it if it > 0.01 && it < calibrated * 0.96 => 0,
+        it if it >= calibrated * 1.41 => 2,
+        it if it >= calibrated * 1.31 => 4,
+        it if it >= calibrated * 1.21 => 6,
+        it if it >= calibrated * 1.11 => 8,
+        it if it >= calibrated * 1.01 => 10,
+        it if it >= calibrated => 5,
+        it if it >= calibrated * 0.96 => 3,
+        _ => 0,
+    }
 }
 
 /// Whether two of an entry's numbers agree, where zero on either side means the database or the
@@ -536,5 +533,26 @@ mod tests {
         // neither is a reason to reject the only profile there is.
         assert!(covers(0.0, 0.0, 0.0, 35.0, 0.0));
         assert!(covers(24.0, 105.0, 0.0, 50.0, 0.0));
+    }
+
+    #[test]
+    fn a_profile_calibrated_on_a_smaller_sensor_than_the_body_is_refused() {
+        // A full-frame body against an APS-C profile: the measurement stops well inside the
+        // corners this body reads, so there is nothing to extrapolate from.
+        assert_eq!(crop_bucket(1.0, 1.53), 0);
+    }
+
+    #[test]
+    fn a_body_further_inside_the_image_circle_scores_lower() {
+        // A full-frame profile is worth most to the body it was measured on and less to each
+        // smaller sensor, which reads only the middle of it.
+        assert_eq!(crop_bucket(1.0, 1.0), 5);
+        assert_eq!(crop_bucket(1.05, 1.0), 10);
+        assert_eq!(crop_bucket(1.15, 1.0), 8);
+        assert_eq!(crop_bucket(1.25, 1.0), 6);
+        assert_eq!(crop_bucket(1.35, 1.0), 4);
+        assert_eq!(crop_bucket(1.6, 1.0), 2);
+        // Within the 4% the formats are treated as the same one.
+        assert_eq!(crop_bucket(0.97, 1.0), 3);
     }
 }

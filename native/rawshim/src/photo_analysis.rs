@@ -31,7 +31,7 @@ use half::f16;
 /// is preferred over a fresh fit, and nothing ever clears it - so a library holding both would
 /// grade two photographs by two rules with nothing to say which was which. Discarding them costs
 /// one re-fit per photograph on next open, about half a second, once.
-const VERSION: u8 = 12;
+const VERSION: u8 = 13;
 const MAGIC: [u8; 3] = *b"BBP";
 
 const KIND_MATCH: u8 = 0;

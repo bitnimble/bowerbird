@@ -2362,13 +2362,8 @@ mod camera_match {
     /// than deleting a source that may be worth revisiting when coverage improves.
     #[test]
     fn reads_a_lateral_curve_out_of_the_database() {
-        let header = crate::header::read_path(canon().to_str().unwrap()).expect("header");
-        let Some(curve) = crate::ffi::database_lateral(canon().to_str().unwrap()) else {
-            // Not a failure: this lens is third-party glass and lensfun's TCA coverage
-            // is far thinner than its distortion coverage.
-            eprintln!("SKIPPED: lensfun has no TCA for {}", crate::header::name(&header.lens_model));
-            return;
-        };
+        let curve = crate::ffi::database_lateral(canon().to_str().unwrap())
+            .expect("the database carries a lateral curve for this lens");
         assert_eq!(curve[0].len(), curve[1].len(), "both channels sample the same grid");
         assert!(curve[0].len() >= 2, "a curve needs at least two knots to interpolate");
         // A lateral correction is a fraction of a percent. Anything larger is a misread
