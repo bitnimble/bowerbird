@@ -16,7 +16,7 @@
 use crate::avif_gain_write::{AVIF_RESULT_OK, GainMap, HDR_CICP, SDR_CICP, UNSPECIFIED, decode, orientation_tag, said};
 use crate::raw;
 
-const AVIF_PIXEL_FORMAT_YUV400: u32 = 4;
+const AVIF_PIXEL_FORMAT_YUV400: raw::avifPixelFormat = 4;
 
 const APP1: u8 = 0xE1;
 const APP2: u8 = 0xE2;

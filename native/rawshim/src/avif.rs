@@ -32,11 +32,15 @@ pub struct StillOptions {
     pub speed: i32,
 }
 
-const AVIF_RANGE_LIMITED: u32 = 0;
+// **Each C enum's constant takes the type bindgen gave that enum, rather than naming a width.** An
+// enum with no negative member is `unsigned int` to the Unixes and `int` to MSVC, so one written
+// `u32` here is one the same comparison rejects on Windows. The two below that stay `u32` are
+// flag sets rather than enums, `uint32_t` on every target.
+const AVIF_RANGE_LIMITED: raw::avifRange = 0;
 /// What an ordinary 8-bit picture uses, and what libheif was writing. Limited range
 /// spends 7% of the code values on headroom a still has no use for, and it costs
 /// measurably: the same quantizer scored SSIM 0.878 limited against 0.902 full.
-const AVIF_RANGE_FULL: u32 = 1;
+const AVIF_RANGE_FULL: raw::avifRange = 1;
 /// The depth every HDR still is written at, and it is twelve rather than ten because ten is
 /// not finer than the eight-bit SDR it replaces: at the luminance of a daylit sky one 10-bit
 /// PQ code is 1.13% of the light it sits on against sRGB 8-bit's 1.15%, since PQ spends the
@@ -48,9 +52,9 @@ const AVIF_RANGE_FULL: u32 = 1;
 /// hardware takes. Chrome decodes it by both the `<img>` and `ImageDecoder` routes, measured;
 /// `stage_gpu.ts` reads the frame's depth back off the format and scales for it.
 const AVIF_DEPTH: u32 = 12;
-const AVIF_PIXEL_FORMAT_YUV444: u32 = 1;
-const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
-const AVIF_RGB_FORMAT_RGB: u32 = 0;
+const AVIF_PIXEL_FORMAT_YUV444: raw::avifPixelFormat = 1;
+const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat = 3;
+const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = 0;
 /// libsharpyuv's solver for the 4:2:0 chroma, in place of a 2x2 box average; a no-op at 4:4:4.
 ///
 /// **The box average is what speckles a saturated red.** Chroma is stored once per 2x2 and Y'
@@ -63,8 +67,8 @@ const AVIF_RGB_FORMAT_RGB: u32 = 0;
 /// *lossless* 4:2:0 encode, and was unchanged through 4:4:4. The solver picks the block's chroma
 /// so that the reconstruction lands closest to the source given each pixel's own Y', which is the
 /// leak term, and it knows the transfer it is working under.
-const AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV: u32 = 4;
-const AVIF_RESULT_OK: u32 = 0;
+const AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV: raw::avifChromaDownsampling = 4;
+const AVIF_RESULT_OK: raw::avifResult = 0;
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
 /// `avifImageContentTypeFlag`'s gain map bit, which decoding one is off without.
 const AVIF_IMAGE_CONTENT_GAIN_MAP: u32 = 1 << 2;

@@ -15,11 +15,14 @@
 
 use crate::raw;
 
-pub(crate) const AVIF_RESULT_OK: u32 = 0;
+// The enums take the type bindgen gave them rather than a width, for `avif.rs`'s reason: MSVC
+// types a C enum `int` where the Unixes type it `unsigned int`. The two transform bits are a flag
+// set, `uint32_t` everywhere.
+pub(crate) const AVIF_RESULT_OK: raw::avifResult = 0;
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
 const AVIF_TRANSFORM_IMIR: u32 = 1 << 3;
-const AVIF_RGB_FORMAT_RGB: u32 = 0;
-const AVIF_PIXEL_FORMAT_YUV420: u32 = 3;
+const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = 0;
+const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat = 3;
 /// Rec.2020 primaries, PQ, Rec.2020 non-constant luminance: what every HDR still here is.
 pub(crate) const HDR_CICP: (u16, u16) = (9, 16);
 /// sRGB primaries and transfer, which is what the SDR arm is written as.

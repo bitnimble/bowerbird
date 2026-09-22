@@ -7,18 +7,22 @@
 
 use crate::raw;
 
-const JXL_ENC_SUCCESS: u32 = 0;
-const JXL_ENC_NEED_MORE_OUTPUT: u32 = 2;
-const JXL_TYPE_UINT8: u32 = 2;
-const JXL_TYPE_UINT16: u32 = 3;
-const JXL_NATIVE_ENDIAN: u32 = 0;
-const JXL_COLOR_SPACE_RGB: u32 = 0;
-const JXL_WHITE_POINT_D65: u32 = 1;
-const JXL_PRIMARIES_SRGB: u32 = 1;
-const JXL_PRIMARIES_2100: u32 = 9;
-const JXL_TRANSFER_FUNCTION_SRGB: u32 = 13;
-const JXL_TRANSFER_FUNCTION_PQ: u32 = 16;
-const JXL_RENDERING_INTENT_RELATIVE: u32 = 1;
+// **Each takes the type bindgen gave its own enum, rather than naming a width.** A C enum with no
+// negative member is `unsigned int` to the Unixes and `int` to MSVC, so a constant written `u32`
+// here is one the same comparison rejects on Windows - 70 of them, all reading `expected i32,
+// found u32`. The alias follows whichever the header was read as.
+const JXL_ENC_SUCCESS: raw::JxlEncoderStatus = 0;
+const JXL_ENC_NEED_MORE_OUTPUT: raw::JxlEncoderStatus = 2;
+const JXL_TYPE_UINT8: raw::JxlDataType = 2;
+const JXL_TYPE_UINT16: raw::JxlDataType = 3;
+const JXL_NATIVE_ENDIAN: raw::JxlEndianness = 0;
+const JXL_COLOR_SPACE_RGB: raw::JxlColorSpace = 0;
+const JXL_WHITE_POINT_D65: raw::JxlWhitePoint = 1;
+const JXL_PRIMARIES_SRGB: raw::JxlPrimaries = 1;
+const JXL_PRIMARIES_2100: raw::JxlPrimaries = 9;
+const JXL_TRANSFER_FUNCTION_SRGB: raw::JxlTransferFunction = 13;
+const JXL_TRANSFER_FUNCTION_PQ: raw::JxlTransferFunction = 16;
+const JXL_RENDERING_INTENT_RELATIVE: raw::JxlRenderingIntent = 1;
 
 /// Eight-bit sRGB, which is what the SDR render holds.
 pub fn encode_sdr(samples: &[u8], width: usize, height: usize, distance: f32) -> Result<Vec<u8>, String> {
