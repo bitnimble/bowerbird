@@ -353,14 +353,30 @@ fn libjxl() -> PathBuf {
 /// Where the six libraries under libavif and libjxl are, on a target whose linker does not
 /// already know.
 ///
-/// **Windows only in practice, and load-bearing there.** `/usr/lib` and Homebrew's prefix are in
-/// the default search of the linkers this crate meets on Linux and macOS, so the `-l` lines below
-/// resolve with no help. vcpkg's tree is in nobody's default, so without this the final link of
-/// `rawshim.dll` fails with `LNK1104: cannot open file 'aom.lib'` after everything else succeeded.
+/// Only Linux's puts them somewhere it already searches. Homebrew's prefix is not in Apple's
+/// default, so a macOS link fails with `ld: library 'aom' not found` after everything else
+/// succeeded, and vcpkg's tree is in nobody's, where the same failure reads `LNK1104: cannot open
+/// file 'aom.lib'`.
+fn codec_search_path() {
+    vcpkg_search_path();
+    for name in ["aom", "dav1d", "libsharpyuv", "libhwy", "libbrotlienc", "lcms2"] {
+        let Ok(asked) = Command::new("pkg-config").args(["--libs-only-L", name]).output() else {
+            return;
+        };
+        for directory in String::from_utf8_lossy(&asked.stdout)
+            .split_whitespace()
+            .filter_map(|it| it.strip_prefix("-L"))
+        {
+            println!("cargo:rustc-link-search=native={directory}");
+        }
+    }
+}
+
+/// The same, for the one tree no `pkg-config` on the machine knows how to find.
 ///
 /// Read from vcpkg's own variables rather than one of ours, so the CI step that installs the
 /// ports is the only place the triplet is written down.
-fn codec_search_path() {
+fn vcpkg_search_path() {
     println!("cargo:rerun-if-env-changed=VCPKG_INSTALLATION_ROOT");
     println!("cargo:rerun-if-env-changed=VCPKG_TARGET_TRIPLET");
     let (Ok(root), Ok(triplet)) =

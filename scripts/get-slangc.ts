@@ -14,7 +14,7 @@
 import { spawnSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { linkPinned, makeOnce, pin, pinnedHome } from './pinned';
+import { linkPinned, makeOnce, pin, pinnedHome, unpack } from './pinned';
 
 const NAME = 'slangc';
 const VERSION = '2026.14.1';
@@ -54,7 +54,7 @@ function main(): void {
     // container builds on.
     const tarball = resolve(home, name);
     run('curl', ['--proto', '=https', '--tlsv1.2', '-fsSL', '-o', tarball, url]);
-    run('tar', ['xzf', tarball, '-C', home]);
+    unpack(home, name);
     rmSync(tarball, { force: true });
 
     const check = spawnSync(binary, ['-v'], { encoding: 'utf8' });

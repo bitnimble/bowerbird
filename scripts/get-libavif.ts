@@ -19,7 +19,15 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CMAKE_CONFIG, installedVersion, linkPinned, makeOnce, pin, pinnedHome } from './pinned';
+import {
+  CMAKE_CONFIG,
+  installedVersion,
+  linkPinned,
+  makeOnce,
+  pin,
+  pinnedHome,
+  unpack,
+} from './pinned';
 
 const NAME = 'libavif';
 // 1.2.0 is the floor: the release that took the gain map API out of experimental and removed the
@@ -73,7 +81,7 @@ function build(): void {
   const url = `https://github.com/AOMediaCodec/libavif/archive/refs/tags/${name}`;
   const tarball = resolve(HOME, name);
   run('curl', ['--proto', '=https', '--tlsv1.2', '-fsSL', '-o', tarball, url]);
-  run('tar', ['xzf', tarball, '-C', HOME]);
+  unpack(HOME, name);
   rmSync(tarball, { force: true });
 
   run('cmake', ['-S', SOURCE, '-B', resolve(SOURCE, 'build'), `-DCMAKE_INSTALL_PREFIX=${HOME}`, ...CMAKE]);

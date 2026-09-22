@@ -46,12 +46,22 @@ const env: Record<string, string> = {
 
 ensureIcons();
 
+// The Gradle project, on the same terms as the icons: it bakes in this machine's SDK paths, so it
+// is generated rather than committed and a fresh checkout has none.
+const repoRoot = resolve(import.meta.dir, '..');
+if (!existsSync(join(repoRoot, 'src-tauri', 'gen', 'android'))) {
+  const started = spawnSync('bun', ['x', '@tauri-apps/cli', 'android', 'init'], {
+    stdio: 'inherit',
+    env,
+  });
+  if (started.status !== 0) process.exit(started.status ?? 1);
+}
+
 const args = ['android', 'build', '--target', 'aarch64', '--apk', ...process.argv.slice(2)];
 const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
 
 // Gradle leaves the APK under the generated project; copy it somewhere a phone can reach.
-const repoRoot = resolve(import.meta.dir, '..');
 const outputs = join(repoRoot, 'src-tauri', 'gen', 'android', 'app', 'build', 'outputs', 'apk');
 const found: string[] = [];
 const walk = (dir: string): void => {

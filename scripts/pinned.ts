@@ -78,11 +78,37 @@ export const CMAKE_CONFIG: readonly string[] = process.platform === 'win32' ? ['
  * first is how a getter refuses on a machine that has every library it wants.
  */
 export function installedVersion(name: string): string | null {
+  let asked = false;
   for (const tool of ['pkg-config', 'pkgconf']) {
-    const asked = spawnSync(tool, ['--modversion', name], { encoding: 'utf8' });
-    if (asked.status === 0) return asked.stdout.trim();
+    const answer = spawnSync(tool, ['--modversion', name], { encoding: 'utf8' });
+    // `error` is the tool not being there at all, where a non-zero status is it answering that
+    // it has never heard of the library. Told apart because the message below is otherwise a
+    // lie in the one case a reader cannot check: an image holding every library and no
+    // `pkg-config` reports the first library as missing, and installing it changes nothing.
+    if (answer.error == null) asked = true;
+    if (answer.status === 0) return answer.stdout.trim();
+  }
+  if (!asked) {
+    throw new Error(
+      `neither pkg-config nor pkgconf is installed, so whether ${name} is here cannot be asked`,
+    );
   }
   return null;
+}
+
+/**
+ * Unpacks an archive already sitting in `home`, named rather than pathed.
+ *
+ * **The name, from inside the directory, because `tar` reads a Windows path as a remote host.**
+ * `tar xzf C:\...` is a drive letter to a reader and `user@host:path` to GNU tar, which then
+ * fails with "Cannot connect to C: resolve failed" - and every path a getter builds on Windows
+ * is absolute.
+ */
+export function unpack(home: string, name: string): void {
+  const done = spawnSync('tar', ['xzf', name], { cwd: home, stdio: 'inherit' });
+  if (done.status !== 0) {
+    throw new Error(`tar xzf ${name} in ${home} exited ${done.status}`);
+  }
 }
 
 /**

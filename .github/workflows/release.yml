@@ -241,6 +241,13 @@ jobs:
           bun run scripts/build-sidecar.ts --target ${{ matrix.target }}
         shell: bash
 
+      # Drawn rather than committed (`src-tauri/.gitignore`), so a checkout has none and
+      # `generate_context!` reads them at compile time - a build without this fails inside a proc
+      # macro naming `icons/icon.png`. Every path that builds this app locally calls the same
+      # script; this job drives the Tauri CLI itself and so has to call it too.
+      - run: bun run scripts/make-icons.ts
+        shell: bash
+
       - name: Build the app
         run: bun x @tauri-apps/cli build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         shell: bash

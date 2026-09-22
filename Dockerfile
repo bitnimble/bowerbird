@@ -193,9 +193,14 @@ FROM base AS native
 #
 # libavif and libjxl are not among them: the two `get-` scripts below build the pinned ones, and
 # what they need from apt is the libraries underneath them and cmake to drive the builds.
+#
+# `pkg-config` is named because two things ask for it and neither installs it: the getters, which
+# check each library is here before building against it, and cmake's `FindPkgConfig`, which is how
+# libavif locates dav1d. Nothing in this list depends on it, so leaving it out is a build that
+# reports the first library as missing on an image that holds every one of them.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libaom-dev libdav1d-dev libsharpyuv-dev cmake \
+     libaom-dev libdav1d-dev libsharpyuv-dev cmake pkg-config \
      libhwy-dev libbrotli-dev liblcms2-dev \
      build-essential ca-certificates curl git libclang-dev \
   && rm -rf /var/lib/apt/lists/*
