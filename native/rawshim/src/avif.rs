@@ -24,8 +24,8 @@ pub struct Cicp {
 
 pub struct StillOptions {
     pub cicp: Cicp,
-    /// `avifPixelFormat`, from the still's chroma setting (`hdr_args::Chroma`).
-    pub format: u32,
+    /// From the still's chroma setting (`hdr_args::Chroma`).
+    pub format: raw::avifPixelFormat,
     /// libaom's quantizer.
     pub quantizer: i32,
     /// libavif's encoder speed, 0 slowest and 10 fastest.
@@ -69,6 +69,7 @@ const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = 0;
 /// leak term, and it knows the transfer it is working under.
 const AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV: raw::avifChromaDownsampling = 4;
 const AVIF_RESULT_OK: raw::avifResult = 0;
+const AVIF_PLANES_YUV: raw::avifPlanesFlags = 1;
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
 /// `avifImageContentTypeFlag`'s gain map bit, which decoding one is off without.
 const AVIF_IMAGE_CONTENT_GAIN_MAP: u32 = 1 << 2;
@@ -113,7 +114,12 @@ impl Image {
     }
 
     /// Room for a frame an encode is about to write.
-    pub(crate) fn sized(width: u32, height: u32, depth: u32, format: u32) -> Result<Image, String> {
+    pub(crate) fn sized(
+        width: u32,
+        height: u32,
+        depth: u32,
+        format: raw::avifPixelFormat,
+    ) -> Result<Image, String> {
         #[expect(unsafe_code)]
         let handle = unsafe { raw::avifImageCreate(width, height, depth, format) };
         Image::owning(handle)
@@ -531,8 +537,7 @@ unsafe fn to_yuv_banded(
     use rayon::prelude::*;
 
     let height = unsafe { (*image).height } as usize;
-    let allocated =
-        unsafe { raw::avifImageAllocatePlanes(image, raw::avifPlanesFlag_AVIF_PLANES_YUV) };
+    let allocated = unsafe { raw::avifImageAllocatePlanes(image, AVIF_PLANES_YUV) };
     if allocated != AVIF_RESULT_OK {
         let why = unsafe { message(allocated) };
         return Err(format!("libavif would not allocate planes: {why}"));
@@ -615,11 +620,11 @@ unsafe fn one_band(
 fn encode_avif<T: Clone>(
     rgb: std::borrow::Cow<'_, [T]>,
     rgb_depth: u32,
-    range: u32,
+    range: raw::avifRange,
     width: usize,
     height: usize,
     depth: u32,
-    format: u32,
+    format: raw::avifPixelFormat,
     cicp: &Cicp,
     // Both ends of libavif's quantizer pair, and a pair rather than one number because
     // it is what the encoder is actually given: libavif quantises on the *midpoint* of
@@ -682,7 +687,7 @@ fn encode_avif<T: Clone>(
 
 /// libavif's own words for a failure, rather than a number.
 #[expect(unsafe_code)]
-pub(crate) unsafe fn message(status: u32) -> String {
+pub(crate) unsafe fn message(status: raw::avifResult) -> String {
     let text = unsafe { raw::avifResultToString(status) };
     if text.is_null() {
         return format!("result {status}");

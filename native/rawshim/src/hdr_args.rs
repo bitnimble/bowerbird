@@ -101,8 +101,8 @@ pub enum Chroma {
 }
 
 impl Chroma {
-    /// libavif's `avifPixelFormat`.
-    pub fn avif_format(self) -> u32 {
+    #[cfg(feature = "renditions")]
+    pub fn avif_format(self) -> crate::raw::avifPixelFormat {
         match self {
             Chroma::Yuv420 => 3,
             Chroma::Yuv444 => 1,
