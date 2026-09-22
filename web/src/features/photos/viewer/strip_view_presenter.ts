@@ -6,6 +6,8 @@ import { STRIP_DEFAULT_THICKNESS, STRIP_MAX_THICKNESS, STRIP_MIN_THICKNESS, type
 
 const THICKNESS_KEY = 'bowerbird.detail.filmstrip.size';
 
+const THICKNESS_STEP = 8;
+
 /** The only writer of one StripViewStore (DESIGN §18.5). */
 export class StripViewPresenter {
   readonly rail: ScrollRailPresenter;
@@ -79,6 +81,11 @@ export class StripViewPresenter {
   setThickness(thickness: number): void {
     this.store.thickness = Math.min(STRIP_MAX_THICKNESS, Math.max(STRIP_MIN_THICKNESS, Math.round(thickness)));
     writeSetting(THICKNESS_KEY, String(this.store.thickness));
+  }
+
+  @action.bound
+  nudgeThickness(steps: number): void {
+    this.setThickness(this.store.thickness + steps * THICKNESS_STEP);
   }
 
   /**

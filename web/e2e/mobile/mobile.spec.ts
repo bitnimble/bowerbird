@@ -30,11 +30,14 @@ test.describe.configure({ mode: 'serial', timeout: 180_000 });
 // however the context is configured, so a real finger is driven through CDP:
 // what the stage answers to is pointer events, and only this produces them with
 // the gesture handling a browser really applies to a touch.
-async function swipe(page: Page, from: { x: number; y: number }, dx: number): Promise<void> {
+async function swipe(page: Page, from: { x: number; y: number }, dx: number, dy = 0): Promise<void> {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: from.x, y: from.y }] });
   for (const step of [0.3, 0.6, 1]) {
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: from.x + dx * step, y: from.y }] });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: from.x + dx * step, y: from.y + dy * step }],
+    });
   }
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await cdp.detach();
@@ -421,4 +424,30 @@ test('the filmstrip opens from the sheet, along the foot and above the verdict',
 
   await details.getByRole('button', { name: 'Hide filmstrip' }).click();
   await expect(gallery(page)).toHaveCount(0);
+});
+
+// The only way to size the strip here: the edge is dragged, and a finger has to be
+// able to find it and hold it without a scroller taking the gesture first.
+test('the filmstrip is made thicker by dragging its edge with a finger', async ({ page }) => {
+  await openFirstPhoto(page);
+  await sheet(page).getByRole('button', { name: 'Show filmstrip' }).click();
+  const strip = gallery(page);
+  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
+
+  const handle = page.getByRole('separator', { name: 'Resize filmstrip' });
+  const grab = await handle.boundingBox();
+  const before = await strip.boundingBox();
+  if (grab == null || before == null) throw new Error('the strip has no box');
+  // Its gutter and the whole of the gap it may overhang into, which is all there is to give: the
+  // 44px a tap target gets elsewhere here would be a band across the photographs or the stage.
+  expect(grab.height).toBeGreaterThanOrEqual(14);
+
+  // Up the screen, the strip being under the photograph: a drag towards it is more of it.
+  await swipe(page, { x: grab.x + grab.width / 2, y: grab.y + grab.height / 2 }, 0, -60);
+  await expect
+    .poll(async () => (await strip.boundingBox())?.height ?? 0)
+    .toBeGreaterThan(before.height + 40);
+  // The handle is not the strip, so it is not exempt from the drawer's own gesture: what keeps
+  // the sidebar shut through this is that the drag is up the screen rather than across it.
+  await expect(drawer(page)).not.toBeVisible();
 });

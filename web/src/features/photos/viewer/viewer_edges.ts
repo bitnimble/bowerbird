@@ -18,8 +18,8 @@ const PANEL_WIDTH = 320;
 const PANEL_FOLD = 0.34;
 /** `styles.detail`'s grid gap, and `styles.frame`'s. */
 const GAP = 10;
-/** What the strip spends across its cells besides them: its viewport's padding, and the seek bar's gutter (`photo_grid.tsx`). */
-const STRIP_CHROME = 20;
+/** What the strip spends across its cells besides them: its viewport's padding, the resize handle's gutter, and the seek bar's (`photo_grid_styles.ts`). */
+const STRIP_CHROME = 24;
 
 export type Edge = 'beside' | 'below';
 

@@ -4,16 +4,9 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useListingStore, useMarksStore, useStacksStore } from '../../../app/stores_context';
 import { focusRing } from '../../../ui/focus_ring';
-import { Slider } from '../../../ui/slider';
-import { stripMarker } from './grid.stylex';
 import { GRID_GAP } from './grid_layout';
 import { PhotoGridStrings } from './photo_grid.strings';
-import {
-  STRIP_MAX_THICKNESS,
-  STRIP_MIN_THICKNESS,
-  STRIP_SPINE,
-  type StripViewStore,
-} from '../viewer/strip_view_store';
+import { STRIP_MAX_THICKNESS, STRIP_MIN_THICKNESS, STRIP_SPINE, type StripViewStore } from '../viewer/strip_view_store';
 import type { StripViewPresenter } from '../viewer/strip_view_presenter';
 import { band, bandColourOf, cells, strip, viewport } from './photo_grid_styles';
 import { BandMember, InStrip } from './photo_tile';
@@ -23,29 +16,58 @@ import { GridScrollbar } from './grid_scrollbar';
 // The scrollers' ids, so each drawn scrollbar can name what it controls.
 const STRIP_ID = 'filmstrip-scroller';
 
-// How big the strip's own cells are, in the corner of the strip. Its own component
-// so a drag re-renders the track and the cells it sizes, and not the viewer around
-// them.
-const StripZoom = observer(function StripZoom({
+// The strip's own edge, dragged, on whichever side faces the photograph: how thick
+// it is drawn is how big its cells are. A delta from where the drag started rather
+// than the pointer's distance from the far edge, which would need the strip's box
+// read back on every move.
+export const StripResizer = observer(function StripResizer({
   view,
   presenter,
 }: {
   view: StripViewStore;
   presenter: StripViewPresenter;
 }): JSX.Element {
+  const along = view.axis;
+  const grabbed = useRef({ x: 0, y: 0, thickness: 0, along });
+  const hold = (e: { clientX: number; clientY: number }): void => {
+    grabbed.current = { x: e.clientX, y: e.clientY, thickness: view.thickness, along };
+  };
+
   return (
-    <div {...stylex.props(strip.zoom, view.axis === 'y' && strip.zoomY)}>
-      <Slider
-        value={view.thickness}
-        min={STRIP_MIN_THICKNESS}
-        max={STRIP_MAX_THICKNESS}
-        step={4}
-        label={PhotoGridStrings.filmstripSize()}
-        onChange={presenter.setThickness}
-        shortGrab
-        style={strip.slider}
-      />
-    </div>
+    <div
+      {...stylex.props(strip.handle, along === 'x' ? strip.handleX : strip.handleY)}
+      role="separator"
+      aria-orientation={along === 'x' ? 'horizontal' : 'vertical'}
+      aria-label={PhotoGridStrings.resizeFilmstrip()}
+      aria-valuenow={view.thickness}
+      aria-valuemin={STRIP_MIN_THICKNESS}
+      aria-valuemax={STRIP_MAX_THICKNESS}
+      tabIndex={0}
+      onPointerDown={(e) => {
+        // Without this the drag selects the cells behind the edge instead of moving it.
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        hold(e);
+      }}
+      onPointerMove={(e) => {
+        if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+        // How thick the strip is is what decides which edge it takes, so a drag can swap its
+        // own axis under itself (`stripEdge`). Taken from here on the new one, rather than
+        // subtracting a distance down the screen from one across it.
+        if (grabbed.current.along !== along) hold(e);
+        const from = along === 'x' ? grabbed.current.y : grabbed.current.x;
+        // The strip is past the photograph either way, so it grows towards the pointer's origin.
+        const moved = from - (along === 'x' ? e.clientY : e.clientX);
+        presenter.setThickness(grabbed.current.thickness + moved);
+      }}
+      onKeyDown={(e) => {
+        const grow = along === 'x' ? e.key === 'ArrowUp' : e.key === 'ArrowLeft';
+        const shrink = along === 'x' ? e.key === 'ArrowDown' : e.key === 'ArrowRight';
+        if (!grow && !shrink) return;
+        e.preventDefault();
+        presenter.nudgeThickness(grow ? 1 : -1);
+      }}
+    />
   );
 });
 
@@ -133,15 +155,11 @@ export const PhotoStrip = observer(function PhotoStrip({
         {...stylex.props(
           strip.viewport,
           view.rail.fraction < 1 && strip.seekable,
-          along === 'y' && strip.viewportY,
+          along === 'x' ? strip.gutterX : [strip.gutterY, strip.viewportY],
           strip.thickness(view.thickness),
-          stripMarker,
         )}
       >
-        {/* At the edge of the strip that faces away from the photograph, and in
-            that order in the DOM as well as on screen: a control drawn under the
-            cells but reached before them is a tab stop in the wrong place. */}
-        {along === 'x' && <StripZoom view={view} presenter={presenter} />}
+        <StripResizer view={view} presenter={presenter} />
 
         <div {...stylex.props(strip.track, along === 'x' ? strip.trackX : strip.trackY)}>
           {/* The one way to reach a photograph ten thousand frames away in a
@@ -232,8 +250,6 @@ export const PhotoStrip = observer(function PhotoStrip({
             </div>
           </div>
         </div>
-
-        {along === 'y' && <StripZoom view={view} presenter={presenter} />}
       </div>
     </InStrip.Provider>
   );

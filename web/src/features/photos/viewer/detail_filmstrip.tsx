@@ -34,8 +34,8 @@ export const DetailFilmstrip = observer(function DetailFilmstrip({
 
   // Once the strip can place the open photograph, which is not the render the
   // route changed on: its row may still be in flight. On the pitch as well as the
-  // cell, because a cell is a different size after a resize, a zoom or a change of
-  // edge, and the reader's place is a cell rather than a number of pixels.
+  // cell, because a cell is a different size after a resize of the window, a drag of the
+  // strip's edge or a change of edge, and the reader's place is a cell rather than pixels.
   const cell = strip.view.cellOf(photoId);
   const pitch = strip.view.pitch;
   useEffect(() => {
