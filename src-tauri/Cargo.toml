@@ -50,6 +50,15 @@ tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = [] }
 
+# Named here so that the bundler can be told about it, which is the only way it carries CEF.
+# `tauri-bundler` copies `libcef.so`, the `.pak` files and the locales into a deb, and assembles an
+# AppImage with `sharun` rather than `linuxdeploy`, only when its `cef_path` is set - and the CLI
+# sets that from the features it was passed, resolved against *this* table. A dependency's own
+# features are not in it, target-specific ones least of all, so `--features tauri/cef` resolves to
+# nothing and the app bundles as though it drew with Wry.
+[features]
+cef = ["tauri/cef"]
+
 [profile.release]
 # The symbol table is 9MB of the Windows binary and 3MB of the macOS one, for builds
 # nothing debugs remotely.

@@ -5,20 +5,27 @@
 // and a job that spells the CLI out itself is a job that can forget to. Every argument is passed
 // through, so `--target` and `--bundles` read as the CLI's own.
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { binary } from './get-tauri-cli.ts';
 import { ensureIcons } from './make-icons.ts';
 
 // `generate_context!` reads them at compile time and they are generated, not committed, so a
 // clean checkout fails inside a proc macro naming a missing file rather than at a build step.
 ensureIcons();
 
-const built = spawnSync('bun', ['x', '@tauri-apps/cli', 'build', ...process.argv.slice(2)], {
-  stdio: 'inherit',
-  env: {
-    ...process.env,
-    // linuxdeploy, which assembles the AppImage, is itself an AppImage, so running it mounts one
-    // through FUSE - which a container and most CI runners refuse. Told to unpack itself and run
-    // from the unpacked copy instead, it needs no kernel support at all.
-    APPIMAGE_EXTRACT_AND_RUN: '1',
-  },
-});
+const cli = binary();
+if (!existsSync(cli)) {
+  throw new Error(`${cli}: no Tauri CLI here. \`bun run get:tauri\` builds the pinned one.`);
+}
+
+/**
+ * The runtime Linux draws with, named to the bundler rather than left to the manifest.
+ *
+ * **This is what carries CEF, and nothing else does.** Unnamed, the deb installs an app whose
+ * `libcef.so` is nowhere on the machine and the AppImage fails assembling it. `src-tauri`'s own
+ * `[features]` says what the name means and why it has to be one of ours.
+ */
+const runtime = process.platform === 'linux' ? ['--features', 'cef'] : [];
+
+const built = spawnSync(cli, ['build', ...runtime, ...process.argv.slice(2)], { stdio: 'inherit' });
 if (built.status !== 0) process.exit(built.status ?? 1);
