@@ -13,5 +13,12 @@ ensureIcons();
 
 const built = spawnSync('bun', ['x', '@tauri-apps/cli', 'build', ...process.argv.slice(2)], {
   stdio: 'inherit',
+  env: {
+    ...process.env,
+    // linuxdeploy, which assembles the AppImage, is itself an AppImage, so running it mounts one
+    // through FUSE - which a container and most CI runners refuse. Told to unpack itself and run
+    // from the unpacked copy instead, it needs no kernel support at all.
+    APPIMAGE_EXTRACT_AND_RUN: '1',
+  },
 });
 if (built.status !== 0) process.exit(built.status ?? 1);
