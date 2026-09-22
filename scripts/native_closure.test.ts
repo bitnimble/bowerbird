@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { elfClosure, machClosure, machNames } from './native_closure';
+import { elfClosure, machNames, machSearchPath } from './native_closure';
 
 // `ldd librawshim.so`, trimmed: what the app carries, the C library it must not, the loader
 // and the vDSO, which are printed with no path at all.
@@ -41,13 +41,36 @@ const MACH = `resources/librawshim.dylib:
 	/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1800.0.0)
 `;
 
-test('a mach closure is what brew put there, never what the OS owns or its own install name', () => {
-  expect(machClosure(MACH, 'librawshim.dylib')).toEqual([
+test('mach names are what brew put there, never what the OS owns or its own install name', () => {
+  expect(machNames(MACH, 'librawshim.dylib')).toEqual([
     '/opt/homebrew/opt/aom/lib/libaom.3.dylib',
     '/opt/homebrew/opt/dav1d/lib/libdav1d.7.dylib',
+    '@rpath/libunplaceable.dylib',
   ]);
 });
 
-test('a name left relative is reported, being what nothing would otherwise carry', () => {
-  expect(machNames(MACH, 'librawshim.dylib')).toContain('@rpath/libunplaceable.dylib');
+// `otool -l libbrotlienc.1.dylib`, trimmed to the two load commands that say anything here.
+const LOAD_COMMANDS = `Load command 12
+          cmd LC_LOAD_DYLIB
+      cmdsize 72
+         name @rpath/libbrotlicommon.1.dylib (offset 24)
+Load command 15
+          cmd LC_RPATH
+      cmdsize 40
+         path /opt/homebrew/opt/brotli/lib (offset 12)
+Load command 16
+          cmd LC_RPATH
+      cmdsize 32
+         path @loader_path/../lib (offset 12)
+`;
+
+test('a mach search path is every rpath the library carries, in order', () => {
+  expect(machSearchPath(LOAD_COMMANDS)).toEqual([
+    '/opt/homebrew/opt/brotli/lib',
+    '@loader_path/../lib',
+  ]);
+});
+
+test('a library with no rpath searches nowhere', () => {
+  expect(machSearchPath('Load command 1\n          cmd LC_SEGMENT_64\n')).toEqual([]);
 });

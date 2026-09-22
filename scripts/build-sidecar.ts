@@ -13,8 +13,8 @@
 // landed (`BOWERBIRD_NATIVE_LIB`).
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { elfClosure, machClosure, machNames } from './native_closure';
+import { basename, dirname, join } from 'node:path';
+import { elfClosure, machNames, machSearchPath } from './native_closure';
 import { assertReferenceFrame, REFERENCE_FRAME } from '../src/services/processing/renditions/reference_frame';
 
 const ROOT = join(import.meta.dir, '..');
@@ -183,15 +183,19 @@ function underLoaderPath(): void {
   const pending = [shippedLibrary()];
   while (pending.length > 0) {
     const at = pending.pop()!;
-    for (const dependency of machClosure(walk('otool', at, '-L'), basename(at))) {
+    const search = machSearchPath(walk('otool', at, '-l'));
+    for (const dependency of machNames(walk('otool', at, '-L'), basename(at))) {
       if (carried.has(dependency)) continue;
+      const from = locate(dependency, at, search);
       // One directory, so a filename is the whole name: two libraries sharing one would
       // overwrite each other and both be rewritten to the survivor, which is a missing symbol
       // at first use rather than anything the checks below could see.
-      const clash = [...carried].find(([, name]) => name === basename(dependency));
+      const clash = [...carried].find(([, name]) => name === basename(from));
       if (clash != null) throw new Error(`${dependency} and ${clash[0]} share a filename`);
-      carried.set(dependency, basename(dependency));
-      pending.push(carry(dependency, NATIVE));
+      // Keyed by the name as written, since that is the string `install_name_tool -change` has
+      // to be given, and it is not the path the file was found at.
+      carried.set(dependency, basename(from));
+      pending.push(carry(from, NATIVE));
     }
   }
   const shipped = [...carried.values()].map((name) => join(NATIVE, name));
@@ -203,6 +207,28 @@ function underLoaderPath(): void {
   }
   for (const at of relocated) refuseStrangers(at, machNames(walk('otool', at, '-L'), basename(at)));
   console.log(`closure: ${NATIVE} (${carried.size} libraries, @loader_path)`);
+}
+
+/**
+ * The file a Mach-O dependency names, wherever the name is relative to.
+ *
+ * Refused by name rather than skipped: an unresolved dependency that reached the end would be a
+ * library still asking the reader's machine for something, which is what carrying a closure is
+ * for.
+ */
+function locate(named: string, from: string, search: readonly string[]): string {
+  if (named.startsWith('/')) return named;
+  const beside = (at: string): string => at.replace(/^@(loader|executable)_path/, dirname(from));
+  if (named.startsWith('@loader_path/') || named.startsWith('@executable_path/')) {
+    return beside(named);
+  }
+  if (named.startsWith('@rpath/')) {
+    const tail = named.slice('@rpath/'.length);
+    const found = search.map((at) => join(beside(at), tail)).find(existsSync);
+    if (found != null) return found;
+    throw new Error(`${from} wants ${named} and none of ${search.join(', ')} holds it`);
+  }
+  throw new Error(`${from} names ${named}, which is neither a path nor relative to one`);
 }
 
 /**
