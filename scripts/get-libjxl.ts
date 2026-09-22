@@ -82,7 +82,9 @@ function build(): void {
   const url = `https://github.com/libjxl/libjxl/archive/refs/tags/${name}`;
   const tarball = resolve(HOME, name);
   run('curl', ['--proto', '=https', '--tlsv1.2', '-fsSL', '-o', tarball, url]);
-  unpack(HOME, name);
+  // The twelve symbolic links in the archive are all here, all wrappers for a benchmark
+  // `JPEGXL_ENABLE_BENCHMARK=OFF` never builds, and a Windows runner cannot write one.
+  unpack(HOME, name, ['*/tools/benchmark/metrics/*']);
   rmSync(tarball, { force: true });
 
   run('cmake', ['-S', SOURCE, '-B', resolve(SOURCE, 'build'), `-DCMAKE_INSTALL_PREFIX=${HOME}`, ...CMAKE]);

@@ -97,15 +97,19 @@ export function installedVersion(name: string): string | null {
 }
 
 /**
- * Unpacks an archive already sitting in `home`, named rather than pathed.
+ * Unpacks an archive already sitting in `home`, named rather than pathed, less whatever `without`
+ * matches.
  *
  * **The name, from inside the directory, because `tar` reads a Windows path as a remote host.**
  * `tar xzf C:\...` is a drive letter to a reader and `user@host:path` to GNU tar, which then
- * fails with "Cannot connect to C: resolve failed" - and every path a getter builds on Windows
- * is absolute.
+ * fails with "Cannot connect to C: resolve failed" - and every path a getter builds is absolute.
+ *
+ * `without` is for the entries Windows cannot write at all: a symbolic link needs a privilege the
+ * runner does not hold, and tar fails the whole extraction over one rather than skipping it.
  */
-export function unpack(home: string, name: string): void {
-  const done = spawnSync('tar', ['xzf', name], { cwd: home, stdio: 'inherit' });
+export function unpack(home: string, name: string, without: readonly string[] = []): void {
+  const args = ['xzf', name, ...without.map((it) => `--exclude=${it}`)];
+  const done = spawnSync('tar', args, { cwd: home, stdio: 'inherit' });
   if (done.status !== 0) {
     throw new Error(`tar xzf ${name} in ${home} exited ${done.status}`);
   }
