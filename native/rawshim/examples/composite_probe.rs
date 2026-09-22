@@ -842,7 +842,7 @@ fn plane_for(path: &str) -> Option<String> {
 /// What the body says its focal is, in this photograph's own pixels.
 fn focal_px(path: &str) -> Option<f64> {
     let header = rawshim::header::read_path(path)?;
-    let crop = rawshim::lensfun::crop_factor(
+    let crop = lensdb::crop_factor(
         rawshim::header::name(&header.camera_make),
         rawshim::header::name(&header.camera_model),
     )?;

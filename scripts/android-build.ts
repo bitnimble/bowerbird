@@ -1,11 +1,8 @@
 // Build the Android APK. Dev testing only, unsigned.
 //
-// The shell links `rawshim` without its `renditions` feature, which now needs no C library
-// for the target at all: rawler reads the RAWs, the demosaic and the grade are WGSL, and
-// the JPEG codec either side is Rust. That matters here more than anywhere - this used to
-// need LibRaw cross-built for `aarch64-linux-android`, fetched out of Termux and linked
-// static so the APK carried no dependency on Termux's prefix, and lensfun would have been
-// worse still with no prebuilt Android build anywhere and a glib dependency behind it.
+// The shell links `rawshim` without its `renditions` feature, so nothing here needs a C library
+// cross-built for the target: rawler reads the RAWs, the lens database is `lensdb`, the demosaic
+// and the grade are WGSL, and the JPEG codec either side is Rust.
 //
 // One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with
 // NDK 27, and a JDK 17. `ANDROID_HOME` and `ANDROID_SDK_ROOT` must agree - Gradle refuses
@@ -34,8 +31,7 @@ if (!existsSync(ndk)) {
 }
 
 const toolchain = join(ndk, 'toolchains', 'llvm', 'prebuilt', 'linux-x86_64', 'bin');
-// API 24 is what the NDK's own linker wrappers are named for and what Termux builds
-// against, so the two agree about which libc symbols exist.
+// API 24, which is what the NDK's own linker wrappers are named for.
 const clang = join(toolchain, `aarch64-linux-android24-clang`);
 
 const env: Record<string, string> = {
@@ -72,9 +68,8 @@ if (found.length === 0) {
   process.exit(1);
 }
 
-// One APK, chosen rather than whichever the walk reached last. Every match used to be
-// copied to the same `Bowerbird.apk` in turn, so what shipped was the last one found - and
-// nothing cleans this tree, so it holds whatever earlier builds left in it.
+// One APK, chosen rather than whichever the walk reached last: nothing cleans this tree, so it
+// holds whatever earlier builds left in it.
 //
 // Chosen by build type, not by the word "unsigned". Nothing here configures signing, so the
 // release APK this produces IS `app-universal-release-unsigned.apk` - filtering that word

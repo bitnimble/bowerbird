@@ -20,10 +20,9 @@ use crate::hdr_fit::CameraMatch;
 ///
 /// **The one real difference between the hosts, named.** Both fit the same curve against the
 /// camera's own embedded JPEG; they disagree only about where the lens geometry comes from, and
-/// that is a build difference rather than a choice. The editor links no C at all - which is what
-/// makes the desktop and Android shells buildable, lensfun having no Android build and wanting
-/// glib underneath it - so it fits the distortion from the picture. A rendition consults lensfun
-/// for a recorded lens as a fourth tier on top of that.
+/// that is a build difference rather than a choice. The editor carries neither the database nor
+/// its ~3.6MB of XML, so it fits the distortion from the picture; a rendition consults the
+/// database for a recorded lens as a fourth tier on top of that.
 ///
 /// Measured before it went: over 32 Canon frames lensfun is worth 0.049 luma levels of 65535
 /// against the fitted geometry, and the gap lives almost entirely in wide and superzoom glass.

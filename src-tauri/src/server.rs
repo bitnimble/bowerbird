@@ -112,23 +112,12 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, St
     // In a directory of its own, with every library it needs: what finds those is a relative
     // search path on the library itself, so they have to be siblings.
     let native = resources.join("native").join(library_name());
-    let lensfun = resources.join("lensfun");
     if !bundle.exists() {
         return Err(format!(
             "this build carries no server bundle at {}. Run `bun run build:sidecar` before packaging.",
             bundle.display()
         ));
     }
-    // Checked rather than passed on trust, because the server refuses a named directory it
-    // cannot read a lens out of - the whole point of naming one - so an absent copy would
-    // surface as a failed photograph rather than as a build that was never finished.
-    if !lensfun.exists() {
-        return Err(format!(
-            "this build carries no lens database at {}. Run `bun run build:sidecar` before packaging.",
-            lensfun.display()
-        ));
-    }
-
     let data = data_dir(app)?;
     std::fs::create_dir_all(&data).map_err(|err| format!("could not make {}: {err}", data.display()))?;
 
@@ -141,10 +130,6 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, St
         .env("DATA_DIR", data.join("data"))
         .env("BOWERBIRD_WORKER_DIR", &workers)
         .env("BOWERBIRD_NATIVE_LIB", &native)
-        // lensfun searches its own compiled-in Unix paths when this is unset, and a packaged
-        // app is on none of them: without it every Canon frame falls back to fitting its own
-        // geometry and nothing says so.
-        .env("BOWERBIRD_LENSFUN_DATA", &lensfun)
         .env("BOWERBIRD_REFERENCE_FRAME", resources.join("reference_frame.ARW"))
         // Inherited so the server's own log lands wherever the app's does, which is
         // the only account of what went wrong when it will not start.

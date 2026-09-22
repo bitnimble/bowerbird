@@ -10,13 +10,11 @@
 //
 // The native library goes with them as a resource rather than inside anything: it
 // is a shared object opened by `dlopen`, and the shell tells the server where it
-// landed (`BOWERBIRD_NATIVE_LIB`). lensfun's lens database travels the same way
-// (`BOWERBIRD_LENSFUN_DATA`), because lensfun looks for it on compiled-in Unix paths
-// and a packaged app is on none of them.
+// landed (`BOWERBIRD_NATIVE_LIB`).
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { elfClosure, machClosure, machNames, peClosure } from './native_closure';
+import { elfClosure, machClosure, machNames } from './native_closure';
 import { assertReferenceFrame, REFERENCE_FRAME } from '../src/services/processing/renditions/reference_frame';
 
 const ROOT = join(import.meta.dir, '..');
@@ -26,7 +24,6 @@ const SERVER = join(RESOURCES, 'server');
 // The library and everything it needs in one directory, so `$ORIGIN` and `@loader_path` are
 // that directory for every object in it and a stale copy cannot outlive a rebuild.
 const NATIVE = join(RESOURCES, 'native');
-const BESIDE = join(ROOT, 'src-tauri', 'dlls');
 
 const shippedLibrary = (): string => join(NATIVE, libraryName(triple));
 
@@ -63,21 +60,11 @@ function flag(name: string): string | undefined {
 }
 
 /**
- * What the shell is built for, which is what Tauri looks for on the end of a sidecar's name.
- *
- * Also what the Bun runtime and the libSQL addon are picked for: Bun is the process that runs
- * the bundle and opens both, so those follow the shell and not `--native-target`.
+ * What everything here is built for: the shell Tauri looks for on the end of a sidecar's name,
+ * the Bun runtime and the libSQL addon that run beside it, and `rawshim` itself.
  */
 function targetTriple(): string {
   return flag('target') ?? hostTriple();
-}
-
-/**
- * What `rawshim` is built for, which on Windows is not the shell's triple: the server's half
- * links lensfun and the two pinned codecs, and those are MinGW (`release.yml`).
- */
-function nativeTriple(): string {
-  return flag('native-target') ?? targetTriple();
 }
 
 function libraryName(triple: string): string {
@@ -146,45 +133,13 @@ function shipTheAddon(triple: string): void {
 }
 
 /**
- * lensfun's lens database, which nothing else carries.
+ * Every shared library `rawshim` needs, carried by the app rather than found (DESIGN §23.7.1).
  *
- * Without it every Canon frame silently falls back to fitting its own geometry, and nothing
- * says so - the library loads, finds no camera, and the fit looks like it simply had nothing
- * to match. So a missing tree fails the build rather than shipping that.
- *
- * `--lensfun-data` names the directory of XML to ship; `pkg-config` otherwise, which gives a
- * `share` and leaves the versioned directory under it to find. The version is not written
- * down here: the copy is flat and `BOWERBIRD_LENSFUN_DATA` names where it landed.
+ * **Windows has none**, which is the point of building it with MSVC against vcpkg's static
+ * triplet: the six codecs are archives linked into `rawshim.dll`, so the only thing it asks the
+ * machine for is the C runtime the shell already asks for.
  */
-function shipTheLensDatabase(): void {
-  const named = flag('lensfun-data');
-  const from = named ?? versionedLensfunData();
-  cpSync(from, join(RESOURCES, 'lensfun'), { recursive: true });
-  console.log(`lensfun: ${join(RESOURCES, 'lensfun')} (from ${from})`);
-}
-
-function versionedLensfunData(): string {
-  const asked = spawnSync('pkg-config', ['--variable=datadir', 'lensfun'], { encoding: 'utf8' });
-  const datadir = asked.status === 0 ? asked.stdout.trim() : '';
-  if (datadir === '') {
-    throw new Error('pkg-config cannot find lensfun, so its lens database cannot be shipped. Install it, or pass --lensfun-data.');
-  }
-  // Joined as a string rather than through `join`: on Windows that would turn `/clang64/share`
-  // into a backslashed path, which `cygpath -w` reads as already converted and hands back.
-  const root = hostPath(`${datadir}/lensfun`);
-  const versions = existsSync(root)
-    ? readdirSync(root, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && readdirSync(join(root, entry.name)).some((file) => file.endsWith('.xml')))
-        .map((entry) => entry.name)
-    : [];
-  if (versions.length !== 1) {
-    throw new Error(`${root} holds ${versions.length} directories of lens XML where exactly one is expected. Pass --lensfun-data.`);
-  }
-  return join(root, versions[0]!);
-}
-
-/** Every shared library `rawshim` needs, carried by the app rather than found (DESIGN §23.7.1). */
-function shipTheClosure(triple: string, library: string): void {
+function shipTheClosure(triple: string): void {
   // Each arm drives the target's own loader tools, which only the target has: a macOS closure
   // assembled from Linux would reach for `otool` and fail as a missing command rather than as
   // the cross build it is.
@@ -192,33 +147,9 @@ function shipTheClosure(triple: string, library: string): void {
   if (platform !== process.platform) {
     throw new Error(`the libraries ${triple} needs can only be gathered on ${triple}: assemble that app there`);
   }
-  if (triple.includes('windows')) return besideTheExecutables(library);
+  if (triple.includes('windows')) return;
   if (triple.includes('apple')) return underLoaderPath();
   underOrigin();
-}
-
-/**
- * Windows, where nothing is rewritten because a PE names its imports by filename alone.
- *
- * **Two copies, and that is not belt and braces.** A dependent DLL resolves out of the loading
- * process's directory, which is `bowerbird-server.exe`'s - unless `LoadLibraryEx` was passed
- * `LOAD_WITH_ALTERED_SEARCH_PATH`, what libuv's `dlopen` uses, which searches the loaded
- * library's own directory and drops the process's from the order entirely. Which one `bun:ffi`
- * gets is not observable from here, and a copy in both places is correct under either.
- */
-function besideTheExecutables(library: string): void {
-  const prefix = process.env.MSYSTEM_PREFIX;
-  if (prefix == null) {
-    throw new Error('a MinGW rawshim.dll has to be gathered inside an MSYS2 shell, which is what sets MSYSTEM_PREFIX');
-  }
-  const needed = peClosure(walk('ldd', shippedLibrary()), prefix);
-  if (needed.length === 0) throw new Error(`${library} needs nothing from ${prefix}, which no lensfun build does`);
-  mkdirSync(BESIDE, { recursive: true });
-  for (const path of needed) {
-    carry(hostPath(path), BESIDE);
-    carry(hostPath(path), NATIVE);
-  }
-  console.log(`beside:  ${BESIDE} and ${NATIVE} (${needed.length} DLLs from ${prefix})`);
 }
 
 /**
@@ -233,7 +164,7 @@ function underOrigin(): void {
   for (const at of relocated) {
     // `DT_RPATH` and not the `DT_RUNPATH` patchelf writes by default: the loader consults a
     // runpath *after* `LD_LIBRARY_PATH`, so an app launched from a shell that names an older
-    // glib or libstdc++ - conda, Steam, a `~/.local/lib` - would get that one instead of the
+    // libstdc++ or aom - conda, Steam, a `~/.local/lib` - would get that one instead of the
     // copy beside it, which is the failure this carrying exists to prevent.
     run('patchelf', ['--force-rpath', '--set-rpath', '$ORIGIN', at]);
   }
@@ -309,35 +240,19 @@ function carry(from: string, into: string): string {
   return at;
 }
 
-/**
- * An MSYS2 path as the Windows processes here can open it.
- *
- * `ldd` and `pkg-config` answer in `/clang64/...`, which only the MSYS2 layer understands;
- * bun, cargo and Tauri are native Windows and see nothing there. A pass-through everywhere
- * else, where the two are the same thing.
- */
-function hostPath(path: string): string {
-  if (process.env.MSYSTEM_PREFIX == null) return path;
-  const converted = spawnSync('cygpath', ['-w', path], { encoding: 'utf8' });
-  if (converted.status !== 0) throw new Error(`cygpath could not place ${path}: ${converted.stderr ?? ''}`);
-  return converted.stdout.trim();
-}
-
 function run(command: string, args: string[]): void {
   const result = spawnSync(command, args, { stdio: 'inherit', cwd: ROOT });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
 const triple = targetTriple();
-const native = nativeTriple();
 const suffix = triple.includes('windows') ? '.exe' : '';
 mkdirSync(BINARIES, { recursive: true });
 // **Emptied, not written over.** Everything under here is written by this script, and every
-// part of it is copied in whole rather than file by file - a bundle, a lens database, a
-// library and its closure. So anything left from a previous run is something an installed app
-// would carry twice, and a path this script no longer writes is one nothing would ever remove.
+// part of it is copied in whole rather than file by file - a bundle, a library and its closure.
+// So anything left from a previous run is something an installed app would carry twice, and a
+// path this script no longer writes is one nothing would ever remove.
 rmSync(RESOURCES, { recursive: true, force: true });
-rmSync(BESIDE, { recursive: true, force: true });
 mkdirSync(SERVER, { recursive: true });
 mkdirSync(NATIVE, { recursive: true });
 
@@ -388,17 +303,15 @@ rmSync(sidecar, { force: true });
 copyFileSync(runtime, sidecar);
 chmodSync(sidecar, 0o755);
 
-const library = nativeLibrary(native);
+const library = nativeLibrary(triple);
 copyFileSync(library, shippedLibrary());
 // Writable, because the relocation below edits it in place.
 chmodSync(shippedLibrary(), 0o755);
-shipTheClosure(native, library);
+shipTheClosure(triple);
 
 const frame = join(ROOT, 'assets', REFERENCE_FRAME.filename);
 assertReferenceFrame(frame);
 copyFileSync(frame, join(RESOURCES, REFERENCE_FRAME.filename));
-
-shipTheLensDatabase();
 
 console.log(`sidecar: ${sidecar} (the Bun runtime, from ${runtime})`);
 console.log(`server:  ${join(SERVER, 'index.js')}`);

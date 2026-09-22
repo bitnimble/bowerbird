@@ -12,15 +12,14 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["renditions"]
 
-# The server's half: building renditions, which is what wants lensfun and libavif.
+# The server's half: building renditions, which is what wants libavif and the lens database.
 #
-# Off, the crate is Rust alone and links no C, which is everything the editor's open needs -
-# `edit::prepare_bytes` reads the lens spline the camera recorded in the RAW itself
-# (`lens::read_distortion`) rather than lensfun's database, and the display transform is
-# the client's GPU rather than an AVIF encoder. That is what lets the desktop and mobile
-# shells ship without a native library to resolve at all, and lensfun in particular is the
-# one with no prebuilt Android build anywhere.
-renditions = []
+# Off, the crate links no C, which is everything the editor's open needs - `edit::prepare_bytes`
+# reads the lens spline the camera recorded in the RAW itself (`lens::read_distortion`) rather
+# than the database, and the display transform is the client's GPU rather than an AVIF encoder.
+# That is what lets the desktop and mobile shells ship without a native library to resolve at
+# all, and what keeps the browser's bundle clear of ~3.6MB of lens XML.
+renditions = ["dep:lensdb"]
 
 # The tests that decode a real RAW, which need the LFS fixtures and take seconds
 # rather than milliseconds. Off by default so `cargo test` stays a thing you can run
@@ -114,6 +113,10 @@ required-features = ["renditions"]
 # Our fork, vendored as a submodule. It reads every format the product imports, and it is the
 # only thing that reads them.
 rawler = { path = "../vendor/dnglab/rawler" }
+# The lens database, and the only copyleft thing in the tree (THIRD_PARTY.md). Optional because
+# the editor's open reads the spline the camera recorded in the RAW and never asks a database,
+# so the Android and wasm builds link neither it nor its ~3.6MB of XML.
+lensdb = { path = "../lensdb", optional = true }
 fast_image_resize = "6.1.0"
 # The f16 the detail and surround textures and the jacobian readback are held in. Conversion
 # only - no feature of it is wanted.
@@ -151,7 +154,7 @@ rust_h265 = "0.1.0"
 tiff = "0.11.3"
 
 # The resize is single-threaded (no `rayon` feature) - it is already milliseconds, and the
-# callers sit inside their own parallelism. lensfun and libavif are linked on top, through
+# callers sit inside their own parallelism. libavif and libjxl are linked on top, through
 # build.rs, and only for a `renditions` build.
 
 # An index product that wraps is a picture that comes out wrong rather than a crash, and

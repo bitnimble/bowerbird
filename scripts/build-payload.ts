@@ -33,8 +33,7 @@ const triple = flag('target') ?? hostTriple();
 const platform = PLATFORMS[triple];
 if (platform == null) throw new Error(`no release is built for ${triple}`);
 
-// Empty is unset, not the current directory - the same trap `mac-build.ts` and
-// `win-build.ts` carry a note about. `''` is not nullish, so `??` does not catch it,
+// Empty is unset, not the current directory - the same trap `mac-build.ts` carries a note about. `''` is not nullish, so `??` does not catch it,
 // `resolve('')` is wherever this happens to be running, and the `rmSync` below would then
 // take a `payload` directory out of it.
 const named = flag('out')?.trim();
@@ -115,16 +114,12 @@ if (triple.includes('apple')) {
   cpSync(app, join(staging, `bowerbird-app${suffix}`));
   cpSync(sidecar, join(staging, `bowerbird-server${suffix}`));
   cpSync(resources, join(staging, 'resources'), { recursive: true });
-  // Windows resolves a dependent DLL from the loading process's own directory, so the
-  // shell's imports and the closure `rawshim.dll` needs both go beside the executables -
-  // the second of those being gathered under `src-tauri/dlls` rather than built here,
-  // since it comes out of MSYS2 and this runs after the MSVC bundle.
+  // Windows resolves a dependent DLL from the loading process's own directory, so whatever the
+  // shell imports goes beside the executables. `rawshim.dll` adds nothing to that list: its
+  // codecs are static (DESIGN §23.7.1).
   if (windows) {
-    const gathered = need(join(ROOT, 'src-tauri', 'dlls'), 'Run `bun run build:sidecar` first.');
-    for (const from of [releaseDir, gathered]) {
-      for (const entry of readdirSync(from)) {
-        if (entry.toLowerCase().endsWith('.dll')) cpSync(join(from, entry), join(staging, entry));
-      }
+    for (const entry of readdirSync(releaseDir)) {
+      if (entry.toLowerCase().endsWith('.dll')) cpSync(join(releaseDir, entry), join(staging, entry));
     }
   }
 }

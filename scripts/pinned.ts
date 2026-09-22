@@ -60,21 +60,29 @@ export function linkPinned(name: string, home: string): void {
 }
 
 /**
- * Windows' cmake defaults to Visual Studio, whose multi-config generators ignore
- * `CMAKE_BUILD_TYPE` and want `--config` on the build and the install; MSYS2's toolchain is Ninja.
- * Empty on every other platform deliberately: the flags are the recipe a tree is named by, so a
- * generator named where cmake would pick one anyway rebuilds libavif on every machine that has it.
+ * What `cmake --build` and `cmake --install` need on Windows, whose default generator is Visual
+ * Studio: a multi-config generator ignores `CMAKE_BUILD_TYPE` and takes the configuration here
+ * instead. Every other generator ignores it.
+ *
+ * Deliberately not a configure flag. The configure flags are the recipe a tree is named by
+ * (`pin`), so anything added there rebuilds libavif on every machine that already has it.
  */
-export const CMAKE_GENERATOR: readonly string[] = process.platform === 'win32' ? ['-G', 'Ninja'] : [];
+export const CMAKE_CONFIG: readonly string[] = process.platform === 'win32' ? ['--config', 'Release'] : [];
 
-/** Called from a build rather than at import: a tree already pinned needs no generator installed. */
-export function requireCmakeGenerator(): void {
-  if (process.platform !== 'win32') {
-    return;
+/**
+ * What a system library reports for its version, or null where there is none.
+ *
+ * **Two names, because the binary is not called the same thing everywhere.** The Unixes ship
+ * `pkg-config`; vcpkg's tree and MSYS2 ship `pkgconf`, which answers the same queries under a
+ * different name, and a Windows runner has neither until one is installed. Asking for only the
+ * first is how a getter refuses on a machine that has every library it wants.
+ */
+export function installedVersion(name: string): string | null {
+  for (const tool of ['pkg-config', 'pkgconf']) {
+    const asked = spawnSync(tool, ['--modversion', name], { encoding: 'utf8' });
+    if (asked.status === 0) return asked.stdout.trim();
   }
-  if (spawnSync('ninja', ['--version'], { stdio: 'ignore' }).status !== 0) {
-    throw new Error('ninja is not installed: pacman -S mingw-w64-clang-x86_64-ninja');
-  }
+  return null;
 }
 
 /**

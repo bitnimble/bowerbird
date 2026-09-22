@@ -373,12 +373,12 @@ the server something untrue about itself.
 | `BOWERBIRD_HOME` | the supervisor | Where the versions live, and so where an update unpacks |
 | `BOWERBIRD_PLATFORM` | the Dockerfile | Which release platform this install is, where it cannot be worked out from the kernel - the image runs the same Linux a desktop build does and installs an entirely different file |
 | `BOWERBIRD_NATIVE_LIB` | the shell, the container entrypoint | The pixel library to open, named rather than searched for: a packaged app has no source tree beside it, and the container's is whichever instruction-set variant won the startup probe (§10.4) |
-| `BOWERBIRD_LENSFUN_DATA` | the shell | The directory of lens XML to load, for the same reason: lensfun searches only the prefixes it was compiled for, and a packaged app is on none of them. Unset, it searches them, which is what a development box wants. What ships the copy is `build-sidecar.ts` |
 
-Two more are genuinely optional, and say where update checks are made (§23.5):
+Three more are genuinely optional. The first replaces the lens database the binary carries; the other two say where update checks are made (§23.5):
 
 | Variable | Default | Description |
 |---|---|---|
+| `BOWERBIRD_LENSFUN_DATA` | unset | A directory of lensfun XML to read instead of the copy compiled into `lensdb`. Nothing needs it - the database travels inside the binary - but the bundled copy is frozen at whichever lensfun release the crate was cut from, so this is how a reader whose lens landed since points at a fresher one. A directory that holds no lens data is refused rather than fallen back from |
 | `BOWERBIRD_UPDATE_REPO` | `bitnimble/bowerbird` | The GitHub repository to check. What a fork sets |
 | `BOWERBIRD_UPDATE_URL` | built from the above | The releases endpoint outright, for somewhere that is not github.com. Wins over the repository, and must report an `assets` list per release - there is no github.com URL guessed behind it (§23.5) |
 

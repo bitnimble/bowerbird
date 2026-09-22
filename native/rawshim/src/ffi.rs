@@ -708,7 +708,7 @@ pub(crate) fn recorded_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
 #[cfg(all(test, feature = "fixtures"))]
 pub(crate) fn database_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
     let header = crate::header::read_path(path)?;
-    crate::lensfun::tca_knots(
+    let [red, blue] = lensdb::tca_knots(
         crate::header::name(&header.camera_make),
         crate::header::name(&header.camera_model),
         crate::header::name(&header.lens_model),
@@ -716,7 +716,14 @@ pub(crate) fn database_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
         header.aperture,
         header.width as usize,
         header.height as usize,
-    )
+    )?;
+    Some([in_spline_units(red), in_spline_units(blue)])
+}
+
+/// A radial offset as `lensdb` reports it - a fraction of the radius - into the unit a camera's
+/// own spline is carried in, which is what the fit compares the two tiers in.
+fn in_spline_units(knots: Vec<f64>) -> Vec<f64> {
+    knots.into_iter().map(|it| it * crate::image::SPLINE_UNIT).collect()
 }
 
 /// The database's profile for whatever lens this file names.
@@ -726,7 +733,7 @@ pub(crate) fn database_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
 /// fitted, as it was before lensfun was here.
 fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
     let header = crate::header::read_path(path)?;
-    let knots = crate::lensfun::knots(
+    let knots = lensdb::distortion_knots(
         crate::header::name(&header.camera_make),
         crate::header::name(&header.camera_model),
         crate::header::name(&header.lens_model),
@@ -735,7 +742,7 @@ fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
         header.width as usize,
         header.height as usize,
     )?;
-    Some(fit::Geometry::Profiled(knots))
+    Some(fit::Geometry::Profiled(in_spline_units(knots)))
 }
 
 /// Exercises the pixel paths on a tiny image. 0 if the library works here.

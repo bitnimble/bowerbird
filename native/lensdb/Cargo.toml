@@ -1,0 +1,19 @@
+[package]
+name = "lensdb"
+version = "0.1.0"
+edition = "2024"
+# Every line of this crate is compiled against an LGPL-3 library and links it statically, so the
+# combined work carries LGPL-3's relink obligation (THIRD_PARTY.md says what that costs). Stated
+# here rather than inferred, because nothing else in the tree is copyleft and a reader checking
+# `Cargo.lock` for one would find this crate's dependency and not this crate.
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+# The pure-Rust port of lensfun, database included: `Database::load_bundled` decompresses the
+# same XML the C library reads from a system prefix, out of the binary. That is the whole reason
+# it is here - the C library wants glib, has no Android build anywhere, and searches only the
+# prefixes it was compiled for, which is a directory to ship and get wrong on three platforms.
+#
+# Pre-alpha by its author's own label, at one published version. What holds it honest is
+# `bundled_lens_database.rs`, which pins the answers the C library gave for the same shots.
+lensfun = "0.7.0"

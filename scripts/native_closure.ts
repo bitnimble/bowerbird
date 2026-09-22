@@ -1,5 +1,6 @@
-// What `rawshim` needs from outside itself, parsed out of the three platforms' loaders
-// (DESIGN §23.7.1). `build-sidecar.ts` is what then copies and relocates.
+// What `rawshim` needs from outside itself, parsed out of the two loaders that name anything
+// (DESIGN §23.7.1). `build-sidecar.ts` is what then copies and relocates. Windows has no arm
+// here: its codecs are static, so `rawshim.dll` asks for nothing the shell does not.
 
 /**
  * The glibc members no application may carry a second copy of.
@@ -28,24 +29,6 @@ export function elfClosure(walk: string): string[] {
     const name = path.slice(path.lastIndexOf('/') + 1);
     return !name.startsWith('ld-linux') && !GLIBC.some((member) => name.startsWith(member));
   });
-}
-
-/**
- * The same walk, less whatever the MSYS2 environment did not provide.
- *
- * A whitelist where the others are blacklists, Windows's own libraries being many and resolving
- * out of `System32` rather than being named.
- */
-export function peClosure(walk: string, prefix: string): string[] {
-  refuseMissing(walk);
-  const resolved = resolvedPaths(walk);
-  // Under neither the prefix nor `System32`, so it is the one thing the whitelist would drop
-  // that matters: a build that reached the MSYS runtime linked a different environment's.
-  const wrong = resolved.filter((path) => path.startsWith('/usr/bin/'));
-  if (wrong.length > 0) {
-    throw new Error(`this library wants the MSYS runtime rather than the environment's: ${wrong.join(', ')}`);
-  }
-  return resolved.filter((path) => path.startsWith(`${prefix}/`));
 }
 
 /** `ldd` exits 0 on a name it could not place, so nothing else here would notice. */

@@ -85,7 +85,7 @@ fn the_wasm_modules_read_the_clock_through_the_shim() {
 /// listed here, so a module added tomorrow is scanned without anyone remembering to add it.
 ///
 /// The wasm build is that build, and every `#[cfg]` in the declarations excludes a module from it
-/// bar one: `renditions` is lensfun and libavif and the rest are test-only, while
+/// bar one: `renditions` is the lens database and libavif and the rest are test-only, while
 /// `target_arch = "wasm32"` is the browser's own entry points and is in this build alone.
 fn wasm_modules() -> Vec<String> {
     let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
@@ -121,7 +121,7 @@ fn wasm_modules() -> Vec<String> {
         out.contains(&"wasm.rs".to_string()),
         "the browser's own entry points went unscanned"
     );
-    for excluded in ["lensfun.rs", "pin.rs", "fixture_tests.rs"] {
+    for excluded in ["picture.rs", "pin.rs", "fixture_tests.rs"] {
         assert!(
             !out.contains(&excluded.to_string()),
             "{excluded} is not in a wasm build"

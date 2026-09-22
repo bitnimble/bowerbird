@@ -17,14 +17,13 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CMAKE_GENERATOR, linkPinned, makeOnce, pin, pinnedHome, requireCmakeGenerator } from './pinned';
+import { CMAKE_CONFIG, installedVersion, linkPinned, makeOnce, pin, pinnedHome } from './pinned';
 
 const NAME = 'libjxl';
 const VERSION = '0.11.1';
 const ROOT = resolve(import.meta.dir, '..');
 
 const CMAKE = [
-  ...CMAKE_GENERATOR,
   '-DCMAKE_BUILD_TYPE=Release',
   '-DBUILD_SHARED_LIBS=OFF',
   '-DBUILD_TESTING=OFF',
@@ -58,12 +57,6 @@ function run(command: string, args: string[], cwd = ROOT): void {
   }
 }
 
-/** What `pkg-config` reports for a system library, or null where there is none. */
-function installed(name: string): string | null {
-  const done = spawnSync('pkg-config', ['--modversion', name], { encoding: 'utf8' });
-  return done.status === 0 ? done.stdout.trim() : null;
-}
-
 function main(): void {
   makeOnce(HOME, RECIPE, process.env.BOWERBIRD_REBUILD_LIBJXL != null, build);
   linkPinned(NAME, HOME);
@@ -71,9 +64,8 @@ function main(): void {
 }
 
 function build(): void {
-  requireCmakeGenerator();
   for (const dependency of ['libhwy', 'libbrotlienc', 'libbrotlidec', 'lcms2']) {
-    if (installed(dependency) == null) {
+    if (installedVersion(dependency) == null) {
       throw new Error(`${dependency} is not installed, and libjxl is built against the system's`);
     }
   }
@@ -86,8 +78,8 @@ function build(): void {
   rmSync(tarball, { force: true });
 
   run('cmake', ['-S', SOURCE, '-B', resolve(SOURCE, 'build'), `-DCMAKE_INSTALL_PREFIX=${HOME}`, ...CMAKE]);
-  run('cmake', ['--build', resolve(SOURCE, 'build'), '--parallel']);
-  run('cmake', ['--install', resolve(SOURCE, 'build')]);
+  run('cmake', ['--build', resolve(SOURCE, 'build'), '--parallel', ...CMAKE_CONFIG]);
+  run('cmake', ['--install', resolve(SOURCE, 'build'), ...CMAKE_CONFIG]);
   rmSync(SOURCE, { recursive: true, force: true });
 
   const built = resolve(HOME, 'include/jxl/encode.h');

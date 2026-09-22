@@ -177,6 +177,8 @@ native/rawshim/target/
 # The supervisor's, built by the Docker build stage and by `cargo build` inside the
 # desktop shell, which links the same crate.
 native/launcher/target/
+# The lens database's, which only its own suite builds as a root.
+native/lensdb/target/
 # Materialised by ensure-patched-rayon.sh from patches/; not committed.
 native/rawshim/patched/
 # Where `bun run build:wasm` puts wasm-pack's output, which the editor imports as a
@@ -204,11 +206,9 @@ native/rawshim/.pmrid
 .baseline/
 OVERNIGHT_LOG.md
 
-# What the desktop app carries: the Bun runtime, the bundled server, the native
-# library, and on Windows the DLLs that library needs beside the executables. All of
-# it is built by `bun run build:sidecar`, and the runtime alone is around a hundred
-# megabytes.
+# What the desktop app carries: the Bun runtime, the bundled server and the native
+# library with everything it opens. All of it is built by `bun run build:sidecar`, and
+# the runtime alone is around a hundred megabytes.
 src-tauri/binaries/
 src-tauri/resources/
-src-tauri/dlls/
 

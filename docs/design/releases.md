@@ -228,33 +228,36 @@ it was ever working.
 | android-aarch64 | apk | no | **no** |
 | docker-x86_64 | ghcr image | yes | yes |
 
-**Windows is built twice, and glib is why.** The shell is `x86_64-pc-windows-msvc`, like every
-other Windows application; the server's half of `rawshim` is `x86_64-pc-windows-gnullvm`, built
-in an MSYS2 CLANG64 environment on the same runner. What that half wants is clang and eight
-prebuilt libraries, and CLANG64 is the only place both are at once. libjxl needs clang either
-way, `cl.exe` being unsupported upstream, but the library that decides it is lensfun: it wants
-glib underneath it, pacman has the pair in a line, and the MSVC route builds both from source
-and records their versions in a vcpkg baseline that `scripts/pinned.ts`'s recipe hashes cannot
-see. Every Unix-shaped assumption `build.rs` already makes - `pkg-config`, a `share` directory -
-holds there as a consequence rather than as the reason. The matrix names the second triple
-`server_target` and the shell that reaches MSYS2 `shell`, so a step that builds the server asks
-for `${{ matrix.server_target || matrix.target }}` and the platforms with one triple read that.
+**Every platform is one triple**, Windows included: `x86_64-pc-windows-msvc` builds the shell,
+`rawshim` and the Bun runtime beside them, exactly as the other two rows build theirs. No
+compiler forces otherwise, and that is worth stating because the reverse is easy to assume:
+libjxl builds under `cl.exe` and under `clang-cl`, and libavif always did.
 
-**`gnullvm` against CLANG64, and the C runtime is why.** The two halves of `rawshim.dll` are
-one module, and rustup's `x86_64-pc-windows-gnu` standard library is built against msvcrt, so
-pairing it with a UCRT environment would put two C runtimes inside one library - which MSYS2
-warns against outright, their internal structures differing. `x86_64-pc-windows-gnullvm` is
-UCRT, libc++ and compiler-rt, and CLANG64 is exactly that, so the two halves agree. The one
-consequence in this repo is that `build.rs` asks for libc++ rather than libstdc++ under
-libjxl there.
+**The six libraries underneath come from vcpkg, on the `x64-windows-static-md` triplet.** aom,
+dav1d and sharpyuv sit under libavif; highway, brotli and lcms2 under libjxl. `-static-md` is
+the load-bearing half of that name: static archives against the *dynamic* C runtime, which is
+the runtime Rust's MSVC target links. So the six end up inside `rawshim.dll` rather than beside
+it, and the only thing the library asks a reader's machine for is the C runtime the shell
+already asks for.
+
+**What it costs is where the versions are written down.** A `~/.cache/bowerbird` tree is named
+for the hash of its recipe (`scripts/pinned.ts`), so bumping libavif or adding a cmake flag
+rebuilds rather than reusing; the six below it are pinned by vcpkg's own baseline instead, which
+that hash cannot see. That is the real trade of this arrangement and the thing to remember when
+a Windows encode differs from a Linux one.
+
+**`lcms` rather than `lcms2`** when asking vcpkg for Little-CMS: the port is named for the
+project where the library is named for its soname, and the wrong one is a "port not found" a
+line into the job.
 
 ### 23.7.1 The app carries every library it opens
 
 **What an installed Bowerbird asks a machine for is a C library, a loader and a Vulkan driver
 (§2.1), and of `librawshim`'s own dependencies, nothing.**
-lensfun and glib for the geometry, aom, dav1d and sharpyuv under libavif, highway, brotli and
-lcms2 under libjxl, and the compiler's own runtime: `build-sidecar.ts` walks what
-`librawshim` resolved at build time and ships each one into `resources/native` beside it.
+aom, dav1d and sharpyuv under libavif, highway, brotli and
+lcms2 under libjxl, and the compiler's own runtime: on the two Unixes `build-sidecar.ts` walks
+what `librawshim` resolved at build time and ships each one into `resources/native` beside it,
+and on Windows they are already inside it.
 
 That is not the same as vendoring them. Which copy the *build* links is unchanged, and
 deliberately the system's, so that what encodes a rendition is a library whose version the
@@ -269,11 +272,13 @@ deb and the AppImage are built on Ubuntu 24.04, so `librawshim.so` and the libst
 want `GLIBC_2.38` and neither will start on Ubuntu 22.04 or Debian 12. That floor follows the
 runner rather than being chosen, and raising it is what moving off a retired image costs.
 
-**Each platform finds them a different way, and only one of the three needs no rewriting.**
+**Two platforms find them a different way; the third has nothing to find.** Windows links its
+six statically and so carries no closure at all (§23.7), which leaves the two Unixes.
+
 An ELF names a search path of its own, so every copy gets `$ORIGIN`, not just the library the
 server opens, a search path not reaching a dependency's own dependencies. It is a `DT_RPATH`
 rather than the `DT_RUNPATH` patchelf writes by default, because the loader consults a runpath
-*after* `LD_LIBRARY_PATH`: an app launched from a shell that names an older glib would
+*after* `LD_LIBRARY_PATH`: an app launched from a shell that names an older libstdc++ would
 otherwise get that one and fail in the way carrying a copy exists to prevent.
 
 A Mach-O names each dependency by the path it was linked at, so the walk is this script's own -
@@ -290,15 +295,11 @@ outcome rather than of each way of getting it wrong - after relocating, every ob
 again and anything still naming a path outside the tree fails the build, which is the only
 thing that catches a dependency Homebrew left as an `@rpath` it could not place.
 
-**Windows is the exception, because a PE resolves a dependent DLL out of the loading
-process's directory.** What `dlopen`s this one is `bowerbird-server.exe`, so its closure lands
-in the installation directory rather than under `resources/`, and nothing is rewritten, a PE
-naming its imports by filename alone. `src-tauri/tauri.windows.conf.json` maps `dlls/*.dll` to
-a destination of `""`, and NSIS writes each resource as `File /oname=<target>` under
-`SetOutPath $INSTDIR`, so an empty destination is the installation directory itself - which is
-how Tauri ships `WebView2Loader.dll` for its own gnu builds. `build-payload.ts` copies the
-same directory into the tarball's root, where the supervisor unpacks it beside the executables
-it starts, so a fresh install and an in-place update resolve alike.
+**Windows has nothing to relocate**, its six codecs being static archives inside `rawshim.dll`
+(§23.7 above). What still goes beside the executables is whatever the *shell* imports, Tauri's
+`WebView2Loader.dll` among them: `build-payload.ts` copies every DLL cargo left in the release
+directory into the tarball's root, where the supervisor unpacks it beside the executables it
+starts, so a fresh install and an in-place update resolve alike.
 
 **Android cannot replace itself at all.** An APK is read-only and the platform will not run
 code loaded from the data directory, so the dialog offers the download and the system

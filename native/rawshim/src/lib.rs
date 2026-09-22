@@ -6,7 +6,7 @@
 //
 // `bb_` and `Bb` are short for Bowerbird. On the exported functions the prefix is
 // not decoration: C has one flat symbol namespace, and this library is dlopen'd
-// into a process that already holds lensfun and libavif, so a bare
+// into a process that already holds libavif and libjxl, so a bare
 // `decode` or `fit` would be an invitation. The `#[repr(C)]` types carry it too,
 // against the usual rule of naming for behaviour rather than owner, only so that
 // each pairs visibly with the symbol it crosses the boundary in - `BbHeader` with
@@ -37,16 +37,14 @@
 // than how much code sits inside a brace - and a `Drop` of two lines carries as much
 // weight as a body of sixty. The number that has to keep falling is the calls
 // themselves: `grep -rniE "destroy\(|_free\(|from_raw_parts" native/rawshim/src`.
-// Case-insensitive because lensfun's C API is snake_case where libavif's and libjxl's
-// are CamelCase, and a pattern that misses one of them audits nothing.
 //
 // Every C handle is owned by a Rust value whose `Drop` frees it - `avif::Image`,
-// `avif::Encoder`, `avif_gain_write::GainMap`, `lensfun::Modifier`,
-// `jxl_write::Runner` - so the marked calls are the one that creates and the one that
-// frees, and no early return can leak in between.
+// `avif::Encoder`, `avif_gain_write::GainMap`, `jxl_write::Runner` - so the marked
+// calls are the one that creates and the one that frees, and no early return can leak
+// in between.
 //
 // What is left is the irreducible part: reading the one command buffer at an entry
-// point, and calling libavif, libjxl and lensfun, which are C. Our own memory is
+// point, and calling libavif and libjxl, which are C. Our own memory is
 // marked nowhere - a `Frame` is an owned Rust value with a real lifetime, and the
 // handle API that needs raw pointers for it sits behind a lint fence, for tests.
 #![deny(unsafe_code)]
@@ -172,8 +170,6 @@ pub mod jpeg;
 pub mod jpeg_gain;
 pub mod job;
 pub mod lens;
-#[cfg(feature = "renditions")]
-pub mod lensfun;
 pub mod light;
 /// A finished picture's code values into the frame the pipeline reads. The rendered formats'
 /// answer to the conditioning and the demosaic, which they have no mosaic for.
@@ -238,7 +234,7 @@ pub mod transfer;
 pub mod wasm;
 pub mod white_balance;
 
-/// lensfun and libavif, which only a `renditions` build binds. An editor build links no C at all
+/// libavif and libjxl, which only a `renditions` build binds. An editor build links no C at all
 /// and so has no bindings to declare.
 #[cfg(feature = "renditions")]
 mod raw {

@@ -663,7 +663,7 @@ fn union_match(
 /// turned, and its long edge is still the sensor's long one.
 fn focal_in_pixels(make: &str, model: &str, millimetres: f32, long_edge: f64) -> Option<f64> {
     const FULL_FRAME_MM: f64 = 36.0;
-    let crop = crate::lensfun::crop_factor(make, model)?;
+    let crop = lensdb::crop_factor(make, model)?;
     Some(f64::from(millimetres) * crop * long_edge / FULL_FRAME_MM)
 }
 

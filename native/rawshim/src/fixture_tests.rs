@@ -2404,11 +2404,12 @@ mod camera_match {
         /// The case the database exists for: a Canon body records no spline, and the
         /// string it writes matches nothing exactly - "TAMRON SP 70-200mm F/2.8 Di VC
         /// USD A009" against lensfun's "Tamron SP 70-200mm f/2.8 Di VC USD A009". Only
-        /// a real database can say whether the scored search still lands on it.
+        /// a real file can say whether the header this reads still feeds the scored
+        /// search what it needs; `lensdb`'s own suite pins what the search then answers.
         #[test]
         fn resolves_a_third_party_lens_name_against_the_lensfun_database() {
             let header = crate::header::read_path(canon().to_str().unwrap()).expect("header");
-            let knots = crate::lensfun::knots(
+            let knots = lensdb::distortion_knots(
                 crate::header::name(&header.camera_make),
                 crate::header::name(&header.camera_model),
                 crate::header::name(&header.lens_model),
@@ -2417,11 +2418,11 @@ mod camera_match {
                 header.width as usize,
                 header.height as usize,
             )
-            .expect("lensfun has this lens");
+            .expect("the database has this lens");
             assert_eq!(knots.len(), 16);
             assert_eq!(knots[0], 0.0);
             // Barely anything at 70mm, which is where this lens crosses over.
-            assert!((knots[15] / SPLINE_UNIT - -0.0024).abs() < 0.0005);
+            assert!((knots[15] - -0.0035).abs() < 0.0005, "{knots:?}");
         }
 
         /// The guard that makes the scored search safe to trust: it returns everything
@@ -2430,7 +2431,7 @@ mod camera_match {
         #[test]
         fn refuses_a_lens_the_shot_could_not_have_been_taken_with() {
             let header = crate::header::read_path(canon().to_str().unwrap()).expect("header");
-            let knots = crate::lensfun::knots(
+            let knots = lensdb::distortion_knots(
                 crate::header::name(&header.camera_make),
                 crate::header::name(&header.camera_model),
                 crate::header::name(&header.lens_model),

@@ -1,10 +1,10 @@
-// Compiles the shaders, and generates the lensfun and libavif bindings from the installed headers
-// so that field offsets come from the same headers the runtime libraries were built from and no
-// offset appears anywhere in the source.
+// Compiles the shaders, and generates the libavif and libjxl bindings from the pinned headers so
+// that field offsets come from the same headers the libraries were built from and no offset
+// appears anywhere in the source.
 //
-// Only a `renditions` build has bindings: the RAWs are rawler's, which is Rust, and the display
-// transform is the client's GPU rather than an AVIF encoder, so the editor's shells link no C at
-// all. lensfun is the one with no prebuilt Android build anywhere, and that is what this buys.
+// Only a `renditions` build has bindings: the RAWs are rawler's, which is Rust, the lens database
+// is `lensdb`, which is Rust, and the display transform is the client's GPU rather than an AVIF
+// encoder, so the editor's shells link no C at all.
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,11 +21,12 @@ fn main() {
     shaders(&out);
     weights();
 
-    // Only a `renditions` build binds anything: rawler reads the RAWs, and lensfun and libavif are
+    // Only a `renditions` build binds anything: rawler reads the RAWs, and libavif and libjxl are
     // the server's alone. An editor build links no C at all.
     if env::var("CARGO_FEATURE_RENDITIONS").is_err() {
         return;
     }
+    codec_search_path();
     std::fs::write(out.join("bindings.rs"), server_bindings().to_string()).expect("write bindings");
 }
 
@@ -244,106 +245,19 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
 }
 
 fn server_bindings() -> bindgen::Bindings {
-    let lensfun = lensfun();
     // The library avifenc is a thin wrapper around. Linking it means the still's
     // encode stops being two child processes with the whole frame passed between
     // them, and becomes a pointer.
     let avif = libavif();
     let jxl = libjxl();
 
-    let mut builder = bindgen::Builder::default().header("wrapper.h").clang_args(lensfun);
+    let mut builder = bindgen::Builder::default().header("wrapper.h");
     for home in [avif, Some(jxl)].into_iter().flatten() {
         builder = builder.clang_arg(format!("-I{}/include", home.display()));
     }
     jxl_functions(avif_functions(builder))
-        // lensfun.h is one header for two languages: under C++ its types are classes
-        // with methods, which bindgen renders as an unusable second surface beside
-        // the `lf_*` functions. The C half is the flat structs this crate binds.
-        .clang_args(["-x", "c"])
-        .allowlist_type("lfLens")
-        .allowlist_type("lfCamera")
-        .allowlist_type("lfDatabase")
-        .allowlist_type("lfModifier")
-        .allowlist_function("lf_db_.*")
-        .allowlist_function("lf_modifier_.*")
-        .allowlist_function("lf_free")
-        .allowlist_var("LF_SEARCH_LOOSE")
-        .allowlist_var("LF_MODIFY_DISTORTION")
         .generate()
-        .expect("bindgen failed against the installed lensfun and libavif headers")
-}
-
-/// The lensfun this build links, located by `pkg-config` rather than assumed, and returning the
-/// clang arguments `wrapper.h` needs.
-///
-/// `/usr/include` and `/usr/lib` are in the default search of both the linker and the clang
-/// bindgen runs, so a Linux build needs neither an include path nor a search path and had neither.
-/// MSYS2's MinGW prefix is in neither default, so a Windows build finds no header and no import
-/// library unless it asks where they are.
-fn lensfun() -> Vec<String> {
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
-    // `wrapper.h` asks for <lensfun/lensfun.h>, where the `.pc` puts the `lensfun` directory
-    // itself on the include path, so the prefix is what makes that spelling resolve.
-    let includedir = native(&pkg_config(&["--variable=includedir"]));
-    assert!(!includedir.is_empty(), "pkg-config named no includedir for lensfun");
-    // The header the bindings are generated from, watched for `libavif`'s reason below. A
-    // package upgrade that moves a field in `lfLens` otherwise leaves cargo reporting the crate
-    // fresh and this crate reading the old offsets, which is a geometry read from the wrong
-    // bytes with nothing pointing at the upgrade.
-    println!("cargo:rerun-if-changed={includedir}/lensfun/lensfun.h");
-    let mut clang = vec![format!("-isystem{includedir}")];
-    for token in pkg_config(&["--cflags", "--libs"]).split_whitespace() {
-        if let Some(at) = token.strip_prefix("-L") {
-            println!("cargo:rustc-link-search=native={}", native(at));
-        } else if let Some(name) = token.strip_prefix("-l") {
-            println!("cargo:rustc-link-lib={name}");
-        } else if let Some(at) = token.strip_prefix("-I") {
-            // glib's, which `lensfun.h` includes, so these are as load-bearing as the prefix
-            // above and need the same conversion.
-            clang.push(format!("-isystem{}", native(at)));
-        } else {
-            clang.push(token.to_owned());
-        }
-    }
-    clang
-}
-
-/// A path as the native tools here can open it.
-///
-/// **`pkg-config` under MSYS2 answers in its own paths**, and both the clang bindgen runs and the
-/// linker are native Windows programs that would read `/clang64/include` against the current
-/// drive. `cygpath` leaves a path it has already converted alone, so this is a no-op wherever the
-/// two are the same thing - including everywhere `cygpath` does not exist.
-fn native(path: &str) -> String {
-    if !cfg!(windows) {
-        return path.to_owned();
-    }
-    let converted = Command::new("cygpath").args(["-m", path]).output();
-    match converted {
-        Ok(run) if run.status.success() => String::from_utf8_lossy(&run.stdout).trim().to_owned(),
-        _ => path.to_owned(),
-    }
-}
-
-/// What `pkg-config` says about lensfun, refused rather than guessed at for `libavif`'s reason
-/// below: a build that linked the wrong copy, or none, is a feature quietly absent from a binary
-/// that looks complete.
-fn pkg_config(ask: &[&str]) -> String {
-    const WANTED: &str = "A `renditions` build binds lensfun for the geometry of the bodies that \
-                          record none of their own. Install it - liblensfun-dev on Debian and \
-                          Ubuntu, mingw-w64-clang-x86_64-lensfun under MSYS2 - or point \
-                          PKG_CONFIG_PATH at the directory holding its lensfun.pc.";
-    // Silent otherwise, so a failure would arrive as an exit code and nothing about which of
-    // the search path and the package was wrong.
-    let run = Command::new("pkg-config").arg("--print-errors").args(ask).arg("lensfun").output();
-    let run = run.unwrap_or_else(|e| panic!("pkg-config: {e}\n{WANTED}"));
-    assert!(
-        run.status.success(),
-        "pkg-config {} lensfun: {}\n{WANTED}",
-        ask.join(" "),
-        String::from_utf8_lossy(&run.stderr).trim(),
-    );
-    String::from_utf8_lossy(&run.stdout).trim().to_owned()
+        .expect("bindgen failed against the pinned libavif and libjxl headers")
 }
 
 /// The libavif this build links, which is the pinned one and not the distribution's.
@@ -383,7 +297,7 @@ fn libavif() -> Option<PathBuf> {
     // The library itself, not only its header: a rebuilt libavif is a different archive under an
     // unchanged `avif.h`, and without this the crate links yesterday's copy.
     println!("cargo:rerun-if-changed={}", pc.display());
-    println!("cargo:rerun-if-changed={}/lib/libavif.a", home.display());
+    println!("cargo:rerun-if-changed={}", archive(&home, "avif").display());
     // Static, so nothing has to find this directory again at run time. The codecs underneath it
     // are the system's and stay dynamic, which is what keeps the encoder the one the bench and the
     // fixtures were recorded against.
@@ -417,21 +331,59 @@ fn libjxl() -> PathBuf {
     for part in ["jxl", "jxl_threads", "jxl_cms"] {
         println!("cargo:rustc-link-lib=static={part}");
     }
-    // The dependencies it was built against, dynamic like libavif's codecs. libjxl is C++, so
-    // whichever standard library the toolchain that built it carries comes with them: `gnullvm`
-    // is clang and libc++ where every other target here is gcc and libstdc++.
-    let cxx = match env::var("TARGET").unwrap_or_default().contains("gnullvm") {
-        true => "c++",
-        false => "stdc++",
-    };
-    for shared in ["hwy", "brotlienc", "brotlidec", "brotlicommon", "lcms2", cxx] {
-        println!("cargo:rustc-link-lib={shared}");
+    for lib in ["hwy", "brotlienc", "brotlidec", "brotlicommon", "lcms2"] {
+        println!("cargo:rustc-link-lib={lib}");
+    }
+    // libjxl is C++, so whichever standard library the toolchain that built it carries comes with
+    // it - except under MSVC, where the C++ runtime is the linker's own and naming one is an error.
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
+        println!("cargo:rustc-link-lib=stdc++");
     }
     println!("cargo:rerun-if-changed={}/include/jxl/encode.h", home.display());
     // The archive too, for the reason libavif's is watched: a rebuilt library under an unchanged
     // header is a link nothing would otherwise redo.
-    println!("cargo:rerun-if-changed={}/lib/libjxl.a", home.display());
+    println!("cargo:rerun-if-changed={}", archive(&home, "jxl").display());
     home
+}
+
+/// Where the six libraries under libavif and libjxl are, on a target whose linker does not
+/// already know.
+///
+/// **Windows only in practice, and load-bearing there.** `/usr/lib` and Homebrew's prefix are in
+/// the default search of the linkers this crate meets on Linux and macOS, so the `-l` lines below
+/// resolve with no help. vcpkg's tree is in nobody's default, so without this the final link of
+/// `rawshim.dll` fails with `LNK1104: cannot open file 'aom.lib'` after everything else succeeded.
+///
+/// Read from vcpkg's own variables rather than one of ours, so the CI step that installs the
+/// ports is the only place the triplet is written down.
+fn codec_search_path() {
+    println!("cargo:rerun-if-env-changed=VCPKG_INSTALLATION_ROOT");
+    println!("cargo:rerun-if-env-changed=VCPKG_TARGET_TRIPLET");
+    let (Ok(root), Ok(triplet)) =
+        (env::var("VCPKG_INSTALLATION_ROOT"), env::var("VCPKG_TARGET_TRIPLET"))
+    else {
+        return;
+    };
+    let lib = PathBuf::from(root).join("installed").join(triplet).join("lib");
+    assert!(
+        lib.is_dir(),
+        "{}: VCPKG_TARGET_TRIPLET names a triplet with no installed tree, so the codecs under \
+         libavif and libjxl would not be found at the link.",
+        lib.display(),
+    );
+    println!("cargo:rustc-link-search=native={}", lib.display());
+}
+
+/// A static library as the target's linker names it on disk.
+///
+/// Named rather than spelled `lib<name>.a` inline, which is what MSVC does not call it - and a
+/// `rerun-if-changed` on a path that does not exist is a build script cargo re-runs on every
+/// build, regenerating the bindings and recompiling the crate on a tree where nothing changed.
+fn archive(home: &Path, name: &str) -> PathBuf {
+    match env::var("CARGO_CFG_TARGET_ENV").as_deref() {
+        Ok("msvc") => home.join(format!("lib/{name}.lib")),
+        _ => home.join(format!("lib/lib{name}.a")),
+    }
 }
 
 /// JPEG XL, which only an export writes.

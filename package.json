@@ -37,7 +37,6 @@
     "e2e:tauri": "bun run e2e:tauri:build && bun run scripts/e2e-tauri-full.ts",
     "tauri": "bun x @tauri-apps/cli",
     "mac:build": "bun run scripts/mac-build.ts",
-    "win:build": "bun run scripts/win-build.ts",
     "android:build": "bun run scripts/android-build.ts"
   },
   "dependencies": {

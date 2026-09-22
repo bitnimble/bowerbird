@@ -1,12 +1,12 @@
 # Bowerbird backend. Every pixel operation goes through native/rawshim, which links
-# libavif and lensfun, so the image ships both as system libraries. The RAW decoder is
-# rawler and needs nothing installed.
+# libavif and libjxl, so the image ships their codecs as system libraries. The RAW
+# decoder is rawler and the lens database is `lensdb`; neither needs anything installed.
 #
 # Debian rather than Alpine, which would save ~50MB of base. The original reason no
 # longer holds - it was that Alpine's `vips` is built without libheif and so cannot
 # write an AVIF, which stopped mattering when the encode moved to libavif and then
 # libvips left entirely - so this is now inertia rather than a constraint. Alpine is
-# untested; musl against lensfun is the part to check before trying it.
+# untested; musl against the codecs below is the part to check before trying it.
 FROM debian:trixie-slim AS base
 WORKDIR /app
 
@@ -42,12 +42,6 @@ RUN printf '%s\n' \
 # colr box and so cannot tag a still as HDR at all; that box is the whole reason
 # libavif is here.
 #
-# liblensfun1 pulls its data package with it, and both halves are needed: the
-# library is what rawshim links, and the ~4MB of XML under /usr/share/lensfun is
-# where every lens profile lives. Without the data the database loads empty and
-# every Canon frame silently falls back to fitting its own geometry - twice the
-# time for a slightly worse grade, with nothing in the logs to say why.
-#
 # **mesa-vulkan-drivers is not optional, and this image did not need it until the
 # grade moved to the GPU.** The shaders are the only implementation of the grade -
 # `tone.rs`'s was deleted, deliberately - so `job::run` refuses rather than falling
@@ -74,7 +68,7 @@ RUN printf '%s\n' \
 # libhwy1, libbrotli1 and liblcms2-2 are the same arrangement under the pinned libjxl.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     liblensfun1 libavif16 libaom3 libdav1d7 libsharpyuv0 libhwy1 libbrotli1 liblcms2-2 \
+     libavif16 libaom3 libdav1d7 libsharpyuv0 libhwy1 libbrotli1 liblcms2-2 \
      mesa-vulkan-drivers libegl1 \
   && rm /usr/share/vulkan/icd.d/lvp_icd.json \
   && rm -rf /var/lib/apt/lists/*
@@ -188,20 +182,20 @@ RUN bun install --frozen-lockfile --production
 # The entrypoint picks between them by running each, so nothing here has to predict
 # what the host supports.
 FROM base AS native
-# The -dev half of what base installs. build.rs generates the lensfun and libavif
-# bindings from these headers, so this stage has to inherit base rather than fork
-# beside it: the generated field offsets are only right against the library the headers
-# describe, and inheriting is what makes them the same package at the same version.
+# The -dev half of what base installs. This stage has to inherit base rather than fork
+# beside it: the codecs the pinned libavif and libjxl link dynamically are only right against
+# the library the headers describe, and inheriting is what makes them the same package at the
+# same version.
 #
-# The same four are what a development machine needs, and there is no substitute for
-# any of them: without the -dev packages the crate does not link, and without
-# libclang-dev bindgen cannot parse the headers it does have.
+# The same set is what a development machine needs, and there is no substitute for any of
+# them: without the -dev packages the crate does not link, and without libclang-dev bindgen
+# cannot parse the headers it does have.
 #
 # libavif and libjxl are not among them: the two `get-` scripts below build the pinned ones, and
 # what they need from apt is the libraries underneath them and cmake to drive the builds.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     liblensfun-dev libaom-dev libdav1d-dev libsharpyuv-dev cmake \
+     libaom-dev libdav1d-dev libsharpyuv-dev cmake \
      libhwy-dev libbrotli-dev liblcms2-dev \
      build-essential ca-certificates curl git libclang-dev \
   && rm -rf /var/lib/apt/lists/*
