@@ -67,9 +67,6 @@ const styles = stylex.create({
       inset: '-16px 0',
     },
   },
-  shortGrab: {
-    '::before': { inset: '-8px 0' },
-  },
 });
 
 /**
@@ -101,7 +98,6 @@ export function Slider({
   tone,
   valueText,
   focusable = true,
-  shortGrab = false,
   style,
 }: {
   value: number;
@@ -155,8 +151,6 @@ export function Slider({
    * unreachable by keyboard, and no arrow key ever gets past the track.
    */
   focusable?: boolean;
-  /** Half the finger's reach above and below the thumb, for a slider in a row too thin to overhang. */
-  shortGrab?: boolean;
   /** On the root, whose height the control inside it takes. */
   style?: stylex.StyleXStyles;
 }): JSX.Element {
@@ -217,7 +211,7 @@ export function Slider({
           {/* On the thumb, which is what carries the range input: the control around it is a
               plain div, so a name left there reaches nothing that announces a value. */}
           <BaseSlider.Thumb
-            {...stylex.props(styles.thumb, shortGrab && styles.shortGrab, focusRing.within)}
+            {...stylex.props(styles.thumb, focusRing.within)}
             aria-label={label}
             getAriaValueText={valueText == null ? undefined : (_formatted, at) => valueText(at)}
             tabIndex={focusable ? undefined : -1}

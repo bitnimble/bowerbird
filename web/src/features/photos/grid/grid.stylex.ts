@@ -22,5 +22,3 @@ export const gridVars = stylex.defineVars({
 
 /** On a tile, for what a tile's own children draw while it is hovered or holds focus. */
 export const tileMarker = stylex.defineMarker();
-
-export const stripMarker = stylex.defineMarker();

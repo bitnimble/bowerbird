@@ -1,7 +1,16 @@
 import * as stylex from '@stylexjs/stylex';
 import { color, derivedSize, font, size } from '../../../ui/tokens.stylex';
 import type { ViewMode } from '../photos_store';
-import { gridVars, stripMarker, tileMarker } from './grid.stylex';
+import { gridVars, tileMarker } from './grid.stylex';
+
+const COARSE = '@media (pointer: coarse)';
+
+/** The gutter the grab on the strip's facing edge sits in, which `STRIP_CHROME` in `viewer_edges.ts` also counts. */
+const STRIP_HANDLE = '8px';
+/** How far past that gutter the grab reaches, into the gap between the strip and the photograph. */
+const HANDLE_OVERHANG = '6px';
+/** How long the bar under a finger is drawn, which is a grip rather than the whole edge. */
+const GRAB_LENGTH = '36px';
 
 // Not `ICON`, which is the size a control's icons are: these sit in a badge whose siblings are 9px
 // uppercase, and a glyph at control size towers over the words beside it.
@@ -722,6 +731,7 @@ export const strip = stylex.create({
     // No gutter unless there is something to seek: the bar is unmounted for a collection
     // the strip shows whole, and an empty gutter reads as a missing photograph.
     [gridVars.barW]: '0px',
+    position: 'relative',
     flexGrow: 0,
     flexShrink: 0,
     flexBasis: 'auto',
@@ -734,6 +744,14 @@ export const strip = stylex.create({
   },
   seekable: {
     [gridVars.barW]: '12px',
+  },
+  // Room for the resize handle that the cells do not share: drawn over them instead, the
+  // edge would swallow a click on the top of every photograph in the strip.
+  gutterX: {
+    paddingTop: STRIP_HANDLE,
+  },
+  gutterY: {
+    paddingLeft: STRIP_HANDLE,
   },
   viewportY: {
     width: `calc(${gridVars.strip} + ${gridVars.barW})`,
@@ -774,31 +792,52 @@ export const strip = stylex.create({
     overflowX: 'hidden',
     overflowY: 'auto',
   },
-  zoom: {
-    flexGrow: 0,
-    flexShrink: 0,
-    flexBasis: 'auto',
-    display: 'flex',
-    justifyContent: 'flex-end',
-    // Inside the bar's gutter and a little more: a track hard against the strip's edge reads
-    // as something that has slipped off it.
-    paddingTop: 0,
-    paddingRight: `calc(${gridVars.barW} + 6px)`,
-    paddingBottom: '4px',
-    paddingLeft: 0,
-    opacity: { default: 0.45, [stylex.when.ancestor(':hover', stripMarker)]: 1, ':focus-within': 1 },
-    transitionProperty: 'opacity',
-    transitionDuration: '120ms',
-    transitionTimingFunction: 'ease-out',
+  handle: {
+    position: 'absolute',
+    // Over the scroller, which is positioned itself and would otherwise paint across it.
+    zIndex: 3,
+    touchAction: 'none',
+    outline: 'none',
+    '::after': {
+      content: '""',
+      position: 'absolute',
+      left: '50%',
+      top: '50%',
+      transform: 'translate(-50%, -50%)',
+      borderRadius: size.radius,
+      // The grab a finger is given is drawn in the furniture's own grey: it is on screen the
+      // whole time the strip is, and an accent bar the width of the window reads as a state
+      // rather than as something to hold.
+      backgroundColor: { default: color.satin, [COARSE]: color.boneDim },
+      transitionProperty: 'width, height',
+      transitionDuration: '150ms',
+      transitionTimingFunction: 'ease',
+    },
   },
-  zoomY: {
-    paddingTop: '4px',
-    paddingBottom: 0,
+  handleX: {
+    // Out into the gap above, never down over the cells: a finger's worth of grab there is a
+    // band across the top of every photograph in the strip where a tap lands on nothing.
+    top: `calc(0px - ${HANDLE_OVERHANG})`,
+    left: 0,
+    right: 0,
+    height: `calc(${STRIP_HANDLE} + ${HANDLE_OVERHANG})`,
+    cursor: 'row-resize',
+    '::after': {
+      width: { default: '100%', [COARSE]: GRAB_LENGTH },
+      // Drawn from the start under a finger, which has no hover to reveal it with.
+      height: { default: 0, [COARSE]: '4px', ':hover': '3px', ':focus-visible': '3px' },
+    },
   },
-  // Shorter than a control: a 30px track over a 104px strip is a third as tall as the photographs.
-  slider: {
-    width: '84px',
-    height: '14px',
+  handleY: {
+    top: 0,
+    bottom: 0,
+    left: `calc(0px - ${HANDLE_OVERHANG})`,
+    width: `calc(${STRIP_HANDLE} + ${HANDLE_OVERHANG})`,
+    cursor: 'col-resize',
+    '::after': {
+      height: { default: '100%', [COARSE]: GRAB_LENGTH },
+      width: { default: 0, [COARSE]: '4px', ':hover': '3px', ':focus-visible': '3px' },
+    },
   },
   thickness: (thickness: number) => ({ [gridVars.strip]: `${thickness}px` }),
 });

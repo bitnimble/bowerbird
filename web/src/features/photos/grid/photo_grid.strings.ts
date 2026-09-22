@@ -45,7 +45,7 @@ export const PhotoGridStrings = {
   /** What fills an album or a shoot, which is the same act from the same place. */
   addFromLibraryHint: () => 'From the library, select photos to add here.',
 
-  filmstripSize: () => 'Filmstrip size',
+  resizeFilmstrip: () => 'Resize filmstrip',
   scrollbar: () => 'Scroll through photos',
   scrollbarPosition: (position: number, total: number) => `photo ${position} of ${total}`,
 };
