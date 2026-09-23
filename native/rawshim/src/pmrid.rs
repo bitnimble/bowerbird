@@ -958,7 +958,7 @@ fn denoise_through(
 
     let (luma, colour) = detail.resolved(Some(fit));
     let (pw, ph) = (window_w / 2, window_h / 2);
-    let mut held = Session::hold(gpu, pmrid, pw, ph);
+    let mut held = Session::take(gpu, pmrid, pw, ph);
     // Seeded from the caller's, so a photosite no tile keeps - the odd row or column past the last
     // whole 2x2 site - comes back as it arrived rather than as zero.
     let filtered = mosaic.duplicate(gpu);
@@ -990,6 +990,7 @@ fn denoise_through(
         }
     }
     *mosaic = filtered;
+    held.put_back();
 }
 
 /// The window every tile of a `width` by `height` mosaic is taken through: of those whose arena
@@ -1091,8 +1092,70 @@ struct Edges {
     colour: f32,
 }
 
+/// Arenas kept between frames while anyone holds them ([`hold_arenas`]), keyed by the shape of
+/// arena they are: packed width, packed height and cell size.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+struct Kept<T> {
+    holds: usize,
+    idle: Vec<((usize, usize, usize), T)>,
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+impl<T> Kept<T> {
+    const fn new() -> Kept<T> {
+        Kept { holds: 0, idle: Vec::new() }
+    }
+
+    fn release(&mut self) {
+        self.holds = self.holds.saturating_sub(1);
+        if self.holds == 0 {
+            self.idle.clear();
+        }
+    }
+
+    fn take(&mut self, shape: (usize, usize, usize)) -> Option<T> {
+        let at = self.idle.iter().position(|(kept, _)| *kept == shape)?;
+        Some(self.idle.swap_remove(at).1)
+    }
+
+    /// **Only the last shape put back is kept**, since a queue renders one camera's frames at a
+    /// time and a pool of every size it has met would hold as many arenas. Of that shape, one arena
+    /// for each frame that was denoised at once, which is what those frames held anyway.
+    fn put(&mut self, shape: (usize, usize, usize), arena: T) {
+        if self.holds == 0 {
+            return;
+        }
+        self.idle.retain(|(kept, _)| *kept == shape);
+        self.idle.push((shape, arena));
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static KEPT: std::sync::Mutex<Kept<Session>> = std::sync::Mutex::new(Kept::new());
+
+#[cfg(not(target_arch = "wasm32"))]
+fn kept() -> std::sync::MutexGuard<'static, Kept<Session>> {
+    KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Keeps each frame's arena for the next frame of its size, until every hold is released: for a
+/// queue of renders, where allocating the arena and freeing it is a tenth of the denoise. Without
+/// one an arena is freed with its frame.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn hold_arenas() {
+    kept().holds += 1;
+}
+
+/// Ends one [`hold_arenas`]; the last frees every arena kept.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn release_arenas() {
+    kept().release();
+}
+
 /// The arena and the bindings one tile size needs, built once and dispatched over every tile.
 struct Session {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    shape: (usize, usize, usize),
     arena: crate::gpu::Buffer,
     edges: crate::gpu::Buffer,
     /// Held because a bind group does not: dropping these destroys the buffers under it.
@@ -1107,6 +1170,27 @@ struct Session {
 }
 
 impl Session {
+    /// An idle arena of this shape where one is kept, or a new one.
+    fn take(gpu: &'static crate::gpu::Gpu, pmrid: &Pmrid, pw: usize, ph: usize) -> Session {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(kept) = kept().take((pw, ph, pmrid.cell)) {
+            return kept;
+        }
+        Session::hold(gpu, pmrid, pw, ph)
+    }
+
+    /// Back among the idle arenas while anyone holds them, and freed otherwise.
+    fn put_back(self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut session = self;
+            // The frame's bind groups hold its mosaic, which is the caller's to free.
+            session.groups.clear();
+            session.coop_group = None;
+            kept().put(session.shape, session);
+        }
+    }
+
     fn hold(gpu: &'static crate::gpu::Gpu, pmrid: &Pmrid, pw: usize, ph: usize) -> Session {
         let net = &pmrid.net;
         let (at, cells) = lay_out(net, pmrid.prediction, pw, ph, pmrid.coop.is_some());
@@ -1170,6 +1254,7 @@ impl Session {
             .collect();
 
         Session {
+            shape: (pw, ph, pmrid.cell),
             arena,
             edges,
             groups: Vec::new(),
@@ -1447,6 +1532,30 @@ fn widest_that_fills(out_channels: usize, plane: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// An arena outlives its frame only while held, only for a frame of its shape, and not past
+    /// the last release.
+    #[test]
+    fn an_arena_is_kept_only_while_held() {
+        let (shape, other) = ((640, 640, 2), (512, 640, 2));
+        let mut kept = super::Kept::new();
+        kept.put(shape, 'a');
+        assert_eq!(kept.take(shape), None, "kept with nothing holding it");
+
+        kept.holds = 2;
+        kept.put(shape, 'a');
+        assert_eq!(kept.take(other), None);
+        assert_eq!(kept.take(shape), Some('a'));
+        kept.put(shape, 'a');
+        kept.put(other, 'b');
+        assert_eq!(kept.take(shape), None, "a shape no longer rendered is still held");
+
+        kept.release();
+        assert_eq!(kept.take(other), Some('b'), "freed while a hold remains");
+        kept.put(other, 'b');
+        kept.release();
+        assert_eq!(kept.take(other), None, "kept past the last release");
+    }
+
     /// Every window tried is one the halvings divide and the frame holds, and a frame they divide
     /// is tried whole.
     #[test]
@@ -1569,6 +1678,44 @@ mod tests {
             (edge / inside - 1.0).abs() < 0.1,
             "the last columns keep {edge:.2e} of noise where the rest keeps {inside:.2e}",
         );
+    }
+
+    /// A frame denoised in an arena another frame left behind comes out as it does in a new one.
+    #[test]
+    fn a_kept_arena_denoises_what_a_new_one_does() {
+        let Some(gpu) = crate::gpu::device() else { return };
+        let network = super::device(gpu).expect("the network built");
+        let (width, height) = (512, 256);
+        let denoised = |seed: u64| {
+            let mut seed = seed;
+            let frame: Vec<f32> = (0..width * height)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    0.3 + 0.04 * ((seed >> 40) as f32 / 16777216.0 - 0.5)
+                })
+                .collect();
+            let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+            let fit = crate::galosh::NoiseFit {
+                alpha: 4.121e-4,
+                sigma_sq: 3.494e-6,
+                unified_sigma: 0.003,
+                dark_ref: [0.0; 4],
+            };
+            let mut mosaic = crate::condition::Mosaic::upload(gpu, &frame, width, height);
+            let detail = crate::galosh::Detail::at(100.0, 100.0);
+            super::denoise(gpu, network, &mut mosaic, &cfa, [1.0, 1.0, 1.0], detail, fit);
+            pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back")
+        };
+        let fresh = denoised(7);
+
+        super::hold_arenas();
+        denoised(3);
+        let reused = denoised(7);
+        super::release_arenas();
+
+        assert!(fresh == reused, "the second frame read what the first left in its arena");
     }
 
     /// Every shader holds the arena in the type the host sizes it for: `float` in the WGSL pass a

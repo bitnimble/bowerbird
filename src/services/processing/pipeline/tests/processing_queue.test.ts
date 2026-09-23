@@ -66,6 +66,40 @@ describe('ProcessingService.processUnprocessed', () => {
     };
   }
 
+  it('renders a batch inside one hold on render memory, released when it settles', async () => {
+    const repo = {
+      listPendingProcessing: jest.fn(() => [pending('a'), pending('b')]),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+    const holds: { postedBefore: number; postedAfter: number | null }[] = [];
+    const holding = async <T,>(run: () => Promise<T>): Promise<T> => {
+      const hold = { postedBefore: posted.length, postedAfter: null as number | null };
+      holds.push(hold);
+      try {
+        return await run();
+      } finally {
+        hold.postedAfter = posted.length;
+      }
+    };
+    const service = new ProcessingService(
+      repo,
+      {} as unknown as PhotoPathsRepository,
+      {} as unknown as PhotoListingRepository,
+      settingsWith({}),
+      undefined,
+      undefined,
+      undefined,
+      holding,
+    );
+
+    await service.processUnprocessed({ libraryId: 'lib' });
+
+    expect(holds).toEqual([{ postedBefore: 0, postedAfter: 4 }]);
+    expect(posted).toHaveLength(4);
+  });
+
   it('carries a saved exposure to every job in the stops the document holds', async () => {
     // Stops all the way to the shader, which raises them once for both hosts. Pinned because
     // converting here would not fail: `4` is a legal exposure, so a photo edited to +2 EV

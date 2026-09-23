@@ -68,6 +68,9 @@ const SYMBOLS = {
   // Tells whatever job is running to stop at the next boundary it counts itself at. Called from
   // the same thread `bb_job_progress` is, and for the same reason.
   bb_cancel_job: { args: [], returns: FFIType.void },
+  // What a render allocates, kept for the next one between a hold and its release.
+  bb_hold_render_memory: { args: [], returns: FFIType.void },
+  bb_release_render_memory: { args: [], returns: FFIType.void },
   // A response body on its way to a socket, copied into a buffer the caller owns
   // rather than handed over as an address (§10.4).
   bb_transcode_jpeg: {

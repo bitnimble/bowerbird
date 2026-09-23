@@ -115,6 +115,21 @@ export function cancelJob(): void {
   shim().bb_cancel_job();
 }
 
+/**
+ * `run`, with what each render allocates kept for the next until it settles.
+ *
+ * For a queue of renders, where the denoise's arena is a tenth of each one. A render outside any
+ * of these frees what it allocated as it finishes, so nothing is held while nothing renders.
+ */
+export async function holdingRenderMemory<T>(run: () => Promise<T>): Promise<T> {
+  shim().bb_hold_render_memory();
+  try {
+    return await run();
+  } finally {
+    shim().bb_release_render_memory();
+  }
+}
+
 const POLL_MS = 250;
 
 /** One job, with `report` told how far into it the native side is until it ends. */

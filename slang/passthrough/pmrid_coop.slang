@@ -122,7 +122,8 @@
 // multiplies in them left out 65: the matrix units are all but idle, and what the layers cost is
 // feeding them - staging the patch, the depthwise, the barriers between the two, and writing the
 // answer back, in roughly equal parts. That is what [`separable`] is shaped around. A tenth of the
-// frame is not a layer at all: allocating the 384MB arena is 5.5ms and freeing it about 4.
+// frame is not a layer at all: allocating the 384MB arena is 5.5ms and freeing it about 4, which a
+// queue of renders pays once rather than a frame (`pmrid::hold_arenas`).
 //
 // **And the feeding is bound by how many workgroups a multiprocessor holds, from both sides at
 // once.** `coopmat registers` reads what the driver compiled: `separable_64` is 79 registers a
