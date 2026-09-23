@@ -5,6 +5,8 @@ pub(crate) const ALBEDO_VIEWS: u32 = 128;
 pub(crate) const ALBEDO_ROUGHNESSES: u32 = 64;
 pub(crate) const ALBEDO_BYTES: u64 = (ALBEDO_VIEWS as u64 + 1) * ALBEDO_ROUGHNESSES as u64 * 4;
 const FRAME_BORDER: Share = Share::of(1, 8);
+const LAMP_REACH: f64 = 10.0;
+const LAMP_NEAREST: f64 = 1.0;
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -33,8 +35,14 @@ pub struct Scene {
     pub yaw_degrees: f64,
     pub pitch_degrees: f64,
     pub key_lux: Light<Illuminance>,
-    pub light_azimuth_degrees: f64,
-    pub light_elevation_degrees: f64,
+    /// Where the lamp hangs, in print lengths from the sheet's centre: to the reader's right, up,
+    /// and out towards the reader.
+    #[serde(deserialize_with = "print_lengths")]
+    pub light_across: Share,
+    #[serde(deserialize_with = "print_lengths")]
+    pub light_height: Share,
+    #[serde(deserialize_with = "print_lengths")]
+    pub light_forward: Share,
     pub light_angular_degrees: f64,
     pub fill_lux: Light<Illuminance>,
     pub light_temperature_kelvin: f64,
@@ -42,11 +50,20 @@ pub struct Scene {
     pub white_reflectance: Gain,
     pub black_reflectance: Gain,
     pub refractive_index: f64,
-    #[serde(deserialize_with = "print_lengths")]
-    pub light_distance: Share,
     #[serde(deserialize_with = "millimetres")]
     pub paper_long_edge_mm: Extent<Millimetre>,
     pub surface_texture: f64,
+    /// The camera's focal length as a multiple of its own, which is the reader's zoom.
+    #[serde(default = "one")]
+    pub zoom: f64,
+    #[serde(default)]
+    pub pan_x: f64,
+    #[serde(default)]
+    pub pan_y: f64,
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 impl Default for Scene {
@@ -59,18 +76,21 @@ impl Default for Scene {
             yaw_degrees: -12.0,
             pitch_degrees: 8.0,
             key_lux: Light::exactly(1000.0),
-            light_azimuth_degrees: 0.0,
-            light_elevation_degrees: 75.0,
+            light_across: Share::of(0, 1),
+            light_height: Share::measured(3.9, 1.0),
+            light_forward: Share::measured(1.7, 1.0),
             light_angular_degrees: 1.0,
             fill_lux: Light::exactly(500.0),
             light_temperature_kelvin: 6500.0,
-            roughness: 0.28,
+            roughness: 0.18,
             white_reflectance: Gain::of_ratio(0.9),
             black_reflectance: Gain::of_ratio(0.008),
             refractive_index: 1.5,
-            light_distance: Share::of(4, 1),
             paper_long_edge_mm: Extent::exactly(300.0),
             surface_texture: 0.5,
+            zoom: 1.0,
+            pan_x: 0.0,
+            pan_y: 0.0,
         }
     }
 }
@@ -87,8 +107,9 @@ impl Scene {
             ("yawDegrees", self.yaw_degrees, -180.0, 180.0),
             ("pitchDegrees", self.pitch_degrees, -85.0, 85.0),
             ("keyLux", self.key_lux.raw(), 0.0, 10000.0),
-            ("lightAzimuthDegrees", self.light_azimuth_degrees, -180.0, 180.0),
-            ("lightElevationDegrees", self.light_elevation_degrees, -85.0, 85.0),
+            ("lightAcross", self.light_across.raw(), -LAMP_REACH, LAMP_REACH),
+            ("lightHeight", self.light_height.raw(), -LAMP_REACH, LAMP_REACH),
+            ("lightForward", self.light_forward.raw(), -LAMP_REACH, LAMP_REACH),
             ("lightAngularDegrees", self.light_angular_degrees, 0.1, 90.0),
             ("fillLux", self.fill_lux.raw(), 0.0, 10000.0),
             ("lightTemperatureKelvin", self.light_temperature_kelvin, 2000.0, 10000.0),
@@ -96,23 +117,47 @@ impl Scene {
             ("whiteReflectance", self.white_reflectance.raw(), 0.5, 0.99),
             ("blackReflectance", self.black_reflectance.raw(), 0.001, 0.2),
             ("refractiveIndex", self.refractive_index, 1.0, 2.0),
-            ("lightDistance", self.light_distance.raw(), 1.0, 20.0),
             ("paperLongEdgeMm", self.paper_long_edge_mm.raw(), 50.0, 1000.0),
             ("surfaceTexture", self.surface_texture, 0.0, 1.0),
+            ("zoom", self.zoom, 1.0, 8.0),
+            ("panX", self.pan_x, -1.0, 1.0),
+            ("panY", self.pan_y, -1.0, 1.0),
         ] {
             if !value.is_finite() || !(minimum..=maximum).contains(&value) {
                 return Err(format!("{name} must be between {minimum} and {maximum}"));
             }
         }
+        let (_, distance) = self.lamp();
+        if distance.raw() < LAMP_NEAREST {
+            return Err(format!("the lamp must hang at least {LAMP_NEAREST} print length from the sheet"));
+        }
         Ok(())
+    }
+
+    /// The lamp placed by its angles from the sheet rather than by where it hangs: `azimuth`
+    /// round towards the reader's right, `elevation` up, `distance` in print lengths.
+    pub fn lit_from(self, azimuth_degrees: f64, elevation_degrees: f64, distance: f64) -> Scene {
+        let (azimuth_sin, azimuth_cos) = azimuth_degrees.to_radians().sin_cos();
+        let (elevation_sin, elevation_cos) = elevation_degrees.to_radians().sin_cos();
+        Scene {
+            light_across: Share::measured(distance * azimuth_sin * elevation_cos, 1.0),
+            light_height: Share::measured(distance * elevation_sin, 1.0),
+            light_forward: Share::measured(distance * azimuth_cos * elevation_cos, 1.0),
+            ..self
+        }
+    }
+
+    /// The direction from the sheet's centre to the lamp, and how far along it the lamp hangs.
+    fn lamp(&self) -> ([f64; 3], Share) {
+        let at = [self.light_across.raw(), self.light_height.raw(), self.light_forward.raw()];
+        let distance = at.iter().map(|value| value * value).sum::<f64>().sqrt();
+        (at.map(|value| value / distance.max(f64::MIN_POSITIVE)), Share::measured(distance, 1.0))
     }
 
     pub(crate) fn light_parameters(&self) -> [f32; 4] {
         let (yaw_sin, yaw_cos) = self.yaw_degrees.to_radians().sin_cos();
         let (pitch_sin, pitch_cos) = self.pitch_degrees.to_radians().sin_cos();
-        let (azimuth_sin, azimuth_cos) = self.light_azimuth_degrees.to_radians().sin_cos();
-        let (elevation_sin, elevation_cos) = self.light_elevation_degrees.to_radians().sin_cos();
-        let light = [azimuth_sin * elevation_cos, elevation_sin, azimuth_cos * elevation_cos];
+        let (light, _) = self.lamp();
         let normal = [yaw_sin, -pitch_sin * yaw_cos, pitch_cos * yaw_cos];
         let facing = if normal[2] < 0.0 { -1.0 } else { 1.0 };
         let tangent = if light[2].abs() < 0.99 { [-light[1], light[0], 0.0] }
@@ -132,20 +177,20 @@ impl Scene {
     pub(crate) fn uniform(&self) -> Vec<u8> {
         let (yaw_sin, yaw_cos) = self.yaw_degrees.to_radians().sin_cos();
         let (pitch_sin, pitch_cos) = self.pitch_degrees.to_radians().sin_cos();
-        let (azimuth_sin, azimuth_cos) = self.light_azimuth_degrees.to_radians().sin_cos();
-        let (elevation_sin, elevation_cos) = self.light_elevation_degrees.to_radians().sin_cos();
-        let distance = self.light_distance.across(Span::<PrintUnit>::exact(2));
+        let (light, lengths) = self.lamp();
+        let distance = lengths.across(Span::<PrintUnit>::exact(2));
         let half_width = Extent::<PrintUnit>::measured(distance.raw() * (self.light_angular_degrees.to_radians() * 0.5).tan());
         let half_paper = Extent::<Millimetre>::measured(self.paper_long_edge_mm.raw() * 0.5);
         [
             yaw_sin, yaw_cos, pitch_sin, pitch_cos,
-            azimuth_sin * elevation_cos, elevation_sin, azimuth_cos * elevation_cos, 0.0,
+            light[0], light[1], light[2], 0.0,
             self.roughness, self.white_reflectance.raw(), self.black_reflectance.raw(),
             self.refractive_index,
             self.key_lux.raw(), self.light_temperature_kelvin, self.fill_lux.raw(),
             if matches!(self.presentation, Presentation::Surface) { 1.0 } else { 0.0 },
             distance.raw(), half_width.raw(), half_paper.raw(), self.surface_texture,
             if self.framed { 1.0 } else { 0.0 }, if self.framed { FRAME_BORDER.raw() } else { 0.0 }, 0.0, 0.0,
+            self.zoom, self.pan_x, self.pan_y, 0.0,
         ].into_iter().flat_map(|word| (word as f32).to_le_bytes()).collect()
     }
 
@@ -205,6 +250,25 @@ mod tests {
             assert_eq!(values[2] - values[0], values[3] - values[1]);
             assert_eq!(Scene::default().display_size(shape), (shape.0 as f64, shape.1 as f64));
         }
+    }
+
+    fn luminance(sample: [f32; 8]) -> f64 {
+        sample.into_iter().zip(crate::hdr_fit::LUMA).map(|(value, weight)| f64::from(value) * weight).sum()
+    }
+
+    /// What the same sheet reads with the lamp turned to stand behind it, which is the room the lamp
+    /// makes and nothing of the lamp itself: the bounce follows the room's own shape rather than the
+    /// lamp's direction or its size, so it survives the turn untouched where every direct term goes
+    /// to zero. Narrowed to a point on the way, since a wide emitter behind a *turned* sheet still
+    /// shows it a corner.
+    fn room_of(scene: &Scene, probes: &[[f32; 8]]) -> Vec<[f32; 8]> {
+        let scene = Scene {
+            light_across: Share::measured(-scene.light_across.raw(), 1.0),
+            light_forward: Share::measured(-scene.light_forward.raw(), 1.0),
+            light_angular_degrees: 0.1,
+            ..*scene
+        };
+        probe(&scene, "lighting", probes)
     }
 
     fn probe(scene: &Scene, entry: &str, probes: &[[f32; 8]]) -> Vec<[f32; 8]> {
@@ -311,9 +375,8 @@ mod tests {
     fn print_meter_matches_received_light_and_sees_the_visible_back() {
         let scene = Scene {
             yaw_degrees: 0.0, pitch_degrees: 0.0,
-            light_azimuth_degrees: 0.0, light_elevation_degrees: 0.0,
             fill_lux: Light::ZERO, refractive_index: 1.0, ..Scene::default()
-        };
+        }.lit_from(0.0, 0.0, 4.0);
         for angle in [0.1, 1.0, 30.0, 90.0] {
             let meter = calibrated(&Scene { light_angular_degrees: angle, ..scene });
             assert!((meter[1] - 1.0).abs() < 1e-6, "aligned {angle}° emitter: {meter:?}");
@@ -322,15 +385,15 @@ mod tests {
         assert!((turned[1] - 0.5).abs() < 1e-6, "oblique illumination: {turned:?}");
         let back = calibrated(&Scene { yaw_degrees: 180.0, ..scene });
         assert!((back[1] - 1.0).abs() < 1e-6, "visible back: {back:?}");
-        let behind = calibrated(&Scene { light_azimuth_degrees: 180.0, ..scene });
+        let behind = calibrated(&scene.lit_from(180.0, 0.0, 4.0));
         assert_eq!(behind[1], 0.0, "light behind paper: {behind:?}");
         for yaw in [0.0, 60.0, 85.0] {
             let scene = Scene { yaw_degrees: yaw, light_angular_degrees: 90.0, ..scene };
             let meter = calibrated(&scene);
-            let reflected = probe(&scene, "lighting", &[[0.28, 0.0, 1.0, 32768.0, 0.0, 0.0, 0.0, 0.0]])[0];
-            let luminance = reflected.into_iter().zip(crate::hdr_fit::LUMA)
-                .map(|(value, weight)| f64::from(value) * weight).sum::<f64>();
-            let received = (luminance * std::f64::consts::PI / scene.key_lux.raw()) as f32;
+            let inputs = [[0.28, 0.0, 1.0, 32768.0, 0.0, 0.0, 0.0, 0.0]];
+            let lit = probe(&scene, "lighting", &inputs)[0];
+            let received = ((luminance(lit) - luminance(room_of(&scene, &inputs)[0]))
+                * std::f64::consts::PI / scene.key_lux.raw()) as f32;
             assert!((received - meter[1]).abs() < 0.0005, "meter differs from rendered light at {yaw}°: {received} vs {meter:?}");
             if yaw == 85.0 {
                 assert!(meter[1] > yaw.to_radians().cos() as f32 + 0.02, "finite light crossing horizon: {meter:?}");
@@ -376,36 +439,41 @@ mod tests {
 
     #[test]
     fn print_softbox_obeys_solid_angle_falloff_and_sampling_converges() {
-        let luminance = |sample: [f32; 8]| sample.into_iter().zip(crate::hdr_fit::LUMA)
-            .map(|(value, weight)| f64::from(value) * weight).sum::<f64>();
         let scene = Scene {
-            yaw_degrees: 0.0, pitch_degrees: 0.0, light_azimuth_degrees: 0.0,
-            light_elevation_degrees: 0.0, light_distance: Share::of(1, 1),
+            yaw_degrees: 0.0, pitch_degrees: 0.0,
             light_angular_degrees: 2.0 * 0.5_f64.atan().to_degrees(),
             refractive_index: 1.0, fill_lux: Light::ZERO, ..Scene::default()
-        };
-        let results = probe(&scene, "lighting", &[
+        }.lit_from(0.0, 0.0, 1.0);
+        let inputs = [
             [0.28, 0.0, 1.0, 32768.0, 0.0, 0.0, 0.0, 0.0],
             [0.28, 0.0, 1.0, 32768.0, 1.0, 0.0, 0.0, 0.0],
             [0.28, 0.0, 1.0, 32768.0, 0.0, 0.0, -2.0, 0.0],
-        ]);
-        assert!((luminance(results[0]) - 1000.0 / std::f64::consts::PI).abs() < 0.05, "centre lux: {results:?}");
-        assert!((luminance(results[1]) - 219.74997).abs() < 0.05, "off-axis flux: {results:?}");
-        assert!((luminance(results[2]) - 85.36209).abs() < 0.05, "finite distance: {results:?}");
+        ];
+        let results = probe(&scene, "lighting", &inputs);
+        let room = room_of(&scene, &inputs);
+        let direct = |at: usize| luminance(results[at]) - luminance(room[at]);
+        assert!((direct(0) - 1000.0 / std::f64::consts::PI).abs() < 0.05, "centre lux: {results:?}");
+        assert!((direct(1) - 219.74997).abs() < 0.05, "off-axis flux: {results:?}");
+        assert!((direct(2) - 85.36209).abs() < 0.05, "finite distance: {results:?}");
         assert!((results[0][3] - 1.5).abs() < 1e-5, "rectangle solid-angle PDF: {results:?}");
         for angular_degrees in [0.1, 1.0, 25.0, 60.0, 90.0] {
             let scene = Scene { light_angular_degrees: angular_degrees, ..scene };
-            let results = probe(&scene, "lighting", &[[0.28, 0.0, 1.0, 32768.0, 0.0, 0.0, 0.0, 0.0]]);
-            assert!((luminance(results[0]) - 1000.0 / std::f64::consts::PI).abs() < 0.05,
-                "calibrated {angular_degrees}° softbox: {results:?}");
+            let inputs = [[0.28, 0.0, 1.0, 32768.0, 0.0, 0.0, 0.0, 0.0]];
+            let results = probe(&scene, "lighting", &inputs);
+            let lamp = luminance(results[0]) - luminance(room_of(&scene, &inputs)[0]);
+            assert!((lamp - 1000.0 / std::f64::consts::PI).abs() < 0.05,
+                "calibrated {angular_degrees}° softbox: {lamp} from {results:?}");
         }
         for roughness in [0.08, 0.28, 0.65] {
             let scene = Scene { refractive_index: 1.5, ..scene };
-            let results = probe(&scene, "lighting", &[
+            let inputs = [
                 [roughness, 0.2, 0.5, 128.0, 0.6, 0.2, 0.0, 0.0],
                 [roughness, 0.2, 0.5, 32768.0, 0.6, 0.2, 0.0, 0.0],
-            ]);
-            assert!((results[0][0] / results[1][0] - 1.0).abs() < 0.025,
+            ];
+            let results = probe(&scene, "lighting", &inputs);
+            let room = room_of(&scene, &inputs);
+            let sampled = |at: usize| f64::from(results[at][0]) - f64::from(room[at][0]);
+            assert!((sampled(0) / sampled(1) - 1.0).abs() < 0.025,
                 "quadrature roughness={roughness}: {results:?}");
             assert!((results[0][5] - scene.roughness as f32).abs() < 1e-6, "unresolved texture must filter away");
         }
@@ -413,10 +481,7 @@ mod tests {
 
     #[test]
     fn print_softbox_has_a_smooth_hdr_radiance_profile() {
-        let scene = Scene {
-            light_azimuth_degrees: 0.0, light_elevation_degrees: 0.0,
-            ..Scene::default()
-        };
+        let scene = Scene::default().lit_from(0.0, 0.0, 4.0);
         let inputs = [0.0, 0.5, 0.9, 1.0, 1.1].map(|x| [x, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
         let results = probe(&scene, "emitter", &inputs);
         assert!(results[0][0] > 1000.0, "HDR emitter: {results:?}");
@@ -466,7 +531,8 @@ mod tests {
         assert!(scene.validate().is_err());
         for scene in [
             Scene { refractive_index: f64::NAN, ..Scene::default() },
-            Scene { light_distance: Share::of(21, 1), ..Scene::default() },
+            Scene { light_forward: Share::of(11, 1), ..Scene::default() },
+            Scene::default().lit_from(0.0, 30.0, 0.5),
             Scene { paper_long_edge_mm: Extent::exactly(0.0), ..Scene::default() },
             Scene { surface_texture: 1.01, ..Scene::default() },
         ] {
@@ -531,12 +597,10 @@ mod tests {
         let mut scene = Scene {
             yaw_degrees: 0.0,
             pitch_degrees: 0.0,
-            light_azimuth_degrees: 0.0,
-            light_elevation_degrees: 0.0,
             fill_lux: Light::ZERO,
             roughness: 0.08,
             ..Scene::default()
-        };
+        }.lit_from(0.0, 0.0, 4.0);
         let first = uploaded.draw_print(&grade, &pyramid, &scene);
         assert!(first[center] > 1.0, "specular reflection must reach HDR");
         let hdr_grade = Grade { peak_nits: Light::exactly(1000.0), ..grade };
@@ -548,22 +612,24 @@ mod tests {
         };
         assert!((linear(twice[center]) / linear(first[center]) - 1.0).abs() < 0.015);
         let mut metered = Scene {
-            light_elevation_degrees: 75.0, refractive_index: 1.0,
-            key_lux: Light::exactly(1000.0), ..scene
-        };
-        let facing = uploaded.draw_print(&grade, &pyramid, &metered);
-        for pitch in [-37.5, -75.0, 0.0] {
+            refractive_index: 1.0, key_lux: Light::exactly(1000.0), ..scene
+        }.lit_from(0.0, 75.0, 4.0);
+        // The meter is the room against a sheet hung facing the reader and never against the pose,
+        // so turning the sheet up towards a lamp at 75 degrees gathers more light and arrives
+        // brighter - where metering the pose would hold every one of these at one brightness and
+        // move the background instead.
+        let mut dimmer = linear(uploaded.draw_print(&grade, &pyramid, &metered)[center]);
+        for pitch in [-37.5, -75.0] {
             metered.pitch_degrees = pitch;
-            let rotated = uploaded.draw_print(&grade, &pyramid, &metered);
-            assert!((linear(rotated[center]) / linear(facing[center]) - 1.0).abs() < 0.015,
-                "cached light meter did not follow paper rotation to {pitch}°");
+            let turned = linear(uploaded.draw_print(&grade, &pyramid, &metered)[center]);
+            assert!(turned > dimmer * 1.1, "turning towards the lamp to {pitch}° left the sheet at {dimmer}");
+            dimmer = turned;
         }
         scene.key_lux = Light::ZERO;
         let dark = uploaded.draw_print(&grade, &pyramid, &scene);
         assert_eq!(&dark[center..center + 3], &[0.0, 0.0, 0.0]);
         scene.key_lux = Light::exactly(1000.0);
         scene.yaw_degrees = 180.0;
-        scene.light_azimuth_degrees = 0.0;
         let back = uploaded.draw_print(&grade, &pyramid, &scene);
         let black_frame = vec![0; width * height * 3];
         let black = gpu.upload(&black_frame, &grade, &peak);

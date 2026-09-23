@@ -14,11 +14,15 @@ fn main() -> Result<(), String> {
         "channel" => Tonemap::Channel,
         other => return Err(format!("unknown tone operator {other}")),
     };
+    let zoom = std::env::args()
+        .find_map(|arg| arg.strip_prefix("--zoom=").map(str::to_owned))
+        .map_or(Ok(1.0), |value| value.parse::<f64>().map_err(|_| "invalid zoom"))?;
     let args: Vec<String> = std::env::args()
-        .filter(|arg| arg != "--framed" && arg != "--surface" && !arg.starts_with("--tone="))
+        .filter(|arg| arg != "--framed" && arg != "--surface"
+            && !arg.starts_with("--tone=") && !arg.starts_with("--zoom="))
         .collect();
     if !(3..=4).contains(&args.len()) {
-        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--tone=neutral|filmic|channel]".to_owned());
+        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--tone=neutral|filmic|channel] [--zoom=1]".to_owned());
     }
     let output = std::path::Path::new(&args[2]);
     std::fs::create_dir_all(output).map_err(|error| error.to_string())?;
@@ -77,7 +81,7 @@ fn main() -> Result<(), String> {
     uploaded.collect_candidates(&grade);
     for (name, paper, roughness, white, black, surface_texture) in [
         ("gloss", Paper::Gloss, 0.08, 0.92, 0.004, 0.15),
-        ("satin", Paper::Satin, 0.28, 0.9, 0.008, 0.5),
+        ("satin", Paper::Satin, 0.18, 0.9, 0.008, 0.5),
         ("matte", Paper::Matte, 0.65, 0.88, 0.025, 0.85),
     ] {
         let scene = Scene {
@@ -89,15 +93,14 @@ fn main() -> Result<(), String> {
             white_reflectance: Gain::of_ratio(white),
             black_reflectance: Gain::of_ratio(black),
             surface_texture,
+            zoom,
             ..Scene::default()
         };
         for (view, scene) in [("default", scene), ("glare", Scene {
             yaw_degrees: -15.0,
             pitch_degrees: -12.0,
-            light_azimuth_degrees: -32.0,
-            light_elevation_degrees: 25.0,
             ..scene
-        }), ("ceiling", Scene {
+        }.lit_from(-32.0, 25.0, 4.0)), ("ceiling", Scene {
             yaw_degrees: -8.0,
             pitch_degrees: -40.0,
             ..scene

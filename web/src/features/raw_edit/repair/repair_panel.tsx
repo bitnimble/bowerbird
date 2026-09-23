@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { RotateCcw, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { MOST_FEATHER } from '../../../../../src/schemas/assembly';
 import { STORED_LONG } from '../../../../../src/schemas/stored_grid';
@@ -11,6 +11,7 @@ import { Panel } from '../../../ui/panel';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
 import { MergePageStrings } from '../../photos/merge/merge_page.strings';
+import { EditControl } from '../edit_control';
 import { EditToolsStrings } from '../edit_tools.strings';
 import { reading } from '../edit_sliders';
 import type { EditStore } from '../edit/edit_store';
@@ -19,41 +20,6 @@ import { RawEditPanelStrings } from '../raw_edit_panel.strings';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
 import type { StageStore } from '../stage/stage_store';
 import type { RepairStore, RepairThumbnail } from './repair_store';
-
-function EditControl({
-  label,
-  value,
-  children,
-  styles,
-}: {
-  label: string;
-  value: string;
-  children: React.ReactNode;
-  styles: RawEditPanelStyles;
-}): JSX.Element {
-  return (
-    <div {...stylex.props(styles.control)}>
-      <div {...stylex.props(styles.head)}>
-        <Text as="span" style={styles.name}>
-          {label}
-        </Text>
-        <Text variant="mono" as="span" style={styles.value}>
-          {value}
-        </Text>
-        <button
-          type="button"
-          {...stylex.props(styles.reset, focusRing.ring, styles.resetClean)}
-          title={RawEditPanelStrings.resetControl(label)}
-          aria-label={RawEditPanelStrings.resetControl(label)}
-          disabled
-        >
-          <RotateCcw size={12} {...stylex.props(styles.resetIcon)} />
-        </button>
-      </div>
-      {children}
-    </div>
-  );
-}
 
 function SeamedThumbnail({
   thumbnail,
@@ -117,7 +83,7 @@ export const RepairPanel = observer(function RepairPanel({
         <EditControl
           label={MergePageStrings.blend()}
           value={RawEditPanelStrings.percent(reading(blend, { min: 0, step: 0.05 }))}
-          styles={styles}
+          reset={null}
         >
           <Slider
             style={styles.slider}

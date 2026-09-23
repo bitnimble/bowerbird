@@ -321,39 +321,58 @@ float3 print_filtered(float2 source, float2 dx, float2 dy)
 ///
 /// The display has one answer to this and no reason to offer another: `rolled` compresses on
 /// whichever channel reaches the ceiling first and scales the colour by what that channel gave
-/// up, so a blown cloud stays neutral. Paper is not a display. Its dyes saturate, so a bright
-/// saturated patch bleaches toward the sheet rather than holding its hue at full purity, and a
-/// printer driver reaching the same ceiling per channel is a look people print for on purpose.
-/// Which of the three a photograph wants is a judgement about that photograph.
+/// up, so a blown cloud stays neutral. Paper is not a display. A film stock reshapes the whole
+/// range and bleaches what it compresses, and a printer driver clipping each channel at its ink
+/// limit is a look people print for on purpose. Which of the three a photograph wants is a
+/// judgement about that photograph - and each has to differ from the others on a photograph
+/// whose highlights are simply blown, since that is the one a reader reaches for to compare them.
 static const uint PRINT_TONE_NEUTRAL = 0;
 static const uint PRINT_TONE_FILMIC = 1;
 static const uint PRINT_TONE_CHANNEL = 2;
+
+static const float FILMIC_CONTRAST = 1.4;
+static const float FILMIC_SHOULDER = 0.977;
+static const float FILMIC_GREY = 0.18;
+
+/// A film stock's curve in shares of paper white: grey held, the scene's own peak landed on paper
+/// white, or paper white held where the scene stops short of it, so a low-key frame is shaped and
+/// never lifted. Lottes' two-constraint form, solved per frame for those two points.
+float filmic(float share, float white)
+{
+    let grey = pow(FILMIC_GREY, FILMIC_CONTRAST);
+    let grey_shoulder = pow(grey, FILMIC_SHOULDER);
+    let top = pow(max(white, 1.0), FILMIC_CONTRAST);
+    let top_shoulder = pow(top, FILMIC_SHOULDER);
+    let span = (top_shoulder - grey_shoulder) * FILMIC_GREY;
+    let b = (top * FILMIC_GREY - grey) / span;
+    let c = (top_shoulder * grey - top * grey_shoulder * FILMIC_GREY) / span;
+    let lifted = pow(max(share, 0.0), FILMIC_CONTRAST);
+    return lifted / (pow(lifted, FILMIC_SHOULDER) * b + c);
+}
 
 /// The graded colour as a share of paper white, compressed by whichever operator is chosen.
 float3 print_signal(Colour<SceneNits> nits, float2 at)
 {
     let peak = measured<DisplayNits>(edit.peak);
-    // Unmatched frames never reach the roll-off on the display path either: there is no scene
-    // peak measured to roll from.
-    if (edit.matched == 0) { return within(neutral_nits(nits, at), peak).v / edit.peak; }
-    let scene_peak = measured<DisplayNits>(peak_out[0]);
-    let graded = within(matched_nits(nits, at), scene_peak);
+    // An unmatched frame has no scene peak measured to roll from, on the display path as here, so
+    // it stands in paper white's place and the roll-off finds nothing to do.
+    let matched = edit.matched != 0;
+    let scene_peak = matched ? measured<DisplayNits>(peak_out[0]) : peak;
+    let graded = within(matched ? matched_nits(nits, at) : neutral_nits(nits, at), scene_peak);
     let knee = rolloff(scene_peak, peak);
-    if (edit.print_tone == PRINT_TONE_CHANNEL) {
-        let apart = float3(roll(measured<DisplayNits>(graded.v.r), knee).v,
-            roll(measured<DisplayNits>(graded.v.g), knee).v,
-            roll(measured<DisplayNits>(graded.v.b), knee).v);
-        return min(apart, float3(edit.peak)) / edit.peak;
-    }
-    let together = within(rolled(graded, knee), peak);
-    if (edit.print_tone == PRINT_TONE_NEUTRAL) { return together.v / edit.peak; }
-    let top = max(graded.v.r, max(graded.v.g, graded.v.b));
-    let held = max(together.v.r, max(together.v.g, together.v.b));
-    let kept = top <= 0.0 ? 1.0 : saturate(held / top);
-    // Squared, so a stop of compression tints rather than bleaches and only a highlight several
-    // stops past the paper arrives white.
-    let bleach = (1.0 - kept) * (1.0 - kept);
-    return lerp(together.v, float3(dot(LUMA, together.v)), bleach) / edit.peak;
+    // A clip, not a per-channel roll: on a blown highlight the three channels are equal, and one
+    // curve on three equal numbers is the neutral operator exactly.
+    if (edit.print_tone == PRINT_TONE_CHANNEL) { return min(graded.v, float3(edit.peak)) / edit.peak; }
+    if (edit.print_tone == PRINT_TONE_NEUTRAL) { return within(rolled(graded, knee), peak).v / edit.peak; }
+    let share = graded.v / edit.peak;
+    let top = max(share.r, max(share.g, share.b));
+    if (top <= 0.0) { return float3(0.0); }
+    let curved = filmic(top, scene_peak.v / edit.peak);
+    let toned = share * (curved / top);
+    // Only through the shoulder: the toe darkens as well, and bleaching there would grey the
+    // shadows a stock is meant to deepen.
+    let bleach = top > FILMIC_GREY ? saturate(1.0 - curved / top) : 0.0;
+    return min(lerp(toned, float3(dot(LUMA, toned)), bleach), float3(1.0));
 }
 
 Colour<SrgbLinear> print_gamut(Colour<SrgbLinear> colour)

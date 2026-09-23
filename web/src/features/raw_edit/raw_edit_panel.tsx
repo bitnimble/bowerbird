@@ -1,5 +1,4 @@
 import * as stylex from '@stylexjs/stylex';
-import { RotateCcw } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { Fragment } from 'react';
 import { CheckLabel } from '../../ui/check_label';
@@ -10,6 +9,7 @@ import { Select } from '../../ui/select';
 import { Slider } from '../../ui/slider';
 import { Text } from '../../ui/text';
 import { CropPanel, GeometryControls } from './crop/crop_panel';
+import { EditControl } from './edit_control';
 import type { CropStore } from './crop/crop_store';
 import type { EditStore } from './edit/edit_store';
 import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, reading, type SliderSpec } from './edit_sliders';
@@ -105,60 +105,6 @@ function Group({
     >
       {children}
     </Panel>
-  );
-}
-
-/**
- * One parameter: what it is, where it stands, and the two ways back to where it started.
- *
- * Both ways, because neither alone covers it. The button is the one a reader finds without
- * being told; the double click is the one their hands already know from every other editor,
- * and it works on the track they are already holding.
- */
-function EditControl({
-  label,
-  value,
-  reset,
-  children,
-}: {
-  label: string;
-  value: string;
-  /**
-   * How to put this parameter back, or null where there is nothing to put back *or* nothing
-   * that could act on it yet.
-   *
-   * Both ways back read off this one value: a reset settles, which writes to the server, so a
-   * row whose slider is shut must not still take a double click.
-   */
-  reset: (() => void) | null;
-  children: React.ReactNode;
-}): JSX.Element {
-  return (
-    <div {...stylex.props(styles.control)} onDoubleClick={reset ?? undefined}>
-      <div {...stylex.props(styles.head)}>
-        {/* Body rather than `label`: the group's own title wears that, and a row named in the
-            same 10px uppercase mono left the panel with no hierarchy at all. */}
-        <Text as="span" style={styles.name}>
-          {label}
-        </Text>
-        <Text variant="mono" as="span" style={styles.value}>
-          {value}
-        </Text>
-        {/* Held in the row rather than removed from it, so crossing the rest position does
-            not shuffle the label and the number sideways under the pointer. */}
-        <button
-          type="button"
-          {...stylex.props(styles.reset, focusRing.ring, reset == null && styles.resetClean)}
-          title={RawEditPanelStrings.resetControl(label)}
-          aria-label={RawEditPanelStrings.resetControl(label)}
-          disabled={reset == null}
-          onClick={reset ?? undefined}
-        >
-          <RotateCcw size={12} {...stylex.props(styles.resetIcon)} />
-        </button>
-      </div>
-      {children}
-    </div>
   );
 }
 

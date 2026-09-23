@@ -16,11 +16,9 @@ fn warm_highlight_detail_survives_diffuse_light_and_glare() {
     let glare = Scene {
         yaw_degrees: -15.0,
         pitch_degrees: -12.0,
-        light_azimuth_degrees: -32.0,
-        light_elevation_degrees: 25.0,
         key_lux: Light::exactly(5000.0),
         ..Scene::default()
-    };
+    }.lit_from(-32.0, 25.0, 4.0);
     let measured = [("diffuse", diffuse), ("glare", glare)].map(|(name, scene)| {
         let dimmer = luminance(draw([1.05, 0.75, 0.5], scene));
         let brighter = luminance(draw([1.10, 0.75, 0.5], scene));
@@ -36,20 +34,29 @@ fn warm_highlight_detail_survives_diffuse_light_and_glare() {
 fn camera_meters_diffuse_paper_without_spending_highlight_headroom() {
     let mut hue: Option<[f64; 2]> = None;
     for fill in [0.0, 500.0] {
-        for pitch in [-37.5, 0.0, -75.0] {
+        let mut facing: Option<f64> = None;
+        for pitch in [0.0, -37.5, -75.0] {
             let scene = Scene {
                 yaw_degrees: 0.0,
                 pitch_degrees: pitch,
-                light_azimuth_degrees: 0.0,
-                light_elevation_degrees: 75.0,
                 fill_lux: Light::exactly(fill),
                 refractive_index: 1.0,
                 surface_texture: 0.0,
                 ..Scene::default()
-            };
+            }.lit_from(0.0, 75.0, 4.0);
             let white = luminance(draw([1.0; 3], scene)).raw();
-            assert!((white - 182.7).abs() < 5.0,
-                "diffuse white overexposed at pitch {pitch}, fill {fill}: {white} nits");
+            match facing {
+                // The camera meters the room it is shown, once, against a sheet hung facing the
+                // reader. A sheet turned in the hand is not a reason to re-expose it, so its
+                // brightness has to *move* with the pose - the ceiling and the floor carry
+                // different amounts and a turn trades one for the other. Re-metering would pin the
+                // sheet and move everything that did not turn, the background included, instead.
+                None => assert!((white - 182.7).abs() < 5.0,
+                    "diffuse white is not metered at fill {fill}: {white} nits"),
+                Some(square) => assert!((white - square).abs() > 5.0 && white < 1000.0,
+                    "the pose did not move the sheet's light: {white} nits against {square}"),
+            }
+            facing.get_or_insert(white);
             let dark = luminance(draw([0.4, 0.28, 0.14], scene)).raw();
             let bright = draw([0.8, 0.56, 0.28], scene);
             let bright_luma = luminance(bright).raw();
@@ -74,14 +81,12 @@ fn coating_reflections_keep_hdr_headroom_after_camera_adaptation() {
         let scene = Scene {
             yaw_degrees: 0.0,
             pitch_degrees: -37.5,
-            light_azimuth_degrees: 0.0,
-            light_elevation_degrees: 75.0,
             light_angular_degrees: size,
             fill_lux: Light::ZERO,
             roughness,
             surface_texture: 0.0,
             ..Scene::default()
-        };
+        }.lit_from(0.0, 75.0, 4.0);
         let white = luminance(draw([1.0; 3], scene)).raw();
         assert!(white > 500.0, "{name} reflection lost HDR headroom: {white} nits");
     }
@@ -93,6 +98,10 @@ fn paper_gamut_preserves_neutrals_and_bounds_reflectance() {
         key_lux: Light::ZERO,
         fill_lux: Light::exactly(500.0),
         refractive_index: 1.0,
+        // Square on, where the metering is: a turned sheet gathers a different amount of the room
+        // and these are a claim about reflectance rather than about pose.
+        yaw_degrees: 0.0,
+        pitch_degrees: 0.0,
         ..Scene::default()
     };
     for (input, expected) in [(0.0, 1.624), (0.18, 34.21768), (1.0, 182.7)] {
@@ -116,8 +125,11 @@ fn paper_gamut_preserves_neutrals_and_bounds_reflectance() {
 fn ambient_light_sets_the_background_and_camera_adapts_to_bright_rooms() {
     let mut scene = Scene { key_lux: Light::ZERO, fill_lux: Light::ZERO, ..Scene::default() };
     assert_eq!(sample([0.5; 3], scene, [0, 0]).map(|light| light.raw()), [0.0; 3]);
+    // A lamp in an unlit room is not a lamp in a void: what it throws past the print comes back
+    // off the floor, which is the whole of the light a sheet turned away from it then has.
     scene.key_lux = Light::exactly(1000.0);
-    assert_eq!(sample([0.5; 3], scene, [0, 0]).map(|light| light.raw()), [0.0; 3]);
+    let lamp_only = luminance(sample([0.5; 3], scene, [0, 0])).raw();
+    assert!(lamp_only > 1.0 && lamp_only < 30.0, "the lamp lit no room at all: {lamp_only} nits");
     scene.key_lux = Light::ZERO;
     scene.fill_lux = Light::exactly(500.0);
     let room = luminance(draw([0.5; 3], scene)).raw();
@@ -180,6 +192,65 @@ fn a_sheet_faced_square_on_reflects_the_reader_rather_than_the_room() {
     assert!(past > facing * 1.3, "the reader casts no silhouette: {facing} facing, {past} past them");
 }
 
+/// The reader has a body, and it hangs below the eye rather than around it.
+///
+/// Tilting a sheet the same angle either way sends its reflection the same angle above the reader
+/// or below them, onto the same wall at elevations that mirror each other - so what separates the
+/// two is the torso and legs standing in one of them. A silhouette that is only a head would
+/// brighten both alike.
+#[test]
+fn the_reader_is_a_body_hanging_below_the_eye_rather_than_a_head_around_it() {
+    let scene = Scene {
+        yaw_degrees: 0.0, pitch_degrees: 0.0, key_lux: Light::ZERO,
+        fill_lux: Light::exactly(500.0), roughness: 0.08, surface_texture: 0.0,
+        black_reflectance: Gain::of_ratio(0.001), ..Scene::default()
+    };
+    let above = luminance(draw([0.0; 3], Scene { pitch_degrees: -9.0, ..scene })).raw();
+    let below = luminance(draw([0.0; 3], Scene { pitch_degrees: 9.0, ..scene })).raw();
+    assert!(above > below * 1.25,
+        "the silhouette is as tall as it is wide: {above} over the reader, {below} down them");
+}
+
+/// A lamp lights the room it is in, and the room lights the print.
+#[test]
+fn a_lamp_in_an_unlit_room_still_reaches_a_sheet_turned_away_from_it() {
+    let scene = Scene {
+        yaw_degrees: 0.0, key_lux: Light::exactly(1000.0), fill_lux: Light::ZERO,
+        refractive_index: 1.0, surface_texture: 0.0, ..Scene::default()
+    }.lit_from(0.0, 75.0, 4.0);
+    let towards = luminance(draw([1.0; 3], Scene { pitch_degrees: -60.0, ..scene })).raw();
+    let away = luminance(draw([1.0; 3], Scene { pitch_degrees: 30.0, ..scene })).raw();
+    assert!(away > towards * 0.05,
+        "a sheet turned from the lamp went black: {away} against {towards} nits towards it");
+    assert!(away < towards * 0.4,
+        "the room's bounce stood in for the lamp: {away} against {towards} nits");
+    // Turned further it faces the floor, which is where a lamp's spill lands and comes back from.
+    let floorward = luminance(draw([1.0; 3], Scene { pitch_degrees: 60.0, ..scene })).raw();
+    assert!(floorward > away, "the floor carried nothing: {floorward} against {away} nits");
+}
+
+/// Light caught between the pane and the sheet is returned to the sheet, and a bright sheet keeps
+/// more of it than a dark one.
+///
+/// The series is `1/(1 - R·rho)`, so a print under glass answers its own reflectance faster than
+/// linearly: the gap between a white sheet and a dark one opens up behind the pane, where an
+/// unframed pair of the same two reflectances stands in the ratio of the reflectances alone.
+#[test]
+fn a_pane_hands_back_what_it_catches_from_the_sheet_beneath_it() {
+    let scene = Scene {
+        yaw_degrees: 0.0, pitch_degrees: -25.0, key_lux: Light::exactly(1000.0), fill_lux: Light::ZERO,
+        roughness: 0.15, surface_texture: 0.0, black_reflectance: Gain::of_ratio(0.2),
+        white_reflectance: Gain::of_ratio(0.9), ..Scene::default()
+    };
+    let contrast = |framed| {
+        let scene = Scene { framed, ..scene };
+        luminance(draw([1.0; 3], scene)).raw() / luminance(draw([0.0; 3], scene)).raw()
+    };
+    let (bare, framed) = (contrast(false), contrast(true));
+    assert!(framed > bare * 1.04,
+        "the pane returned nothing to the sheet: {bare} bare against {framed} framed");
+}
+
 /// The blacks a room leaves a print, which is what an ambient of uniform radiance takes away.
 #[test]
 fn a_lit_room_leaves_a_gloss_black_where_a_print_keeps_it() {
@@ -206,15 +277,60 @@ fn the_tone_operators_trade_saturation_for_highlight_detail() {
         ..Scene::default()
     };
     let operators = [Tonemap::Neutral, Tonemap::Filmic, Tonemap::Channel];
-    let neutrals = operators.map(|tonemap| luminance(matched([0.5; 3], paper(tonemap), &colour)).raw());
-    assert!(neutrals.iter().all(|level| (level - neutrals[0]).abs() < 0.5),
-        "the operators moved a neutral the paper can already hold: {neutrals:?}");
     let purity = operators.map(|tonemap| {
         let drawn = matched([6.0, 1.2, 0.4], paper(tonemap), &colour).map(|light| light.raw());
         drawn.into_iter().fold(f64::MAX, f64::min) / drawn.into_iter().fold(0.0f64, f64::max)
     });
-    assert!(purity[2] > purity[1] + 0.02 && purity[1] > purity[0] + 0.02,
+    // Far enough apart to be a choice rather than a rounding: a squared bleach put filmic within
+    // a percent of neutral, which is a dropdown nobody can see the effect of.
+    assert!(purity[2] > purity[1] + 0.05 && purity[1] > purity[0] + 0.05,
         "the operators failed to separate on a saturated highlight: {purity:?}");
+}
+
+/// Neutral and channel leave alone whatever paper can already hold; a stock reshapes the whole
+/// range around grey, which is what makes it a choice on a photograph with no saturated highlight
+/// in it - and that is most photographs.
+#[test]
+fn a_film_stock_reshapes_the_range_the_other_operators_hold() {
+    let colour = HdrColour::identity();
+    let level = |tonemap, share: f64| {
+        let scene = Scene {
+            key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, tonemap,
+            ..Scene::default()
+        };
+        luminance(matched([share; 3], scene, &colour)).raw()
+    };
+    for share in [0.05, 0.18, 0.5] {
+        let (neutral, channel) = (level(Tonemap::Neutral, share), level(Tonemap::Channel, share));
+        assert!((channel - neutral).abs() < 0.5, "channel moved a grey of {share}: {neutral} to {channel}");
+    }
+    let against = |share| level(Tonemap::Filmic, share) / level(Tonemap::Neutral, share);
+    let (shadow, grey, upper) = (against(0.05), against(0.18), against(0.5));
+    assert!((grey - 1.0).abs() < 0.03, "the stock moved its own pivot: {grey}");
+    assert!(shadow < 0.85, "the stock has no toe: {shadow}");
+    assert!(upper > 1.08, "the stock adds no contrast above grey: {upper}");
+}
+
+/// A blown highlight is neutral - every channel clipped alike - so an operator that only decides
+/// how a highlight's *colour* is compressed is the same picture as its neighbours on the very
+/// photograph a reader picks to compare them. What they have to disagree about is the tones just
+/// under the blown patch, which each one gives a different share of the paper.
+#[test]
+fn every_operator_differs_on_a_photograph_whose_highlights_are_blown() {
+    let colour = HdrColour::identity();
+    let read = |tonemap| {
+        let scene = Scene {
+            key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, tonemap,
+            ..Scene::default()
+        };
+        let blown = |column: usize| if column < 6 { [4.0; 3] } else { [0.8; 3] };
+        luminance(sample_as(&blown, scene, [16, 16], Some(&colour))).raw()
+    };
+    let [neutral, filmic, channel] = [Tonemap::Neutral, Tonemap::Filmic, Tonemap::Channel].map(read);
+    for (name, a, b) in [("neutral/filmic", neutral, filmic), ("neutral/channel", neutral, channel),
+        ("filmic/channel", filmic, channel)] {
+        assert!((a / b - 1.0).abs() > 0.05, "{name} drew the same picture: {a} against {b} nits");
+    }
 }
 
 fn luminance(color: [Light<DisplayNits>; 3]) -> Light<DisplayNits> {
@@ -227,15 +343,16 @@ fn draw(source: [f64; 3], scene: Scene) -> [Light<DisplayNits>; 3] {
 }
 
 fn sample(source: [f64; 3], scene: Scene, pixel_at: [usize; 2]) -> [Light<DisplayNits>; 3] {
-    sample_as(source, scene, pixel_at, None)
+    sample_as(&|_| source, scene, pixel_at, None)
 }
 
 fn matched(source: [f64; 3], scene: Scene, colour: &HdrColour) -> [Light<DisplayNits>; 3] {
-    sample_as(source, scene, [16, 16], Some(colour))
+    sample_as(&|_| source, scene, [16, 16], Some(colour))
 }
 
+/// `source` is the photograph's colour at a column, in shares of 203 nits.
 fn sample_as(
-    source: [f64; 3],
+    source: &dyn Fn(usize) -> [f64; 3],
     scene: Scene,
     pixel_at: [usize; 2],
     colour: Option<&HdrColour>,
@@ -253,11 +370,11 @@ fn sample_as(
         canvas: Some(Canvas { region: (0.0, 0.0, size as f64, size as f64),
             size: Size::measured(size, size), max_lod: 5 }),
     };
-    let pixel = rawshim::hdr_fit::srgb_to_rec2020().map(|row| {
-        let value = row.into_iter().zip(source).map(|(weight, value)| weight * value).sum::<f64>();
+    let coded = |colour: [f64; 3]| rawshim::hdr_fit::srgb_to_rec2020().map(|row| {
+        let value = row.into_iter().zip(colour).map(|(weight, value)| weight * value).sum::<f64>();
         (rawshim::tone::pq(Light::<SceneNits>::exactly(value * 203.0)).raw() * 65535.0).round() as u16
     });
-    let frame = pixel.repeat(size * size);
+    let frame: Vec<u16> = (0..size * size).flat_map(|at| coded(source(at % size))).collect();
     let pyramid = rawshim::base::pyramid(gpu, base, &frame, (size, size)).expect("source pyramid");
     let peak = gpu.scene_peak();
     let uploaded = gpu.upload(&frame, &grade, &peak);

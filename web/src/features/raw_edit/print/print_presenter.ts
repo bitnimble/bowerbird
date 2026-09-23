@@ -1,5 +1,5 @@
 import { action } from 'mobx';
-import { DEFAULT_PRINT_SCENE, PAPER_MATERIALS, PrintSceneSchema, type Paper, type PrintControl, type Tonemap } from './print_scene';
+import { DEFAULT_PRINT_SCENE, PAPER_MATERIALS, PRINT_ZOOM_RANGE, PrintSceneSchema, restingValue, type Paper, type PrintControl, type Tonemap } from './print_scene';
 import { browserPrintMotion, PrintMotion, type PrintMotionEnvironment, type PrintTilt } from './print_motion';
 import type { PrintStore } from './print_store';
 
@@ -11,6 +11,12 @@ type Drag = {
   yaw: number;
   pitch: number;
 };
+
+const ZOOM_PER_NOTCH = 1.2;
+
+function clamp(value: number, low: number, high: number): number {
+  return Math.max(low, Math.min(high, value));
+}
 
 export class PrintPresenter {
   private drag: Drag | null = null;
@@ -249,13 +255,51 @@ export class PrintPresenter {
   };
 
   @action.bound
-  resetRotation = (): void => {
+  resetControl = (key: PrintControl): void => {
+    this.setControl(key, restingValue(this.store.scene.paper, key));
+  };
+
+  @action.bound
+  resetView = (): void => {
     if (this.store.surface) return;
     this.endDrag();
     this.store.scene = {
       ...this.store.scene,
       yawDegrees: DEFAULT_PRINT_SCENE.yawDegrees,
       pitchDegrees: DEFAULT_PRINT_SCENE.pitchDegrees,
+      zoom: DEFAULT_PRINT_SCENE.zoom,
+      panX: DEFAULT_PRINT_SCENE.panX,
+      panY: DEFAULT_PRINT_SCENE.panY,
+    };
+    this.redraw();
+  };
+
+  /**
+   * `at` is where the pointer sits in the canvas's own units - its offset from the centre over
+   * the short edge - so that the scene under it stays under it as the focal length changes.
+   */
+  @action.bound
+  zoomAt = (notches: number, at: { x: number; y: number }): void => {
+    if (this.store.surface) return;
+    const { zoom, panX, panY } = this.store.scene;
+    const zoomed = clamp(zoom * ZOOM_PER_NOTCH ** notches, PRINT_ZOOM_RANGE.min, PRINT_ZOOM_RANGE.max);
+    const held = zoomed / zoom;
+    this.store.scene = {
+      ...this.store.scene,
+      zoom: zoomed,
+      panX: clamp(at.x - (at.x - panX) * held, -1, 1),
+      panY: clamp(at.y - (at.y - panY) * held, -1, 1),
+    };
+    this.redraw();
+  };
+
+  @action.bound
+  panBy = (dx: number, dy: number): void => {
+    if (this.store.surface) return;
+    this.store.scene = {
+      ...this.store.scene,
+      panX: clamp(this.store.scene.panX + dx, -1, 1),
+      panY: clamp(this.store.scene.panY + dy, -1, 1),
     };
     this.redraw();
   };

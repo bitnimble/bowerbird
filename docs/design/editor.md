@@ -150,11 +150,28 @@ Print mode holds its paper, lighting and orientation in a separate `PrintStore`,
 The same worker and HDR canvas draw a suspended sheet through the shared Slang renderer. The photo
 is graded to a bounded print reflectance before illumination, with smooth chroma compression
 into the generic sRGB paper gamut that preserves luminance and neutral whites. Highlights past
-what paper can hold roll off against diffuse white, under one of three operators the paper panel
-selects: neutral rolls the max channel so ratios and hue survive, filmic bleaches a colour towards
-its own luminance in proportion to how far that channel was compressed, and per channel rolls each
-channel alone, which desaturates a saturated highlight most and keeps the most detail in it.
-Surface reflections can exceed diffuse white. Dragging or arrow keys rotate the sheet, and the panel controls its material and light.
+what paper can hold are fitted into it by one of three operators the paper panel selects. Neutral
+rolls the max channel off from a knee under white, so ratios and hue survive. Filmic is a film
+stock over the whole range - grey held, the scene's peak landed on paper white, a contrast of 1.4
+between a toe and a shoulder - and bleaches towards luminance through the shoulder. Per channel
+clips each channel at paper white with no shoulder, the way a printer driver meets its ink limit.
+**Each has to differ on a photograph whose highlights are simply blown**, because that is the
+photograph a reader picks to compare them, and a blown highlight is neutral - every channel clipped
+alike. Operators that differ only in what they do to a highlight's *colour* above the knee were
+pixel-identical there: the same curve on three equal numbers is the same curve. Measured under a
+blown patch, the same tone reads 118 nits neutral, 106 filmic and 131 per channel.
+Surface reflections can exceed diffuse white. Dragging or arrow keys rotate the sheet, the wheel
+lengthens the camera's focal length about whatever sits under the pointer and the middle button
+drags the view across, and Home or a double-click puts all three back. Zoom is the focal length
+rather than a scale on the drawn canvas, so a print seen closer is a print seen closer: the
+perspective narrows and the sheen moves with it, where scaling the canvas would only enlarge the
+same picture. The camera fits the sheet's own outline to the canvas, so a landscape sheet fills a
+landscape canvas as far as a portrait one does; fitted to the long edge alone it lay along the
+canvas's long edge and covered half the frame. The panel controls the material and the light, and
+every slider carries the editor's reset arrow and double-click back to its rest - for a paper
+control, the chosen paper's own value, which is also what choosing a paper puts every material
+control back to. The mockup is the viewer's own screen, so a sidebar the viewer hides stays hidden
+under it.
 The camera rays intersect a slightly bowed sheet, lit by a finite softbox whose illuminance is specified at
 the print centre facing the light. Its diffuser has a smooth spatial radiance profile, shared by
 light samples and reflected rays. Surface reflection uses dielectric Fresnel and GGX; its
@@ -165,27 +182,47 @@ texture varies roughness in paper coordinates, with its physical scale set by th
 long edge and its visible detail filtered against the camera-ray footprint.
 The ambient light is a room rather than a surround of one radiance: its ceiling and the luminaires
 in it carry the light, and the wall opposite, the floor and the reader in front of the print sit at
-a twentieth of that. The ambient setting is the illuminance an upright print stands in, and the
+a fifth of that. The ambient setting is the illuminance an upright print stands in, and the
 room is scaled to deliver exactly that, so the shape above only decides which direction it arrives
 from. A sheen is then a reflection of the room and follows what the sheet is turned towards: the
-wall, where it leaves a gloss black at a hundredth of paper white, or the ceiling, ten times
-brighter. The reader is in that room too: a body at arm's length covers a quarter of a steradian around the
-one direction a square-on sheet mirrors into the eye, and it is darker than the wall behind it, so a
-print faced straight reflects a silhouette rather than a room and reaches its paper's own black. The
-silhouette washes out as the lobe reading it opens, in the ratio the two solid angles stand in, so
-it belongs to gloss and barely to matte. Nothing shadows the diffuse side, where the same cone is a
-twelfth of a hemisphere in the room's dim band and worth under a percent of the illuminance.
+wall, or the ceiling five times brighter. The reader is in that room too, and is a body rather than
+a head: a third of a radian across and most of a radian tall, standing on the floor rather than
+floating at eye level, so the silhouette hangs below the direction a square-on sheet mirrors into
+the eye and reaches half the wall's own radiance. A print faced straight therefore reflects a
+silhouette rather than a room and holds its paper's own black, and one tilted down its own height
+still has the reader in it where one tilted up does not.
+The lamp lights that room as well as the print. What a luminaire throws past a sheet lands on the
+floor and the lower walls and comes back up, so the room carries a second, dimmer copy of itself
+under the lamp - a tenth of the accent level, and shaped from below where the ambient is shaped from
+above. It is modelled apart rather than folded in because a sheet tilted down reads the two in
+opposite order, and because it is the whole of the light reaching a print turned away from a lamp in
+an unlit room: measured, a sheet turned 30 degrees off a 1000-lux lamp with the ambient at zero
+holds a seventh of what it holds facing the lamp, and brightens again as it turns onto the floor.
+Both floors are calibrations a reader can see through the
+frame's glass, which mirrors whatever the model leaves in those directions: a dim wall and a dark
+body multiplied together put a framed print behind a black pane with the lamp's image the only
+thing in it. The silhouette washes out as the lobe reading it opens, in the ratio the two solid
+angles stand in, so it belongs to gloss and barely to matte. Nothing shadows the diffuse side,
+where the same cone is worth under a percent of the illuminance.
 The diffuse side reads the same room through zonal harmonics to the second band, which is
 all a Lambert cosine keeps of any surround. A surround of one radiance instead puts the whole
 room's illuminance in the direction the reader's own reflection comes from, which lifts that black
 four times over and leaves every off-axis reflection a flat wash.
-Camera exposure meters ambient and direct illuminance reaching the visible sheet's centre.
+Camera exposure meters the room against a sheet hung facing the reader, and never against the pose:
+a camera meters a room once, and re-metering as the print is turned holds the sheet at one
+brightness while moving everything that did not turn - the background with it - which reads as the
+room changing colour under a rotation. Turning a print towards the ceiling gathers more light and
+arrives brighter, which is what the HDR headroom above diffuse white is for.
 The GPU integrates the finite light against the sheet's orientation, including light crossing
 its horizon. One exposure gain applies to the whole scene, anchored to 203-nit diffuse white
 and bounded in dark rooms; coating reflections retain their HDR headroom.
 The featureless background follows ambient illumination and is black at zero ambient. Defaults
-use 500 lux ambient, a 1000-lux overhead light one degree across - a ceiling downlight, near the
-sun's half degree - and 6500 K illumination. The source spans a tenth of a degree to ninety, slid
+use 500 lux ambient, a 1000-lux light one degree across - a ceiling downlight, near the
+sun's half degree - and 6500 K illumination. The lamp is placed by where it hangs rather than by
+its angle: across, up and forward from the sheet's centre in print lengths, by default 3.9 up and
+1.7 forward, which is over the reader's head rather than over the sheet. Angles alone left the
+one question a reader asks of a room light - is it behind me or in front of the picture - with no
+control of its own. The source spans a tenth of a degree to ninety, slid
 in decades so a lamp and a softbox each get a usable stretch of track. Below about a degree the
 highlight stops following the source: the paper's own roughness is wider than the lamp, and the
 roughness control is what narrows it from there. The light temperature
@@ -197,14 +234,50 @@ second image offset by the thickness it crossed and refracted on the way - which
 read as glass rather than as a light painted on the picture. The paper's own sheen reaches the
 reader through that glass twice over and under the glass's own reflection of the same room, so
 half of what separates satin from gloss goes behind it, the way it does on a wall.
+Light also travels the other way and comes back. A tenth of what the mat and the photograph send up
+returns off the underside of the pane to be diffused again, and a tenth of that after it, which the
+closed form `1/(1 - R·rho)` sums: a framed print is about a tenth brighter than the same print bare,
+per channel, so a deep colour behind glass comes back deeper while the mat beside it barely moves.
+The pane is not an optical flat, and that is what stops a mirrored lamp reading as a white
+quadrilateral someone pasted on: drawn sheet keeps a shallow wave from the line it was rolled on
+and a pane in a rebate adds its own bow, a few thousandths of a radian over a hand's width, which
+bends the lamp's straight edges into curves. Nor is the pane perfectly clear, so a fourteenth of
+what it mirrors leaves within a couple of degrees of the specular direction rather than along it,
+as a halo around the image. That halo is the only part of a mirrored lamp whose shape a reader can
+see: the core is a hundred times paper white and clips whatever is done to it, and the taper that
+would soften the rim falls inside a pixel, so integrating the pixel does not reach it - measured,
+four rays across a pixel moved the rim and nothing else, and cost as much as the halo does.
+A frame costs about 1.4x an unframed sheet on the scene path, measured at 1920 on radv: a quarter
+more canvas to cover, the moulding and mat to intersect, and the glass's own two reflections. What
+it no longer costs is the light integration answering for all three surfaces at every pixel - a
+pixel shows the photograph or the mat or the moulding, and only the footprint's width between them
+needs two - nor a ray-box test against the moulding for each of the emitter's samples, since the
+hole is convex and so is the emitter, which makes four corner tests decide it for all of them.
 **What the print costs is the emitter's integral, and it is paid per canvas pixel on the desktop
-path and per field texel on the touch one.** Three things keep it in proportion. The emitter is
+path and per field texel on the touch one.** Four things keep it in proportion. The emitter is
 sampled against how much of the sky it covers, from 64 for a lamp to 128 for a softbox, since a
 source a degree across hardly varies over its own solid angle. Sampling the lobe as well is dropped
 where the emitter is the smaller of the two: balance-weighted MIS is unbiased either way, and the
 lobe's strategy finds a one-degree lamp once in a hundred tries for a hundred times the value, which
 is variance and not signal - held against a thousand-sample render, the pair costs a third of the
-frame and lands closer than the old estimator did. And the scene path's canvas is one pixel per
+frame and lands closer than the old estimator did.
+The third is that those counts are the *specular's*. Under a hundredth of a steradian - a lamp, not
+a softbox - every geometric factor is constant across the emitter's face, so the diffuse half of
+the same pixel is the diffuser's mean radiance times one cosine, in closed form, at one evaluation
+rather than sixty-four. A near softbox varies its own inverse square over its face by a quarter and
+pays the full count; so does a penumbra, where the face is what the softness is made of, and the
+four corner tests already say which pixels those are. The fourth is that a gloss sheet's specular is
+zero wherever the lobe reflected towards the reader misses the lamp by more than its own reach,
+which is most of the sheet; the reach is taken to where GGX has fallen a millionth under its peak,
+so what it drops sits beneath the last code of an HDR white - measured against a share of the peak
+instead, it clips the tail into a step, which the cached lighting field reports before the eye does.
+With them a framed gloss sheet costs 56ms a frame at 1920 on radv, and a framed satin one 38ms.
+**Half precision is not the next step, and the lobe is why.** WebGPU offers `shader-f16`, but a
+gloss paper's alpha squared is 4.1e-5 where fp16's smallest normal is 6.1e-5, and GGX divides by
+that square again - so the one term worth the conversion is the one term half cannot hold, and what
+is left of the integral is sixteen samples. Ray-tracing cores are not reachable at all: WebGPU has
+no ray-tracing API, and the editor and a rendition are one implementation of the same shaders.
+And the scene path's canvas is one pixel per
 device pixel rather than supersampled, the photograph arriving there through the pyramid's
 anisotropic taps and every edge carrying its own subpixel coverage, so the 2.25x bought nothing.
 The mockup also opens the photograph at half the sensor where the editor takes all of it: a 61MP
@@ -238,6 +311,10 @@ the print renderer and shows the paper, lighting and orientation panels alone. I
 and `View photo` or Escape returns.
 Gloss, satin and matte are generic simulations. Predicting a specific print requires its
 printer, ink and paper colour profile, measured surface reflectance and calibrated viewing conditions.
+What sets how far a lamp's highlight spreads across a sheet is its roughness, not its refractive
+index: the index sets how strong the coating's reflection is - a twenty-fifth of the light at normal
+incidence for the 1.5 every photo coating sits near - and nothing about its width. Satin sits at
+0.18, where a one-degree lamp is a soft spot rather than a glow across half the sheet.
 
 ### 21.5 Tests
 

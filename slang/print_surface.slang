@@ -65,7 +65,8 @@ void build_lighting(uint3 id : SV_DispatchThreadID)
     let upper = min(1.0, print.material.x * exp(0.35 * print.surface.w));
     let fraction = layers == 1 ? 0.0 : float(id.z) / float(layers - 1);
     let roughness = exp(lerp(log(lower), log(upper), fraction));
-    let coefficients = print_direct_coefficients(hit, roughness, light_samples(roughness)) * print_light_calibration[0];
+    let coefficients = print_direct_coefficients(hit, roughness, light_samples(roughness), WANT_ALL)
+        * print_light_calibration[0];
     lighting_out.Store(int3(id), coefficients);
 }
 

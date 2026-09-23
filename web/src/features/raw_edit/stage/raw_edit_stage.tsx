@@ -68,6 +68,8 @@ const styles = stylex.create({
  * since the redraw is at the stage's own resolution rather than a magnified raster.
  */
 /** How far apart the two fingers of a pinch are. */
+const MIDDLE_BUTTON = 1;
+
 function spread(touches: Map<number, { x: number; y: number }>): number {
   const [first, second] = [...touches.values()];
   if (first == null || second == null) return 0;
@@ -223,6 +225,25 @@ export const RawEditStage = observer(function RawEditStage({
     return () => element.removeEventListener('wheel', onWheel);
   }, [presenter, loupe.loupeOpen, box]);
 
+  useEffect(() => {
+    const element = viewport.current;
+    if (element == null || !scenePrint) return;
+    const onWheel = (event: WheelEvent): void => {
+      event.preventDefault();
+      const span = Math.min(box.width, box.height);
+      if (span === 0) return;
+      presenter.print.zoomAt(-Math.sign(event.deltaY), {
+        x: (event.clientX - origin.current.left - box.width / 2) / span,
+        y: (event.clientY - origin.current.top - box.height / 2) / span,
+      });
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => element.removeEventListener('wheel', onWheel);
+  }, [presenter, scenePrint, box]);
+
+  /** Where the middle button last was, which is what a pan is a run of differences from. */
+  const panning = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+
   /**
    * The touches currently down, which is what makes a pinch tellable from a drag.
    *
@@ -328,23 +349,50 @@ export const RawEditStage = observer(function RawEditStage({
     : {};
 
   const printHandlers = scenePrint ? {
+    onPointerEnter: measure,
     onPointerDown: (event: React.PointerEvent<HTMLDivElement>): void => {
-      if (event.button !== 0 || !event.isPrimary || !stageStore.editable) return;
+      measure(event);
+      if (!event.isPrimary || !stageStore.editable) return;
+      if (event.button === MIDDLE_BUTTON) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        panning.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+        event.preventDefault();
+        return;
+      }
+      if (event.button !== 0) return;
       event.currentTarget.setPointerCapture(event.pointerId);
       event.currentTarget.focus();
       presenter.print.beginDrag(event.pointerId, event.clientX, event.clientY, Math.min(box.width, box.height));
       event.preventDefault();
     },
     onPointerMove: (event: React.PointerEvent<HTMLDivElement>): void => {
+      const pan = panning.current;
+      if (pan != null && pan.pointerId === event.pointerId) {
+        const span = Math.min(box.width, box.height);
+        presenter.print.panBy((event.clientX - pan.x) / span, (event.clientY - pan.y) / span);
+        panning.current = { ...pan, x: event.clientX, y: event.clientY };
+        return;
+      }
       presenter.print.moveDrag(event.pointerId, event.clientX, event.clientY);
     },
     onPointerUp: (event: React.PointerEvent<HTMLDivElement>): void => {
+      if (panning.current?.pointerId === event.pointerId) panning.current = null;
       presenter.print.endDrag(event.pointerId);
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     },
-    onPointerCancel: (event: React.PointerEvent<HTMLDivElement>): void => presenter.print.endDrag(event.pointerId),
-    onLostPointerCapture: (event: React.PointerEvent<HTMLDivElement>): void => presenter.print.endDrag(event.pointerId),
-    onDoubleClick: (): void => presenter.print.resetRotation(),
+    onPointerCancel: (event: React.PointerEvent<HTMLDivElement>): void => {
+      if (panning.current?.pointerId === event.pointerId) panning.current = null;
+      presenter.print.endDrag(event.pointerId);
+    },
+    onLostPointerCapture: (event: React.PointerEvent<HTMLDivElement>): void => {
+      if (panning.current?.pointerId === event.pointerId) panning.current = null;
+      presenter.print.endDrag(event.pointerId);
+    },
+    // Middle-click pastes on X11 and scrolls on Windows; neither belongs over a print.
+    onAuxClick: (event: React.MouseEvent<HTMLDivElement>): void => {
+      if (event.button === MIDDLE_BUTTON) event.preventDefault();
+    },
+    onDoubleClick: (): void => presenter.print.resetView(),
     onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>): void => {
       if (!stageStore.editable || event.altKey || event.ctrlKey || event.metaKey) return;
       const step = event.shiftKey ? 15 : 5;
@@ -353,7 +401,7 @@ export const RawEditStage = observer(function RawEditStage({
         case 'ArrowRight': presenter.print.rotateBy(step, 0); break;
         case 'ArrowUp': presenter.print.rotateBy(0, -step); break;
         case 'ArrowDown': presenter.print.rotateBy(0, step); break;
-        case 'Home': presenter.print.resetRotation(); break;
+        case 'Home': presenter.print.resetView(); break;
         default: return;
       }
       event.preventDefault();

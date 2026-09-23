@@ -58,7 +58,7 @@ fn main() -> Result<(), String> {
     println!("paper,view,light_angular_degrees,key_lux,fill_lux,min_nits,peak_nits,mean_nits,peak_p3_nits,peak_canvas_code,above_203_percent,above_500_percent,above_1000_percent,pq_error_nits,pq_error_relative,sdr_proof_error,twice_light_error");
     for (name, paper, roughness, white, black, surface_texture) in [
         ("gloss", Paper::Gloss, 0.08, 0.92, 0.004, 0.15),
-        ("satin", Paper::Satin, 0.28, 0.9, 0.008, 0.5),
+        ("satin", Paper::Satin, 0.18, 0.9, 0.008, 0.5),
         ("matte", Paper::Matte, 0.65, 0.88, 0.025, 0.85),
     ] {
         let scene = Scene {
@@ -66,8 +66,8 @@ fn main() -> Result<(), String> {
             surface_texture, ..Scene::default()
         };
         for (view, scene) in [("default", scene), ("glare", Scene {
-            yaw_degrees: -15.0, pitch_degrees: -12.0, light_azimuth_degrees: -32.0, light_elevation_degrees: 25.0, ..scene
-        })] {
+            yaw_degrees: -15.0, pitch_degrees: -12.0, ..scene
+        }.lit_from(-32.0, 25.0, 4.0))] {
             for light_angular_degrees in [60.0, 45.0, 30.0, 25.0] {
                 let scene = Scene { light_angular_degrees, ..scene };
                 let doubled = Scene {

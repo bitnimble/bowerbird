@@ -80,10 +80,9 @@ fn surface_pose_moves_physical_hdr_reflections() {
     for (roughness, angular_degrees) in [(0.08, 30.0), (0.28, 10.0)] {
         let scene = Scene {
             presentation: Presentation::Surface, yaw_degrees: 0.0, pitch_degrees: 0.0,
-            light_azimuth_degrees: 0.0, light_elevation_degrees: 75.0,
             light_angular_degrees: angular_degrees, fill_lux: Light::ZERO,
             roughness, surface_texture: 0.0, ..Scene::default()
-        };
+        }.lit_from(0.0, 75.0, 4.0);
         let face = draw(&frame, &grade, Some(&scene));
         let reflected = draw(&frame, &grade, Some(&Scene { pitch_degrees: -37.5, ..scene }));
         let center = (32 * 64 + 32) * 4;
@@ -101,10 +100,10 @@ fn glass_stands_in_for_the_paper_it_covers() {
     grade.canvas.as_mut().expect("canvas").region = (0.0, 0.0, 80.0, 80.0);
     let lit = Scene {
         presentation: Presentation::Surface, yaw_degrees: -15.0, pitch_degrees: -25.0,
-        light_azimuth_degrees: -20.0, light_elevation_degrees: 60.0, light_angular_degrees: 30.0,
+        light_angular_degrees: 30.0,
         key_lux: Light::exactly(1000.0), fill_lux: Light::exactly(500.0), refractive_index: 1.5,
         surface_texture: 0.0, ..Scene::default()
-    };
+    }.lit_from(-20.0, 60.0, 4.0);
     let coating = |framed: bool, roughness: f64| draw(&photo, &grade, Some(&Scene { framed, roughness, ..lit }));
     let apart = |a: &[f32], b: &[f32]| {
         let (sum, level) = a.iter().zip(b).fold((0.0, 0.0), |(sum, level), (a, b)| {
@@ -148,13 +147,33 @@ fn frame_glass_has_hdr_reflections_and_gains_reflectivity_at_grazing_angles() {
         "glass did not gain grazing reflection: {} / {}", grazing[center], face[center]);
     // A softbox rather than the default lamp: the centre reads the emitter's mirror image, and a
     // one-degree source lands its image between the probe and the frame.
-    let lit = Scene { key_lux: Light::exactly(1000.0), light_elevation_degrees: 0.0,
-        light_azimuth_degrees: 0.0, light_angular_degrees: 30.0, ..scene };
+    let lit = Scene { key_lux: Light::exactly(1000.0), light_angular_degrees: 30.0, ..scene }
+        .lit_from(0.0, 0.0, 4.0);
     let reflection = draw(&black, &framed_grade, Some(&lit));
     assert!(linear(reflection[center]) > 2.0, "glass lost HDR headroom: {}", reflection[center]);
     let bare = draw(&black, &grade(), Some(&Scene { framed: false, ..lit }));
     assert!(linear(reflection[center]) > linear(bare[center]) * 10.0,
         "reflection must belong to the glass above nonreflective paper");
+}
+
+/// Glass mirrors the room a reader stands in, and a reader looking straight at a framed print
+/// sees it: the wall behind them, the ceiling above it, the window. A model that leaves the pane
+/// black everywhere the lamp's own image is not draws a picture behind an open hole.
+#[test]
+fn glass_shows_the_room_and_not_only_the_lamp_in_it() {
+    let black = coded([0.0; 3]).repeat(64 * 64);
+    let white = coded([1.0; 3]).repeat(64 * 64);
+    let scene = Scene { framed: true, black_reflectance: Gain::of_ratio(0.001), ..diffuse() };
+    let mut framed_grade = grade();
+    framed_grade.canvas.as_mut().expect("canvas").region = (0.0, 0.0, 80.0, 80.0);
+    let center = (32 * 64 + 32) * 4;
+    let paper_white = linear(draw(&white, &grade(), Some(&Scene { framed: false, ..scene }))[center]);
+    let lit = linear(draw(&black, &framed_grade, Some(&scene))[center]);
+    let dark = linear(draw(&black, &framed_grade,
+        Some(&Scene { fill_lux: Light::ZERO, ..scene }))[center]);
+    assert!(lit > dark * 4.0, "the room did not reach the glass: {lit} lit against {dark} dark");
+    assert!(lit > paper_white * 0.015,
+        "the glass is a black pane: {lit} against {paper_white} of paper white");
 }
 
 #[test]

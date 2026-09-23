@@ -60,6 +60,19 @@ test('light size slides in decades, so a lamp gets as much track as a softbox', 
   expect(screen.getByRole('slider', { name: 'Light size' }).getAttribute('aria-valuetext')).toBe('3.0°');
 });
 
+test('a moved slider offers its way back, and a slider at rest does not', () => {
+  const store = new PrintStore();
+  presenter = new PrintPresenter(store, () => {}, null);
+  render(<PrintPanel store={store} presenter={presenter} disabled={false} section="lighting" />);
+  const reset = screen.getByRole<HTMLButtonElement>('button', { name: 'Reset Light forward' });
+  expect(reset.disabled).toBe(true);
+  act(() => presenter?.setControl('lightForward', 4));
+  expect(reset.disabled).toBe(false);
+  act(() => reset.click());
+  expect(store.scene.lightForward).toBe(1.7);
+  expect(reset.disabled).toBe(true);
+});
+
 test('the roll-off names the operator the print is drawn with', () => {
   const store = new PrintStore();
   let redraws = 0;

@@ -8,16 +8,15 @@ import { Select } from '../../../ui/select';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
 import type { Option } from '../../../ui/option';
+import { EditControl } from '../edit_control';
+import { styles as rows } from '../raw_edit_panel.stylex';
 import { PrintPanelStrings as strings } from './print_panel.strings';
-import type { Paper, PrintControl, Tonemap } from './print_scene';
+import { LAMP_REACH, restingValue, type Paper, type PrintControl, type Tonemap } from './print_scene';
 import type { PrintStore } from './print_store';
 import type { PrintPresenter } from './print_presenter';
 
 const styles = stylex.create({
   group: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '12px' },
-  control: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  head: { display: 'flex', justifyContent: 'space-between', gap: '8px' },
-  slider: { width: '100%' },
 });
 
 const PAPERS: Option<Paper>[] = [
@@ -58,10 +57,10 @@ const LIGHT: Control[] = [
   { key: 'keyLux', min: 0, max: 10000, step: 10, format: strings.lux },
   { key: 'fillLux', min: 0, max: 10000, step: 10, format: strings.lux },
   { key: 'lightTemperatureKelvin', min: 2000, max: 10000, step: 100, format: strings.kelvin },
-  { key: 'lightAzimuthDegrees', min: -180, max: 180, step: 1, format: strings.degrees },
-  { key: 'lightElevationDegrees', min: -85, max: 85, step: 1, format: strings.degrees },
+  { key: 'lightAcross', min: -LAMP_REACH, max: LAMP_REACH, step: 0.05, format: strings.printLengths },
+  { key: 'lightHeight', min: -LAMP_REACH, max: LAMP_REACH, step: 0.05, format: strings.printLengths },
+  { key: 'lightForward', min: -LAMP_REACH, max: LAMP_REACH, step: 0.05, format: strings.printLengths },
   { key: 'lightAngularDegrees', min: 0.1, max: 90, step: 0.01, format: strings.lightSize, log: true },
-  { key: 'lightDistance', min: 1, max: 20, step: 0.1, format: strings.printLengths },
 ];
 const ROTATION: Control[] = [
   { key: 'yawDegrees', min: -180, max: 180, step: 1, format: strings.degrees },
@@ -74,30 +73,41 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
   disabled: boolean;
   section?: 'paper' | 'lighting' | 'orientation';
 }): JSX.Element {
-  const controls = (specs: Control[]): JSX.Element[] => specs.map((spec) => (
-    <div key={spec.key} {...stylex.props(styles.control)}>
-      <div {...stylex.props(styles.head)}>
-        <Text as="span">{strings[spec.key]()}</Text>
-        <Text as="span" variant="mono">{spec.format(store.scene[spec.key])}</Text>
-      </div>
-      <Slider
+  const controls = (specs: Control[]): JSX.Element[] => specs.map((spec) => {
+    const value = store.scene[spec.key];
+    const resting = restingValue(store.scene.paper, spec.key);
+    return (
+      <EditControl
+        key={spec.key}
         label={strings[spec.key]()}
-        value={decades(spec, store.scene[spec.key])}
-        valueText={(position) => spec.format(degrees(spec, position))}
-        min={decades(spec, spec.min)}
-        max={decades(spec, spec.max)}
-        step={spec.step}
-        onChange={(value) => presenter.setControl(spec.key, degrees(spec, value))}
-        disabled={disabled}
-        style={styles.slider}
-      />
-    </div>
-  ));
+        value={spec.format(value)}
+        reset={disabled || value === resting ? null : () => presenter.resetControl(spec.key)}
+      >
+        <Slider
+          label={strings[spec.key]()}
+          value={decades(spec, value)}
+          valueText={(position) => spec.format(degrees(spec, position))}
+          min={decades(spec, spec.min)}
+          max={decades(spec, spec.max)}
+          step={spec.step}
+          snap={[decades(spec, resting)]}
+          onChange={(next) => presenter.setControl(spec.key, degrees(spec, next))}
+          disabled={disabled}
+          style={rows.slider}
+        />
+      </EditControl>
+    );
+  });
 
   return <>
     {(section == null || section === 'paper') && <Panel title={strings.paper()} style={styles.group}>
       <Select label={strings.paper()} options={PAPERS} value={store.scene.paper} onChange={presenter.setPaper} />
-      <Select label={strings.tonemap()} options={TONEMAPS} value={store.scene.tonemap} onChange={presenter.setTonemap} />
+      <div {...stylex.props(rows.control)}>
+        <div {...stylex.props(rows.head, rows.headAboveSelect)}>
+          <Text as="span" style={rows.name}>{strings.tonemap()}</Text>
+        </div>
+        <Select label={strings.tonemap()} options={TONEMAPS} value={store.scene.tonemap} onChange={presenter.setTonemap} />
+      </div>
       <Text as="p" variant="muted">{strings.simulation()}</Text>
       <CheckLabel>
         <input
@@ -127,7 +137,7 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
     </Panel> : <Panel title={strings.rotation()} style={styles.group}>
       <Text as="p" variant="muted">{strings.dragHint()}</Text>
       {controls(ROTATION)}
-      <Button onClick={presenter.resetRotation} disabled={disabled}>{strings.resetRotation()}</Button>
+      <Button onClick={presenter.resetView} disabled={disabled}>{strings.resetView()}</Button>
     </Panel>)}
   </>;
 });

@@ -1,5 +1,4 @@
 import * as stylex from '@stylexjs/stylex';
-import { RotateCcw } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { CheckLabel } from '../../../ui/check_label';
 import { focusRing } from '../../../ui/focus_ring';
@@ -8,6 +7,7 @@ import { Panel } from '../../../ui/panel';
 import { Select } from '../../../ui/select';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
+import { EditControl } from '../edit_control';
 import { EditToolsStrings } from '../edit_tools.strings';
 import { reading } from '../edit_sliders';
 import type { EditStore } from '../edit/edit_store';
@@ -39,25 +39,11 @@ function StraightenControl({
   const reset = !stage.editable || angle === 0 ? null : () => presenter.settleStraighten(0);
   const label = RawEditPanelStrings.straighten();
   return (
-    <div {...stylex.props(styles.control)} onDoubleClick={reset ?? undefined}>
-      <div {...stylex.props(styles.head)}>
-        <Text as="span" style={styles.name}>
-          {label}
-        </Text>
-        <Text variant="mono" as="span" style={styles.value}>
-          {RawEditPanelStrings.degrees(reading(angle, { min: -45, step: 0.05 }))}
-        </Text>
-        <button
-          type="button"
-          {...stylex.props(styles.reset, focusRing.ring, reset == null && styles.resetClean)}
-          title={RawEditPanelStrings.resetControl(label)}
-          aria-label={RawEditPanelStrings.resetControl(label)}
-          disabled={reset == null}
-          onClick={reset ?? undefined}
-        >
-          <RotateCcw size={12} {...stylex.props(styles.resetIcon)} />
-        </button>
-      </div>
+    <EditControl
+      label={label}
+      value={RawEditPanelStrings.degrees(reading(angle, { min: -45, step: 0.05 }))}
+      reset={reset}
+    >
       <Slider
         style={styles.slider}
         value={angle}
@@ -71,7 +57,7 @@ function StraightenControl({
         valueText={(at) => RawEditPanelStrings.degrees(reading(at, { min: -45, step: 0.05 }))}
         disabled={!stage.editable}
       />
-    </div>
+    </EditControl>
   );
 }
 

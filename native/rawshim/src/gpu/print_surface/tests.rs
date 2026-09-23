@@ -117,7 +117,7 @@ fn print_surface_cache_preserves_lighting_and_hdr_peaks() {
                 presentation: Presentation::Surface, roughness, surface_texture: texture,
                 light_angular_degrees: angular, pitch_degrees: pitch, yaw_degrees: yaw,
                 fill_lux: Light::exactly(fill), paper_long_edge_mm: Extent::exactly(millimetres), ..Scene::default()
-            };
+            }.lit_from(0.0, 75.0, 4.0);
             let [absolute, relative, squared, bad, reference_peak, peak, _, _, ..] = comparison.draw(&scene);
             eprintln!("roughness={roughness} texture={texture} angle={angular} pitch={pitch} yaw={yaw}: absolute={absolute} relative={relative} rms={} peak={reference_peak}/{peak}", squared.sqrt());
             assert_eq!(bad, 0.0);

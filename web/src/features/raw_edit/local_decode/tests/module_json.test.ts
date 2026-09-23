@@ -24,6 +24,10 @@ describe('what a tick carries', () => {
       ...DEFAULT_PRINT_SCENE,
       framed: true,
       tonemap: 'filmic',
+      lightAcross: -0.6,
+      zoom: 2.5,
+      panX: -0.125,
+      panY: 0.25,
     });
   });
   test('names the region as the module reads it', () => {

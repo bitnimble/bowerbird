@@ -69,10 +69,26 @@ public float3 paper_inverse(float3 point)
     return float3(r.y * pitched.x - r.x * pitched.z, pitched.y, r.x * pitched.x + r.y * pitched.z);
 }
 
-float3 paper_ray(float2 pixel, float2 canvas)
+static const float PRINT_FOCAL = 1.45;
+
+/// The camera's focal length over the canvas's short edge, which the reader's zoom lengthens.
+///
+/// Fitted to the sheet's own outline (`outer`, the sheet's half extents with its long edge at one)
+/// rather than to its long edge alone. Held against the short edge alone, a landscape sheet on a
+/// landscape canvas lays its long edge along the canvas's long one and fills half the frame, where
+/// a portrait one fills it: `PRINT_FOCAL` is the fit a portrait sheet gets, and every other shape
+/// is brought to the same margin.
+public float print_focal(float2 canvas, float2 outer)
 {
-    let at = (pixel - canvas * 0.5) / min(canvas.x, canvas.y);
-    return paper_inverse(normalize(float3(at.x, -at.y, -1.45)));
+    let across = canvas / min(canvas.x, canvas.y);
+    let reach = max(outer.x / across.x, outer.y / across.y);
+    return PRINT_FOCAL * print.view.x * print_camera_distance() / (CAMERA_DISTANCE.d * reach);
+}
+
+float3 paper_ray(float2 pixel, float2 canvas, float2 outer)
+{
+    let at = (pixel - canvas * 0.5) / min(canvas.x, canvas.y) - print.view.yz;
+    return paper_inverse(normalize(float3(at.x, -at.y, -print_focal(canvas, outer))));
 }
 
 public struct PrintHit {
@@ -220,7 +236,7 @@ void paper_surface(float depth, float sign, float3 origin, float3 ray, float3 ha
 void paper_intersection(float2 pixel, float2 canvas, float3 half, float3 origin,
     float bend, float4 frame, out PrintHit answer)
 {
-    let ray = paper_ray(pixel, canvas);
+    let ray = paper_ray(pixel, canvas, half.xy);
     let axis = half.x >= half.y ? 0u : 1u;
     answer.hit = false;
     answer.coverage = 0.0;
@@ -264,7 +280,7 @@ public PrintHit paper_hit(float2 pixel, float2 canvas, float2 shape)
 
 bool paper_near_pixel(float2 pixel, float2 canvas, float3 half, float3 origin, float bend, float padding)
 {
-    let ray = paper_ray(pixel, canvas);
+    let ray = paper_ray(pixel, canvas, half.xy);
     let inverse = float3(
         abs(ray.x) < 1e-10 ? 1e10 : 1.0 / ray.x,
         abs(ray.y) < 1e-10 ? 1e10 : 1.0 / ray.y,
@@ -288,7 +304,8 @@ public PrintHit paper_covered(float2 pixel, float2 canvas, float2 shape)
     let bend = framed ? 0.0 : PAPER_BEND.d;
     PrintHit answer;
     paper_intersection(pixel, canvas, half, origin, bend, frame, answer);
-    let padding = (camera + length(half + float3(0.0, 0.0, bend))) / (1.45 * min(canvas.x, canvas.y));
+    let focal = print_focal(canvas, half.xy);
+    let padding = (camera + length(half + float3(0.0, 0.0, bend))) / (focal * min(canvas.x, canvas.y));
     if (!paper_near_pixel(pixel, canvas, half, origin, bend, padding)) { return answer; }
     var full = answer.hit;
     PrintHit sample;
@@ -304,7 +321,7 @@ public PrintHit paper_covered(float2 pixel, float2 canvas, float2 shape)
         let projected_x = paper_rotation(float3(half.x, 0.0, 0.0)).xy;
         let projected_y = paper_rotation(float3(0.0, half.y, 0.0)).xy;
         let along = normalize(dot(projected_x, projected_x) > dot(projected_y, projected_y) ? projected_x : projected_y);
-        let thickness = 2.0 * half.z * 1.45 * min(canvas.x, canvas.y) / (camera + length(half));
+        let thickness = 2.0 * half.z * focal * min(canvas.x, canvas.y) / (camera + length(half));
         let across = min(ceil(2.0 / thickness), 256.0);
         columns = uint(max(8.0, ceil(across * abs(along.y))));
         rows = uint(max(8.0, ceil(across * abs(along.x))));
@@ -325,7 +342,7 @@ public PrintHit paper_covered(float2 pixel, float2 canvas, float2 shape)
 public float2 paper_uv(float2 pixel, float2 canvas, float2 shape, PrintHit hit)
 {
     let origin = paper_inverse(float3(0.0, 0.0, print_camera_distance()));
-    let ray = paper_ray(pixel, canvas);
+    let ray = paper_ray(pixel, canvas, frame_outer_half(shape / max(shape.x, shape.y)));
     let cosine = dot(ray, hit.normal);
     let safe = abs(cosine) < 1e-7 ? (cosine < 0.0 ? -1e-7 : 1e-7) : cosine;
     let distance = dot(hit.position - origin, hit.normal) / safe;

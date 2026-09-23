@@ -249,7 +249,7 @@ describe('print surface motion', () => {
     harness.presenter.beginDrag(1, 0, 0, 100);
     harness.presenter.moveDrag(1, 60, 30);
     harness.presenter.rotateBy(45, 20);
-    harness.presenter.resetRotation();
+    harness.presenter.resetView();
     harness.presenter.setControl('yawDegrees', 40);
     expect(harness.store.dragging).toBe(false);
     expect(harness.store.scene).toMatchObject({ yawDegrees: 0, pitchDegrees: 0 });

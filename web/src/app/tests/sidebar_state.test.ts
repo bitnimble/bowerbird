@@ -9,6 +9,8 @@ describe('the sidebar hides itself in the viewer', () => {
     expect(inViewer(route(PathSegment.libraries(), 'lib-1', PathSegment.bin(), PathSegment.photos(), 'abc'))).toBe(true);
     expect(inViewer(route(PathSegment.shoots(), 's-1', PathSegment.photos(), 'abc'))).toBe(true);
     expect(inViewer(route(PathSegment.albums(), 'a-1', PathSegment.photos(), 'abc'))).toBe(true);
+    expect(inViewer(route(PathSegment.photos(), 'abc', PathSegment.mockup()))).toBe(true);
+    expect(inViewer(route(PathSegment.shoots(), 's-1', PathSegment.photos(), 'abc', PathSegment.mockup()))).toBe(true);
   });
 
   test('and nothing else', () => {

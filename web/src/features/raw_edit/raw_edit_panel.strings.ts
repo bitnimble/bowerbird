@@ -29,7 +29,6 @@ export const RawEditPanelStrings = {
   valueWithUnit: (reading: string, unit: string) => `${reading}${unit}`,
 
   rebuildingThePhoto: () => 'Rebuilding the photo…',
-  resetControl: (label: string) => `Reset ${label}`,
 
   removeSensorDust: () => 'Remove sensor dust',
 

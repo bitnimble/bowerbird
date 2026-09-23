@@ -837,7 +837,7 @@ impl Gpu {
     pub(crate) fn print_light_calibration(&self, parameters: [f32; 4], temperature: f32) -> Buffer {
         let mut recording = self.record();
         let buffer = self.own_buffer(&wgpu::BufferDescriptor {
-            label: Some("print light calibration"), size: 48,
+            label: Some("print light calibration"), size: 64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
         });
         recording.holding(&buffer);

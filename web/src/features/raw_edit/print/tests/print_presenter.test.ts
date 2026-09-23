@@ -108,6 +108,36 @@ describe('print viewing', () => {
     expect(editor.decoder.print?.framed).toBe(false);
   });
 
+  test('a reset puts a control back where the chosen paper keeps it, or the default scene for the rest', () => {
+    editor.presenter.setTool('print');
+    editor.presenter.print.setPaper('gloss');
+    editor.presenter.print.setControl('roughness', 0.4);
+    editor.presenter.print.setControl('keyLux', 2500);
+    editor.presenter.print.setControl('lightForward', 4);
+    editor.presenter.print.resetControl('roughness');
+    editor.presenter.print.resetControl('keyLux');
+    editor.presenter.print.resetControl('lightForward');
+    expect(editor.print.scene).toMatchObject({ paper: 'gloss', roughness: 0.08, keyLux: 1000, lightForward: 1.7 });
+  });
+
+  test('choosing a paper replaces every material control a reader moved, and leaves the rest', () => {
+    editor.presenter.setTool('print');
+    editor.presenter.print.setControl('refractiveIndex', 1.8);
+    editor.presenter.print.setControl('surfaceTexture', 0.9);
+    editor.presenter.print.setControl('keyLux', 2500);
+    editor.presenter.print.setPaper('matte');
+    expect(editor.print.scene).toMatchObject({
+      paper: 'matte', refractiveIndex: 1.5, surfaceTexture: 0.85, roughness: 0.65, keyLux: 2500,
+    });
+  });
+
+  test('the lamp never comes nearer the sheet than a print length', () => {
+    editor.presenter.setTool('print');
+    editor.presenter.print.setControl('lightHeight', 0.5);
+    editor.presenter.print.setControl('lightForward', 0.5);
+    expect(editor.print.scene).toMatchObject({ lightHeight: 0.5, lightForward: 1.7 });
+  });
+
   test('print framing defaults off and rejects non-boolean values', () => {
     expect(PrintSceneSchema.parse({ ...DEFAULT_PRINT_SCENE, framed: undefined }).framed).toBe(false);
     expect(PrintSceneSchema.safeParse({ ...DEFAULT_PRINT_SCENE, framed: 1 }).success).toBe(false);
@@ -200,13 +230,13 @@ describe('print viewing', () => {
     editor.presenter.print.setPaper('matte');
     editor.presenter.print.setControl('keyLux', 2340);
     editor.presenter.print.setControl('refractiveIndex', 1.46);
-    editor.presenter.print.setControl('lightDistance', 2.5);
+    editor.presenter.print.setControl('lightForward', 2.5);
     editor.presenter.print.setControl('paperLongEdgeMm', 420);
     editor.presenter.print.setControl('lightTemperatureKelvin', 2700);
     await drawnBy(editor);
     expect(editor.decoder.print).toMatchObject({
       paper: 'matte', roughness: 0.65, keyLux: 2340, refractiveIndex: 1.46,
-      lightDistance: 2.5, paperLongEdgeMm: 420, surfaceTexture: 0.85, lightTemperatureKelvin: 2700,
+      lightForward: 2.5, paperLongEdgeMm: 420, surfaceTexture: 0.85, lightTemperatureKelvin: 2700,
     });
     expect(JSON.stringify(editor.edit.doc)).toBe(doc);
   });
@@ -269,7 +299,7 @@ describe('print viewing', () => {
     editor.presenter.print.setControl('roughness', 0);
     editor.presenter.print.setControl('whiteReflectance', 2);
     editor.presenter.print.setControl('refractiveIndex', 0.9);
-    editor.presenter.print.setControl('lightDistance', 0.1);
+    editor.presenter.print.setControl('lightForward', 11);
     editor.presenter.print.setControl('paperLongEdgeMm', 0);
     editor.presenter.print.setControl('surfaceTexture', 2);
     editor.presenter.print.setControl('lightTemperatureKelvin', 1000);
@@ -277,7 +307,35 @@ describe('print viewing', () => {
     editor.presenter.print.setPaper('gloss');
     editor.presenter.print.setControl('fillLux', 40);
     editor.presenter.print.rotateBy(30, 20);
-    editor.presenter.print.resetRotation();
-    expect(editor.print.scene).toMatchObject({ paper: 'gloss', roughness: 0.08, fillLux: 40, yawDegrees: -12, pitchDegrees: 8 });
+    editor.presenter.print.zoomAt(3, { x: 0.2, y: -0.1 });
+    editor.presenter.print.panBy(0.1, 0.05);
+    editor.presenter.print.resetView();
+    expect(editor.print.scene).toMatchObject({
+      paper: 'gloss', roughness: 0.08, fillLux: 40, yawDegrees: -12, pitchDegrees: 8,
+      zoom: 1, panX: 0, panY: 0,
+    });
+  });
+
+  test('a wheel zoom holds the scene under the pointer and a pan runs to the edge and stops', () => {
+    editor.presenter.setTool('print');
+    const at = { x: 0.3, y: -0.2 };
+    editor.presenter.print.zoomAt(4, at);
+    const { zoom, panX, panY } = editor.print.scene;
+    expect(zoom).toBeGreaterThan(2);
+    // The ray through `at` is `(at - pan) / focal`, so holding it still across a change of focal
+    // is what makes the point under the pointer the one the zoom is about.
+    expect((at.x - panX) / zoom).toBeCloseTo(at.x, 10);
+    expect((at.y - panY) / zoom).toBeCloseTo(at.y, 10);
+
+    editor.presenter.print.panBy(5, -5);
+    expect(editor.print.scene).toMatchObject({ panX: 1, panY: -1 });
+  });
+
+  test('zoom and pan stay out of the surface presentation, which has the editor own its view', () => {
+    editor.presenter.setTool('print');
+    editor.presenter.print.setSurface(true);
+    editor.presenter.print.zoomAt(4, { x: 0.3, y: -0.2 });
+    editor.presenter.print.panBy(0.5, 0.5);
+    expect(editor.print.scene).toMatchObject({ zoom: 1, panX: 0, panY: 0 });
   });
 });

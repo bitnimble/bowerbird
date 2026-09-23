@@ -52,17 +52,25 @@ void calibrate(uint lane : SV_GroupIndex)
 /// illuminance rather than an approximation of it.
 void room_calibration()
 {
+    zonal_bands(false, 6);
+    zonal_bands(true, 10);
+}
+
+/// The four words a profile needs: its radiance per unit of the illuminance it is named by, then
+/// the three zonal coefficients a Lambert cosine reads it through.
+void zonal_bands(bool bounced, uint at)
+{
     let pi = 3.141592653589793;
     var bands = float3(0.0);
     for (uint i = 0; i < 1024; i += 1) {
         let up = (float(i) + 0.5) / 512.0 - 1.0;
-        let radiance = room_profile(up, 0.0) / 512.0;
+        let radiance = (bounced ? bounce_profile(up, 0.0) : room_profile(up, 0.0)) / 512.0;
         bands += radiance * float3(0.5, 1.5 * up, 2.5 * 0.5 * (3.0 * up * up - 1.0));
     }
     let lambert = float3(pi, 2.0 * pi / 3.0, pi / 4.0) * bands;
     let scale = 1.0 / (lambert.x - 0.5 * lambert.z);
-    calibration[6] = scale;
-    calibration[7] = scale * lambert.x;
-    calibration[8] = scale * lambert.y;
-    calibration[9] = scale * lambert.z;
+    calibration[at] = scale;
+    calibration[at + 1] = scale * lambert.x;
+    calibration[at + 2] = scale * lambert.y;
+    calibration[at + 3] = scale * lambert.z;
 }

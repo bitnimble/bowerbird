@@ -3461,9 +3461,11 @@ mod pictures {
         use crate::print::{Paper, Presentation, Scene};
 
         const CANVAS: (u32, u32) = (320, 240);
-        // Wider than the pins beside it and on one adapter's evidence only: the scene path
-        // faults on SwiftShader, so there is no second reading of it to narrow this against.
-        const SHEET: Tolerance = Tolerance { worst: 768, mean: 1.5 };
+        // Wider than the pins beside it, and set by two adapters rather than by the lighting: an
+        // RTX 3080 reads both sheets 15 codes from radv's on average, every one of them inside the
+        // photograph - the mat, the rim and the lamp's image in the glass agree exactly - so what
+        // moves is the frame the adapter prepared, not anything this draw does with it.
+        const SHEET: Tolerance = Tolerance { worst: 768, mean: 20.0 };
 
         let bytes = std::fs::read(sony()).expect("the fixture");
         let prepared = crate::edit::prepare_bytes(
@@ -3502,10 +3504,11 @@ mod pictures {
                 surface_texture: 0.15,
                 yaw_degrees: -15.0,
                 pitch_degrees: -12.0,
-                light_azimuth_degrees: -32.0,
-                light_elevation_degrees: 25.0,
                 ..Scene::default()
-            }),
+            }.lit_from(-32.0, 25.0, 4.0)),
+            // A softbox rather than the default one-degree lamp, so the pane's own image of it is
+            // in the picture: its shape carries the glass's waviness and its rim carries the
+            // coverage, and both are claims only a picture can hold.
             ("print/framed-satin", true, Scene {
                 paper: Paper::Satin,
                 framed: true,
@@ -3516,8 +3519,9 @@ mod pictures {
                 surface_texture: 0.5,
                 yaw_degrees: -8.0,
                 pitch_degrees: -14.0,
+                light_angular_degrees: 10.0,
                 ..Scene::default()
-            }),
+            }.lit_from(-30.0, 44.0, 4.0)),
         ] {
             // The surface presentation maps the whole sheet into the canvas, so its canvas takes
             // the sheet's shape; the scene one draws the sheet inside a canvas of its own.

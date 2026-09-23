@@ -7,6 +7,7 @@ public struct PrintParams {
     public float4 illumination;
     public float4 surface;
     public float4 framing;
+    public float4 view;
 };
 
 [vk::binding(0, 1)] public ConstantBuffer<PrintParams> print;
