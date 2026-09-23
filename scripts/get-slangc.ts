@@ -20,7 +20,7 @@ import { hostPath, vcpkgInstall, vcpkgRecipe, WINDOWS } from './vcpkg';
 
 const NAME = 'slangc';
 const FEATURE = 'shaders';
-const RECIPE = vcpkgRecipe(FEATURE);
+const RECIPE = vcpkgRecipe(FEATURE, import.meta.path);
 const HOME = pinnedHome(NAME, RECIPE);
 const INSTALLED = resolve(HOME, 'installed');
 const BINARY = WINDOWS ? 'slangc.exe' : 'slangc';

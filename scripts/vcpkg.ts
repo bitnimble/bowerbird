@@ -17,9 +17,12 @@ const MANIFEST = resolve(ROOT, 'native/rawshim/vcpkg');
 export const WINDOWS = process.platform === 'win32';
 export const TRIPLET = triplet();
 
-/** What a tree installed for `feature` is named by: the commit, the triplet and the manifest. */
-export function vcpkgRecipe(feature: string): string {
-  return pin(VCPKG, [feature, TRIPLET, ...manifest()]);
+/**
+ * What a tree installed for `feature` is named by: the commit, the triplet, the manifest, and the
+ * `getter` that shapes the tree after vcpkg is done with it.
+ */
+export function vcpkgRecipe(feature: string, getter: string): string {
+  return pin(VCPKG, [feature, TRIPLET, text(getter), text(import.meta.path), ...manifest()]);
 }
 
 /**
@@ -97,12 +100,16 @@ function manifest(): string[] {
     for (const entry of readdirSync(at).sort()) {
       const path = join(at, entry);
       if (statSync(path).isDirectory()) walk(path);
-      // Line endings normalised, or a Windows checkout would name a different tree for the same files.
-      else files.push(`${relative(MANIFEST, path).replaceAll('\\', '/')}\n${readFileSync(path, 'utf8').replaceAll('\r\n', '\n')}`);
+      else files.push(`${relative(MANIFEST, path).replaceAll('\\', '/')}\n${text(path)}`);
     }
   };
   walk(MANIFEST);
   return files;
+}
+
+/** Line endings normalised, or a Windows checkout would name a different tree for the same file. */
+function text(path: string): string {
+  return readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
 }
 
 /**

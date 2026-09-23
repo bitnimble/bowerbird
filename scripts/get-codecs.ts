@@ -18,7 +18,7 @@ import { linkPinned, makeOnce, pinnedHome } from './pinned';
 import { hostPath, TRIPLET, vcpkgInstall, vcpkgRecipe, WINDOWS } from './vcpkg';
 
 const NAME = 'codecs';
-const RECIPE = vcpkgRecipe(NAME);
+const RECIPE = vcpkgRecipe(NAME, import.meta.path);
 const HOME = pinnedHome(NAME, RECIPE);
 /** What `build.rs` reads the whole link from, relative to `HOME`. */
 const LINK = 'link.txt';

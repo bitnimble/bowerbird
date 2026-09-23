@@ -154,8 +154,8 @@ nasm on x86, and the getter names whichever is missing before it starts. It fetc
 and ninja, and on Windows everything.
 
 **All three getters replace a tree made from an older recipe.** Each records what it was made from
-(`scripts/pinned.ts`) - the vcpkg commit and every file under `native/rawshim/vcpkg/` for the
-codecs and the compiler, the file hashes for the driver - and reuses what is there
+(`scripts/pinned.ts`) - the vcpkg commit, every file under `native/rawshim/vcpkg/` and the getter's
+own source for the codecs and the compiler, the file hashes for the driver - and reuses what is there
 only when that still matches, so bumping a version or adding a flag rebuilds rather than leaving
 the old tree where the build will find it. That is not hypothetical: a libavif built without
 sharpyuv compiles the stub, which answers `NOT_IMPLEMENTED` to every 4:2:0 encode, which is every
