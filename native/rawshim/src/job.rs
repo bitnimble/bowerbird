@@ -382,7 +382,7 @@ pub struct HeaderFields {
 pub struct CaptureSequence {
     pub kind: &'static str,
     pub group: Option<u32>,
-    pub index: u32,
+    pub index: Option<u32>,
     pub count: Option<u32>,
 }
 
@@ -391,13 +391,14 @@ impl CaptureSequence {
         let kind = match header.sequence_kind {
             crate::header::SEQUENCE_PIXEL_SHIFT => "pixelShift",
             crate::header::SEQUENCE_EXPOSURE_BRACKET => "exposureBracket",
+            crate::header::SEQUENCE_FOCUS_BRACKET => "focusBracket",
             _ => return None,
         };
         let known = |value: u32| (value != 0).then_some(value);
         Some(CaptureSequence {
             kind,
             group: known(header.sequence_group),
-            index: header.sequence_index,
+            index: known(header.sequence_index),
             count: known(header.sequence_count),
         })
     }

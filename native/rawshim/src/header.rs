@@ -42,9 +42,9 @@ pub struct BbHeader {
     pub camera_make: [u8; 64],
     pub camera_model: [u8; 64],
     pub lens_model: [u8; 128],
-    /// The multi-shot capture this frame is one of: [`SEQUENCE_NONE`], [`SEQUENCE_PIXEL_SHIFT`] or
-    /// [`SEQUENCE_EXPOSURE_BRACKET`], then the fields of `rawler`'s `CaptureSequence` with 0 for
-    /// what the body did not record.
+    /// The multi-shot capture this frame is one of: [`SEQUENCE_NONE`], [`SEQUENCE_PIXEL_SHIFT`],
+    /// [`SEQUENCE_EXPOSURE_BRACKET`] or [`SEQUENCE_FOCUS_BRACKET`], then the fields of `rawler`'s
+    /// `CaptureSequence` with 0 for what the body did not record.
     pub sequence_kind: u32,
     pub sequence_group: u32,
     pub sequence_index: u32,
@@ -54,6 +54,7 @@ pub struct BbHeader {
 pub const SEQUENCE_NONE: u32 = 0;
 pub const SEQUENCE_PIXEL_SHIFT: u32 = 1;
 pub const SEQUENCE_EXPOSURE_BRACKET: u32 = 2;
+pub const SEQUENCE_FOCUS_BRACKET: u32 = 3;
 
 impl BbHeader {
     fn blank() -> BbHeader {
@@ -347,9 +348,10 @@ pub fn read_with(
         out.sequence_kind = match sequence.kind {
             SequenceKind::PixelShift => SEQUENCE_PIXEL_SHIFT,
             SequenceKind::ExposureBracket => SEQUENCE_EXPOSURE_BRACKET,
+            SequenceKind::FocusBracket => SEQUENCE_FOCUS_BRACKET,
         };
         out.sequence_group = sequence.group.unwrap_or(0);
-        out.sequence_index = sequence.index;
+        out.sequence_index = sequence.index.unwrap_or(0);
         out.sequence_count = sequence.count.unwrap_or(0);
     }
 
