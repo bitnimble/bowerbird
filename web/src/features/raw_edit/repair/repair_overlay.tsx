@@ -201,11 +201,15 @@ export const RepairOverlay = observer(function RepairOverlay({
     if (removal !== hovered) setHovered(removal);
   };
 
-  /** A pointer held down on the overlay for the rest of its gesture, `onMove` and `onUp` its own. */
+  /**
+   * A pointer held down on the overlay for the rest of its gesture, `onMove` and `onUp` its own, and
+   * `onCancel` whatever ends it otherwise.
+   */
   const capture = (
     event: ReactPointerEvent<HTMLDivElement>,
     onMove: (moved: PointerEvent, travelled: number) => void,
     onUp: (lifted: PointerEvent, travelled: number) => void,
+    onCancel?: () => void,
   ): void => {
     event.preventDefault();
     const surface = event.currentTarget;
@@ -231,6 +235,7 @@ export const RepairOverlay = observer(function RepairOverlay({
       release();
       setLoop(null);
       setDragged(null);
+      onCancel?.();
     };
     const lifting = (lifted: PointerEvent): void => {
       release();
@@ -272,6 +277,10 @@ export const RepairOverlay = observer(function RepairOverlay({
         if (travelled <= TAP_SLOP) return;
         step(onOutput(lifted));
         void presenter.settleMove();
+      },
+      // The steps already sent moved it, so a cancelled drag settles where it was left.
+      () => {
+        if (sent !== from) void presenter.settleMove();
       },
     );
   };

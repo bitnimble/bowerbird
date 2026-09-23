@@ -10,6 +10,7 @@ import { StageStore } from '../../stage/stage_store';
 import type { Repair } from '../../../../../../src/schemas/stored_grid';
 import { RawEditPanelStrings } from '../../raw_edit_panel.strings';
 import { FakeDecoder, GRADE, openEditor, openedWith, type Editor } from '../../stage/tests/raw_edit_harness';
+import { MOVED_SOLVE_QUIET_MS } from '../repair_presenter';
 import { RepairStore } from '../repair_store';
 
 let editor: Editor;
@@ -44,6 +45,12 @@ const SQUARE = [
 /** Long enough for a sweep of bands to resolve, each one a turn of its own. */
 const settled = async (): Promise<void> => {
   for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+};
+
+/** Long enough for a dragged fill to count as resting, and for its solve to land. */
+const rested = async (): Promise<void> => {
+  await Bun.sleep(MOVED_SOLVE_QUIET_MS + 20);
+  await settled();
 };
 
 beforeEach(() => {
@@ -303,24 +310,78 @@ describe('the repair tool', () => {
     expect(repair.repairOptionThumbnails.size).toBe(0);
   });
 
-  test('moves where the fill on show is read from step by step, solving it at each', async () => {
+  test('moves where the fill on show is read from, and solves it there once it rests', async () => {
     await presenter.repair.draw(SQUARE);
     presenter.repair.settleFeather(0.005);
     await settled();
-    decoder.offer = [];
+    decoder.offer = [{ ...SECOND, gain: 1.25 }];
+    const solves = decoder.solved.length;
 
     // Two sixteenths of the output across, which the identity makes an eighth of the grid's 65535.
     void presenter.repair.move('source', { x: 0.25, y: 0.5 }, { x: 0.3125, y: 0.5 });
     await presenter.repair.move('source', { x: 0.3125, y: 0.5 }, { x: 0.375, y: 0.5 });
     const read: [number, number] = [3000 + 8192, 0];
     expect(edit.doc?.repairs[0]?.donor).toEqual(read);
-
-    decoder.offer = [{ ...SECOND, gain: 1.25 }];
-    await presenter.repair.move('source', { x: 0.375, y: 0.5 }, { x: 0.375, y: 0.5 });
     await settled();
+    expect(decoder.solved).toHaveLength(solves);
+
+    await rested();
+    expect(decoder.solved).toHaveLength(solves + 1);
     expect(decoder.solved.at(-1)).toMatchObject({ donor: read, without: { donor: read } });
     // Solved there, at the blend the reader had.
     expect(edit.doc?.repairs).toEqual([{ ...SECOND, gain: 1.25, feather: 328 }]);
+  });
+
+  test('takes every move queued behind a step in as one step', async () => {
+    await presenter.repair.draw(SQUARE);
+    await settled();
+    let steps = 0;
+    const map = decoder.pictureOfOutput;
+    decoder.pictureOfOutput = (geometry, points) => {
+      steps += 1;
+      return map(geometry, points);
+    };
+
+    void presenter.repair.move('source', { x: 0.25, y: 0.5 }, { x: 0.3125, y: 0.5 });
+    void presenter.repair.move('source', { x: 0.3125, y: 0.5 }, { x: 0.34375, y: 0.5 });
+    await presenter.repair.move('source', { x: 0.34375, y: 0.5 }, { x: 0.375, y: 0.5 });
+
+    expect(steps).toBe(1);
+    expect(edit.doc?.repairs[0]?.donor).toEqual([3000 + 8192, 0]);
+    presenter.repair.cancel();
+  });
+
+  test('solves a moved fill where it was let go without waiting for it to rest', async () => {
+    await presenter.repair.draw(SQUARE);
+    await settled();
+    decoder.offer = [{ ...SECOND, gain: 1.25 }];
+    const solves = decoder.solved.length;
+
+    await presenter.repair.move('source', { x: 0.25, y: 0.5 }, { x: 0.375, y: 0.5 });
+    await presenter.repair.settleMove();
+    await settled();
+
+    expect(decoder.solved).toHaveLength(solves + 1);
+    await rested();
+    expect(decoder.solved).toHaveLength(solves + 1);
+    presenter.repair.cancel();
+  });
+
+  test('draws the fills on offer again once a drag lets go, and not at each step of it', async () => {
+    await presenter.repair.draw(SQUARE);
+    await settled();
+    const before = decoder.optionThumbnails.length;
+
+    void presenter.repair.move('source', { x: 0.25, y: 0.5 }, { x: 0.3125, y: 0.5 });
+    await presenter.repair.move('source', { x: 0.3125, y: 0.5 }, { x: 0.375, y: 0.5 });
+    await rested();
+    expect(decoder.optionThumbnails).toHaveLength(before);
+
+    await presenter.repair.settleMove();
+    await settled();
+    expect(decoder.optionThumbnails).toHaveLength(before + 2);
+    expect([...repair.repairOptionThumbnails.keys()]).toEqual([0, 1]);
+    presenter.repair.cancel();
   });
 
   test('moves the fill on show, reading from where it did, and drops the places found for where it was', async () => {
@@ -330,7 +391,7 @@ describe('the repair tool', () => {
     decoder.offer = [];
 
     await presenter.repair.move('fill', { x: 0.5, y: 0.5 }, { x: 0.5, y: 0.45 });
-    await settled();
+    await rested();
     // A twentieth of the output down, which is 5% of the grid's 49151 steps.
     const by = -2458;
     const moved = edit.doc?.repairs[0];
