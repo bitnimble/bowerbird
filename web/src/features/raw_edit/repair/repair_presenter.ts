@@ -27,6 +27,8 @@ const REPAIR_THUMBNAIL_MARGIN = 1.6;
 /** A fill on offer's thumbnail, which the panel shows half its width across. */
 const REPAIR_OPTION_THUMBNAIL_SIDE = 320;
 
+export const MOVED_SOLVE_QUIET_MS = 80;
+
 type Point = { x: number; y: number };
 
 /** What the repair tool needs of the editor it works in. */
@@ -427,26 +429,47 @@ export class RepairPresenter {
   /** The moves not yet applied, in order: each is a step from wherever the last left the fill. */
   private moving: Promise<void> = Promise.resolve();
 
+  /** Moves waiting for the step before them, each taking in every move of its part after it. */
+  private readonly queuedMoves: { part: 'fill' | 'source'; from: Point; to: Point }[] = [];
+
   /**
    * The fill on offer, or where it is read from, dragged on the stage from `from` to `to`, in
-   * fractions of the output: shown there at once, moved as it was, then solved again there - the
-   * seam grown from the loop and the light matched for where it now reads from.
+   * fractions of the output: shown there at once, moved as it was, then solved again there once it
+   * rests - the seam grown from the loop and the light matched for where it now reads from.
    *
    * **Moving the fill leaves where it is read from where it was**, as a clone stamp's source stays
    * put, and the other places on offer go with the place they were searched for until
    * {@link settleMove} searches its new one.
    */
   move(part: 'fill' | 'source', from: Point, to: Point): Promise<void> {
-    this.moving = this.moving.then(() => this.step(part, from, to));
+    this.dragging = true;
+    const waiting = this.queuedMoves.at(-1);
+    if (waiting?.part === part) {
+      waiting.to = to;
+      return this.moving;
+    }
+    this.queuedMoves.push({ part, from, to });
+    this.moving = this.moving.then(() => {
+      const next = this.queuedMoves.shift();
+      return next == null ? undefined : this.step(next.part, next.from, next.to);
+    });
     return this.moving;
   }
 
-  /** The drag let go: a fill moved is offered beside what the search finds at its new place. */
+  /**
+   * The drag let go: solved where it was left, and a fill moved is offered beside what the search
+   * finds at its new place.
+   */
   settleMove(): Promise<void> {
     this.moving = this.moving.then(() => {
-      if (!this.fillMoved) return;
-      this.fillMoved = false;
-      this.searchMoved = true;
+      this.dragging = false;
+      this.stopSolveTimer();
+      if (this.fillMoved) {
+        this.fillMoved = false;
+        this.searchMoved = true;
+      } else if (this.repairAt != null) {
+        void this.followOptionThumbnails(this.repairAt);
+      }
       return this.solveMoved();
     });
     return this.moving;
@@ -454,6 +477,24 @@ export class RepairPresenter {
 
   /** Whether the fill itself has moved since it was last searched around. */
   private fillMoved = false;
+
+  /** Whether a drag is moving the fill or its source, whose every step would outdate a thumbnail. */
+  private dragging = false;
+
+  private solveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private solveAtRest(): void {
+    this.stopSolveTimer();
+    this.solveTimer = setTimeout(() => {
+      this.solveTimer = null;
+      void this.solveMoved();
+    }, MOVED_SOLVE_QUIET_MS);
+  }
+
+  private stopSolveTimer(): void {
+    if (this.solveTimer != null) clearTimeout(this.solveTimer);
+    this.solveTimer = null;
+  }
 
   private async step(part: 'fill' | 'source', from: Point, to: Point): Promise<void> {
     const local = this.host.local();
@@ -485,7 +526,7 @@ export class RepairPresenter {
       const options = this.store.repairOptions ?? [];
       this.place(at, options.map((option, index) => (index === choice ? source : option)), choice);
     }
-    void this.solveMoved();
+    this.solveAtRest();
   }
 
   /** Whether a moved fill is being solved, whether it has moved again since, and whether a search waits. */
@@ -535,7 +576,7 @@ export class RepairPresenter {
     this.store.repairOptions = options;
     this.store.repairChoice = choice;
     this.show();
-    void this.followOptionThumbnails(at);
+    if (!this.dragging) void this.followOptionThumbnails(at);
   }
 
   /**
@@ -650,6 +691,8 @@ export class RepairPresenter {
     this.moves += 1;
     this.fillMoved = false;
     this.searchMoved = false;
+    this.dragging = false;
+    this.stopSolveTimer();
     this.dropOptionThumbnails();
     this.store.repairOptions = null;
     this.store.repairChoice = 0;

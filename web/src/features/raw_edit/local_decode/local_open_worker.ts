@@ -153,13 +153,12 @@ async function answer(ask: Ask): Promise<{ value: unknown; transfer?: Transferab
     case 'repairThumbnail': {
       const canvas = new OffscreenCanvas(ask.side, ask.side);
       drawing().drawThumbnail(canvas, ask.side, ask.ev, ask.region, ask.repair);
-      // Copied in this task, before the canvas's image can expire.
-      return { value: await canvas.convertToBlob() };
+      return { value: await eightBitPng(canvas) };
     }
     case 'optionThumbnail': {
       const canvas = new OffscreenCanvas(ask.side, ask.side);
       drawing().drawOptionThumbnail(canvas, ask.side, ask.ev, ask.region, ask.showing ?? undefined, ask.option);
-      return { value: await canvas.convertToBlob() };
+      return { value: await eightBitPng(canvas) };
     }
     case 'tick': {
       const editor = drawing();
@@ -174,6 +173,18 @@ async function answer(ask: Ask): Promise<{ value: unknown; transfer?: Transferab
       return { value: null };
     }
   }
+}
+
+/** A thumbnail the module drew, as an 8-bit sRGB PNG. */
+async function eightBitPng(drawn: OffscreenCanvas): Promise<Blob> {
+  // The drawn canvas is float16 and encodes as a 16-bit PNG, and in Chrome on Windows one of those
+  // leaving the page drops the stage's canvas to SDR for as long as it keeps redrawing.
+  const flat = new OffscreenCanvas(drawn.width, drawn.height);
+  const context = flat.getContext('2d');
+  if (context == null) throw new Error('this worker would not open a 2D canvas for a thumbnail');
+  // Before any await: the drawn canvas's image expires when the current event-loop task ends.
+  context.drawImage(drawn, 0, 0);
+  return flat.convertToBlob();
 }
 
 function raw(): Uint8Array {

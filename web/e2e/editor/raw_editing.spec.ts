@@ -305,6 +305,14 @@ async function paintedSum(thumbnail: Locator): Promise<number> {
   });
 }
 
+/** The bit depth a thumbnail's PNG declares in its header. */
+async function bitDepth(thumbnail: Locator): Promise<number> {
+  return thumbnail.evaluate(async (img: HTMLImageElement) => {
+    const bytes = new Uint8Array(await (await fetch(img.src)).arrayBuffer());
+    return bytes[24] ?? 0;
+  });
+}
+
 test('a loop drawn around something is offered fills, and one is kept', async ({ page }) => {
   await open(page);
   const wasAt = await savedRev(page, photoId);
@@ -334,7 +342,10 @@ test('a loop drawn around something is offered fills, and one is kept', async ({
   await expect(details.getByRole('slider', { name: 'Blend' })).toBeVisible();
   // Each fill on offer shows the stage as it would be with that fill chosen.
   const fills = details.getByRole('radiogroup', { name: 'Fills' });
-  expect(await paintedSum(fills.getByRole('radio', { name: 'Fill 1' }).locator('img'))).toBeGreaterThan(0);
+  const firstFill = fills.getByRole('radio', { name: 'Fill 1' }).locator('img');
+  expect(await paintedSum(firstFill)).toBeGreaterThan(0);
+  // `eightBitPng`: a 16-bit one leaving the page drops the stage to SDR in Chrome on Windows.
+  expect(await bitDepth(firstFill)).toBe(8);
 
   // While it is on offer the stage draws it, where it is read from, and the way between; the fill
   // is taken by the pointer and moved.
