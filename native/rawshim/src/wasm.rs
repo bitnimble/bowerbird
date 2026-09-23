@@ -112,6 +112,8 @@ pub struct HeldRaw {
     adjust: std::cell::Cell<crate::gpu::Adjust>,
     /// Which output the reader is proofing against, which the draw grades and clips for.
     proof: std::cell::Cell<crate::gpu::Output>,
+    /// How an sRGB proof fits its highlights under diffuse white.
+    proof_tone: std::cell::Cell<crate::gpu::Tonemap>,
     print: std::cell::Cell<Option<crate::print::Scene>>,
     /// What an open answered with, for a picture that arrived already prepared.
     ///
@@ -310,6 +312,7 @@ pub async fn hold_raw(bytes: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
         geometry: std::cell::Cell::new(crate::image::Geometry::none()),
         adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
         proof: std::cell::Cell::new(crate::gpu::Output::Pq),
+        proof_tone: std::cell::Cell::new(crate::gpu::Tonemap::Neutral),
         print: std::cell::Cell::new(None),
         header: String::new(),
     })
@@ -357,6 +360,7 @@ pub async fn hold_picture(framed: &[u8], request: &str) -> Result<HeldRaw, JsVal
         geometry: std::cell::Cell::new(crate::image::Geometry::none()),
         adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
         proof: std::cell::Cell::new(crate::gpu::Output::Pq),
+        proof_tone: std::cell::Cell::new(crate::gpu::Tonemap::Neutral),
         print: std::cell::Cell::new(None),
         header: String::new(),
     };
@@ -1774,8 +1778,13 @@ impl HeldRaw {
     /// **A view of the same edits, not an edit.** The grade is untouched; what moves is where the
     /// highlights roll into and which gamut the result is clipped to, which is precisely the pair
     /// that differs between this library's two renditions (`job::peak_nits`, `frame.slang`'s `fs`).
+    ///
+    /// `tone` is the operator an sRGB proof fits its highlights with, named as a print scene names
+    /// its own; the neutral one is the rendition's.
     #[wasm_bindgen(js_name = setProof)]
-    pub fn set_proof(&self, proof: &str) -> Result<(), JsValue> {
+    pub fn set_proof(&self, proof: &str, tone: &str) -> Result<(), JsValue> {
+        self.proof_tone.set(serde_json::from_value(serde_json::Value::from(tone))
+            .map_err(|e| JsValue::from_str(&format!("rawshim: no highlights are fitted by {tone}: {e}")))?);
         self.proof.set(match proof {
             "hdr" => crate::gpu::Output::Pq,
             "srgb" => crate::gpu::Output::Srgb,
@@ -1863,14 +1872,20 @@ impl HeldRaw {
             }
             _ => peak_nits,
         };
+        // Neutral anywhere else, where nothing reads it and the regional operator would build a
+        // neighbourhood for nobody.
+        let proofed_tone = match proof {
+            crate::gpu::Output::Srgb => self.proof_tone.get(),
+            _ => crate::gpu::Tonemap::Neutral,
+        };
 
         let (uploaded, width, height, window) = match reading {
             Reading::Tile(tiled) => {
                 let scene = tiled.window.scene(ev, self.adjust.get());
-                let grade = tiled
-                    .window
-                    .grade(&scene, proofed(tiled.peak_nits), proof)
-                    .onto(shown);
+                let grade = crate::gpu::Grade {
+                    print_tone: proofed_tone,
+                    ..tiled.window.grade(&scene, proofed(tiled.peak_nits), proof).onto(shown)
+                };
                 crate::gpu::present(&tiled.uploaded, stage, &grade, &drawing.pyramid, None);
                 return refused();
             }
@@ -1908,9 +1923,9 @@ impl HeldRaw {
             window,
             surround_window: None,
             canvas: Some(shown),
-            // The print scene's own operator reaches the draw through `draw_with_print`, which
-            // overrides this for the pigment it grades.
-            print_tone: crate::gpu::Tonemap::Neutral,
+            // An sRGB proof's. A print scene's own operator reaches the draw through
+            // `draw_with_print`, which overrides this for the pigment it grades.
+            print_tone: proofed_tone,
         };
         // **Before the draw, and every tick.** The peak is measured *after* the exposure
         // (`peak.slang`), so it is not a property of the photograph the way the levels are: read

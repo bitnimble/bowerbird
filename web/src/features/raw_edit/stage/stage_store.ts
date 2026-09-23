@@ -1,7 +1,8 @@
 import { computed, observable } from 'mobx';
 import type { JobLevels, NoiseFit } from '../../../../../src/schemas/jobs';
 import type { EditStore } from '../edit/edit_store';
-import type { Region, SoftProof } from '../edits';
+import type { Region } from '../edits';
+import type { SoftProof } from '../proof/soft_proof';
 
 export type EditStatus = 'idle' | 'fetching' | 'preparing' | 'live' | 'failed';
 
@@ -146,13 +147,11 @@ export class StageStore {
   @observable accessor repreparing = false;
 
   /**
-   * Which rendition the stage is showing this photograph as.
+   * What the stage is showing this photograph as: a rendition, or a print.
    *
    * A view of the edits rather than one of them, so it stays off the document and out of a save:
    * two readers of the same photograph may be proofing against different targets, and neither is
-   * a thing the other should inherit. Remembered across sessions for the same reason `cropToFit`
-   * is - it is a habit.
+   * a thing the other should inherit.
    */
   @observable accessor softProof: SoftProof = 'hdr';
-
 }

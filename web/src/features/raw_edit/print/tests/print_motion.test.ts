@@ -66,8 +66,8 @@ class MotionHarness {
   }
 
   open(): void {
-    this.presenter.setSurface(true);
-    this.presenter.setOpen(true);
+    this.presenter.setTouch(true);
+    this.presenter.setView('sheet');
   }
 
   orient(alpha: number | null, beta: number | null, gamma: number | null, count = 1): void {
@@ -123,7 +123,7 @@ describe('print surface motion', () => {
     expect(harness.pendingFrames).toBe(0);
   });
 
-  test('cancels interpolated motion on recenter, hiding, mode changes and close', () => {
+  test('cancels interpolated motion on recentre, hiding, mode changes and close', () => {
     const moving = (): void => {
       harness.sample(0, 90, 0);
       harness.sample(30, 90, 0);
@@ -141,9 +141,9 @@ describe('print surface motion', () => {
     expect(harness.pendingFrames).toBe(0);
     harness.visibility.setHidden(false);
     moving();
-    harness.presenter.setSurface(false);
+    harness.presenter.setTouch(false);
     expect(harness.pendingFrames).toBe(0);
-    harness.presenter.setSurface(true);
+    harness.presenter.setTouch(true);
     moving();
     harness.presenter.close();
     expect(harness.pendingFrames).toBe(0);
@@ -199,7 +199,7 @@ describe('print surface motion', () => {
     expect(Math.abs(harness.store.scene.pitchDegrees - 2)).toBeLessThan(0.1);
   });
 
-  test('remaps landscape axes and recenters after screen rotation', () => {
+  test('remaps landscape axes and recentres after screen rotation', () => {
     harness.angle = 90;
     harness.open();
     harness.orient(0, 90, 0);
@@ -231,7 +231,7 @@ describe('print surface motion', () => {
     expect(Math.abs(harness.store.scene.yawDegrees - 70)).toBeLessThan(0.1);
   });
 
-  test('uses heading-free tilt and recenters if heading becomes available', () => {
+  test('uses heading-free tilt and recentres if heading becomes available', () => {
     harness.open();
     harness.orient(null, 90, 0);
     harness.orient(null, 90, 20, 50);
@@ -242,10 +242,10 @@ describe('print surface motion', () => {
   });
 
   test('surface controls preserve and restore desktop rotation', () => {
-    harness.presenter.setOpen(true);
+    harness.presenter.setView('sheet');
     harness.presenter.rotateBy(30, 20);
     const desktop = { yawDegrees: harness.store.scene.yawDegrees, pitchDegrees: harness.store.scene.pitchDegrees };
-    harness.presenter.setSurface(true);
+    harness.presenter.setTouch(true);
     harness.presenter.beginDrag(1, 0, 0, 100);
     harness.presenter.moveDrag(1, 60, 30);
     harness.presenter.rotateBy(45, 20);
@@ -255,7 +255,7 @@ describe('print surface motion', () => {
     expect(harness.store.scene).toMatchObject({ yawDegrees: 0, pitchDegrees: 0 });
     harness.orient(0, 90, 0);
     harness.orient(20, 90, 0, 50);
-    harness.presenter.setSurface(false);
+    harness.presenter.setTouch(false);
     expect(harness.store.scene).toMatchObject({ presentation: 'scene', ...desktop });
     expect(harness.events.count('deviceorientation')).toBe(0);
     harness.orient(50, 90, 0, 50);
@@ -306,8 +306,8 @@ describe('print surface motion', () => {
   test('keeps a static surface when the browser has no motion API', async () => {
     const store = new PrintStore();
     const presenter = new PrintPresenter(store, jest.fn(), null);
-    presenter.setSurface(true);
-    presenter.setOpen(true);
+    presenter.setTouch(true);
+    presenter.setView('sheet');
     await presenter.enableTilt();
     expect(store.tiltStatus).toBe('unavailable');
     expect(store.scene).toMatchObject({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });
@@ -370,7 +370,7 @@ describe('print surface motion', () => {
     harness = new MotionHarness(() => permission);
     harness.open();
     const enabling = harness.presenter.enableTilt();
-    harness.presenter.setSurface(false);
+    harness.presenter.setTouch(false);
     grant('granted');
     await enabling;
     expect(harness.events.count('deviceorientation')).toBe(0);

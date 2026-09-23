@@ -12,6 +12,7 @@ fn main() -> Result<(), String> {
         "neutral" => Tonemap::Neutral,
         "filmic" => Tonemap::Filmic,
         "channel" => Tonemap::Channel,
+        "local" => Tonemap::Local,
         other => return Err(format!("unknown tone operator {other}")),
     };
     let zoom = std::env::args()
@@ -22,7 +23,7 @@ fn main() -> Result<(), String> {
             && !arg.starts_with("--tone=") && !arg.starts_with("--zoom="))
         .collect();
     if !(3..=4).contains(&args.len()) {
-        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--tone=neutral|filmic|channel] [--zoom=1]".to_owned());
+        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--tone=neutral|filmic|channel|local] [--zoom=1]".to_owned());
     }
     let output = std::path::Path::new(&args[2]);
     std::fs::create_dir_all(output).map_err(|error| error.to_string())?;

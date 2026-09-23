@@ -17,6 +17,8 @@ import prelude;
 import lanes;
 import edit;
 import colour;
+import adjust;
+import print_tone;
 import geometry;
 import catmull_rom;
 import light;
@@ -269,9 +271,15 @@ Colour<P3Linear> proofed(Colour<DisplayNits> nits)
 [shader("fragment")]
 float4 fs(float4 pos : SV_Position) : SV_Target
 {
-    let nits = display_nits(covered(pos.xy), frame_at(pos.xy));
-    let p3 = edit.output == OUTPUT_SRGB ? proofed(nits) : on_the_canvas(nits);
-    return float4(srgb_oetf_signed(p3.v), 1.0);
+    let scene = covered(pos.xy);
+    let at = frame_at(pos.xy);
+    if (edit.output != OUTPUT_SRGB) { return float4(srgb_oetf_signed(on_the_canvas(display_nits(scene, at)).v), 1.0); }
+    // Neutral is the rendition's own roll-off, so the default proof is the file an sRGB rendition
+    // writes; the other operators are the print's, fitted under the same diffuse white.
+    Colour<DisplayNits> nits;
+    if (edit.print_tone == PRINT_TONE_NEUTRAL) { nits = display_nits(scene, at); }
+    else { nits = measured<DisplayNits>(print_signal(scene, at) * edit.peak); }
+    return float4(srgb_oetf_signed(proofed(nits).v), 1.0);
 }
 
 float3 print_sample(float2 at, float lod)
@@ -317,62 +325,40 @@ float3 print_filtered(float2 source, float2 dx, float2 dy)
     return sum / float(count);
 }
 
-/// How the print fits the scene's highlights into what paper can reflect.
-///
-/// The display has one answer to this and no reason to offer another: `rolled` compresses on
-/// whichever channel reaches the ceiling first and scales the colour by what that channel gave
-/// up, so a blown cloud stays neutral. Paper is not a display. A film stock reshapes the whole
-/// range and bleaches what it compresses, and a printer driver clipping each channel at its ink
-/// limit is a look people print for on purpose. Which of the three a photograph wants is a
-/// judgement about that photograph - and each has to differ from the others on a photograph
-/// whose highlights are simply blown, since that is the one a reader reaches for to compare them.
-static const uint PRINT_TONE_NEUTRAL = 0;
-static const uint PRINT_TONE_FILMIC = 1;
-static const uint PRINT_TONE_CHANNEL = 2;
+static const Stops LOCAL_KNEE = { -1.0 };
+static const Stops LOCAL_TOP = { 0.0 };
 
-static const float FILMIC_CONTRAST = 1.4;
-static const float FILMIC_SHOULDER = 0.977;
-static const float FILMIC_GREY = 0.18;
-
-/// A film stock's curve in shares of paper white: grey held, the scene's own peak landed on paper
-/// white, or paper white held where the scene stops short of it, so a low-key frame is shaped and
-/// never lifted. Lottes' two-constraint form, solved per frame for those two points.
-float filmic(float share, float white)
+/// How far a region of the photograph is brought down, on the scene's stops under diffuse white:
+/// nothing under `LOCAL_KNEE`, the frame's own top to `LOCAL_TOP`, and no corner between.
+Stops local_lowering(Stops around, Stops top)
 {
-    let grey = pow(FILMIC_GREY, FILMIC_CONTRAST);
-    let grey_shoulder = pow(grey, FILMIC_SHOULDER);
-    let top = pow(max(white, 1.0), FILMIC_CONTRAST);
-    let top_shoulder = pow(top, FILMIC_SHOULDER);
-    let span = (top_shoulder - grey_shoulder) * FILMIC_GREY;
-    let b = (top * FILMIC_GREY - grey) / span;
-    let c = (top_shoulder * grey - top * grey_shoulder * FILMIC_GREY) / span;
-    let lifted = pow(max(share, 0.0), FILMIC_CONTRAST);
-    return lifted / (pow(lifted, FILMIC_SHOULDER) * b + c);
+    let span = top.s - LOCAL_KNEE.s;
+    let room = LOCAL_TOP.s - LOCAL_KNEE.s;
+    let over = around.s - LOCAL_KNEE.s;
+    if (over <= 0.0 || span <= room) { return stops(0.0); }
+    let reach = room * span / (span - room);
+    return stops(over / (1.0 + over / reach) - over);
 }
 
 /// The graded colour as a share of paper white, compressed by whichever operator is chosen.
 float3 print_signal(Colour<SceneNits> nits, float2 at)
 {
-    let peak = measured<DisplayNits>(edit.peak);
-    // An unmatched frame has no scene peak measured to roll from, on the display path as here, so
-    // it stands in paper white's place and the roll-off finds nothing to do.
     let matched = edit.matched != 0;
-    let scene_peak = matched ? measured<DisplayNits>(peak_out[0]) : peak;
-    let graded = within(matched ? matched_nits(nits, at) : neutral_nits(nits, at), scene_peak);
-    let knee = rolloff(scene_peak, peak);
-    // A clip, not a per-channel roll: on a blown highlight the three channels are equal, and one
-    // curve on three equal numbers is the neutral operator exactly.
-    if (edit.print_tone == PRINT_TONE_CHANNEL) { return min(graded.v, float3(edit.peak)) / edit.peak; }
-    if (edit.print_tone == PRINT_TONE_NEUTRAL) { return within(rolled(graded, knee), peak).v / edit.peak; }
-    let share = graded.v / edit.peak;
-    let top = max(share.r, max(share.g, share.b));
-    if (top <= 0.0) { return float3(0.0); }
-    let curved = filmic(top, scene_peak.v / edit.peak);
-    let toned = share * (curved / top);
-    // Only through the shoulder: the toe darkens as well, and bleaching there would grey the
-    // shadows a stock is meant to deepen.
-    let bleach = top > FILMIC_GREY ? saturate(1.0 - curved / top) : 0.0;
-    return min(lerp(toned, float3(dot(LUMA, toned)), bleach), float3(1.0));
+    let exposure = gain_of(stops(edit.exposure));
+    let unmatched_peak = measured<DisplayNits>(neutral_peak().v * exposure.g);
+    let scene_peak = matched ? measured<DisplayNits>(peak_out[0]) : unmatched_peak;
+    // Dodging, as a darkroom does it: each region of the scene brought down by how bright the
+    // region is, so the detail inside a sky keeps the contrast a global curve would take from it.
+    let local = edit.print_tone == PRINT_TONE_LOCAL;
+    var lit = nits;
+    if (local) {
+        let top = stops(log2(max(unmatched_peak.v / edit.reference, 1e-6)));
+        let around = stops(stops_around(base_luma(nits), at).s + edit.exposure);
+        lit = times(nits, gain_of(local_lowering(around, top)));
+    }
+    // The neutral arm unrolled, as the matched arm arrives: the operators below are the roll-off.
+    let graded = within(matched ? matched_nits(lit, at) : in_gamut(neutral_unrolled(lit, at)), scene_peak);
+    return fitted(graded, scene_peak, measured<DisplayNits>(edit.peak), edit.print_tone);
 }
 
 Colour<SrgbLinear> print_gamut(Colour<SrgbLinear> colour)
@@ -405,6 +391,21 @@ float4 fs_print_pigment(float4 pos : SV_Position) : SV_Target
     let scale = edit.region_size / edit.canvas_size;
     let pixel = edit.region_origin + pos.xy * scale;
     return float4(print_pigment(pixel, float2(scale.x, 0.0), float2(0.0, scale.y)), 1.0);
+}
+
+/// The print as a soft proof rather than an object: the pigment laid on the paper and read under a
+/// light that puts a perfect white reflector at diffuse white, with nothing of the room, the lamp
+/// or the sheet's shape in it.
+[shader("fragment")]
+float4 fs_print_flat(float4 pos : SV_Position) : SV_Target
+{
+    let scale = edit.region_size / edit.canvas_size;
+    let pixel = edit.region_origin + pos.xy * scale;
+    let shape = float2(float(edit.output_width), float(edit.output_height));
+    if (any(pixel < float2(0.0)) || any(pixel > shape)) { return float4(0.0, 0.0, 0.0, 1.0); }
+    let pigment = print_pigment(pixel, float2(scale.x, 0.0), float2(0.0, scale.y));
+    let reflectance = mul(SRGB_TO_R2020, lerp(float3(print.material.z), float3(print.material.y), pigment));
+    return float4(srgb_oetf_signed(on_the_canvas(measured<DisplayNits>(reflectance * edit.peak)).v), 1.0);
 }
 
 float3 print_hit_reflected(PrintHit hit, float2 pixel, float2 dx, float2 dy, float2 footprint)

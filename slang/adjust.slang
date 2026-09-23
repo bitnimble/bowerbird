@@ -478,6 +478,28 @@ float3 dehazed(float3 colour, float dark_stops)
         recovered(colour.b, transmission));
 }
 
+/// `detail`'s texel for a position in the frame's own pixels.
+public float4 detail_at(float2 at)
+{
+    // Read at the texel the *partition* puts this pixel in, not at `uv` of the texture.
+    // `SampleLevel` scales uv by the texture's own size, and that size is the frame
+    // rounded up to a whole texel - so sampling by uv stretches the blur by whatever the last
+    // texel is short by. For a frame and a window of it those are different amounts, which
+    // slides the window's blur against the photograph's by a fraction of a texel everywhere.
+    let step = float(max(edit.detail_step, 1));
+    let texel = at / step;
+    uint2 size;
+    detail.GetDimensions(size.x, size.y);
+    return detail.SampleLevel(bilinear, texel / float2(size), 0.0);
+}
+
+/// The edge-aware neighbourhood of a pixel, in the base's stops under diffuse white.
+public Stops stops_around(Light<Scene> base_luma, float2 at)
+{
+    let blur = detail_at(at);
+    return stops(blur.g * stops_below_white(base_luma).s + blur.b);
+}
+
 /// Every adjustment, on a scene-relative colour where 1.0 is diffuse white.
 ///
 /// `base_luma` is the *frame's* own luma at this pixel, in the same units, before the match and
@@ -510,19 +532,7 @@ public Colour<D> adjusted<D : IWhiteAtOne>(
     // and measured - a joint bilateral fetch of nine texels moved the band this leaves along an
     // edge by less than a count, because by then the error is already in the texture.
     let base_stops = stops_below_white(base_luma).s;
-    var blur = float4(0.0);
-    if (local) {
-        // Read at the texel the *partition* puts this pixel in, not at `uv` of the texture.
-        // `SampleLevel` scales uv by the texture's own size, and that size is the frame
-        // rounded up to a whole texel - so sampling by uv stretches the blur by whatever the last
-        // texel is short by. For a frame and a window of it those are different amounts, which
-        // slides the window's blur against the photograph's by a fraction of a texel everywhere.
-        let step = float(max(edit.detail_step, 1));
-        let texel = at / step;
-        uint2 size;
-        detail.GetDimensions(size.x, size.y);
-        blur = detail.SampleLevel(bilinear, texel / float2(size), 0.0);
-    }
+    let blur = local ? detail_at(at) : float4(0.0);
 
     // The colour arrives already lit by the illuminant the reader asked for. The balance is a
     // claim about the *scene*, so it belongs upstream of the camera's rendering rather than on

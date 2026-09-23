@@ -6,12 +6,13 @@ import { colourWords } from '../stage_gpu';
 // is the pin. Both traps are silent: a field out of order is a wrong picture, and a buffer shorter
 // than the struct - which std140 rounds up to its 16-byte alignment - is a draw that never happens.
 test('the colour words are the fields the emitted WGSL declares, in its order and size', () => {
-  const words = colourWords(2, [0.5, 0.25], { depth: 4, chroma: 0.5 }, [3, -2], 1.5, 180);
-  expect(Array.from(words).slice(0, 10)).toEqual([2, 203, 0.5, 0.25, 4, 0.5, 3, -2, 1.5, 180]);
+  const words = colourWords(2, [0.5, 0.25], { depth: 4, chroma: 0.5 }, [3, -2], 1.5, 180, 3, 4.9);
+  expect(Array.from(words)).toEqual([2, 203, 0.5, 0.25, 4, 0.5, 3, -2, 1.5, 180, 3, Math.fround(4.9)]);
 
   const block = STAGE_WGSL.match(/struct Colour[^{]*\{([^}]*)\}/)?.[1] ?? '';
   const fields = [...block.matchAll(/@align\((\d+)\)\s+(\w+)_\d+\s*:\s*([\w<>]+)/g)];
-  expect(fields.map((field) => field[2])).toEqual(['headroom', 'reference', 'sample', 'depth', 'chroma', 'shift', 'gain', 'rotation']);
+  expect(fields.map((field) => field[2])).toEqual(
+    ['headroom', 'reference', 'sample', 'depth', 'chroma', 'shift', 'gain', 'rotation', 'proof', 'source_peak']);
 
   // std140 layout of what was declared, with the struct rounded to its widest alignment.
   let end = 0;

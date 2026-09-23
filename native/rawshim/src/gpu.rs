@@ -257,6 +257,7 @@ pub struct Gpu {
     print_pipeline: wgpu::RenderPipeline,
     print_pq_pipeline: wgpu::RenderPipeline,
     print_pigment_pipeline: wgpu::RenderPipeline,
+    print_flat_pipeline: wgpu::RenderPipeline,
     print_surface: print_surface::Pipelines,
     print_albedo_layout: wgpu::BindGroupLayout,
     print_albedo_tabulate: wgpu::ComputePipeline,
@@ -1264,6 +1265,7 @@ impl Gpu {
         let print_pipeline = drawing(true, "fs_print");
         let print_pq_pipeline = drawing(true, "fs_print_pq");
         let print_pigment_pipeline = drawing(true, "fs_print_pigment");
+        let print_flat_pipeline = drawing(true, "fs_print_flat");
         let print_surface = print_surface::Pipelines::new(&device);
         let peak_measure = compute("measure", &peak_module, &peak_layout, "measure");
         // The editor's route to the same number, so that it has one here to be held against:
@@ -1328,6 +1330,7 @@ impl Gpu {
             print_pipeline,
             print_pq_pipeline,
             print_pigment_pipeline,
+            print_flat_pipeline,
             print_surface,
             print_albedo_layout,
             print_albedo_tabulate,
@@ -1850,12 +1853,15 @@ pub enum Tonemap {
     /// up. Hue and saturation survive exactly, which is what the display's own roll-off promises.
     #[default]
     Neutral,
-    /// The same curve, with chroma given up as the tone is compressed, so a highlight several
-    /// stops past the paper arrives white the way a dye that has run out of range does.
+    /// A film stock's curve over the whole range, with chroma given up through its shoulder, so a
+    /// highlight several stops past the paper arrives white the way a dye that has run out does.
     Filmic,
-    /// The curve per channel, which is what a printer driver reaching its ceiling one ink at a
-    /// time does: the most gradation left in a saturated highlight, and a hue that drifts with it.
+    /// Each channel clipped at paper white, which is what a printer driver reaching its ceiling
+    /// one ink at a time does.
     Channel,
+    /// Each region brought down by how bright its neighbourhood is, then a shoulder into paper
+    /// white: the detail inside a bright region keeps its contrast.
+    Local,
 }
 
 /// The reader's view: which rectangle of the output is on screen, and how large the screen is.
@@ -3144,7 +3150,7 @@ impl Uploaded<'_> {
     /// size, the reference and the frame, and no slider. So the first grade to want it builds
     /// the one every later grade off this upload reads.
     fn detail_for(&self, grade: &Grade<'_>) -> &wgpu::TextureView {
-        if !grade.adjust.reads_the_neighbourhood() {
+        if !grade.adjust.reads_the_neighbourhood() && grade.print_tone != Tonemap::Local {
             return &self.detail_absent;
         }
         self.detail.get_or_init(|| {
@@ -3735,8 +3741,11 @@ impl Uploaded<'_> {
             })],
             ..Default::default()
         });
+        let flat = print.is_some_and(|scene| matches!(scene.presentation, crate::print::Presentation::Flat));
         pass.set_pipeline(if pigment {
             &self.gpu.print_pigment_pipeline
+        } else if flat && !pq {
+            &self.gpu.print_flat_pipeline
         } else if print.is_some() && pq {
             &self.gpu.print_pq_pipeline
         } else if print.is_some() {

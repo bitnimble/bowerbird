@@ -29,6 +29,7 @@ const TONEMAPS: Option<Tonemap>[] = [
   { value: 'neutral', label: strings.neutral() },
   { value: 'filmic', label: strings.filmic() },
   { value: 'channel', label: strings.channel() },
+  { value: 'local', label: strings.local() },
 ];
 
 type Control = {
@@ -66,12 +67,40 @@ const ROTATION: Control[] = [
   { key: 'yawDegrees', min: -180, max: 180, step: 1, format: strings.degrees },
   { key: 'pitchDegrees', min: -85, max: 85, step: 1, format: strings.degrees },
 ];
+/** What a flat print is still made of, with no light to catch a surface. */
+const FLAT_PAPER = new Set<PrintControl>(['whiteReflectance', 'blackReflectance']);
+
+export type PrintSection = 'paper' | 'lighting' | 'orientation' | 'tone';
+
+/**
+ * Which operator fits the highlights under white. `regional` is false where there is no
+ * neighbourhood to dodge by - a rendition decoded in the page rather than graded from the RAW.
+ */
+export function TonemapChoice({ value, onChange, regional = true }: {
+  value: Tonemap;
+  onChange: (tonemap: Tonemap) => void;
+  regional?: boolean;
+}): JSX.Element {
+  return (
+    <div {...stylex.props(rows.control)}>
+      <div {...stylex.props(rows.head, rows.headAboveSelect)}>
+        <Text as="span" style={rows.name}>{strings.tonemap()}</Text>
+      </div>
+      <Select
+        label={strings.tonemap()}
+        options={regional ? TONEMAPS : TONEMAPS.filter((option) => option.value !== 'local')}
+        value={value}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
 
 export const PrintPanel = observer(function PrintPanel({ store, presenter, disabled, section }: {
   store: PrintStore;
   presenter: PrintPresenter;
   disabled: boolean;
-  section?: 'paper' | 'lighting' | 'orientation';
+  section: PrintSection;
 }): JSX.Element {
   const controls = (specs: Control[]): JSX.Element[] => specs.map((spec) => {
     const value = store.scene[spec.key];
@@ -99,17 +128,16 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
     );
   });
 
-  return <>
-    {(section == null || section === 'paper') && <Panel title={strings.paper()} style={styles.group}>
+  const tonemap = <TonemapChoice value={store.scene.tonemap} onChange={presenter.setTonemap} />;
+
+  if (section === 'tone') return <Panel title={strings.highlights()} style={styles.group}>{tonemap}</Panel>;
+  if (section === 'lighting') return <Panel title={strings.lighting()} style={styles.group}>{controls(LIGHT)}</Panel>;
+  if (section === 'paper') {
+    return <Panel title={strings.paper()} style={styles.group}>
       <Select label={strings.paper()} options={PAPERS} value={store.scene.paper} onChange={presenter.setPaper} />
-      <div {...stylex.props(rows.control)}>
-        <div {...stylex.props(rows.head, rows.headAboveSelect)}>
-          <Text as="span" style={rows.name}>{strings.tonemap()}</Text>
-        </div>
-        <Select label={strings.tonemap()} options={TONEMAPS} value={store.scene.tonemap} onChange={presenter.setTonemap} />
-      </div>
+      {tonemap}
       <Text as="p" variant="muted">{strings.simulation()}</Text>
-      <CheckLabel>
+      {!store.flat && <CheckLabel>
         <input
           type="checkbox"
           {...stylex.props(focusRing.ring)}
@@ -118,11 +146,12 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
           onChange={(event) => presenter.setFramed(event.currentTarget.checked)}
         />
         <Text as="span">{strings.addFrame()}</Text>
-      </CheckLabel>
-      {controls(PAPER)}
-    </Panel>}
-    {(section == null || section === 'lighting') && <Panel title={strings.lighting()} style={styles.group}>{controls(LIGHT)}</Panel>}
-    {(section == null || section === 'orientation') && (store.surface ? <Panel title={strings.deviceTilt()} style={styles.group}>
+      </CheckLabel>}
+      {controls(store.flat ? PAPER.filter((spec) => FLAT_PAPER.has(spec.key)) : PAPER)}
+    </Panel>;
+  }
+  if (store.surface) {
+    return <Panel title={strings.deviceTilt()} style={styles.group}>
       <Text as="p" variant="muted">{{
         permission: strings.tiltPermission,
         waiting: strings.tiltWaiting,
@@ -134,10 +163,11 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
         <Button onClick={() => void presenter.enableTilt()} disabled={disabled}>{strings.enableTilt()}</Button>}
       {store.tiltStatus === 'active' &&
         <Button onClick={presenter.resetTilt} disabled={disabled}>{strings.resetTilt()}</Button>}
-    </Panel> : <Panel title={strings.rotation()} style={styles.group}>
-      <Text as="p" variant="muted">{strings.dragHint()}</Text>
-      {controls(ROTATION)}
-      <Button onClick={presenter.resetView} disabled={disabled}>{strings.resetView()}</Button>
-    </Panel>)}
-  </>;
+    </Panel>;
+  }
+  return <Panel title={strings.rotation()} style={styles.group}>
+    <Text as="p" variant="muted">{strings.dragHint()}</Text>
+    {controls(ROTATION)}
+    <Button onClick={presenter.resetView} disabled={disabled}>{strings.resetView()}</Button>
+  </Panel>;
 });

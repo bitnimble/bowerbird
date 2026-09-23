@@ -2,7 +2,7 @@ use rawshim::gpu::{Adjust, Canvas, Grade, Output, Tonemap};
 use rawshim::hdr_fit::HdrColour;
 use rawshim::image::Geometry;
 use rawshim::light::{DisplayNits, Gain, Light, SceneNits, Stops};
-use rawshim::print::Scene;
+use rawshim::print::{Presentation, Scene};
 use rawshim::px::{Size, Span};
 
 #[test]
@@ -333,8 +333,75 @@ fn every_operator_differs_on_a_photograph_whose_highlights_are_blown() {
     }
 }
 
+/// A sky two stops over white, textured by a third of a stop: a curve over the frame spends almost
+/// nothing on it, where lowering the region first leaves the texture room to show.
+#[test]
+fn the_regional_operator_keeps_the_texture_inside_a_bright_region() {
+    let size = 1024;
+    let sky = |column: usize| if (column / 4) % 2 == 0 { [3.0; 3] } else { [3.0 * 2f64.powf(-0.3); 3] };
+    let texture = |tonemap| {
+        let scene = Scene {
+            key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, tonemap,
+            ..Scene::default()
+        };
+        let drawn = drawn_as(&sky, Shown::Print(scene), size, 4.0, None);
+        let row = size / 2;
+        let lumas: Vec<f64> = (size / 2 - 32..size / 2 + 32).map(|column| {
+            let at = (row * size + column) * 4;
+            (0..3).map(|channel| linear(drawn[at + channel]) * P3_LUMA[channel]).sum()
+        }).collect();
+        let (low, high) = lumas.iter().fold((f64::MAX, 0.0f64), |(low, high), &luma| (low.min(luma), high.max(luma)));
+        (high / low).log2()
+    };
+    let (neutral, regional) = (texture(Tonemap::Neutral), texture(Tonemap::Local));
+    assert!(regional > 0.06 && regional > 4.0 * neutral,
+        "the texture was not kept: {regional} stops by region against {neutral} neutral");
+}
+
+/// Only what is bright is dodged: a grey reads as the neutral curve draws it.
+#[test]
+fn the_regional_operator_leaves_the_midtones_alone() {
+    let level = |tonemap| {
+        let scene = Scene {
+            key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, tonemap,
+            ..Scene::default()
+        };
+        let drawn = drawn_as(&|_| [0.18; 3], Shown::Print(scene), 32, 4.0, None);
+        linear(drawn[(16 * 32 + 16) * 4 + 1])
+    };
+    let (neutral, regional) = (level(Tonemap::Neutral), level(Tonemap::Local));
+    assert!((regional / neutral - 1.0).abs() < 0.02, "a grey moved: {neutral} to {regional}");
+}
+
+/// The paper and the ink under a light that puts a perfect white at diffuse white, and nothing of
+/// the lamp or the room: white paper reads at its own reflectance, black ink at its.
+#[test]
+fn a_flat_print_is_the_paper_under_diffuse_white() {
+    let nits = |source: f64, key_lux: f64| {
+        let scene = Scene { presentation: Presentation::Flat, key_lux: Light::exactly(key_lux), ..Scene::default() };
+        let drawn = drawn_as(&|_| [source; 3], Shown::Print(scene), 32, 1.0, None);
+        linear(drawn[(16 * 32 + 16) * 4 + 1]) * 203.0
+    };
+    let (white, black) = (nits(1.0, 1000.0), nits(0.0, 1000.0));
+    assert!((white / (0.9 * 203.0) - 1.0).abs() < 0.01, "paper white read {white} nits");
+    assert!((black / (0.008 * 203.0) - 1.0).abs() < 0.05, "black ink read {black} nits");
+    assert_eq!(white, nits(1.0, 8000.0), "the lamp reached a flat print");
+}
+
+/// The operator the print offers is the sRGB proof's too, fitted under diffuse white: the tones
+/// under a blown patch differ between them, and the neutral one is the rendition's own.
+#[test]
+fn an_srgb_proof_fits_its_highlights_with_the_operator_chosen() {
+    let blown = |column: usize| if column < 6 { [4.0; 3] } else { [0.8; 3] };
+    let read = |tone| linear(drawn_as(&blown, Shown::Srgb(tone), 32, 4.0, None)[(16 * 32 + 16) * 4 + 1]);
+    let [neutral, filmic, channel] = [Tonemap::Neutral, Tonemap::Filmic, Tonemap::Channel].map(read);
+    assert!((filmic / neutral - 1.0).abs() > 0.05, "filmic proofed as neutral: {filmic} against {neutral}");
+    assert!((channel / neutral - 1.0).abs() > 0.05, "per channel proofed as neutral: {channel} against {neutral}");
+}
+
+const P3_LUMA: [f64; 3] = [0.22897456, 0.69173852, 0.07928691];
+
 fn luminance(color: [Light<DisplayNits>; 3]) -> Light<DisplayNits> {
-    const P3_LUMA: [f64; 3] = [0.22897456, 0.69173852, 0.07928691];
     Light::measured(color.into_iter().zip(P3_LUMA).map(|(value, weight)| value.raw() * weight).sum())
 }
 
@@ -350,22 +417,51 @@ fn matched(source: [f64; 3], scene: Scene, colour: &HdrColour) -> [Light<Display
     sample_as(&|_| source, scene, [16, 16], Some(colour))
 }
 
-/// `source` is the photograph's colour at a column, in shares of 203 nits.
 fn sample_as(
     source: &dyn Fn(usize) -> [f64; 3],
     scene: Scene,
     pixel_at: [usize; 2],
     colour: Option<&HdrColour>,
 ) -> [Light<DisplayNits>; 3] {
+    let size = 32;
+    let drawn = drawn_as(source, Shown::Print(scene), size, 1.0, colour);
+    let at = (pixel_at[1] * size + pixel_at[0]) * 4;
+    std::array::from_fn(|channel| Light::measured(linear(drawn[at + channel]) * 203.0))
+}
+
+/// A canvas value decoded from its extended sRGB, in shares of SDR white.
+fn linear(coded: f32) -> f64 {
+    let coded = f64::from(coded);
+    if coded.abs() <= 0.04045 { coded / 12.92 } else { coded.signum() * ((coded.abs() + 0.055) / 1.055).powf(2.4) }
+}
+
+enum Shown {
+    Print(Scene),
+    /// An sRGB soft proof, its highlights fitted by the operator given.
+    Srgb(Tonemap),
+}
+
+/// A square photograph drawn onto a canvas of the same size. `source` is its colour at a column, in
+/// shares of 203 nits, and `over_white` how far its top end sits over diffuse white.
+fn drawn_as(
+    source: &dyn Fn(usize) -> [f64; 3],
+    shown: Shown,
+    size: usize,
+    over_white: f64,
+    colour: Option<&HdrColour>,
+) -> Vec<f32> {
     let gpu = rawshim::gpu::device().expect("print requires Vulkan");
     let base = rawshim::base::device(gpu).expect("source pyramid");
-    let size = 32;
+    let (output, peak_nits, print_tone) = match shown {
+        Shown::Print(_) => (Output::Pq, Light::exactly(1000.0), Tonemap::Neutral),
+        Shown::Srgb(tone) => (Output::Srgb, Light::exactly(203.0), tone),
+    };
     let grade = Grade {
         width: size, height: size, photograph_long: Span::measured(size), colour,
-        white: Light::measured(10000.0), source_level: Light::measured(10000.0), floor: None,
-        reference_nits: Light::exactly(203.0), peak_nits: Light::exactly(1000.0),
-        exposure: Stops::ZERO, adjust: Adjust::none(), as_shot: None, output: Output::Pq,
-        print_tone: Tonemap::Neutral,
+        white: Light::measured(10000.0), source_level: Light::measured(10000.0 * over_white), floor: None,
+        reference_nits: Light::exactly(203.0), peak_nits,
+        exposure: Stops::ZERO, adjust: Adjust::none(), as_shot: None, output,
+        print_tone,
         geometry: Geometry::none(), window: None, surround_window: None,
         canvas: Some(Canvas { region: (0.0, 0.0, size as f64, size as f64),
             size: Size::measured(size, size), max_lod: 5 }),
@@ -378,12 +474,8 @@ fn sample_as(
     let pyramid = rawshim::base::pyramid(gpu, base, &frame, (size, size)).expect("source pyramid");
     let peak = gpu.scene_peak();
     let uploaded = gpu.upload(&frame, &grade, &peak);
-    let drawn = uploaded.draw_print(&grade, &pyramid, &scene);
-    let at = (pixel_at[1] * size + pixel_at[0]) * 4;
-    std::array::from_fn(|channel| {
-        let coded = f64::from(drawn[at + channel]);
-        let linear = if coded.abs() <= 0.04045 { coded / 12.92 }
-            else { coded.signum() * ((coded.abs() + 0.055) / 1.055).powf(2.4) };
-        Light::measured(linear * 203.0)
-    })
+    match shown {
+        Shown::Print(scene) => uploaded.draw_print(&grade, &pyramid, &scene),
+        Shown::Srgb(_) => uploaded.draw(&grade, &pyramid),
+    }
 }

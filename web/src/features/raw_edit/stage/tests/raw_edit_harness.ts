@@ -3,7 +3,7 @@
 import { RawEditPresenter } from '../raw_edit_presenter';
 import { CropStore } from '../../crop/crop_store';
 import { EditStore } from '../../edit/edit_store';
-import type { EditAdjust, EditGeometry, Region, SoftProof } from '../../edits';
+import type { EditAdjust, EditGeometry, Proof, Region } from '../../edits';
 import { KeystoneStore } from '../../keystone/keystone_store';
 import type { LocalPrepare, LocalTileRequest, TileKeep } from '../../local_decode/local_open';
 import { LoupeStore } from '../../loupe/loupe_store';
@@ -36,7 +36,7 @@ export class FakeDecoder {
 
   geometry: EditGeometry | null = null;
   adjust: EditAdjust | null = null;
-  proof: SoftProof | null = null;
+  proof: Proof | null = null;
   exposure = 0;
   draws = 0;
 
@@ -81,7 +81,7 @@ export class FakeDecoder {
     loupe: Region | null;
     adjust: EditAdjust | null;
     geometry: EditGeometry | null;
-    proof: SoftProof | null;
+    proof: Proof | null;
     print: PrintScene | null;
     stage: { width: number; height: number } | null;
   }): Promise<void> {

@@ -21,6 +21,9 @@ pub enum Paper {
 pub enum Presentation {
     Scene,
     Surface,
+    /// The pigment on the paper and nothing of the room: a soft proof drawn through the stage's
+    /// own view rather than a sheet a camera looks at.
+    Flat,
 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
@@ -206,7 +209,7 @@ impl Scene {
     }
 
     fn frame_border(&self, shape: (usize, usize)) -> Extent<crate::px::Output> {
-        let share = if self.framed { FRAME_BORDER } else { Share::of(0, 1) };
+        let share = if self.framed && !matches!(self.presentation, Presentation::Flat) { FRAME_BORDER } else { Share::of(0, 1) };
         share.across(Span::measured(shape.0.min(shape.1)))
     }
 }

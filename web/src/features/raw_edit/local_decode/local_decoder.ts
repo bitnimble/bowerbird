@@ -3,7 +3,7 @@ import { type Repair, RepairSchema } from '../../../../../src/schemas/photo_edit
 import {
   type Job as RenditionCommand,
 } from '../../../../../src/schemas/jobs';
-import type { EditAdjust, EditGeometry, Region, SoftProof } from '../edits';
+import type { EditAdjust, EditGeometry, Proof, Region } from '../edits';
 import type { PrintScene } from '../print/print_scene';
 import {
   AnswerSchema,
@@ -325,7 +325,7 @@ export class LocalDecoder {
     loupe: Region | null;
     adjust: EditAdjust | null;
     geometry: EditGeometry | null;
-    proof: SoftProof | null;
+    proof: Proof | null;
     print: PrintScene | null;
     stage: { width: number; height: number } | null;
   }): Promise<void> {

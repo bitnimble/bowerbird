@@ -15,6 +15,7 @@ import { StageFrame, type FrameState } from './stage_frame';
 import { Spinner } from '../../../ui/spinner';
 import { styles } from './photo_stage_view.stylex';
 import { StageDetail } from './stage_detail';
+import type { Tonemap } from '../../raw_edit/print/print_scene';
 
 // Fit, zoom and pan live in `zoom_pan.ts`, because the editor's canvas needs the same
 // gesture and cannot be transformed the way an `<img>` can.
@@ -191,6 +192,8 @@ interface Props {
    */
   frameColor?: string;
   style?: stylex.StyleXStyles;
+  /** The operator HDR frames are proofed to sRGB with, or null to draw them as they are. */
+  proof?: Tonemap | null;
 }
 
 function noop(): void {
@@ -219,6 +222,7 @@ export function PhotoStage({
   status = null,
   frameColor,
   style,
+  proof = null,
 }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -891,6 +895,7 @@ export function PhotoStage({
                   shown={source === visible}
                   requested={source === chosen}
                   whole={zoomed && group.key === shownKey}
+                  proof={proof}
                   onDecoded={promote}
                   // Only a frame still being asked for. A retiring one is on its
                   // way off the stage, and building a rendition nobody is looking
@@ -914,6 +919,7 @@ export function PhotoStage({
                     view={view}
                     hidden={!zoomed}
                     shown={source === visible}
+                    proof={proof}
                     onSharp={noteSharp}
                   />
                 ))}

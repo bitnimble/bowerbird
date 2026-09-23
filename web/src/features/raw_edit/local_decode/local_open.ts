@@ -12,7 +12,7 @@ import {
   type JobLevels,
   type NoiseFit,
 } from '../../../../../src/schemas/jobs';
-import { SoftProofSchema } from '../edits';
+import { ProofSchema } from '../edits';
 import { PrintSceneSchema } from '../print/print_scene';
 
 /** `crate::edit::EditRequest`, which the module takes as JSON. */
@@ -207,7 +207,7 @@ export const AskSchema = z.discriminatedUnion('kind', [
     loupe: JsonSchema.nullable(),
     adjust: JsonSchema.nullable(),
     geometry: JsonSchema.nullable(),
-    proof: SoftProofSchema.nullable(),
+    proof: ProofSchema.nullable(),
     print: PrintSceneSchema.nullable(),
     /**
      * The backing store the stage wants, applied before the draw that reads it.

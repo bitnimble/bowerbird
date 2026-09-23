@@ -39,6 +39,7 @@ import type { ListingStore } from './grid/listing_store';
 import type { MarksStore } from './grid/marks_store';
 import type { StacksStore } from './grid/stacks_store';
 import type { ViewerStore } from './viewer/viewer_store';
+import type { Tonemap } from '../raw_edit/print/print_scene';
 
 // Blocks of rows kept in memory at once. A scroll through a hundred thousand
 // photos would otherwise accumulate every row it passed; two and a half thousand
@@ -462,6 +463,15 @@ export class PhotosPresenter {
   setDetailBox(width: number, height: number): void {
     this.viewerPresenter.setDetailBox(width, height);
   }
+
+  /** Which rendition the viewer proofs an HDR frame against. Nothing is saved: it is a way of looking. */
+  chooseProof = (proof: 'hdr' | 'srgb'): void => {
+    this.viewerPresenter.chooseProof(proof);
+  };
+
+  chooseProofTone = (tone: Tonemap): void => {
+    this.viewerPresenter.chooseProofTone(tone);
+  };
 
   /** Put a photo at the start of the viewport, named by its position in the collection. */
   @action.bound

@@ -15,6 +15,7 @@ import {
   photoStage,
   savedRev,
   scanLibrary,
+  softProof,
   waitForEditorLive,
   waitForScanSettled,
 } from '../helpers';
@@ -144,36 +145,35 @@ test('grades through the camera match, as the renditions do', async ({ page }) =
 });
 
 /**
- * The soft proof names its target as a bare string, and this is the only runner that can see
- * whether the module accepts it.
+ * The soft proof names its target and its operator as bare strings, and this is the only runner
+ * that can see whether the module accepts them.
  *
- * `wasm::set_proof` matches `"hdr"` and `"srgb"` and refuses anything else, where the page's
- * `SoftProof` is a TypeScript union the module knows nothing about - so a value renamed on
- * either side compiles, passes `raw_edit_presenter.test.ts` against its recording decoder, and
- * refuses at the first tick. `wasm.rs` is `#[cfg(target_arch = "wasm32")]`, so no cargo suite
- * compiles that match either way.
+ * `wasm::set_proof` matches `"hdr"` and `"srgb"`, and a print scene's presentation and tonemap
+ * are serde's names, where the page's are TypeScript unions the module knows nothing about - so a
+ * value renamed on either side compiles, passes `raw_edit_presenter.test.ts` against its recording
+ * decoder, and refuses at the first tick. `wasm.rs` is `#[cfg(target_arch = "wasm32")]`, so no
+ * cargo suite compiles that match either way.
  *
- * What a proof *does* to the picture is the presenter's test and `job::peak_nits`; what needs a
- * browser is that both names survive the crossing and the tick still draws.
- *
- * A live stage cannot tell the two proofs apart: both names are ones the module accepts, so a
- * label paired with the other one's value refuses nothing and draws the wrong picture in perfect
- * health. That pairing is `raw_edit_panel.test.tsx`'s.
+ * What a proof *does* to the picture is the presenter's test and `print_rendering.rs`; what needs
+ * a browser is that every name survives the crossing and the tick still draws.
  */
-test('both soft proofs cross to the module and keep drawing', async ({ page }) => {
+test('every soft proof crosses to the module and keeps drawing', async ({ page }) => {
   await open(page);
-  const proof = page.getByRole('combobox', { name: 'Soft proof' });
 
-  for (const label of ['sRGB', 'Rec.2020 PQ HDR']) {
-    await proof.click();
-    await page.getByRole('option', { name: label, exact: true }).click();
-
-    await expect(proof).toHaveText(label);
+  for (const [label, panel] of [['sRGB', 'Highlights'], ['Printed media', 'Paper'], ['Rec.2020 PQ HDR (default)', null]] as const) {
+    await softProof(page, label);
+    if (label === 'sRGB') {
+      await page.getByRole('combobox', { name: 'Highlight roll-off' }).click();
+      await page.getByRole('option', { name: 'By region', exact: true }).click();
+    }
+    await expect(page.getByRole('button', { name: /^Soft proof/ })).toHaveText(label === 'Rec.2020 PQ HDR (default)' ? 'Soft proof' : label);
+    if (panel != null) await expect(page.getByRole('group', { name: panel, exact: true })).toBeVisible();
     // A refused command comes back asynchronously and lands on the tick after it
     // (`gpu::refusal`), so the status is read for a while rather than once.
     await waitForEditorLive(page, 10_000);
     await expect(editDiagnostics(page)).toHaveAttribute('data-adapter', /./);
   }
+  await expect(page.getByRole('group', { name: 'Paper', exact: true })).toHaveCount(0);
 });
 
 /**
@@ -778,8 +778,9 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   const hdrCanvas = { format: 'rgba16float', colorSpace: 'display-p3', toneMapping: 'extended' };
   expect(await canvasConfigurations()).toContainEqual(hdrCanvas);
   const revision = await savedRev(page, photoId);
-  await tool(page, 'Print').click();
-  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print');
+  await softProof(page, 'Printed media (3D)');
+  // After a shader changes, the driver's cache is cold and the sheet's pipeline compiles on this draw.
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', { timeout: 60_000 });
   const frame = page.getByRole('checkbox', { name: 'Add frame', exact: true });
   await expect(frame).not.toBeChecked();
   await frame.check();
@@ -836,7 +837,7 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   expect(compositing.filter((layer) => layer.opacity !== '1' || layer.filter !== 'none' || layer.transform !== 'none' || layer.blend !== 'normal')).toEqual([]);
   await expect(page.getByText(/^Unavailable/)).toHaveCount(0);
   expect(await savedRev(page, photoId)).toBe(revision);
-  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await softProof(page, 'Rec.2020 PQ HDR (default)');
   await waitForEditorLive(page);
   await expect(editTools(page)).toBeVisible();
   await expect(print).toHaveCount(0);

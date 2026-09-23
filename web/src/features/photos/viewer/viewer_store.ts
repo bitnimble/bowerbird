@@ -15,6 +15,7 @@ import { BLOCK } from '../grid/grid_layout';
 import { BinPageStrings } from '../grid/bin_page.strings';
 import type { ListingStore } from '../grid/listing_store';
 import type { StacksStore } from '../grid/stacks_store';
+import type { Tonemap } from '../../raw_edit/print/print_scene';
 
 // Which photo the detail view is on, and what came back for it. A union rather
 // than a detail plus two flags: "missing" carries the reason that made it
@@ -47,6 +48,20 @@ export class ViewerStore {
   // (§10.2). Null until something is picked, which is the usual state - the
   // setting answers for the rest, and `showing` is what is actually on screen.
   @observable accessor rendition: ViewerRendition | null = null;
+  // Which rendition an HDR frame is proofed against, kept across photos as a way of looking is.
+  // Null follows the frame, which is also the only answer a frame with no HDR in it has.
+  @observable accessor proof: 'hdr' | 'srgb' | null = null;
+  @observable accessor proofTone: Tonemap = 'neutral';
+
+  /** Whether the frame on screen for this photograph carries HDR, which is what an HDR proof needs. */
+  showsHdr(photoId: string): boolean {
+    const { rendition } = this.frameOf(photoId);
+    return rendition !== 'embedded' && this.detailFor(photoId)?.renditions?.[rendition]?.hdr === true;
+  }
+
+  proofOf(photoId: string): 'hdr' | 'srgb' {
+    return this.showsHdr(photoId) ? this.proof ?? 'hdr' : 'srgb';
+  }
   // The renditions being built right now, as `photoId:rendition`. One set for
   // both ways a build starts - the reader choosing one that is not on disk, and
   // the stage meeting a 404 on the one the photo opened at - because the stage

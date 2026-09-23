@@ -1,4 +1,4 @@
-// The print mockup as the viewer offers it: a menu row that replaces the stage with the
+// The print mockup as the viewer offers it: a soft proof that replaces the stage with the
 // editor's print renderer and leaves the photograph untouched. What the renderer draws is
 // `editor/raw_editing.spec.ts`; this is only the way in and the way back out.
 import { expect, test } from '@playwright/test';
@@ -7,11 +7,12 @@ import { PRINT_PHOTOS_DIR } from '../fixture_library';
 import {
   editDiagnosticSize,
   editDiagnostics,
+  editTools,
   openLibrary,
   openPhoto,
   openPhotoId,
-  photoAction,
   savedRev,
+  softProof,
   useLibrary,
   waitForEditorLive,
 } from '../helpers';
@@ -35,18 +36,36 @@ test('the viewer shows a print mockup and comes back to the photograph unedited'
   const photoPath = new URL(page.url()).pathname;
   const revision = await savedRev(page, photoId);
 
-  await photoAction(page, 'View', 'View print mockup', { exact: true });
+  // The camera's JPEG is what this library shows, so its own gamut is the proof in force.
+  await expect(page.getByRole('button', { name: 'Soft proof: sRGB' })).toBeVisible();
+  await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
-  await expect(page.getByRole('group', { name: 'Paper', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Lighting', exact: true })).toBeVisible();
   expect(new URL(page.url()).pathname).toBe(`${photoPath}${route(PathSegment.mockup())}`);
   // The mockup is a way of looking at the photograph, not a grade: no toolbar, and
   // nothing of the editor's saved onto it.
-  await expect(page.getByRole('radio', { name: 'Print', exact: true })).toHaveCount(0);
+  await expect(editTools(page)).toHaveCount(0);
 
-  await photoAction(page, 'View', 'View photo', { exact: true });
+  await softProof(page, 'sRGB');
   await expect(page.getByRole('img', { name: 'Edit preview' })).toHaveCount(0);
   expect(new URL(page.url()).pathname).toBe(photoPath);
   expect(await savedRev(page, photoId)).toBe(revision);
+});
+
+test('the flat print and the sheet are one open, and the flat one has no light to set', async ({ page }) => {
+  await page.goto(route(PathSegment.settings()));
+  await openLibrary(page, PRINT_PHOTOS_DIR);
+  await openPhoto(page);
+
+  await softProof(page, 'Printed media');
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
+  await expect(page.getByRole('group', { name: 'Paper', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Lighting', exact: true })).toHaveCount(0);
+  const opened = await editDiagnosticSize(page, 'data-size');
+
+  await softProof(page, 'Printed media (3D)');
+  await expect(page.getByRole('group', { name: 'Lighting', exact: true })).toBeVisible();
+  expect(await editDiagnosticSize(page, 'data-size')).toEqual(opened);
 });
 
 test('the mockup opens on its own address', async ({ page }) => {
@@ -67,7 +86,7 @@ test('the mockup opens the photograph smaller than the editor does', async ({ pa
   await openPhoto(page);
   const photoPath = new URL(page.url()).pathname;
 
-  await photoAction(page, 'View', 'View print mockup', { exact: true });
+  await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
   const mockup = Math.max(...(await editDiagnosticSize(page, 'data-size')));
 
@@ -84,7 +103,7 @@ test('escape leaves the print mockup', async ({ page }) => {
   await openLibrary(page, PRINT_PHOTOS_DIR);
   await openPhoto(page);
   const photoPath = new URL(page.url()).pathname;
-  await photoAction(page, 'View', 'View print mockup', { exact: true });
+  await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('img', { name: 'Edit preview' })).toHaveCount(0);

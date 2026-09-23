@@ -14,6 +14,7 @@
 import { type Region, paintExtended, planarLayout } from './stage_gpu';
 import { orientationOfAvif } from 'avif-hdr-video';
 import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../../../src/schemas/request_activity';
+import type { Tonemap } from '../../raw_edit/print/print_scene';
 
 /** The longest edge a frame is decoded to: a 4K stage at 2x, which is past any display we draw on. */
 const DECODE_CAP = 4096;
@@ -347,11 +348,16 @@ function forget(
  * The attributes are read only the first time a context is asked for, so this is the only
  * place that asks.
  */
-export async function drawInto(canvas: HTMLCanvasElement, frame: Decoded, region?: Region): Promise<void> {
+export async function drawInto(
+  canvas: HTMLCanvasElement,
+  frame: Decoded,
+  region?: Region,
+  proof: Tonemap | null = null,
+): Promise<void> {
   // Through the GPU where there is one, which is what carries an HDR rendition's headroom and
   // decodes the frame's own transfer function on the way (`stage_gpu.ts`). It answers for an
   // ordinary camera JPEG too: the curve and the primaries differ, the work does not.
-  if (await paintExtended(canvas, frame.picture, region, frame.rotation)) return;
+  if (await paintExtended(canvas, frame.picture, region, frame.rotation, proof)) return;
   // Otherwise plain and unconfigured, which is what a machine with no WebGPU shows: no colour
   // space asked for is no colour space converted to, so an SDR photograph comes out as the
   // `<img>` drew it, and the browser tone maps an HDR rendition on the way in rather than

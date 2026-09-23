@@ -24,6 +24,7 @@
 import IMPORT_WGSL from '../generated/stage_import.wgsl?raw';
 import PLANAR_WGSL from '../generated/stage.wgsl?raw';
 import { settingsApi } from '../../../api/settings';
+import type { Tonemap } from '../../raw_edit/print/print_scene';
 
 /**
  * Where SDR white sits, in nits (ITU-R BT.2408).
@@ -63,12 +64,20 @@ let peak: Promise<number> | null = null;
  */
 async function displayHeadroom(): Promise<number> {
   if (!matchMedia('(dynamic-range: high)').matches) return 1;
+  return renditionHeadroom();
+}
+
+/** How far over SDR white a rendition was graded to reach, whatever this display can show. */
+async function renditionHeadroom(): Promise<number> {
   peak ??= settingsApi
     .get()
     .then((settings) => settings.hdr_peak_nits)
     .catch(() => DEFAULT_PEAK_NITS);
   return (await peak) / SDR_WHITE_NITS;
 }
+
+/** `Colour.proof` in `stage.slang`: one more than the operator's number in `print_tone.slang`. */
+const PROOF_TONE: Record<Tonemap, number> = { neutral: 1, filmic: 2, channel: 3, local: 4 };
 
 /**
  * The imported pipeline's fragment, which is the one thing `slang/` cannot say.
@@ -289,12 +298,16 @@ export async function planesOf(
  * holds a context of another kind - and the caller draws it the ordinary way instead. A
  * canvas holds one kind of context for its whole life, so which of the two a frame uses is
  * settled by the first draw into it and never changes under it.
+ *
+ * `proof` draws an HDR frame as an sRGB rendition would hold it, its highlights fitted under
+ * diffuse white by that operator. A frame that is not HDR is already that, and ignores it.
  */
 export async function paintExtended(
   canvas: HTMLCanvasElement,
   picture: ImageBitmap | VideoFrame,
   region?: Region,
   rotation: 0 | 90 | 180 | 270 = 0,
+  proof: Tonemap | null = null,
 ): Promise<boolean> {
   if (declined) return false;
   if (!(typeof VideoFrame === 'function' && picture instanceof VideoFrame)) return false;
@@ -372,6 +385,8 @@ export async function paintExtended(
         [0, 0],
         1,
         rotation,
+        proof == null ? 0 : PROOF_TONE[proof],
+        await renditionHeadroom(),
       );
       device.queue.writeBuffer(pipelinesFor(device).colour, 0, uniform.buffer as ArrayBuffer);
     } else {
@@ -431,7 +446,7 @@ export async function paintExtended(
   }
 }
 
-/** `Colour` in `stage.slang`, packed as the emitted WGSL declares it: ten floats, std140-rounded. */
+/** `Colour` in `stage.slang`, packed as the emitted WGSL declares it: twelve floats. */
 const COLOUR_BYTES = 48;
 
 export function colourWords(
@@ -441,9 +456,11 @@ export function colourWords(
   shift: readonly [number, number] = [0, 0],
   gain = 1,
   rotation: 0 | 90 | 180 | 270 = 0,
+  proof = 0,
+  sourcePeak = 1,
 ): Float32Array {
   const words = new Float32Array(COLOUR_BYTES / 4);
-  words.set([headroom, SDR_WHITE_NITS, sample[0], sample[1], layout.depth, layout.chroma, shift[0], shift[1], gain, rotation]);
+  words.set([headroom, SDR_WHITE_NITS, sample[0], sample[1], layout.depth, layout.chroma, shift[0], shift[1], gain, rotation, proof, sourcePeak]);
   return words;
 }
 

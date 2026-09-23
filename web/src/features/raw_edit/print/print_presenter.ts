@@ -1,5 +1,5 @@
 import { action } from 'mobx';
-import { DEFAULT_PRINT_SCENE, PAPER_MATERIALS, PRINT_ZOOM_RANGE, PrintSceneSchema, restingValue, type Paper, type PrintControl, type Tonemap } from './print_scene';
+import { DEFAULT_PRINT_SCENE, PAPER_MATERIALS, PRINT_ZOOM_RANGE, PrintSceneSchema, restingValue, type Paper, type Presentation, type PrintControl, type Tonemap } from './print_scene';
 import { browserPrintMotion, PrintMotion, type PrintMotionEnvironment, type PrintTilt } from './print_motion';
 import type { PrintStore } from './print_store';
 
@@ -20,6 +20,7 @@ function clamp(value: number, low: number, high: number): number {
 
 export class PrintPresenter {
   private drag: Drag | null = null;
+  private touch = false;
   private desktopRotation = { yawDegrees: DEFAULT_PRINT_SCENE.yawDegrees, pitchDegrees: DEFAULT_PRINT_SCENE.pitchDegrees };
   private readonly tilt = new PrintMotion();
   private tiltTarget: PrintTilt | null = null;
@@ -38,32 +39,42 @@ export class PrintPresenter {
     private readonly motion: PrintMotionEnvironment | null = browserPrintMotion(),
   ) {}
 
+  /**
+   * The print on the stage, `flat` as a soft proof or as a `sheet` - held in a room, or on a touch
+   * screen the device itself - or null to take it away.
+   */
   @action.bound
-  setOpen = (open: boolean): void => {
+  setView = (view: 'flat' | 'sheet' | null): void => {
     this.endDrag();
-    this.store.open = open;
+    this.store.open = view != null;
+    this.present(view === 'flat' ? 'flat' : this.touch ? 'surface' : 'scene');
     this.syncTilt();
-    if (open && this.permission === 'unknown') void this.enableTilt();
+    if (this.store.open && this.store.surface && this.permission === 'unknown') void this.enableTilt();
     this.redraw();
   };
 
+  /** Whether a sheet is the device the reader holds rather than one hanging in a room. */
   @action.bound
-  setSurface = (surface: boolean): void => {
-    if (surface === this.store.surface) return;
-    this.endDrag();
+  setTouch = (touch: boolean): void => {
+    if (touch === this.touch) return;
+    this.touch = touch;
+    if (this.store.flat) return;
+    this.setView(this.store.open ? 'sheet' : null);
+  };
+
+  private present(presentation: Presentation): void {
+    const was = this.store.scene.presentation;
+    if (presentation === was) return;
     this.stopTilt();
-    if (surface) {
+    if (was === 'scene') {
       this.desktopRotation = { yawDegrees: this.store.scene.yawDegrees, pitchDegrees: this.store.scene.pitchDegrees };
     }
     this.store.scene = {
       ...this.store.scene,
-      presentation: surface ? 'surface' : 'scene',
-      ...(surface ? { yawDegrees: 0, pitchDegrees: 0 } : this.desktopRotation),
+      presentation,
+      ...(presentation === 'scene' ? this.desktopRotation : { yawDegrees: 0, pitchDegrees: 0 }),
     };
-    this.syncTilt();
-    if (surface && this.permission === 'unknown') void this.enableTilt();
-    this.redraw();
-  };
+  }
 
   @action.bound
   enableTilt = async (): Promise<void> => {
@@ -157,7 +168,7 @@ export class PrintPresenter {
     if (tilt == null) return;
     this.clearWaitingTimer();
     this.store.tiltStatus = 'active';
-    if (tilt === 'recenter') {
+    if (tilt === 'recentre') {
       this.stopTiltAnimation();
       if (this.store.scene.yawDegrees !== 0 || this.store.scene.pitchDegrees !== 0) this.rotate(0, 0);
       return;
@@ -306,7 +317,7 @@ export class PrintPresenter {
 
   @action.bound
   beginDrag = (pointerId: number, x: number, y: number, span: number): void => {
-    if (!this.store.open || this.store.surface || this.drag != null || span <= 0) return;
+    if (!this.store.hanging || this.drag != null || span <= 0) return;
     this.drag = { pointerId, x, y, span, yaw: this.store.scene.yawDegrees, pitch: this.store.scene.pitchDegrees };
     this.store.dragging = true;
   };

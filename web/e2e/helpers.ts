@@ -412,6 +412,12 @@ export async function photoAction(page: Page, section: string, name: string, opt
   await page.getByRole('group', { name: section }).getByRole('menuitem', { name, exact: options?.exact }).click();
 }
 
+/** Chooses a proof from the bar's soft proof menu, whichever one it is showing. */
+export async function softProof(page: Page, proof: string): Promise<void> {
+  await page.getByRole('button', { name: /^Soft proof/ }).click();
+  await page.getByRole('menuitem', { name: proof, exact: true }).click();
+}
+
 // Panels start closed; tests that read them have to ask. Waits for the toggle so
 // a call right after openPhoto cannot no-op before DetailNav mounts, and skips
 // the click when a prior toggle in this context already left them open.

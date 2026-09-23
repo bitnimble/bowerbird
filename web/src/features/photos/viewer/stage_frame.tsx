@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeFrame, decodedFrame, drawInto, fittedCanvasSize, type Decoded } from './stage_bitmaps';
 import { CanvasLost } from './stage_gpu';
+import type { Tonemap } from '../../raw_edit/print/print_scene';
 import { stageStyles } from './photo_stage.stylex';
 
 const styles = stylex.create({
@@ -33,6 +34,7 @@ export function StageFrame({
   shown,
   requested,
   whole,
+  proof,
   onDecoded,
   onMissing,
 }: {
@@ -53,6 +55,8 @@ export function StageFrame({
    */
   shown: boolean;
   requested: boolean;
+  /** The operator an HDR frame is proofed to sRGB with, or null to draw it as it is. */
+  proof: Tonemap | null;
   onDecoded: (source: string, width: number, height: number) => void;
   onMissing: (source: string) => void;
 }): JSX.Element {
@@ -113,7 +117,7 @@ export function StageFrame({
       }
       // Reported after the draw, not beside it: the picture is up once the frame is in the
       // canvas, and everything that waits on a picture being up waits on this.
-      void drawInto(element, frame).then(
+      void drawInto(element, frame, undefined, proof).then(
         () => {
           if (!live) return;
           // The file's own shape, not the decoded one's: what is decoded is capped at what this
@@ -158,7 +162,7 @@ export function StageFrame({
     // frame carried into the next round - which every decisive verdict does, the winner
     // keeping its slot - would otherwise never report again, and the round would show one
     // photo whichever slot was asked for. Redrawing it costs the blit and no decode.
-  }, [source, photoKey, hold, attempt]);
+  }, [source, photoKey, hold, attempt, proof]);
 
   const capture = useCallback((element: HTMLCanvasElement | HTMLVideoElement | null): void => {
     elementRef.current = element;

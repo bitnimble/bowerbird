@@ -10,7 +10,7 @@ const { PrintPanel } = await import('../print_panel');
 let presenter: PrintPresenter | null = null;
 afterEach(() => { cleanup(); presenter?.close(); presenter = null; });
 
-test('mobile print requests motion access on opening and offers recentering', async () => {
+test('mobile print requests motion access on opening and offers recentring', async () => {
   let requests = 0;
   const events = new window.EventTarget();
   const motion: PrintMotionEnvironment = {
@@ -21,16 +21,16 @@ test('mobile print requests motion access on opening and offers recentering', as
   };
   const store = new PrintStore();
   presenter = new PrintPresenter(store, () => {}, motion);
-  presenter.setSurface(true);
-  await act(async () => presenter?.setOpen(true));
-  render(<PrintPanel store={store} presenter={presenter} disabled={false} />);
+  presenter.setTouch(true);
+  await act(async () => presenter?.setView('sheet'));
+  render(<PrintPanel store={store} presenter={presenter} disabled={false} section="orientation" />);
   expect(screen.queryByRole('slider', { name: 'Horizontal rotation' })).toBeNull();
   expect(screen.queryByRole('slider', { name: 'Vertical rotation' })).toBeNull();
   expect(requests).toBe(1);
   expect(screen.queryByRole('button', { name: 'Enable tilt' })).toBeNull();
   act(() => events.dispatchEvent(Object.assign(new window.Event('deviceorientation'), { alpha: 0, beta: 90, gamma: 0 })));
   expect(screen.getByText('Tilt your phone to move the reflections.')).toBeTruthy();
-  act(() => screen.getByRole('button', { name: 'Recenter tilt' }).click());
+  act(() => screen.getByRole('button', { name: 'Recentre tilt' }).click());
   expect(store.tiltStatus).toBe('waiting');
   expect(store.scene).toMatchObject({ yawDegrees: 0, pitchDegrees: 0 });
 });
@@ -38,8 +38,8 @@ test('mobile print requests motion access on opening and offers recentering', as
 test('desktop print retains its rotation controls', () => {
   const store = new PrintStore();
   presenter = new PrintPresenter(store, () => {}, null);
-  presenter.setOpen(true);
-  render(<PrintPanel store={store} presenter={presenter} disabled={false} />);
+  presenter.setView('sheet');
+  render(<PrintPanel store={store} presenter={presenter} disabled={false} section="orientation" />);
   expect(screen.getByRole('slider', { name: 'Horizontal rotation' })).toBeTruthy();
   expect(screen.getByRole('slider', { name: 'Vertical rotation' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Enable tilt' })).toBeNull();
@@ -84,6 +84,20 @@ test('the roll-off names the operator the print is drawn with', () => {
   expect(store.scene.tonemap).toBe('channel');
   expect(redraws).toBe(1);
   expect(screen.getByRole('combobox', { name: 'Highlight roll-off' }).textContent).toBe('Per channel');
+});
+
+test('a flat print offers the paper and the ink and nothing a surface needs light to show', () => {
+  const store = new PrintStore();
+  presenter = new PrintPresenter(store, () => {}, null);
+  presenter.setView('flat');
+  render(<PrintPanel store={store} presenter={presenter} disabled={false} section="paper" />);
+  expect(screen.getByRole('combobox', { name: 'Paper' })).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Highlight roll-off' })).toBeTruthy();
+  expect(screen.getByRole('slider', { name: 'Paper reflectance' })).toBeTruthy();
+  expect(screen.getByRole('slider', { name: 'Black reflectance' })).toBeTruthy();
+  expect(screen.queryByRole('slider', { name: 'Surface roughness' })).toBeNull();
+  expect(screen.queryByRole('slider', { name: 'Paper texture' })).toBeNull();
+  expect(screen.queryByRole('checkbox', { name: 'Add frame' })).toBeNull();
 });
 
 test('paper settings toggle framing and disable it with the other controls', () => {

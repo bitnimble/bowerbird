@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { MOBILE_EDIT_PHOTOS_DIR } from '../fixture_library';
-import { editDiagnostics, editPreview, editTools, openLibrary, openPhoto, openPhotoId, photoStage, useLibrary, waitForEditorLive } from '../helpers';
+import { editDiagnostics, editPreview, editTools, openLibrary, openPhoto, openPhotoId, photoStage, softProof, useLibrary, waitForEditorLive } from '../helpers';
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 test.describe.configure({ timeout: 180_000 });
@@ -49,7 +49,7 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
   const scene = async (): Promise<z.infer<typeof Scene>> => Scene.parse(
     await worker.evaluate(() => Reflect.get(globalThis, 'printMotionScene')),
   );
-  await editTools(page).getByRole('radio', { name: 'Print', exact: true }).click();
+  await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print');
   await expect(page.getByRole('region', { name: 'Rotate print' })).toHaveCount(0);
   await expect(page.getByRole('slider', { name: 'Horizontal rotation' })).toHaveCount(0);
@@ -78,7 +78,7 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await cdp.detach();
   expect(await scene()).toEqual(tilted);
-  await editTools(page).getByRole('radio', { name: 'Cursor', exact: true }).click();
+  await softProof(page, 'Rec.2020 PQ HDR (default)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'photo');
   await page.evaluate(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 20, gamma: -30 })));
   expect(await worker.evaluate(() => Reflect.get(globalThis, 'printMotionScene'))).toBeNull();
@@ -156,7 +156,7 @@ for (const { device, viewport, hasTouch, isMobile } of [
     test('every slider spans the panel width', async ({ page }) => {
       await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
       await waitForEditorLive(page);
-      await editTools(page).getByRole('radio', { name: 'Print', exact: true }).click();
+      await softProof(page, 'Printed media (3D)');
       for (const { name, count } of [
         { name: 'Paper', count: 6 },
         { name: 'Lighting', count: 7 },
@@ -230,7 +230,8 @@ test.describe('zoom on a high density phone display', () => {
       await waitForEditorLive(page);
       const worker = page.workers().find((worker) => worker.url().includes('local_open_worker'));
       if (worker == null) throw new Error('The editor worker was not created');
-      await editTools(page).getByRole('radio', { name: tool, exact: true }).click();
+      if (tool === 'Print') await softProof(page, 'Printed media (3D)');
+      else await editTools(page).getByRole('radio', { name: tool, exact: true }).click();
       if (tool === 'Print') {
         const paper = page.getByRole('tab', { name: 'Paper', exact: true });
         await paper.click();

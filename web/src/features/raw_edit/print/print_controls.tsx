@@ -1,8 +1,9 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { Fragment, type ReactNode } from 'react';
-import { MobileEditPanels } from '../mobile_edit_panels';
-import { PrintPanel } from './print_panel';
+import { MobileEditPanels, type MobileEditPanel } from '../mobile_edit_panels';
+import type { SoftProof } from '../proof/soft_proof';
+import { PrintPanel, type PrintSection } from './print_panel';
 import { PrintPanelStrings } from './print_panel.strings';
 import type { PrintPresenter } from './print_presenter';
 import type { PrintStore } from './print_store';
@@ -16,23 +17,35 @@ const styles = stylex.create({
   },
 });
 
-export const PrintControls = observer(function PrintControls({ store, presenter, disabled, mobile, notice }: {
+/** What a proof has to offer: nothing for the library's own rendition, and only what it can show otherwise. */
+export function proofPanels(proof: SoftProof, store: PrintStore, presenter: PrintPresenter, disabled: boolean): MobileEditPanel[] {
+  const sections: PrintSection[] =
+    proof === 'srgb' ? ['tone']
+    : proof === 'print' ? ['paper']
+    : proof === 'print3d' ? ['paper', 'lighting', 'orientation']
+    : [];
+  const titles: Record<PrintSection, string> = {
+    tone: PrintPanelStrings.highlights(),
+    paper: PrintPanelStrings.paper(),
+    lighting: PrintPanelStrings.lighting(),
+    orientation: store.surface ? PrintPanelStrings.deviceTilt() : PrintPanelStrings.rotation(),
+  };
+  return sections.map((section) => ({
+    id: section,
+    title: titles[section],
+    content: <PrintPanel store={store} presenter={presenter} disabled={disabled} section={section} />,
+  }));
+}
+
+export const PrintControls = observer(function PrintControls({ proof, store, presenter, disabled, mobile, notice }: {
+  proof: SoftProof;
   store: PrintStore;
   presenter: PrintPresenter;
   disabled: boolean;
   mobile: boolean;
   notice?: ReactNode;
 }): JSX.Element {
-  const titles = {
-    paper: PrintPanelStrings.paper(),
-    lighting: PrintPanelStrings.lighting(),
-    orientation: store.surface ? PrintPanelStrings.deviceTilt() : PrintPanelStrings.rotation(),
-  };
-  const panels = (['paper', 'lighting', 'orientation'] as const).map((section) => ({
-    id: section,
-    title: titles[section],
-    content: <PrintPanel store={store} presenter={presenter} disabled={disabled} section={section} />,
-  }));
+  const panels = proofPanels(proof, store, presenter, disabled);
   if (mobile) return <MobileEditPanels panels={panels} scope="print" notice={notice} />;
   return <div {...stylex.props(styles.panels)}>
     {notice}

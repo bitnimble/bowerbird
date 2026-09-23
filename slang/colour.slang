@@ -451,7 +451,7 @@ Light<Graded> matched_pivot(Light<Rendered> white)
 /// What `detail` blurred, and so the only value a difference against that blur is
 /// meaningful in. Both arms hand it to `adjusted` beside the graded colour, because the
 /// presence sliders act on the base's detail while everything else acts on the graded pixel.
-Light<Scene> base_luma(Colour<SceneNits> nits)
+public Light<Scene> base_luma(Colour<SceneNits> nits)
 {
     return measured<Scene>(luma_of(nits).v / edit.reference);
 }
@@ -568,15 +568,26 @@ public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
 ///
 /// The frame arrives anchored - `tone::encode_base` divided by diffuse white and multiplied
 /// by the reference before coding - so what the levels form of this divided out is already
-/// done, and the exposure is what is left. It cancelled out of `source_peak` there and does
+/// done, and the exposure is what is left. It cancelled out of `neutral_peak` there and does
 /// here too: the ratio of the frame's peak to its own white is what the roll-off is against,
 /// and a gain moves both.
 public Colour<DisplayNits> neutral_nits(Colour<SceneNits> nits, float2 at)
 {
-    // A ratio of two levels, so the container they are counts of divides out and what is left is
-    // how far over its own diffuse white the frame's top end sits.
+    // The floor last, as the matched arm takes it: the sliders can send a channel under it.
+    return in_gamut(rolled(neutral_unrolled(nits, at), rolloff(neutral_peak(), measured<DisplayNits>(edit.peak))));
+}
+
+/// The neutral arm's top end: how far over its own diffuse white the frame's top end sits.
+public Light<DisplayNits> neutral_peak()
+{
+    // A ratio of two levels, so the container they are counts of divides out.
     let over_white = over(measured<Level>(edit.source_level), measured<Level>(edit.white));
-    let source_peak = measured<DisplayNits>(over_white.g * edit.reference);
+    return measured<DisplayNits>(over_white.g * edit.reference);
+}
+
+/// The neutral arm before its roll-off.
+public Colour<DisplayNits> neutral_unrolled(Colour<SceneNits> nits, float2 at)
+{
     // Adjusted in the same scene-relative space the matched arm uses, so one set of sliders
     // means one thing whether or not the fit landed.
     //
@@ -587,10 +598,7 @@ public Colour<DisplayNits> neutral_nits(Colour<SceneNits> nits, float2 at)
     let exposed = lit_by_reader(nits).v * gain_of(stops(edit.exposure)).g / edit.reference;
     let scene = adjusted(measured<Scene>(exposed), base_luma(nits), at, PIVOT);
     // **Scene nits taken as display nits, which is what having no tone curve means.** This arm's
-    // whole rendering is the roll-off below, so the reference is multiplied back in and the
+    // whole rendering is `neutral_nits`' roll-off, so the reference is multiplied back in and the
     // result is handed to a display without a camera's own answer in between.
-    // The floor last, as the matched arm takes it: the sliders can send a channel under it.
-    return in_gamut(rolled(
-        measured<DisplayNits>(scene.v * edit.reference),
-        rolloff(source_peak, measured<DisplayNits>(edit.peak))));
+    return measured<DisplayNits>(scene.v * edit.reference);
 }

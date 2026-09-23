@@ -276,12 +276,12 @@ describe('a slider reaching the picture', () => {
     // than one the setter has just been handed.
     presenter.settle({ exposure: 0.25 });
     const drew = await drawn();
-    expect(decoder.proof).toBe('hdr');
+    expect(decoder.proof).toEqual({ output: 'hdr', tone: 'neutral' });
 
     presenter.setSoftProof('srgb');
     await drawn();
 
-    expect(decoder.proof).toBe('srgb');
+    expect(decoder.proof).toEqual({ output: 'srgb', tone: 'neutral' });
     // The picture is what moved, so a tick has to have been asked for: the edits are untouched
     // and nothing else on this path would go and get one.
     expect(decoder.draws).toBeGreaterThan(drew);
@@ -739,9 +739,9 @@ describe('the level a zoom is served at', () => {
       mapped.push(region);
       return Promise.resolve([0.25, 0.2, 0.2, 0.2]);
     };
-    presenter.print.setSurface(true);
+    presenter.print.setTouch(true);
     presenter.print.setFramed(true);
-    presenter.setTool('print');
+    presenter.setSoftProof('print3d');
     presenter.showRegion({ x: 2750, y: 1950, width: 1600, height: 1200 });
     await drawn();
     await settled();

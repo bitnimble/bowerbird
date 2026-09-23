@@ -22,9 +22,9 @@ describe('print viewing', () => {
   });
 
   test('surface framing fits its outer dimensions and zooms in outer-frame coordinates', async () => {
-    editor.presenter.print.setSurface(true);
+    editor.presenter.print.setTouch(true);
     editor.presenter.print.setFramed(true);
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     await drawnBy(editor);
     expect(editor.presenter.displaySize).toEqual({ width: 4750, height: 3750 });
     expect(editor.decoder.frames.at(-1)?.region).toEqual({ x: 0, y: 0, width: 4750, height: 3750 });
@@ -52,8 +52,8 @@ describe('print viewing', () => {
   });
 
   test('surface framing follows crop and rotation, and leaving Print restores photo dimensions', async () => {
-    editor.presenter.print.setSurface(true);
-    editor.presenter.setTool('print');
+    editor.presenter.print.setTouch(true);
+    editor.presenter.setSoftProof('print3d');
     editor.presenter.print.setFramed(true);
     editor.presenter.preview({ cropRight: 0.5 });
     await drawnBy(editor);
@@ -67,16 +67,16 @@ describe('print viewing', () => {
     expect(editor.presenter.displaySize).toEqual({ width: 3500, height: 2500 });
     expect(editor.decoder.frames.at(-1)?.region).toEqual({ x: 0, y: 0, width: 3500, height: 2500 });
 
-    editor.presenter.setTool('cursor');
+    editor.presenter.setSoftProof('hdr');
     await drawnBy(editor);
     expect(editor.presenter.displaySize).toEqual({ width: 3000, height: 2000 });
     expect(editor.decoder.frames.at(-1)?.region).toEqual({ x: 0, y: 0, width: 3000, height: 2000 });
     expect(editor.decoder.stage.width / editor.decoder.stage.height).toBeCloseTo(3 / 2, 2);
 
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     await drawnBy(editor);
     expect(editor.presenter.displaySize).toEqual({ width: 3500, height: 2500 });
-    editor.presenter.print.setSurface(false);
+    editor.presenter.print.setTouch(false);
     await drawnBy(editor);
     expect(editor.presenter.displaySize).toEqual({ width: 3000, height: 2000 });
     expect(editor.decoder.frames.at(-1)?.region).toEqual({ x: 0, y: 0, width: 3000, height: 2000 });
@@ -84,7 +84,7 @@ describe('print viewing', () => {
   });
 
   test('frame choice redraws and survives paper and presentation changes', async () => {
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     await drawnBy(editor);
     expect(editor.decoder.print?.framed).toBe(false);
 
@@ -93,13 +93,13 @@ describe('print viewing', () => {
     expect(editor.decoder.print?.framed).toBe(true);
 
     editor.presenter.print.setPaper('gloss');
-    editor.presenter.print.setSurface(true);
+    editor.presenter.print.setTouch(true);
     await drawnBy(editor);
     expect(editor.decoder.print).toMatchObject({ paper: 'gloss', presentation: 'surface', framed: true });
 
-    editor.presenter.print.setSurface(false);
-    editor.presenter.setTool('cursor');
-    editor.presenter.setTool('print');
+    editor.presenter.print.setTouch(false);
+    editor.presenter.setSoftProof('hdr');
+    editor.presenter.setSoftProof('print3d');
     await drawnBy(editor);
     expect(editor.decoder.print).toMatchObject({ presentation: 'scene', framed: true });
 
@@ -109,7 +109,7 @@ describe('print viewing', () => {
   });
 
   test('a reset puts a control back where the chosen paper keeps it, or the default scene for the rest', () => {
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     editor.presenter.print.setPaper('gloss');
     editor.presenter.print.setControl('roughness', 0.4);
     editor.presenter.print.setControl('keyLux', 2500);
@@ -121,7 +121,7 @@ describe('print viewing', () => {
   });
 
   test('choosing a paper replaces every material control a reader moved, and leaves the rest', () => {
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     editor.presenter.print.setControl('refractiveIndex', 1.8);
     editor.presenter.print.setControl('surfaceTexture', 0.9);
     editor.presenter.print.setControl('keyLux', 2500);
@@ -132,7 +132,7 @@ describe('print viewing', () => {
   });
 
   test('the lamp never comes nearer the sheet than a print length', () => {
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     editor.presenter.print.setControl('lightHeight', 0.5);
     editor.presenter.print.setControl('lightForward', 0.5);
     expect(editor.print.scene).toMatchObject({ lightHeight: 0.5, lightForward: 1.7 });
@@ -155,8 +155,8 @@ describe('print viewing', () => {
       await new Promise((resolve) => setTimeout(resolve, REWINDOW_QUIET_MS + 30));
     };
 
-    editor.presenter.print.setSurface(true);
-    editor.presenter.setTool('print');
+    editor.presenter.print.setTouch(true);
+    editor.presenter.setSoftProof('print3d');
     await settled();
     expect(coverage).toEqual([]);
 
@@ -173,15 +173,15 @@ describe('print viewing', () => {
     await settled();
     expect(coverage).toEqual([true]);
 
-    editor.presenter.setTool('cursor');
+    editor.presenter.setSoftProof('hdr');
     await settled();
     expect(coverage).toEqual([true, false]);
 
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     await settled();
     expect(coverage).toEqual([true, false, true]);
 
-    editor.presenter.print.setSurface(false);
+    editor.presenter.print.setTouch(false);
     await settled();
     expect(coverage).toEqual([true, false, true, false]);
   });
@@ -196,8 +196,8 @@ describe('print viewing', () => {
     let release = (): void => { throw new Error('no pending draw'); };
     const pending = new Promise<void>((resolve) => { release = resolve; });
     editor.decoder.landed = () => pending;
-    editor.presenter.print.setSurface(true);
-    editor.presenter.setTool('print');
+    editor.presenter.print.setTouch(true);
+    editor.presenter.setSoftProof('print3d');
     await drawnBy(editor);
 
     editor.presenter.print.setFramed(true);
@@ -218,7 +218,7 @@ describe('print viewing', () => {
   test('draws a print of the edited crop without changing the photo document', async () => {
     editor.presenter.preview({ exposure: 1.25, cropLeft: 0.2, rotate: 90 });
     const doc = JSON.stringify(editor.edit.doc);
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     await drawnBy(editor);
     expect(editor.decoder.print).toEqual(DEFAULT_PRINT_SCENE);
     expect(editor.stage.renderedMode).toBe('print');
@@ -245,10 +245,10 @@ describe('print viewing', () => {
     editor.presenter.preview({ cropRight: 0.25 });
     await drawnBy(editor);
     const photo = { ...editor.decoder.stage };
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     await drawnBy(editor);
     expect(editor.decoder.stage.width / editor.decoder.stage.height).toBeCloseTo(800 / 600, 2);
-    editor.presenter.setTool('cursor');
+    editor.presenter.setSoftProof('hdr');
     await drawnBy(editor);
     expect(editor.decoder.print).toBeNull();
     expect(editor.stage.renderedMode).toBe('photo');
@@ -259,8 +259,8 @@ describe('print viewing', () => {
     editor.presenter.preview({ cropRight: 0.25 });
     await drawnBy(editor);
     const photo = { ...editor.decoder.stage };
-    editor.presenter.print.setSurface(true);
-    editor.presenter.setTool('print');
+    editor.presenter.print.setTouch(true);
+    editor.presenter.setSoftProof('print3d');
     await drawnBy(editor);
     expect(editor.decoder.stage).toEqual(photo);
     expect(editor.decoder.print).toMatchObject({ presentation: 'surface', yawDegrees: 0, pitchDegrees: 0 });
@@ -269,13 +269,13 @@ describe('print viewing', () => {
     editor.presenter.print.rotateBy(20, 30);
     expect(editor.print.dragging).toBe(false);
     expect(editor.print.scene).toMatchObject({ yawDegrees: 0, pitchDegrees: 0 });
-    editor.presenter.setTool('cursor');
+    editor.presenter.setSoftProof('hdr');
     await drawnBy(editor);
     expect(editor.decoder.stage).toEqual(photo);
   });
 
-  test('rotates with the captured pointer, clamps pitch, wraps yaw and releases on tool change', async () => {
-    editor.presenter.setTool('print');
+  test('rotates with the captured pointer, clamps pitch, wraps yaw, and lies flat for a tool', async () => {
+    editor.presenter.setSoftProof('print3d');
     editor.presenter.print.beginDrag(1, 100, 100, 200);
     editor.presenter.print.moveDrag(2, 200, 200);
     expect(editor.print.scene.yawDegrees).toBe(-12);
@@ -285,16 +285,55 @@ describe('print viewing', () => {
     editor.presenter.print.rotateBy(720, -180);
     expect(editor.print.scene).toMatchObject({ yawDegrees: 78, pitchDegrees: -85 });
     editor.presenter.setTool('crop');
-    expect(editor.print.open).toBe(false);
+    expect(editor.stage.softProof).toBe('print');
+    expect(editor.print.hanging).toBe(false);
     expect(editor.print.dragging).toBe(false);
     editor.presenter.print.moveDrag(1, 0, 0);
-    expect(editor.print.scene.yawDegrees).toBe(78);
     await drawnBy(editor);
+    expect(editor.decoder.print?.presentation).toBe('flat');
+
+    editor.presenter.setSoftProof('print3d');
+    expect(editor.print.scene).toMatchObject({ presentation: 'scene', yawDegrees: 78, pitchDegrees: -85 });
+    expect(editor.crop.cropping).toBe(false);
+  });
+
+  test('a flat print is the stage as it is, with the paper under the pigment and no room around it', async () => {
+    editor.presenter.preview({ cropRight: 0.25 });
+    await drawnBy(editor);
+    const photo = { ...editor.decoder.stage };
+    editor.presenter.setSoftProof('print');
+    await drawnBy(editor);
+    expect(editor.decoder.print?.presentation).toBe('flat');
+    expect(editor.decoder.proof).toEqual({ output: 'hdr', tone: 'neutral' });
+    expect(editor.decoder.stage).toEqual(photo);
+    editor.presenter.print.beginDrag(1, 100, 100, 200);
+    expect(editor.print.dragging).toBe(false);
+    editor.presenter.setTool('crop');
+    expect(editor.stage.softProof).toBe('print');
+  });
+
+  test('an edit opens under the proof it was left under, and a proof the viewer asked for is not one', () => {
+    editor.presenter.setSoftProof('print3d');
+    editor.presenter.restoreSoftProof();
+    expect(editor.stage.softProof).toBe('hdr');
+    expect(editor.print.open).toBe(false);
+    editor.presenter.setSoftProof('print');
+    editor.presenter.setSoftProof('hdr');
+    editor.presenter.setSoftProof('srgb');
+    editor.presenter.restoreSoftProof();
+    expect(editor.stage.softProof).toBe('srgb');
+  });
+
+  test('an sRGB proof carries the operator its highlights are fitted with, and no print', async () => {
+    editor.presenter.setSoftProof('srgb');
+    editor.presenter.print.setTonemap('filmic');
+    await drawnBy(editor);
+    expect(editor.decoder.proof).toEqual({ output: 'srgb', tone: 'filmic' });
     expect(editor.decoder.print).toBeNull();
   });
 
   test('rejects invalid material and lighting values and resets rotation alone', () => {
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     editor.presenter.print.setControl('keyLux', Number.NaN);
     editor.presenter.print.setControl('roughness', 0);
     editor.presenter.print.setControl('whiteReflectance', 2);
@@ -317,7 +356,7 @@ describe('print viewing', () => {
   });
 
   test('a wheel zoom holds the scene under the pointer and a pan runs to the edge and stops', () => {
-    editor.presenter.setTool('print');
+    editor.presenter.setSoftProof('print3d');
     const at = { x: 0.3, y: -0.2 };
     editor.presenter.print.zoomAt(4, at);
     const { zoom, panX, panY } = editor.print.scene;
@@ -332,8 +371,8 @@ describe('print viewing', () => {
   });
 
   test('zoom and pan stay out of the surface presentation, which has the editor own its view', () => {
-    editor.presenter.setTool('print');
-    editor.presenter.print.setSurface(true);
+    editor.presenter.setSoftProof('print3d');
+    editor.presenter.print.setTouch(true);
     editor.presenter.print.zoomAt(4, { x: 0.3, y: -0.2 });
     editor.presenter.print.panBy(0.5, 0.5);
     expect(editor.print.scene).toMatchObject({ zoom: 1, panX: 0, panY: 0 });

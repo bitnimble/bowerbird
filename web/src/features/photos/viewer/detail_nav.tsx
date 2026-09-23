@@ -9,7 +9,6 @@ import {
   EyeOff,
   FileType,
   FolderOpen,
-  Frame,
   GalleryThumbnails,
   HardDriveDownload,
   Info,
@@ -52,7 +51,8 @@ import type { RawEditPresenter } from '../../raw_edit/stage/raw_edit_presenter';
 import type { StageStore } from '../../raw_edit/stage/stage_store';
 import { bugReporter } from '../../feedback/report_bug';
 import { ReportBugStrings } from '../../feedback/report_bug_dialog.strings';
-import type { PrintStore } from '../../raw_edit/print/print_store';
+import type { SoftProof } from '../../raw_edit/proof/soft_proof';
+import { SoftProofMenu } from '../../raw_edit/proof/soft_proof_menu';
 import { BulkBarStrings } from '../grid/bulk_bar.strings';
 import { isComposite, mergeEditPath, triagePath } from '../photos_store';
 import { renditionLabel } from '../renditions';
@@ -121,7 +121,7 @@ function offered<T extends 'original' | ViewerRendition>(
   return options.filter((option) => option.value !== 'embedded');
 }
 
-type ViewAction = 'fullscreen' | 'print' | 'rotateLeft' | 'rotateRight';
+type ViewAction = 'fullscreen' | 'rotateLeft' | 'rotateRight';
 
 const VIEW_ACTIONS: Option<ViewAction>[] = [
   { value: 'fullscreen', label: PhotoStageStrings.fullscreen(), icon: <Maximize size={ICON} />, hint: 'F' },
@@ -196,7 +196,9 @@ export const DetailNav = observer(function DetailNav({
   onToggleStrip,
   onEdit,
   onDone,
-  onTogglePrint,
+  proof,
+  hdrOffered,
+  onProof,
   onFullscreen,
   zoomRef,
   mode,
@@ -215,11 +217,14 @@ export const DetailNav = observer(function DetailNav({
   onToggleStrip: () => void;
   onEdit: () => void;
   onDone: () => void;
-  onTogglePrint: () => void;
+  /** What the stage stands in for, and whether an HDR rendition is there to stand in for. */
+  proof: SoftProof;
+  hdrOffered: boolean;
+  onProof: (proof: SoftProof) => void;
   onFullscreen: () => void;
   mode: DetailMode;
   /** Null until the editor's own layout effect has built the pair, one render behind `mode`. */
-  edit: { edit: EditStore; stage: StageStore; loupe: LoupeStore; print: PrintStore; presenter: RawEditPresenter } | null;
+  edit: { edit: EditStore; stage: StageStore; loupe: LoupeStore; presenter: RawEditPresenter } | null;
 }): JSX.Element {
   const listing = useListingStore();
   const store = useViewerStore();
@@ -258,13 +263,6 @@ export const DetailNav = observer(function DetailNav({
   // the zoom and the fullscreen are the same controls in the same place.
   const viewActions: Option<ViewAction>[] = [
     ...(document.fullscreenEnabled ? VIEW_ACTIONS : []),
-    {
-      value: 'print',
-      label: mode === 'print' ? PhotoDetailStrings.viewPhoto() : PhotoDetailStrings.viewPrintMockup(),
-      icon: <Frame size={ICON} />,
-      active: mode === 'print',
-      disabled: mode !== 'print' && !editable,
-    },
     // A turn in the mockup would rotate the photograph rather than the sheet on screen,
     // so it is not offered there.
     ...(mode === 'print' ? [] : ROTATE_ACTIONS.map((option) => ({
@@ -295,10 +293,6 @@ export const DetailNav = observer(function DetailNav({
       onSelect: (action) => {
         if (action === 'fullscreen') {
           onFullscreen();
-          return;
-        }
-        if (action === 'print') {
-          onTogglePrint();
           return;
         }
         const by = action === 'rotateLeft' ? -90 : 90;
@@ -422,7 +416,7 @@ export const DetailNav = observer(function DetailNav({
   // than squeezing every button below its own label. Which also means dropping the centring:
   // a spacer on a wrapped line pushes the toolbar to an edge instead of the middle.
   const centred = editing && !mobile;
-  const tool = edit?.print.open === true ? 'print' : edit?.loupe.tool ?? 'cursor';
+  const tool = edit?.loupe.tool ?? 'cursor';
   const leaveTool = (): void => edit?.presenter.setTool('cursor');
 
   return (
@@ -521,7 +515,7 @@ export const DetailNav = observer(function DetailNav({
           of the bar rather than on the end of whichever group happens to be longer. */}
       {editing && edit != null && (
         <>
-          <EditToolbar stage={edit.stage} loupe={edit.loupe} print={edit.print} presenter={edit.presenter} />
+          <EditToolbar stage={edit.stage} loupe={edit.loupe} presenter={edit.presenter} />
           {centred && <Spacer />}
         </>
       )}
@@ -544,6 +538,8 @@ export const DetailNav = observer(function DetailNav({
           {!mobile && PhotoDetailStrings.triageStack()}
         </Button>
       )}
+
+      <SoftProofMenu value={proof} hdrOffered={hdrOffered} printOffered={editable} onChange={onProof} />
 
       {stripOpen != null && (
         <Button

@@ -16,7 +16,6 @@ import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, reading, type SliderSpec } from '
 import type { RawEditPresenter } from './stage/raw_edit_presenter';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
 import type { ColourProfile, Denoiser } from '../../../../src/schemas/photo_edits';
-import type { SoftProof } from './edits';
 import { KeystonePanel } from './keystone/keystone_panel';
 import type { KeystoneStore } from './keystone/keystone_store';
 import { styles } from './raw_edit_panel.stylex';
@@ -24,7 +23,7 @@ import type { StageStore } from './stage/stage_store';
 import { RepairPanel } from './repair/repair_panel';
 import type { RepairStore } from './repair/repair_store';
 import type { PrintStore } from './print/print_store';
-import { PrintControls } from './print/print_controls';
+import { proofPanels } from './print/print_controls';
 import { EditToolsStrings } from './edit_tools.strings';
 import { MobileEditPanels, type MobileEditPanel } from './mobile_edit_panels';
 
@@ -37,11 +36,6 @@ const COLOUR_PROFILES: Option<ColourProfile>[] = [
 const DENOISERS: Option<Denoiser>[] = [
   { value: 'galosh', label: RawEditPanelStrings.denoiserGalosh() },
   { value: 'pmrid', label: RawEditPanelStrings.denoiserPmrid() },
-];
-
-const SOFT_PROOFS: Option<SoftProof>[] = [
-  { value: 'hdr', label: RawEditPanelStrings.softProofHdr() },
-  { value: 'srgb', label: RawEditPanelStrings.softProofSrgb() },
 ];
 
 /**
@@ -308,38 +302,6 @@ const WhiteBalance = observer(function WhiteBalance({
   );
 });
 
-/**
- * Which rendition the stage is standing in for.
- *
- * **The default is the library's own**, which serves HDR unless someone turned it off - so what
- * this offers is the narrower target a reader wants to check against, and the picture comes back
- * with its highlights rolled into diffuse white and its colours clipped to what sRGB holds.
- */
-const SoftProofChoice = observer(function SoftProofChoice({
-  stage,
-  presenter,
-}: {
-  stage: StageStore;
-  presenter: RawEditPresenter;
-}): JSX.Element {
-  return (
-    <div>
-      <div {...stylex.props(styles.head, styles.headAboveSelect)}>
-        <Text as="span" style={styles.name}>
-          {RawEditPanelStrings.softProof()}
-        </Text>
-      </div>
-      <Select
-        style={styles.selectTrigger}
-        label={RawEditPanelStrings.softProof()}
-        options={SOFT_PROOFS}
-        value={stage.softProof}
-        onChange={presenter.setSoftProof}
-      />
-    </div>
-  );
-});
-
 const ColourProfileChoice = observer(function ColourProfileChoice({
   edit,
   presenter,
@@ -413,8 +375,6 @@ export const RawEditPanel = observer(function RawEditPanel({ edit, stage, crop, 
       {stage.status !== 'live' && <Text as="p" variant={stage.status === 'failed' ? 'muted' : 'mono'} style={styles.status}>{status}</Text>}
     </Panel>
   );
-  if (print.open) return <PrintControls store={print} presenter={presenter.print}
-    disabled={!stage.editable} mobile={mobile} notice={notice} />;
   let scope: string;
   let panels: MobileEditPanel[];
   if (crop.cropping) {
@@ -453,7 +413,7 @@ export const RawEditPanel = observer(function RawEditPanel({ edit, stage, crop, 
       ...(stage.mosaic ? [panelGroup('dust', RawEditPanelStrings.groupDustRemoval(),
         <Dust edit={edit} stage={stage} presenter={presenter} />, stage.repreparing)] : []),
       panelGroup('geometry', RawEditPanelStrings.groupGeometry(), <GeometryControls edit={edit} stage={stage} store={crop} presenter={presenter} styles={styles} />),
-      panelGroup('rendering', RawEditPanelStrings.groupRendering(), <SoftProofChoice stage={stage} presenter={presenter} />),
+      ...proofPanels(stage.softProof, print, presenter.print, !stage.editable),
     ];
   }
   if (mobile) return <MobileEditPanels panels={panels} scope={scope} notice={notice} />;

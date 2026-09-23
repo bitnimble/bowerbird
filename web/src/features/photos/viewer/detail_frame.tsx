@@ -46,7 +46,9 @@ export const DetailFrame = observer(function DetailFrame({
   // video - so there the same AVIF is rewrapped as one and shown through a
   // `<video>` (§10.7). The camera's JPEG never needs it, being 8-bit SDR with no
   // headroom to carry, so its still is already right.
-  const hdrVideo = useHdrVideo(photoId, stillSrc, shownFile?.hdr === true && showing !== 'embedded');
+  // A proof is drawn by the stage's shader, which a `<video>` never passes through.
+  const proof = store.showsHdr(photoId) && store.proofOf(photoId) === 'srgb' ? store.proofTone : null;
+  const hdrVideo = useHdrVideo(photoId, stillSrc, shownFile?.hdr === true && showing !== 'embedded' && proof == null);
 
   // Every rendition this photo has already decoded stays mounted, with the one
   // being asked for on the end. Comparing the camera's JPEG against a render is
@@ -171,6 +173,7 @@ export const DetailFrame = observer(function DetailFrame({
       toolsInto={toolsInto}
       zoomInto={zoomInto}
       fullscreenRef={fullscreenRef}
+      proof={proof}
       // No arrow keys on a phone, so the frame itself is the control: the same
       // step the bar's buttons take, taken by dragging the picture aside.
       onSwipe={step}

@@ -11,6 +11,7 @@ import {
 import { CanvasLost, type Region } from './stage_gpu';
 import { fitScale, type Size, type View } from './zoom_pan';
 import { styles } from './photo_stage_view.stylex';
+import type { Tonemap } from '../../raw_edit/print/print_scene';
 
 /**
  * How much of the frame beyond what is on screen the detail canvas covers, as a fraction of
@@ -68,6 +69,7 @@ export function StageDetail({
   view,
   hidden,
   shown,
+  proof,
   onSharp,
 }: {
   source: string;
@@ -77,6 +79,8 @@ export function StageDetail({
   hidden: boolean;
   /** False while this is the rendition being swapped to, drawn before it is revealed. */
   shown: boolean;
+  /** As `StageFrame`'s: the patch has to be the picture it lies over. */
+  proof: Tonemap | null;
   /** Whether what this lays over the frame is as sharp as the view asks for, including having nothing to add. */
   onSharp: (source: string, sharp: boolean) => void;
 }): JSX.Element | null {
@@ -130,6 +134,7 @@ export function StageDetail({
       releaseDetail(source);
     }
   }, [wanted, source]);
+  useEffect(() => setCovered(null), [proof]);
 
   // Through a ref: the region is a fresh object every render, and as a dependency it would
   // restart the decode below on every frame of a pan.
@@ -161,7 +166,7 @@ export function StageDetail({
         const bitmap = canvasSizeFor(cropped.width * scale, cropped.height * scale);
         canvas.width = bitmap.width;
         canvas.height = bitmap.height;
-        await drawInto(canvas, frame, cropped);
+        await drawInto(canvas, frame, cropped, proof);
         if (live) setCovered({ region: drawing, density });
       })
       // Nothing covered rather than the last thing that was: what is held is a rectangle of a
@@ -180,7 +185,7 @@ export function StageDetail({
     return () => {
       live = false;
     };
-  }, [source, wanted, enough, key, density, attempt]);
+  }, [source, wanted, enough, key, density, attempt, proof]);
 
   if (!wanted || region == null) return null;
   // **Laid out at the rectangle it is being drawn for, and shown only once that is what it

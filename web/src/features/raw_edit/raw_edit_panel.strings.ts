@@ -94,7 +94,6 @@ export const RawEditPanelStrings = {
   groupDetail: () => 'Detail',
   groupDustRemoval: () => 'Dust removal',
   groupGeometry: () => 'Geometry',
-  groupRendering: () => 'Rendering',
 
   colourProfile: () => 'Colour profile',
   colourProfileNone: () => 'None',
@@ -103,8 +102,4 @@ export const RawEditPanelStrings = {
   denoiser: () => 'Denoiser',
   denoiserGalosh: () => 'GALOSH',
   denoiserPmrid: () => 'PMRID',
-
-  softProof: () => 'Soft proof',
-  softProofHdr: () => 'Rec.2020 PQ HDR',
-  softProofSrgb: () => 'sRGB',
 };

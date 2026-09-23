@@ -29,7 +29,8 @@ import type { LoupeStore } from '../loupe/loupe_store';
 import { PreparePresenter } from './prepare_presenter';
 import { SUPERSAMPLE, stageResolution } from './stage_resolution';
 import { type PreparedHeader, readPreparedHeader } from '../../../../../src/schemas/prepared';
-import type { EditAdjust, Region, SoftProof } from '../edits';
+import type { EditAdjust, Region } from '../edits';
+import { isSoftProof, type SoftProof } from '../proof/soft_proof';
 import type { EditTool } from '../edit_tool';
 import type { GuideKind } from '../keystone/keystone_store';
 import type { RepairStore } from '../repair/repair_store';
@@ -116,6 +117,7 @@ export class RawEditPresenter {
   private pending: number | null = null;
   private frame = 0;
   private closed = false;
+  private remembersProof = false;
 
   private photoId: string | null = null;
 
@@ -138,7 +140,6 @@ export class RawEditPresenter {
     private readonly printStore: PrintStore,
   ) {
     this.print = new PrintPresenter(printStore, () => this.showGeometry());
-    stage.softProof = readSetting(SOFT_PROOF_KEY) === 'srgb' ? 'srgb' : 'hdr';
     this.crop = new CropPresenter(stage, editStore, cropStore, {
       preview: (patch) => this.preview(patch),
       write: (patch) => this.write(patch),
@@ -287,7 +288,7 @@ export class RawEditPresenter {
     if (box == null || region == null) return null;
     if (box.width === 0 || box.height === 0) return null;
 
-    const scenePrint = this.printStore.open && !this.printStore.surface;
+    const scenePrint = this.printStore.hanging;
     const size = stageResolution(
       box,
       scenePrint ? { x: 0, y: 0, ...box } : region,
@@ -485,7 +486,7 @@ export class RawEditPresenter {
   }
 
   setCropping(open: boolean): void {
-    if (open) this.print.setOpen(false);
+    if (open) this.leaveSheet();
     this.crop.setCropping(open);
   }
 
@@ -511,20 +512,24 @@ export class RawEditPresenter {
 
   @action.bound
   setTool(tool: EditTool): void {
-    this.print.setOpen(tool === 'print');
     this.setCropping(tool === 'crop');
     this.setKeystoning(tool === 'perspective');
     this.setRepairing(tool === 'repair');
     this.setLoupe(tool === 'loupe');
   }
 
+  /** A tool works on the picture as it lies, so a sheet being turned in a room goes flat for it. */
+  private leaveSheet(): void {
+    if (this.stage.softProof === 'print3d') this.setSoftProof('print');
+  }
+
   setRepairing(open: boolean): void {
-    if (open) this.print.setOpen(false);
+    if (open) this.leaveSheet();
     this.repair.setRepairing(open);
   }
 
   setLoupe(open: boolean): void {
-    if (open) this.print.setOpen(false);
+    if (open) this.leaveSheet();
     this.loupe.setLoupe(open);
   }
 
@@ -560,7 +565,7 @@ export class RawEditPresenter {
   }
 
   setKeystoning(open: boolean): void {
-    if (open) this.print.setOpen(false);
+    if (open) this.leaveSheet();
     this.keystone.setKeystoning(open);
   }
 
@@ -619,12 +624,30 @@ export class RawEditPresenter {
     this.keystone.setGuideKind(kind);
   }
 
-  /** Which rendition the stage proofs against. Nothing is saved: the edits have not moved. */
+  /**
+   * What the stage proofs against. Nothing is saved: the edits have not moved. Remembered for the
+   * next edit only once `restoreSoftProof` has run, so a proof the viewer asked for is not one.
+   */
   @action.bound
   setSoftProof(proof: SoftProof): void {
     this.stage.softProof = proof;
-    writeSetting(SOFT_PROOF_KEY, proof);
-    this.request(this.editStore.exposureEv);
+    if (this.remembersProof) writeSetting(SOFT_PROOF_KEY, proof);
+    // The sheet takes the whole stage, which a geometry tool or a loupe has no picture to act on.
+    if (proof === 'print3d') {
+      this.setCropping(false);
+      this.setKeystoning(false);
+      this.setRepairing(false);
+      this.setLoupe(false);
+    }
+    this.print.setView(proof === 'print' ? 'flat' : proof === 'print3d' ? 'sheet' : null);
+  }
+
+  /** The proof this reader last edited under, which an edit opens at. */
+  @action.bound
+  restoreSoftProof(): void {
+    this.remembersProof = true;
+    const remembered = readSetting(SOFT_PROOF_KEY);
+    this.setSoftProof(isSoftProof(remembered) ? remembered : 'hdr');
   }
 
   removeGuide(index: number): void {
@@ -951,7 +974,7 @@ export class RawEditPresenter {
           loupe,
           adjust: this.adjust,
           geometry: this.keystoneStore.geometry,
-          proof: this.stage.softProof,
+          proof: { output: this.stage.softProof === 'srgb' ? 'srgb' : 'hdr', tone: this.printStore.scene.tonemap },
           print,
           stage: next == null ? null : this.stageSize(),
         })

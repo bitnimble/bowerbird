@@ -51,7 +51,7 @@ export class PrintMotion {
     this.baseline = null;
   }
 
-  read(event: Event, screenAngle: number): PrintTilt | 'recenter' | null {
+  read(event: Event, screenAngle: number): PrintTilt | 'recentre' | null {
     const parsed = OrientationSchema.safeParse(event);
     if (!parsed.success || !Number.isFinite(screenAngle)) return null;
     const { alpha: heading, beta, gamma } = parsed.data;
@@ -71,7 +71,7 @@ export class PrintMotion {
       this.baseline = [screenRight, screenUp, normal];
       this.angle = angle;
       this.hasHeading = heading != null;
-      return 'recenter';
+      return 'recentre';
     }
     const dot = (axis: Vector): number => axis[0] * normal[0] + axis[1] * normal[1] + axis[2] * normal[2];
     const x = dot(this.baseline[0]);

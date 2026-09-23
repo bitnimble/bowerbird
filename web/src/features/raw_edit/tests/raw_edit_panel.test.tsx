@@ -46,6 +46,7 @@ function recording(): { presenter: RawEditPresenter; calls: { name: string; valu
     settleStraighten: record('settleStraighten'),
     clearKeystone: record('clearKeystone'),
     setCropToFit: record('setCropToFit'),
+    print: {},
   } as unknown as RawEditPresenter;
   return { presenter, calls };
 }
@@ -169,21 +170,26 @@ describe('the edit panel', () => {
     expect((screen.getByLabelText('Reset Contrast') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  // Both proofs are names the module accepts, so a label paired with the other one's value refuses
-  // nothing and draws the wrong picture in perfect health.
-  test('names each soft proof after the rendition the module is told to draw', () => {
-    for (const [proof, label] of [
-      ['srgb', 'sRGB'],
-      ['hdr', 'Rec.2020 PQ HDR'],
+  // Below the grade, and only what the proof can show: an sRGB rendition has its highlights to fit
+  // and nothing else, a flat print has no light for a surface to catch, and the sheet has it all.
+  test('adds what each soft proof can show below the edit panels', () => {
+    for (const [proof, groups, absent] of [
+      ['hdr', [], ['Highlights', 'Paper', 'Lighting']],
+      ['srgb', ['Highlights'], ['Paper', 'Lighting']],
+      ['print', ['Paper'], ['Highlights', 'Lighting', 'Rotation']],
+      ['print3d', ['Paper', 'Lighting', 'Rotation'], ['Highlights']],
     ] as const) {
       const edit = new EditStore();
       const stage = new StageStore(edit);
       const crop = new CropStore(stage, edit);
       const keystone = new KeystoneStore(stage, edit, crop);
       const repair = new RepairStore(edit, keystone);
+      const print = new PrintStore();
       edit.doc = neutralEdits();
       stage.status = 'live';
       stage.softProof = proof;
+      print.open = proof === 'print' || proof === 'print3d';
+      print.scene = { ...print.scene, presentation: proof === 'print' ? 'flat' : 'scene' };
       render(
         <RawEditPanel
           edit={edit}
@@ -191,11 +197,13 @@ describe('the edit panel', () => {
           crop={crop}
           keystone={keystone}
           repair={repair}
-          print={new PrintStore()}
+          print={print}
           presenter={recording().presenter}
         />,
       );
-      expect(screen.getByRole('combobox', { name: 'Soft proof' }).textContent).toBe(label);
+      expect(screen.getByRole('group', { name: 'Light' })).not.toBeNull();
+      for (const name of groups) expect(screen.getByRole('group', { name })).not.toBeNull();
+      for (const name of absent) expect(screen.queryByRole('group', { name })).toBeNull();
       cleanup();
     }
   });

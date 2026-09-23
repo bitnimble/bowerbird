@@ -14,6 +14,7 @@ import prelude;
 import stage_shared;
 import light;
 import primaries;
+import print_tone;
 
 /// Ten-bit video range. A twelve-bit frame's are four times these, so `depth` divides the sample
 /// rather than a second set of constants existing to be kept in step.
@@ -57,6 +58,11 @@ struct Colour {
     /// `stage_light` takes, bare in the block.
     float gain;
     float rotation;
+    /// Zero draws the frame as it is. Otherwise an sRGB proof of it, its highlights fitted under
+    /// diffuse white by the print operator numbered one less (`print_tone.slang`).
+    float proof;
+    /// The rendition's own peak over diffuse white, which is what a proof fits down from.
+    float source_peak;
 };
 
 [vk::binding(0, 0)] Texture2D<uint4> luma;
@@ -147,6 +153,14 @@ float3 stage_light(float2 position, Gain gain)
     // Linear light at last, in the primaries it was authored in, against the white the renderer
     // wrote it against. `pq_inv` answers in nits, which is what `colour.reference` is stated in.
     let light = float3(nits_of(signal.r), nits_of(signal.g), nits_of(signal.b)) / colour.reference * gain.g;
+    if (colour.proof > 0.0) {
+        let white = measured<DisplayNits>(colour.reference);
+        let toned = fitted(measured<DisplayNits>(light * white.v), measured<DisplayNits>(colour.source_peak * white.v),
+            white, uint(colour.proof) - 1);
+        // Clipped to what an sRGB file holds, as `frame.slang`'s `proofed` clips the editor's.
+        let held = saturate(mul(R2020_TO_SRGB, toned));
+        return srgb_oetf_signed(mul(R2020_TO_P3, mul(SRGB_TO_R2020, held)));
+    }
 
     // Rolled where the renderer rolls, which is in the primaries the file was written in and
     // before they are rotated (`frame.slang`'s `display_nits`, then `R2020_TO_P3`). The two do not

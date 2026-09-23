@@ -145,9 +145,26 @@ Two things in that build are silent when wrong and cost an afternoon each. libao
 
 A drag emits far more pointer positions than the grade can serve, so requests **coalesce rather than queue**: only the latest position is ever outstanding, and queueing them would replay the drag in slow motion after the user let go.
 
+What the stage is proofed as is one choice, the `Soft proof` menu in the header - in the editor
+between the zoom and the overflow menu, in the viewer between the triage buttons and the
+filmstrip. Rec.2020 PQ HDR is the default and is withheld from a rendition with no HDR in it; sRGB
+is always offered and is what an SDR rendition already shows; the two printed media proofs need
+the original. Choosing one adds its panels under the edit panels: sRGB the highlights operator,
+`Printed media` the paper, `Printed media (3D)` the paper, lighting and orientation. The editor
+sends sRGB to the worker as an output and an operator, and the module fits the frame's highlights
+into sRGB white with the same operators a print uses (`print_tone.slang`). The viewer has no
+module, so an HDR rendition proofed as sRGB is fitted in `stage.slang` on the client, against the
+rendition's own headroom; a print proof from the viewer opens the photograph's `/mockup`, which
+builds the editor's session for it and saves nothing, and choosing an HDR or sRGB proof there or
+pressing Escape returns to the photograph.
+
 Print mode holds its paper, lighting and orientation in a separate `PrintStore`, written by
 `PrintPresenter`. These are viewing settings and leave the photo document and its history alone.
-The same worker and HDR canvas draw a suspended sheet through the shared Slang renderer. The photo
+`Printed media` is the flat proof: the pigment the print grade arrives at drawn as paper
+reflectance under diffuse white, straight onto the ordinary stage (`fs_print_flat`), with no sheet,
+room or light to integrate, so it costs what the ordinary grade does and every editing tool works
+over it. `Printed media (3D)` draws a suspended sheet with the same worker and HDR canvas through
+the shared Slang renderer, and closes the tools that draw over the photograph. The photo
 is graded to a bounded print reflectance before illumination, with smooth chroma compression
 into the generic sRGB paper gamut that preserves luminance and neutral whites. Highlights past
 what paper can hold are fitted into it by one of three operators the paper panel selects. Neutral
@@ -155,6 +172,15 @@ rolls the max channel off from a knee under white, so ratios and hue survive. Fi
 stock over the whole range - grey held, the scene's peak landed on paper white, a contrast of 1.4
 between a toe and a shoulder - and bleaches towards luminance through the shoulder. Per channel
 clips each channel at paper white with no shoulder, the way a printer driver meets its ink limit.
+By region dodges: the edge-aware neighbourhood the presence sliders read says how bright each
+region is, regions over a stop under white are brought down along a curve that lands the frame's
+own top on white, and a shoulder then takes what their detail carries past it. The three curves
+are one mapping over the frame, and one that holds grey has about half a stop of paper for the
+three stops a daylight frame keeps over its white - diffuse white is the 90th percentile by
+default, so that is a tenth of the picture. Dodging spends the compression between regions
+rather than inside them, which is what keeps a sky's texture. Every operator is handed the light
+before any roll-off, the neutral arm included, whose own roll into the display is the neutral
+operator's job here.
 **Each has to differ on a photograph whose highlights are simply blown**, because that is the
 photograph a reader picks to compare them, and a blown highlight is neutral - every channel clipped
 alike. Operators that differ only in what they do to a highlight's *colour* above the knee were
@@ -295,20 +321,16 @@ The photo uses up to 16 anisotropic taps along the projected footprint, with tri
 sampling in decoded light, so a tilted sheet preserves detail along its less compressed axis.
 Touch devices use a surface presentation: the print fills the editor's canvas with its normal
 crop, zoom and pan mapping, while device orientation changes material lighting without rotating
-the image. Motion permission is requested as Print opens, inside the click that opened it, since a
-browser that gates the sensors only grants them under a user gesture; a control offers the prompt
-again where that gesture was spent. Tilt is relative to the device's initial pose, recentres across screen orientation changes,
-and stops while the tab is hidden or Print is closed. Without motion access the surface remains
+the image. Motion permission is requested as the 3D proof opens, inside the click that opened it,
+since a browser that gates the sensors only grants them under a user gesture; a control offers the
+prompt again where that gesture was spent. Tilt is relative to the device's initial pose, recentres across screen orientation changes,
+and stops while the tab is hidden or the 3D proof is left. Without motion access the surface remains
 usable with the lighting controls.
 Mobile editing controls sit in footer tabs. A tab opens one panel over the photograph without
 resizing it, and a tap outside the panel closes it rather than reaching the stage beneath.
 During a slider drag the panel fades away and a floating readout keeps the active
 slider visible at the same position; its original control keeps pointer capture and commits
 the edit on release. Panels support keyboard navigation, Escape and reduced motion.
-The viewer reaches the same mockup outside the editor: a `View print mockup` row in its overflow
-menu puts the page on the photograph's `/mockup`, which builds the editor's session, replaces the photo stage with
-the print renderer and shows the paper, lighting and orientation panels alone. It saves nothing,
-and `View photo` or Escape returns.
 Gloss, satin and matte are generic simulations. Predicting a specific print requires its
 printer, ink and paper colour profile, measured surface reflectance and calibrated viewing conditions.
 What sets how far a lamp's highlight spreads across a sheet is its roughness, not its refractive

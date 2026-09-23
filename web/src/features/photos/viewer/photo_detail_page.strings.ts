@@ -65,8 +65,6 @@ export const PhotoDetailStrings = {
   more: () => 'More',
 
   sectionView: () => 'View',
-  viewPrintMockup: () => 'View print mockup',
-  viewPhoto: () => 'View photo',
   sectionRendition: () => 'Rendition',
   sectionActions: () => 'Actions',
   sectionSend: () => 'Share and download',

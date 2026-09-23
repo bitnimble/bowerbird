@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {
   GalleryThumbnails,
@@ -54,7 +54,10 @@ import {
   RenditionPanel,
 } from './detail_panels';
 import { DetailKeys } from './detail_keys';
-import { detailMode, detailPath, mockupPath, type DetailMode } from './detail_mode';
+import { detailMode, detailPath, isPrintRequest, mockupPath, type DetailMode } from './detail_mode';
+import { isPrintProof, type SoftProof } from '../../raw_edit/proof/soft_proof';
+import { TonemapChoice } from '../../raw_edit/print/print_panel';
+import { PrintPanelStrings } from '../../raw_edit/print/print_panel.strings';
 
 const EDIT_LONG_EDGE = 0;
 
@@ -117,8 +120,12 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // the same reason `box` is: it is mounted and unmounted under this component,
   // by the editor as much as by the not-found branch.
   const [stage, setStage] = useState<HTMLDivElement | null>(null);
-  const { pathname, search } = useLocation();
+  const { pathname, search, state } = useLocation();
   const navigate = useNavigate();
+  // Which print the mockup was asked for, carried on the navigation; a deep link is the sheet.
+  // Through a ref, so asking for the other one from inside the mockup is not a second open.
+  const requestedPrint = useRef<SoftProof>('print3d');
+  requestedPrint.current = isPrintRequest(state) ? state.proof : 'print3d';
   // In the address rather than in state, because the address is the one thing stepping
   // already changes: `useStep` navigates to a bare photo path, so walking away drops `?edit`
   // and there is nothing left to go stale.
@@ -185,10 +192,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     const loupe = new LoupeStore(crop, keystone, repair);
     const print = new PrintStore();
     const presenter = new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print);
-    if (mode === 'print') {
-      presenter.print.setSurface(touch);
-      presenter.setTool('print');
-    }
+    // Before the proof, so a sheet opens as this device's rather than as the desktop's and then turns into it.
+    presenter.print.setTouch(touch);
+    if (mode === 'print') presenter.setSoftProof(requestedPrint.current);
+    else presenter.restoreSoftProof();
     setSession({ photoId, mode, touch, edit, stage, crop, keystone, repair, loupe, print, presenter });
     let startingRotation: number | null = null;
     void presenter.open(photoId, mode === 'print' ? PRINT_LONG_EDGE : EDIT_LONG_EDGE).then(() => {
@@ -218,10 +225,23 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     () => navigate(photoPathname, { replace: true }),
     [navigate, photoPathname],
   );
-  const togglePrint = useCallback(() => {
-    // Motion permission must be requested before this click's user activation ends.
-    flushSync(() => navigate(mode === 'print' ? photoPathname : mockupPath(photoPathname), { replace: true }));
-  }, [navigate, photoPathname, mode]);
+  const showsHdr = store.showsHdr(photoId);
+  const proof: SoftProof = session != null ? session.stage.softProof : store.proofOf(photoId);
+  const proofAs = (next: SoftProof): void => {
+    if (mode === 'edit' || (mode === 'print' && isPrintProof(next))) {
+      session?.presenter.setSoftProof(next);
+      return;
+    }
+    if (isPrintProof(next)) {
+      // Motion permission must be requested before this click's user activation ends.
+      flushSync(() => navigate(mockupPath(photoPathname), { replace: true, state: { proof: next } }));
+      return;
+    }
+    photos.chooseProof(next === 'hdr' ? 'hdr' : 'srgb');
+    // The operator is the one thing an sRGB proof of an HDR frame asks, and it is in the panels.
+    if (next === 'srgb' && showsHdr && !panelsOpen && !mobile) togglePanels();
+    if (mode === 'print') navigate(photoPathname, { replace: true });
+  };
 
   function togglePanels(): void {
     setPanelsOpen((was) => {
@@ -298,6 +318,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const metaPanels = mode === 'print' ? (
     session != null && (
       <PrintControls
+        proof={session.stage.softProof}
         store={session.print}
         presenter={session.presenter.print}
         disabled={!session.stage.live}
@@ -321,6 +342,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     )
   ) : (
     <>
+      {showsHdr && proof === 'srgb' && (
+        <Panel title={PrintPanelStrings.highlights()} style={panelStyle}>
+          <TonemapChoice value={store.proofTone} onChange={photos.chooseProofTone} regional={false} />
+        </Panel>
+      )}
       <DetailNotes photoId={photoId} style={panelStyle} />
       <PhotoEdits photoId={photoId} defaultOpen={expanded} style={panelStyle} />
       <CameraPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
@@ -403,7 +429,9 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         onToggleStrip={toggleStrip}
         onEdit={startEdit}
         onDone={stopPreview}
-        onTogglePrint={togglePrint}
+        proof={proof}
+        hdrOffered={mode === 'edit' || showsHdr}
+        onProof={proofAs}
         onFullscreen={() => void toggleFullscreenOf(stage)}
         zoomRef={setZoomSlot}
         mode={mode}

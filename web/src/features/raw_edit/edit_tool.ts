@@ -1,1 +1,1 @@
-export type EditTool = 'cursor' | 'crop' | 'perspective' | 'repair' | 'loupe' | 'print';
+export type EditTool = 'cursor' | 'crop' | 'perspective' | 'repair' | 'loupe';

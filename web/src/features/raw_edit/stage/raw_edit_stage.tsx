@@ -109,10 +109,9 @@ export const RawEditStage = observer(function RawEditStage({
   const canvas = useRef<HTMLCanvasElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const touch = useIsTouch();
-  const scenePrint = print.open && !print.surface;
+  const scenePrint = print.hanging;
   useEffect(() => {
-    presenter.print.setSurface(touch);
-    return () => presenter.print.setSurface(false);
+    presenter.print.setTouch(touch);
   }, [presenter, touch]);
   // The wheel listens on the stage and the box is measured from the viewport, exactly as the
   // viewer does it: the stage is what a pointer is over, the viewport is what the frame is

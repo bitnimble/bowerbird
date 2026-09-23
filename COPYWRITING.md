@@ -290,12 +290,12 @@ lower case except at the start of a string.
 | Term | What it is | Avoid |
 |---|---|---|
 | edit | A change to how a photo looks, made in the editor | adjustment, develop, tweak |
-| Light, White balance, Colour, Effects, Detail, Dust removal, Geometry, Rendering | The sections of the edit panel, written as the UI shows them when named as a section | tabs, groups, panels |
+| Light, White balance, Colour, Effects, Detail, Dust removal, Geometry | The sections of the edit panel, written as the UI shows them when named as a section | tabs, groups, panels |
 | crop, straighten, perspective | Geometry tools | trim, level, keystone |
 | guide | A line drawn to straighten or correct perspective against | helper line |
 | dust removal | Removing spots left by sensor dust | spot healing, clean up |
 | colour fringe removal | Removing purple and green rims along hard edges | defringe, chromatic aberration, CA |
-| soft proof | Showing the photo as it looks in HDR or in sRGB | preview, simulate |
+| soft proof | Showing the photo as it looks in HDR, in sRGB or printed | preview, simulate, mockup |
 | merge | Combining several photos into 1 | composite, stitch, combine, assembly |
 | panorama | A merge of frames side by side into 1 wider photo | pano, stitch |
 | Take best parts | A merge that builds 1 photo from the best part of each frame | composite, blend, best take |

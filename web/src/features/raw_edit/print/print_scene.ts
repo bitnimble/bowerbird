@@ -5,10 +5,14 @@ const LAMP_NEAREST = 1;
 
 const lampAxis = z.number().min(-LAMP_REACH).max(LAMP_REACH);
 
+/** How highlights are fitted under a white that cannot go higher: paper's, or an sRGB proof's. */
+export const TonemapSchema = z.enum(['neutral', 'filmic', 'channel', 'local']);
+export type Tonemap = z.infer<typeof TonemapSchema>;
+
 export const PrintSceneSchema = z.object({
   paper: z.enum(['gloss', 'satin', 'matte']),
-  tonemap: z.enum(['neutral', 'filmic', 'channel']),
-  presentation: z.enum(['scene', 'surface']),
+  tonemap: TonemapSchema,
+  presentation: z.enum(['scene', 'surface', 'flat']),
   framed: z.boolean().default(false),
   yawDegrees: z.number().min(-180).max(180),
   pitchDegrees: z.number().min(-85).max(85),
@@ -35,7 +39,7 @@ export const PrintSceneSchema = z.object({
 
 export type PrintScene = z.infer<typeof PrintSceneSchema>;
 export type Paper = PrintScene['paper'];
-export type Tonemap = PrintScene['tonemap'];
+export type Presentation = PrintScene['presentation'];
 export type PrintControl = Exclude<
   keyof PrintScene,
   'paper' | 'tonemap' | 'presentation' | 'framed' | 'zoom' | 'panX' | 'panY'
