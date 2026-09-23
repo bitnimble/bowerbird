@@ -15,7 +15,22 @@ import packed;
 
 struct Params {
     uint pixels;
+    /// The layer's worth against the others, and where it clips: `composite_tile::Merit`.
+    float merit;
+    float clip;
 };
+
+/// Where below its clip a layer starts giving way, as a share of the clip: far enough down that
+/// a channel near saturation has already lost its linearity before it counts for nothing.
+static const float ROLL_OFF_FROM = 0.8;
+
+/// How much of a layer's light to trust at a pixel: all of it well below its clip, none at it.
+float unclipped(float3 light)
+{
+    if (params.clip <= 0.0) { return 1.0; }
+    let brightest = max(light.r, max(light.g, light.b));
+    return 1.0 - smoothstep(ROLL_OFF_FROM * params.clip, params.clip, brightest);
+}
 
 [vk::binding(0, 0)] ConstantBuffer<Params> params;
 [vk::binding(1, 0)] StructuredBuffer<uint> layer;
@@ -40,14 +55,16 @@ void composite_add(uint3 id : SV_DispatchThreadID)
 {
     let pixel = linear(id);
     if (pixel >= params.pixels) { return; }
-    let w = weight[pixel];
-    if (w <= 0.0) { return; }
+    let reach = weight[pixel];
+    if (reach <= 0.0) { return; }
 
     let base = pixel * 3;
     let light = float3(
         light_of_code[code_at(base)],
         light_of_code[code_at(base + 1)],
         light_of_code[code_at(base + 2)]);
+    let w = reach * params.merit * unclipped(light);
+    if (w <= 0.0) { return; }
     let at = pixel * 4;
     acc[at] = acc[at] + w * light.r;
     acc[at + 1] = acc[at + 1] + w * light.g;

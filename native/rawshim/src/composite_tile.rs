@@ -98,20 +98,48 @@ fn through_code(through: Through) -> u32 {
     }
 }
 
+/// Where a layer's weight comes from, as `composite_gather.slang`'s `weighting` names it.
+#[derive(Clone, Copy)]
+pub enum Weighed<'a> {
+    /// How deep inside its own frame each pixel sits: a panorama's.
+    Feather,
+    /// §5.2's field: an assembly's.
+    Masked(Masked<'a>),
+    /// One wherever the source reaches, which leaves the weighing to the blend: an exposure
+    /// bracket's ([`Merit`]).
+    Flat,
+}
+
+impl Weighed<'_> {
+    /// `(weighting, stride, slot)` for the uniform block.
+    fn code(&self) -> (u32, u32, u32) {
+        match self {
+            Weighed::Feather => (0, 0, 0),
+            Weighed::Masked(held) => (1, held.stride, held.slot),
+            Weighed::Flat => (2, 0, 0),
+        }
+    }
+
+    fn masked(&self) -> Option<Masked<'_>> {
+        match self {
+            Weighed::Masked(held) => Some(*held),
+            _ => None,
+        }
+    }
+}
+
 /// The uniform block, as `composite_gather.slang` declares it.
 ///
 /// The geometry rather than a [`Gathered`], so `wgsl_layout.rs` can ask what length this writes
 /// without a device: a `Gathered` also carries the decoded region the taps read, which is a
 /// `Resident` and so a buffer.
-///
-/// `mask` is `(stride, slot)` where §5.2's mask is what the weight comes from, None for a panorama.
 #[allow(clippy::too_many_arguments)]
 fn params(
     source_at: &SourceSpec,
     full: Size<Drawn>,
     region: Rect<Drawn>,
     through: Through,
-    mask: Option<(u32, u32)>,
+    weighed: (u32, u32, u32),
     p: &Composition,
     window: Rect<crate::px::Composite>,
     scale: f64,
@@ -155,11 +183,11 @@ fn params(
     ] {
         bytes.extend_from_slice(&(value as f32).to_le_bytes());
     }
-    let (stride, slot) = mask.unwrap_or((0, 0));
+    let (weighting, stride, slot) = weighed;
     for word in [
         projection_code(p.projection),
         through_code(through),
-        u32::from(mask.is_some()),
+        weighting,
         stride,
         slot,
     ] {
@@ -200,7 +228,7 @@ pub(crate) fn params_block() -> usize {
         Size::exact(64, 64),
         Rect::exact(0, 0, 64, 64),
         Through::Corrected,
-        None,
+        Weighed::Feather.code(),
         &spec,
         Rect::exact(0, 0, 64, 64),
         1.0,
@@ -245,16 +273,17 @@ pub struct Masked<'a> {
 /// the brightness its neighbours meet it at. A tile's own correction cannot, being per pixel rather
 /// than per source, so §3.7a's gain is applied in the gather beside §3.7a's warp.
 ///
-/// `mask` given, the weight is read from §5.2's field rather than computed as a feather, and the
-/// warp is the owning tile's rather than the source's.
+/// `Masked`, the weight is read from §5.2's field rather than computed as a feather, and the warp is
+/// the owning tile's rather than the source's.
 pub fn gather_layer(
     gpu: &'static crate::gpu::Gpu,
     from: &Gathered<'_>,
     p: &Composition,
     window: Rect<crate::px::Composite>,
     scale: f64,
-    mask: Option<Masked<'_>>,
+    weighed: Weighed<'_>,
 ) -> Layer {
+    let mask = weighed.masked();
     let (_, _, width, height) = window.raw();
     let pixels = width * height;
     let rgb = Resident::empty(gpu, width, height);
@@ -282,7 +311,7 @@ pub fn gather_layer(
             from.full,
             from.region,
             from.through,
-            mask.map(|held| (held.stride, held.slot)),
+            weighed.code(),
             p,
             window,
             scale,
@@ -431,12 +460,9 @@ impl Blending {
             contents: &vec![0u8; pixels.max(1) * 16],
             usage: wgpu::BufferUsages::STORAGE,
         });
-        // Padded to std140's own multiple of sixteen, which is the size the binding is checked at.
-        let mut block = (pixels as u32).to_le_bytes().to_vec();
-        block.resize(16, 0);
         let uniform = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pano blend params"),
-            contents: &block,
+            contents: &blend_params(pixels, Merit::EVEN),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         Blending {
@@ -458,11 +484,22 @@ impl Blending {
 
     /// Adds one source's layer, and gives its ten bytes a pixel back.
     pub fn add(&mut self, layer: Layer) {
+        self.add_merited(layer, Merit::EVEN);
+    }
+
+    /// [`Blending::add`], with the layer's own weight scaled by what it is worth (`Merit`).
+    pub fn add_merited(&mut self, layer: Layer, merit: Merit) {
         let kernel = adding(self.gpu);
         let mut recording = self.gpu.record();
         let stub = stub_buffer(&mut recording);
-        let group = self.bind(
+        let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pano add params"),
+            contents: &blend_params(self.pixels, merit),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = self.bind_with(
             kernel,
+            &uniform,
             layer.rgb.buffer().as_entire_binding(),
             layer.weight.as_entire_binding(),
             stub.as_entire_binding(),
@@ -519,13 +556,25 @@ impl Blending {
         out: wgpu::BindingResource<'_>,
         alpha: wgpu::BindingResource<'_>,
     ) -> wgpu::BindGroup {
+        self.bind_with(kernel, &self.uniform, layer, weight, out, alpha)
+    }
+
+    fn bind_with(
+        &self,
+        kernel: &crate::hdr_fit::Kernel,
+        uniform: &crate::gpu::Buffer,
+        layer: wgpu::BindingResource<'_>,
+        weight: wgpu::BindingResource<'_>,
+        out: wgpu::BindingResource<'_>,
+        alpha: wgpu::BindingResource<'_>,
+    ) -> wgpu::BindGroup {
         self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pano blend"),
             layout: &kernel.layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.uniform.as_entire_binding(),
+                    resource: uniform.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -554,6 +603,41 @@ impl Blending {
             ],
         })
     }
+}
+
+/// What one layer of an exposure bracket is worth against the others, beside the weight its gather
+/// wrote.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Merit {
+    /// A multiplier on the whole layer: the light it gathered, so a longer exposure outweighs a
+    /// shorter one wherever both are sound, which is the lower-noise average.
+    pub scale: f32,
+    /// Where the layer clips, in `Base::light_of_code`'s units; its weight rolls off to nothing on
+    /// the way there. Zero for a layer that is never rolled off - the shortest exposure, so a
+    /// highlight every frame clipped is still something rather than black.
+    pub clip: f32,
+}
+
+impl Merit {
+    /// Every layer alike: a panorama's and an assembly's.
+    pub const EVEN: Merit = Merit {
+        scale: 1.0,
+        clip: 0.0,
+    };
+}
+
+/// `composite_blend.slang`'s block, padded to std140's own multiple of sixteen.
+fn blend_params(pixels: usize, merit: Merit) -> Vec<u8> {
+    let mut block = (pixels as u32).to_le_bytes().to_vec();
+    block.extend_from_slice(&merit.scale.to_le_bytes());
+    block.extend_from_slice(&merit.clip.to_le_bytes());
+    block.resize(16, 0);
+    block
+}
+
+#[cfg(test)]
+pub(crate) fn blend_block() -> usize {
+    blend_params(1, Merit::EVEN).len()
 }
 
 /// Somewhere for a binding this pass does not use to point: the layout names all six either way.
@@ -657,9 +741,28 @@ pub struct CompositeRequest<'a> {
     pub detail: crate::galosh::Detail,
     pub sources: &'a [SourceFile<'a>],
     pub from: From,
-    /// §5.2's weight field, where this is an assembly rather than a panorama. Absent means the
-    /// gather computes its own feather, which is the panorama's path untouched.
-    pub mask: Option<Mask<'a>>,
+    pub weight: Weight<'a>,
+}
+
+/// How the sources that reach a window are weighed against each other.
+#[derive(Clone, Copy)]
+pub enum Weight<'a> {
+    /// A panorama's: the gather's own feather.
+    Feather,
+    /// An assembly's: §5.2's field.
+    Mask(Mask<'a>),
+    /// An exposure bracket's: every source wherever it reaches, by the light it gathered, rolled
+    /// off before it clips ([`Merit`]).
+    Exposure,
+}
+
+impl<'a> Weight<'a> {
+    pub fn mask(&self) -> Option<Mask<'a>> {
+        match self {
+            Weight::Mask(held) => Some(*held),
+            _ => None,
+        }
+    }
 }
 
 /// How far outside its footprint a source is decoded, **in the decoded frame's own pixels**, for
@@ -800,6 +903,27 @@ pub async fn prepared(
     spec: &Composition,
     request: &CompositeRequest<'_>,
 ) -> Result<(Resident, crate::tile::Prepared), String> {
+    prepared_with(spec, request, &[]).await
+}
+
+/// [`prepared`] over one source whose RAW is a sensor-shift burst: `burst` is every frame of it, in
+/// its own order, and the source's own path is the first.
+pub async fn shifted(
+    spec: &Composition,
+    request: &CompositeRequest<'_>,
+    burst: &[&str],
+) -> Result<(Resident, crate::tile::Prepared), String> {
+    if spec.sources.len() != 1 {
+        return Err("a pixel shift is rendered as its reference frame".into());
+    }
+    prepared_with(spec, request, burst).await
+}
+
+async fn prepared_with(
+    spec: &Composition,
+    request: &CompositeRequest<'_>,
+    burst: &[&str],
+) -> Result<(Resident, crate::tile::Prepared), String> {
     let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
     let gpu = crate::gpu::device().ok_or_else(refused)?;
     let base = crate::base::device(gpu).ok_or_else(refused)?;
@@ -816,8 +940,10 @@ pub async fn prepared(
 
     let mut lap = crate::clock::laps("    pano source ");
     let mut blending = Blending::over(gpu, base, request.window);
+    // The largest gain is the shortest exposure, which is never rolled off: see `Merit::clip`.
+    let shortest = spec.sources.iter().map(|source| source.gain).fold(0.0, f64::max);
     for i in order_of(spec) {
-        let Some(taken) = taken(gpu, base, spec, request, i, levels, &mut lap).await? else {
+        let Some(taken) = taken(gpu, base, spec, request, i, levels, burst, &mut lap).await? else {
             continue;
         };
         levels = Some(taken.levels);
@@ -827,7 +953,17 @@ pub async fn prepared(
             wb_gains = Some(taken.wb_gains);
             defocus = taken.defocus;
         }
-        blending.add(taken.layer);
+        let merit = match request.weight {
+            Weight::Exposure => merit_of(
+                &spec.sources[i],
+                shortest,
+                taken.neutral_ceiling,
+                &taken.levels,
+                request.reference_white_nits,
+            ),
+            Weight::Feather | Weight::Mask(_) => Merit::EVEN,
+        };
+        blending.add_merited(taken.layer, merit);
     }
 
     if blending.is_empty() {
@@ -892,6 +1028,7 @@ struct Taken {
     as_shot: Option<crate::white_balance::AsShot>,
     wb_gains: [f32; 3],
     defocus: (f32, f32),
+    neutral_ceiling: f32,
 }
 
 /// One source decoded with the request's strengths and detail, coded against `anchor`, and
@@ -903,6 +1040,7 @@ async fn taken(
     request: &CompositeRequest<'_>,
     i: usize,
     anchor: Option<crate::tone::Anchored>,
+    burst: &[&str],
     lap: &mut impl FnMut(&str),
 ) -> Result<Option<Taken>, String> {
     let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
@@ -910,11 +1048,12 @@ async fn taken(
     let file = &request.sources[i];
     // A source the recipe holds no slot for is one no tile and not the base uses, so the window
     // skips it outright rather than decoding a frame to gather it at no weight.
-    let mask = match &request.mask {
-        None => None,
-        Some(held) => match held.slot_of.get(i).copied().flatten() {
+    let weighed = match &request.weight {
+        Weight::Feather => Weighed::Feather,
+        Weight::Exposure => Weighed::Flat,
+        Weight::Mask(held) => match held.slot_of.get(i).copied().flatten() {
             None => return Ok(None),
-            Some(slot) => Some(Masked {
+            Some(slot) => Weighed::Masked(Masked {
                 signed: held.signed,
                 tile_of: held.tile_of,
                 warps: held.warps,
@@ -923,7 +1062,7 @@ async fn taken(
             }),
         },
     };
-    let Some(region) = footprint(spec, source, request, mask.map(|held| held.slot)) else {
+    let Some(region) = footprint(spec, source, request, weighed.masked().map(|held| held.slot)) else {
         return Ok(None);
     };
 
@@ -946,16 +1085,31 @@ async fn taken(
                 window: region,
                 scale: crate::view::Scale::for_long_edge(photograph.raw(), wanted as u32),
             };
-            let frame = crate::decode::tile_from(
-                crate::decode::Source::Path(file.path),
-                view,
-                request.detail,
-                crate::galosh::wanted(noise, request.detail),
-                crate::RENDITION_TILE_HALO,
-                // A panorama carries no reader's settings yet, and dust removal is one.
-                crate::dust::Known::Off,
-            )
-            .await
+            let fit = crate::galosh::wanted(noise, request.detail);
+            let frame = match burst.is_empty() {
+                true => {
+                    crate::decode::tile_from(
+                        crate::decode::Source::Path(file.path),
+                        view,
+                        request.detail,
+                        fit,
+                        crate::RENDITION_TILE_HALO,
+                        // A panorama carries no reader's settings yet, and dust removal is one.
+                        crate::dust::Known::Off,
+                    )
+                    .await
+                }
+                false => {
+                    crate::decode::shifted_tile_from(
+                        burst,
+                        view,
+                        request.detail,
+                        fit,
+                        crate::RENDITION_TILE_HALO,
+                    )
+                    .await
+                }
+            }
             .ok_or_else(|| format!("{} could not be decoded", file.path))?;
             // **What came back, not what was asked for.** A region decode answers at the scale
             // it can rather than the one the view names - the halved path wants the region on
@@ -1078,7 +1232,7 @@ async fn taken(
         spec,
         request.window,
         request.scale,
-        mask,
+        weighed,
     );
     // Before the next source is decoded, which is the whole memory argument.
     coded.reclaim();
@@ -1091,7 +1245,32 @@ async fn taken(
         as_shot: frame.as_shot,
         wb_gains: frame.wb_gains,
         defocus: took_off,
+        neutral_ceiling: frame.neutral_ceiling,
     }))
+}
+
+/// What one source of an exposure bracket is worth in the blend (`Merit`).
+///
+/// **The clip in the blend's own units**: the coding writes a sample `s` at `s / white * nits`, the
+/// white being the set's divided by this source's gain, and `Base::light_of_code` hands that back
+/// over PQ's own ceiling - so a neutral clipping at `neutral_ceiling` lands at this.
+fn merit_of(
+    source: &SourceSpec,
+    shortest: f64,
+    neutral_ceiling: f32,
+    levels: &crate::tone::Anchored,
+    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+) -> Merit {
+    let ceiling = crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(1.0));
+    let clip = f64::from(neutral_ceiling) * source.gain * reference_white_nits.raw()
+        / (levels.white.raw() * ceiling.raw());
+    Merit {
+        scale: (1.0 / source.gain) as f32,
+        clip: match source.gain >= shortest {
+            true => 0.0,
+            false => clip as f32,
+        },
+    }
 }
 
 /// Every source of the recipe, prepared exactly as [`prepared`] prepares one and handed to `take`
@@ -1119,7 +1298,7 @@ pub async fn layers_of(
         request.levels.or_else(|| whole_anchor(spec, request));
     let mut lap = crate::clock::laps("    pano source ");
     for i in order_of(spec) {
-        let Some(taken) = taken(gpu, base, spec, request, i, levels, &mut lap).await? else {
+        let Some(taken) = taken(gpu, base, spec, request, i, levels, &[], &mut lap).await? else {
             continue;
         };
         levels = Some(taken.levels);
@@ -1315,7 +1494,7 @@ pub fn covered(spec: &Composition, request: &CompositeRequest<'_>) -> bool {
         .iter()
         .enumerate()
         .any(|(i, source)| {
-            let slot = request.mask.and_then(|held| held.slot_of.get(i).copied().flatten());
+            let slot = request.weight.mask().and_then(|held| held.slot_of.get(i).copied().flatten());
             footprint(spec, source, request, slot).is_some()
         })
 }
@@ -1339,7 +1518,7 @@ fn footprint(
         false => request.parts,
     };
     let mut warps = vec![source.warp];
-    if let (Some(mask), Some(slot)) = (request.mask, slot) {
+    if let (Some(mask), Some(slot)) = (request.weight.mask(), slot) {
         for (tile, owner) in mask.tile_slot.iter().enumerate() {
             if *owner == slot {
                 warps.push(mask.tile_warps[tile]);
@@ -1496,7 +1675,7 @@ pub async fn probe_layer(
             from.full,
             from.region,
             from.through,
-            None,
+            Weighed::Feather.code(),
             p,
             window,
             scale,
@@ -1788,7 +1967,7 @@ mod tests {
                 region,
                 through: Through::Corrected,
             };
-            blending.add(gather_layer(gpu, &from, &p, window, 1.0, None));
+            blending.add(gather_layer(gpu, &from, &p, window, 1.0, Weighed::Feather));
         }
 
         let (blended, alpha) = blending.resolve();
@@ -1832,6 +2011,49 @@ mod tests {
             (ends.0 - 200.0).abs() < 4.0 && (ends.1 - 800.0).abs() < 16.0,
             "{ends:?}"
         );
+    }
+
+    /// An exposure bracket's layers, one over the other: each weighed by its merit, and a layer past
+    /// its clip counting for nothing.
+    #[test]
+    fn a_bracket_weighs_by_merit_and_drops_what_clipped() {
+        let gpu = drawing();
+        let base = crate::base::device(gpu).expect("the base pipelines");
+        let p = recipe(Projection::Rectilinear, Through::Corrected);
+        let window: Rect<crate::px::Composite> = Rect::exact(4000, 2050, 16, 4);
+        let region: Rect<Drawn> = Rect::exact(0, 0, SOURCE[0], SOURCE[1]);
+        let light = |code: u16| {
+            crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(
+                f64::from(code) / f64::from(u16::MAX),
+            ))
+            .raw()
+        };
+        let merged = |layers: &[(f64, Merit)]| {
+            let mut blending = Blending::over(gpu, base, window);
+            for (nits, merit) in layers {
+                let flat = flat_frame(gpu, *nits);
+                let from = Gathered {
+                    source: &p.sources[0],
+                    prepared: &flat,
+                    full: Size::exact(SOURCE[0], SOURCE[1]),
+                    region,
+                    through: Through::Corrected,
+                };
+                blending.add_merited(gather_layer(gpu, &from, &p, window, 1.0, Weighed::Flat), *merit);
+            }
+            let (blended, _) = blending.resolve();
+            light(pollster::block_on(read_row(gpu, &blended, 16))[8])
+        };
+        let even = Merit::EVEN;
+        let heavy = Merit { scale: 3.0, clip: 0.0 };
+
+        let alone = merged(&[(200.0, even)]);
+        assert!((merged(&[(200.0, even), (200.0, heavy)]) - alone).abs() < 1.0, "a frame merged with itself moved");
+        let mixed = merged(&[(200.0, even), (400.0, heavy)]);
+        assert!((mixed - 350.0).abs() < 7.0, "merit 1 at 200 and 3 at 400 came to {mixed}");
+        let clipped = Merit { scale: 3.0, clip: 300.0 / 10000.0 };
+        let dropped = merged(&[(200.0, even), (400.0, clipped)]);
+        assert!((dropped - alone).abs() < 1.0, "a layer past its clip still counted: {dropped}");
     }
 
     /// A frame every sample of which is the same code, which is what makes a blend's answer
@@ -1903,7 +2125,7 @@ mod tests {
             detail: crate::galosh::Detail::at(0.0, 0.0),
             sources: &[],
             from: From::Original,
-            mask: None,
+            weight: Weight::Feather,
         }
     }
 

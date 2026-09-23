@@ -33,6 +33,11 @@ export class CompositesApi {
       return c.json(respond(CompositePhotoSchema, await this.composites.mergePanorama(photoIds)), 201);
     });
 
+    app.post(route(PathSegment.bracket()), async (c) => {
+      const photoIds = this.photos.resolve(PhotoTargetSchema.parse(await c.req.json()));
+      return c.json(respond(CompositePhotoSchema, await this.composites.mergeBracket(photoIds)), 201);
+    });
+
     // Starts the analysis and answers its job at once; the page reads the job for the rest.
     app.post(route(PathSegment.assembly()), async (c) => {
       const photoIds = this.photos.resolve(PhotoTargetSchema.parse(await c.req.json()));

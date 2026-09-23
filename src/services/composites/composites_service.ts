@@ -5,7 +5,9 @@ import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import { newId } from '../../schemas/id';
+import type { AlignShape } from '../../schemas/jobs';
 import type { Library } from '../../schemas/libraries';
+import type { CompositeKind } from '../../schemas/photos';
 import type { CameraMatch } from '../../schemas/render_stages';
 import {
   AnalysedSchema,
@@ -45,6 +47,11 @@ import { owedOf, renditionVariant } from '../processing/renditions/renditions';
 import type { RenditionsRepository } from '../processing/renditions/renditions_repository';
 
 const log = new Logger('panoramas');
+
+/** The composites an align answers the recipe for, where an assembly's is carved. */
+type AlignedKind = Exclude<CompositeKind, 'assembly'>;
+
+const PIXEL_SHIFT_FRAMES = 4;
 
 /**
  * What a reader is told is happening, and how much of the wait each part is.
@@ -163,7 +170,32 @@ export class CompositesService {
    * one composite of two sizes, not a library's worth of work.
    */
   mergePanorama(photoIds: readonly string[]): Promise<CompositePhoto> {
-    return this.serially(() => this.mergeNow(photoIds));
+    return this.serially(() => this.mergeNow(photoIds, 'panorama'));
+  }
+
+  /**
+   * A bracket stack's frames into the one photograph the camera shot them to make: an exposure
+   * merge or a pixel shift, whichever the frames say they are. In the camera's own order, which
+   * for a pixel shift is where each frame's photosites landed.
+   */
+  async mergeBracket(photoIds: readonly string[]): Promise<CompositePhoto> {
+    const frames = this.photoComposites.sequencesOf(photoIds);
+    const stacks = new Set(frames.map((frame) => frame.stackId));
+    if (frames.length !== photoIds.length || stacks.size !== 1 || frames.some((frame) => frame.origin !== 'bracket')) {
+      throw new AppError('VALIDATION_ERROR', 'these photographs are not one bracket stack');
+    }
+    const kinds = new Set(frames.map((frame) => frame.sequence?.kind));
+    const kind = frames[0]?.sequence?.kind;
+    if (kind == null || kinds.size !== 1) {
+      throw new AppError('VALIDATION_ERROR', 'these photographs are not one capture');
+    }
+    if (kind === 'pixelShift' && frames.length !== PIXEL_SHIFT_FRAMES) {
+      throw new AppError('VALIDATION_ERROR', `a pixel shift is merged from exactly its ${PIXEL_SHIFT_FRAMES} frames`);
+    }
+    const ordered = [...frames]
+      .sort((a, b) => (a.sequence?.index ?? 0) - (b.sequence?.index ?? 0))
+      .map((frame) => frame.photoId);
+    return await this.serially(() => this.mergeNow(ordered, kind));
   }
 
   /**
@@ -180,8 +212,9 @@ export class CompositesService {
     return queued;
   }
 
-  private async mergeNow(photoIds: readonly string[]): Promise<CompositePhoto> {
-    const frames = this.framesOf(photoIds);
+  private async mergeNow(photoIds: readonly string[], kind: AlignedKind): Promise<CompositePhoto> {
+    // A pan is shot oldest first; a bracket comes in the camera's own order already.
+    const frames = this.framesOf(photoIds, kind !== 'panorama');
     const { library, sources } = frames;
     await this.bringFrames(photoIds, library);
     const watching = { photoId: null, photoIds: sources.map((source) => source.photoId) };
@@ -191,8 +224,9 @@ export class CompositesService {
     const on = this.processing.openComposite();
     let photoId: string | null = null;
     try {
-      const aligned = await this.watched(watching, 0, () => this.aligned(sources, library, on));
-      const recipe: Composed = { ...aligned, kind: 'panorama' };
+      const shape = kind === 'panorama' ? 'pan' : kind;
+      const aligned = await this.watched(watching, 0, () => this.aligned(sources, library, on, shape));
+      const recipe: Composed = { ...aligned, kind };
 
       // The row before the pixels: it is what the copies are keyed by, and what the client is
       // handed back so it can show the frame being filled in rather than a merge that answered
@@ -200,14 +234,14 @@ export class CompositesService {
       photoId = this.photoComposites.insertComposite({
         libraryId: library.id,
         recipe: aligned,
-        kind: 'panorama',
+        kind,
         reference: frames.referenceOf(aligned),
       });
       // The framing on the row rather than only in the recipe, so every render of this
       // photograph - a rendition, an export, the editor's own tick - trims the wedges of nothing
       // a hand-held pan leaves at the corners, and the reader can move it like any other crop.
       this.edits.save(photoId, framingEdits(recipe), 0);
-      log.info('merged a panorama', { photo: photoId, sources: recipe.sources.length });
+      log.info('merged a composite', { photo: photoId, kind, sources: recipe.sources.length });
 
       const made = { ...watching, photoId };
       await this.build(photoId, recipe, sources, library, made, on);
@@ -636,12 +670,17 @@ export class CompositesService {
    * photograph per lens, which is what a group needs (`shared_lenses` hands its answer to every
    * member), and once ever: the fit is kept in that photograph's analysis.
    */
-  private async aligned(sources: CompositeJobSource[], library: Library, on: CompositeWorker): Promise<Composition> {
-    let answered = await this.processing.alignComposite(library.id, this.searchable(sources, library), library, on);
+  private async aligned(
+    sources: CompositeJobSource[],
+    library: Library,
+    on: CompositeWorker,
+    shape: AlignShape,
+  ): Promise<Composition> {
+    let answered = await this.processing.alignComposite(library.id, this.searchable(sources, library), library, on, shape);
     let aligned = this.readAlignment(answered);
     if (aligned.lensless.length > 0) {
       await this.fitLensless(aligned.lensless, sources, library, on);
-      answered = await this.processing.alignComposite(library.id, this.searchable(sources, library), library, on);
+      answered = await this.processing.alignComposite(library.id, this.searchable(sources, library), library, on, shape);
       aligned = this.readAlignment(answered);
     }
     for (const warning of aligned.warnings) log.warn('the alignment has something to say', { warning });
@@ -688,7 +727,7 @@ export class CompositesService {
    * so a frame that has been renamed or moved is still found, and one that has been deleted is
    * what makes this answer null rather than a render that fails half way.
    */
-  renderable(photoId: string): { kind: 'panorama' | 'assembly'; recipe: Composed; sources: CompositeJobSource[] } | null {
+  renderable(photoId: string): { kind: CompositeKind; recipe: Composed; sources: CompositeJobSource[] } | null {
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null || !isComposite(photo.recipe)) return null;
     const library = this.libraries.getById(photo.library_id);
@@ -827,7 +866,10 @@ export class CompositesService {
    * panorama of panoramas is refused for want of an implementation rather than of a use. They
    * also have to share a library, since what comes out is a row in one.
    */
-  private framesOf(photoIds: readonly string[]): {
+  private framesOf(
+    photoIds: readonly string[],
+    inOrderGiven = false,
+  ): {
     library: Library;
     sources: CompositeJobSource[];
     referenceOf: (recipe: Composition) => string;
@@ -835,8 +877,8 @@ export class CompositesService {
     if (photoIds.length < 2) {
       throw new AppError('VALIDATION_ERROR', 'a merge is made of at least two photographs');
     }
-    for (const photoId of photoIds) this.frameOf(photoId);
-    const ordered = this.photoComposites.orderedForComposite(photoIds);
+    const given = photoIds.map((photoId) => this.frameOf(photoId));
+    const ordered = inOrderGiven ? given : this.photoComposites.orderedForComposite(photoIds);
     const libraries = new Set(ordered.map((photo) => photo.library_id));
     if (libraries.size !== 1) {
       throw new AppError('VALIDATION_ERROR', 'these photographs are not all in one library');

@@ -10,8 +10,11 @@ import { ViewerRenditionSchema } from './settings';
 export const TriageSchema = z.enum(['untriaged', 'picked', 'rejected']);
 export type Triage = z.infer<typeof TriageSchema>;
 
-export const CompositeKindSchema = z.enum(['panorama', 'assembly']);
+export const CompositeKindSchema = z.enum(['panorama', 'assembly', 'exposureBracket', 'pixelShift']);
 export type CompositeKind = z.infer<typeof CompositeKindSchema>;
+
+/** Every composite kind, as the list an SQL `IN` takes. */
+export const COMPOSITE_KINDS_SQL = CompositeKindSchema.options.map((kind) => `'${kind}'`).join(', ');
 
 export const PhotoSummarySchema = z.object({
   id: IdSchema,

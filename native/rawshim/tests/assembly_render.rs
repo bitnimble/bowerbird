@@ -8,7 +8,7 @@ use rawshim::assembly_render::{LAMBDA_SPLIT, Lowpass, lowpass};
 use rawshim::assembly_tiles::W_MAX;
 use rawshim::assembly_weight::{W_HIGH_PX, Weights, slots_of, weights};
 use rawshim::composite_tile::{
-    Blending, CompositeRequest, From, Layer, Mask, SourceFile, layers_of,
+    Blending, CompositeRequest, From, Layer, Mask, SourceFile, Weight, layers_of,
 };
 use rawshim::composition::{Composition, LensSpec, Projection, SourceSpec};
 use rawshim::galosh::Detail;
@@ -361,7 +361,7 @@ fn asking<'a>(
         detail: Detail::at(0.0, 0.0),
         sources: files,
         from: From::Original,
-        mask: None,
+        weight: Weight::Feather,
     }
 }
 
@@ -635,7 +635,7 @@ fn gathered_weight(
     source: usize,
 ) -> Vec<f32> {
     let request = CompositeRequest {
-        mask: Some(Mask {
+        weight: Weight::Mask(Mask {
             signed: &fields.signed,
             tile_of: &fields.tile_of,
             warps: &fields.warps,
@@ -862,7 +862,7 @@ fn rendered(
     let held =
         pollster::block_on(lowpass(recipe, &asking(spec, paths, window))).expect("a lowpass");
     let request = CompositeRequest {
-        mask: Some(Mask {
+        weight: Weight::Mask(Mask {
             signed: &fields.signed,
             tile_of: &fields.tile_of,
             warps: &fields.warps,
@@ -1491,7 +1491,7 @@ fn a_source_no_tile_picked_is_never_decoded() {
     let fields = pollster::block_on(weights(rig.gpu, &recipe, window, 1.0));
     let of = slots_of(&recipe);
     let request = CompositeRequest {
-        mask: Some(Mask {
+        weight: Weight::Mask(Mask {
             signed: &fields.signed,
             tile_of: &fields.tile_of,
             warps: &fields.warps,

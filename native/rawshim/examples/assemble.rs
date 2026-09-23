@@ -366,7 +366,7 @@ fn through_the_render(
             detail,
             sources: &files,
             from: rawshim::composite_tile::From::Original,
-            mask: None,
+            weight: rawshim::composite_tile::Weight::Feather,
         }
     };
     let whole = rawshim::px::Rect::exact(left, top, width, height);

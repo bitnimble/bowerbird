@@ -17,7 +17,10 @@ use serde::Deserialize;
 )]
 pub enum Want {
     /// Search the sources for a recipe and report it. Renders nothing.
-    Align,
+    Align {
+        #[serde(default)]
+        shape: Shape,
+    },
     /// Search the sources for an assembly's recipe (§3), writing the seam volume its tiles are
     /// solved over to `volume_path`. Renders nothing.
     Analyse { volume_path: String },
@@ -32,7 +35,21 @@ pub enum Want {
     },
 }
 
-/// The recipe a render is handed, which is a panorama's geometry or an assembly's tiles over one.
+/// What an align is looking for, which decides how it looks.
+#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum Shape {
+    /// Frames pointed across a scene, overlapping in strips.
+    #[default]
+    Pan,
+    /// Frames of one scene from one place at different exposures, each over the whole of the
+    /// others (`composite_align::Kind::Burst`).
+    ExposureBracket,
+    /// A sensor-shift burst, whose frames sit a photosite apart by construction: nothing to search.
+    PixelShift,
+}
+
+/// The recipe a render is handed: a composition, and how its sources become one picture.
 ///
 /// Tagged by the same `kind` field the TypeScript union already carries, rather than tried in turn:
 /// an assembly is a superset of a composition, so an untagged enum would read a plain panorama as
@@ -42,15 +59,30 @@ pub enum Want {
 pub enum CompositeRecipe {
     Panorama(crate::composition::Composition),
     Assembly(Box<crate::assembly::Assembly>),
+    /// Weighted by the light each frame gathered, rolled off before it clips.
+    ExposureBracket(crate::composition::Composition),
+    /// Merged on the mosaic, before any demosaic (`pixel_shift`).
+    PixelShift(crate::composition::Composition),
 }
 
 impl CompositeRecipe {
-    /// The geometry both kinds share - the levels-and-colour half of [`base`] reads only this,
+    /// The geometry every kind shares - the levels-and-colour half of [`base`] reads only this,
     /// whichever arm it was handed.
     pub fn composition(&self) -> &crate::composition::Composition {
         match self {
-            CompositeRecipe::Panorama(spec) => spec,
+            CompositeRecipe::Panorama(spec)
+            | CompositeRecipe::ExposureBracket(spec)
+            | CompositeRecipe::PixelShift(spec) => spec,
             CompositeRecipe::Assembly(assembly) => &assembly.spec,
+        }
+    }
+
+    fn weight(&self) -> crate::composite_tile::Weight<'static> {
+        match self {
+            CompositeRecipe::ExposureBracket(_) => crate::composite_tile::Weight::Exposure,
+            CompositeRecipe::Panorama(_)
+            | CompositeRecipe::Assembly(_)
+            | CompositeRecipe::PixelShift(_) => crate::composite_tile::Weight::Feather,
         }
     }
 }
@@ -260,16 +292,32 @@ pub(crate) fn sources_of<'a>(
 }
 
 /// A set of photographs searched for the recipe that composites them (`Want::Align`).
-pub fn align(gpu: &'static crate::gpu::Gpu, pano: &CompositeJob) -> Result<String, String> {
+pub fn align(gpu: &'static crate::gpu::Gpu, pano: &CompositeJob, shape: Shape) -> Result<String, String> {
     let (headers, models) = headers_of(pano);
     let sources = sources_of(pano, &headers, &models)?;
 
-    let aligned = pollster::block_on(crate::composite_align::align(
-        gpu,
-        &sources,
-        crate::composite_solve::Leash::Free,
-        crate::composite_align::Kind::Pan,
-    ))?;
+    let aligned = match shape {
+        Shape::Pan => pollster::block_on(crate::composite_align::align(
+            gpu,
+            &sources,
+            crate::composite_solve::Leash::Free,
+            crate::composite_align::Kind::Pan,
+        ))?,
+        // A bracket points every frame at the same place, as a burst does, so its focal is held for
+        // the assembly's reason (take-best-parts §3.1) and every source covers the same crop.
+        Shape::ExposureBracket => {
+            let mut aligned = pollster::block_on(crate::composite_align::align(
+                gpu,
+                &sources,
+                crate::composite_solve::Leash::Assumed,
+                crate::composite_align::Kind::Burst,
+            ))?;
+            aligned.composition.crop =
+                crate::assembly_analysis::intersection_crop(&aligned.composition);
+            aligned
+        }
+        Shape::PixelShift => crate::composite_align::fixed(&sources)?,
+    };
     let named = |indices: &[usize]| -> Vec<String> {
         indices
             .iter()
@@ -682,6 +730,13 @@ fn overlap(
         .then(|| crate::px::Rect::exact(left, top, right - left, bottom - top))
 }
 
+/// How a strip of a recipe is drawn.
+enum Drawn {
+    Blended,
+    Assembly(crate::assembly::Drawing),
+    Shifted(crate::composition::Composition),
+}
+
 /// The composite this job's targets are cut from, at the largest of the sizes they asked for.
 ///
 /// Strip by strip, and each strip source by source: nothing here is ever as large as the canvas
@@ -843,9 +898,17 @@ pub(crate) fn base(
     // the first strip that asks, which is where a request to build it from exists.
     let mut hold: Option<crate::assembly_render::Lowpass> = None;
     let drawn = match wanted {
-        CompositeRecipe::Assembly(assembly) => Some(assembly.rendered()?),
-        CompositeRecipe::Panorama(_) => None,
+        CompositeRecipe::Assembly(assembly) => Drawn::Assembly(assembly.rendered()?),
+        CompositeRecipe::Panorama(_) | CompositeRecipe::ExposureBracket(_) => Drawn::Blended,
+        // Every frame sits on the first's canvas, so the merge is that one source decoded from all
+        // of them.
+        CompositeRecipe::PixelShift(spec) => Drawn::Shifted(crate::composition::Composition {
+            sources: spec.sources[..1].to_vec(),
+            reference: 0,
+            ..spec.clone()
+        }),
     };
+    let burst: Vec<&str> = files.iter().map(|file| file.path).collect();
     let mut top = 0;
     while top < height {
         let deep = down.min(height - top);
@@ -880,7 +943,7 @@ pub(crate) fn base(
                 detail: job.detail(),
                 sources: &files,
                 from,
-                mask: None,
+                weight: wanted.weight(),
             };
             // **A tile of a canvas can hold no photograph at all.** The canvas is framed to what
             // the sources cover between them, and a hand-held pan leaves wedges of nothing at its
@@ -893,8 +956,15 @@ pub(crate) fn base(
                 continue;
             }
             let (tile, prepared) = match &drawn {
-                None => pollster::block_on(crate::composite_tile::prepared(spec, &request))?,
-                Some(assembly) => {
+                Drawn::Blended => pollster::block_on(crate::composite_tile::prepared(spec, &request))?,
+                Drawn::Shifted(first) => {
+                    let request = crate::composite_tile::CompositeRequest {
+                        sources: &files[..1],
+                        ..request
+                    };
+                    pollster::block_on(crate::composite_tile::shifted(first, &request, &burst))?
+                }
+                Drawn::Assembly(assembly) => {
                     let held = match &hold {
                         Some(held) => held,
                         None => hold.insert(pollster::block_on(crate::assembly_render::lowpass(
@@ -1162,7 +1232,7 @@ mod tests {
             detail: crate::galosh::Detail::at(0.0, 0.0),
             sources: &files,
             from: crate::composite_tile::From::Camera,
-            mask: None,
+            weight: crate::composite_tile::Weight::Feather,
         };
         let (composite, prepared) =
             pollster::block_on(crate::composite_tile::prepared(&spec, &request))
@@ -1786,7 +1856,7 @@ mod tests {
                 detail: crate::galosh::Detail::at(0.0, 0.0),
                 sources: &files,
                 from: crate::composite_tile::From::Original,
-                mask: None,
+                weight: crate::composite_tile::Weight::Feather,
             };
             let (frame, _) = pollster::block_on(crate::composite_tile::prepared(&spec, &request))
                 .expect("one source gathers");

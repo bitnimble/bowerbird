@@ -2065,7 +2065,7 @@ fn a_panorama_window_reproduces_the_recorded_frame() {
         detail: rawshim::galosh::Detail::at(0.0, 0.0),
         sources: &sources,
         from: From::Original,
-        mask: None,
+        weight: rawshim::composite_tile::Weight::Feather,
     };
     let (window_out, _) =
         pollster::block_on(rawshim::composite_tile::prepared(&spec, &request)).expect("a window");
@@ -2179,7 +2179,7 @@ fn assembly_request<'a>(
         detail: rawshim::galosh::Detail::at(0.0, 0.0),
         sources,
         from: From::Original,
-        mask: None,
+        weight: rawshim::composite_tile::Weight::Feather,
     }
 }
 

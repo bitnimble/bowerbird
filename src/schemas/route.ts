@@ -59,6 +59,7 @@ export const PathSegment = {
   libraries: segment('libraries'),
   mark: segment('mark'),
   merge: segment('merge'),
+  bracket: segment('bracket'),
   missing: segment('missing'),
   mockup: segment('mockup'),
   models: segment('models'),

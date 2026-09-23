@@ -5,7 +5,7 @@ import type { RequestActivity } from '../../../../../src/schemas/request_activit
 import { compositesApi } from '../../../api/composites';
 import { photosApi } from '../../../api/photos';
 import { stacksApi } from '../../../api/stacks';
-import type { CompositeProgress } from '../../../../../src/schemas/composition';
+import type { CompositePhoto, CompositeProgress } from '../../../../../src/schemas/composition';
 import type { ToastsPresenter } from '../../toasts/toasts_presenter';
 import { displayRowOf, rowAt, type Expansion } from './bands';
 import type { ScrollRailPresenter } from './scroll_rail_presenter';
@@ -393,8 +393,17 @@ export class StackActionsPresenter {
     this.holdRowThroughBands(was);
   }
 
+  async mergeSelectionToPanorama(): Promise<void> {
+    await this.mergeSelection(compositesApi.createPanorama);
+  }
+
+  /** Merges a selected bracket stack into the photograph its capture was shot for. */
+  async mergeSelectedBracket(): Promise<void> {
+    await this.mergeSelection(compositesApi.mergeBracket);
+  }
+
   /**
-   * Merges whatever is selected into one panorama.
+   * Merges whatever is selected into one photograph.
    *
    * The same target the stack action takes, and the same refresh afterwards: what
    * comes back is a stack, drawn from the composite rather than from a member.
@@ -402,7 +411,7 @@ export class StackActionsPresenter {
    * selection stays put until it answers - a cleared selection with nothing new in
    * the grid reads as an action that did nothing.
    */
-  async mergeSelectionToPanorama(): Promise<void> {
+  private async mergeSelection(merge: (target: PhotoTarget) => Promise<CompositePhoto>): Promise<void> {
     const target = this.selectionTarget();
     // One at a time: the merge holds the device for minutes, and the selection is still on screen
     // while it runs, so the entry stays clickable.
@@ -411,7 +420,7 @@ export class StackActionsPresenter {
     const generation = this.generation();
     this.startedMerging();
     try {
-      await compositesApi.createPanorama(target);
+      await merge(target);
       // Minutes, in which the reader may have moved to another collection and selected in it:
       // what came back describes the listing the merge was asked from, and clearing a selection
       // that has nothing to do with it is the one thing worse than not clearing this one.
@@ -457,15 +466,12 @@ export class StackActionsPresenter {
       this.store.mergingRows = { positions: rows?.positions ?? new Set(), photoIds: new Set(progress.photoIds) };
     }
     if (this.mergeToast == null) {
-      this.mergeToast = this.toasts.showProgress(
-        PhotosPresenterStrings.mergingToPanorama(progress.phase),
-        progress.fraction,
-      );
+      this.mergeToast = this.toasts.showProgress(PhotosPresenterStrings.merging(progress.phase), progress.fraction);
       return;
     }
     this.toasts.progressed(
       this.mergeToast,
-      PhotosPresenterStrings.mergingToPanorama(progress.phase),
+      PhotosPresenterStrings.merging(progress.phase),
       progress.fraction,
     );
   }
@@ -479,7 +485,7 @@ export class StackActionsPresenter {
       for (let at = range.start; at <= range.end; at++) positions.add(at);
     }
     this.store.mergingRows = { positions, photoIds: new Set(this.marks.selectedMembers) };
-    this.mergeToast ??= this.toasts.showProgress(PhotosPresenterStrings.mergingToPanorama('aligning'), 0);
+    this.mergeToast ??= this.toasts.showProgress(PhotosPresenterStrings.merging('aligning'), 0);
   }
 
   @action.bound

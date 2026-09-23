@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runMigrations } from '../../../db/migrate';
 import { AssemblyRecipeSchema, type AssemblyRecipe, type Seams } from '../../../schemas/assembly';
+import type { CaptureSequenceKind } from '../../../schemas/capture_sequence';
 import { DEFAULT_SETTINGS, type Settings } from '../../../schemas/settings';
 import { dataPathForLibraryId, draftLayerPath, draftVolumePath } from '../../../utils/paths';
 import { localOriginals } from '../../blobs/originals_for_testing';
@@ -458,6 +459,57 @@ describe('CompositesService.merge', () => {
     expect(db.query('SELECT COUNT(*) AS n FROM renditions').get()).toEqual({ n: renditionsBefore });
     expect(plantedRenditionFile).not.toBeNull();
     expect(existsSync(plantedRenditionFile as string)).toBe(false);
+  });
+});
+
+/** These photographs as one bracket stack, each the frame of `kind` at its place in `order`. */
+function bracket(kind: CaptureSequenceKind, order: string[], origin = 'bracket'): void {
+  db.query('INSERT INTO stacks (id, library_id, origin, date_created) VALUES (?, ?, ?, ?)').run(
+    'burst',
+    LIB,
+    origin,
+    '2026-01-01',
+  );
+  order.forEach((id, at) => {
+    const sequence = { kind, group: null, index: at + 1, count: order.length };
+    db.query(
+      `UPDATE photos SET stack_id = 'burst', stack_state = 'stacked', is_representative = ?, capture_sequence = ?
+        WHERE id = ?`,
+    ).run(at === 0 ? 1 : 0, JSON.stringify(sequence), id);
+  });
+}
+
+describe('CompositesService.mergeBracket', () => {
+  it('merges a pixel shift in the order the camera shot it, as its own kind', async () => {
+    photo('photo004');
+    // Against the order they were taken in, so the one that decides is visible.
+    bracket('pixelShift', ['photo003', 'photo001', 'photo004', 'photo002']);
+
+    const { photoId } = await panoramas.mergeBracket(['photo001', 'photo002', 'photo003', 'photo004']);
+
+    expect(photoPaths.getBasicById(photoId)?.recipe.kind).toBe('pixelShift');
+    expect(photoComposites.framesOf(photoId)).toEqual(['photo003', 'photo001', 'photo004', 'photo002']);
+    const align = posted[0];
+    expect(align?.want === 'align' && align.shape).toBe('pixelShift');
+  });
+
+  it('aligns an exposure bracket as one', async () => {
+    bracket('exposureBracket', ['photo001', 'photo002', 'photo003']);
+    const { photoId } = await panoramas.mergeBracket(['photo001', 'photo002', 'photo003']);
+
+    expect(photoPaths.getBasicById(photoId)?.recipe.kind).toBe('exposureBracket');
+    const align = posted[0];
+    expect(align?.want === 'align' && align.shape).toBe('exposureBracket');
+  });
+
+  it('refuses frames that are not one bracket stack', async () => {
+    bracket('exposureBracket', ['photo001', 'photo002'], 'manual');
+    await expect(panoramas.mergeBracket(['photo001', 'photo002'])).rejects.toThrow(/bracket stack/);
+  });
+
+  it('refuses a pixel shift missing a frame', async () => {
+    bracket('pixelShift', ['photo001', 'photo002', 'photo003']);
+    await expect(panoramas.mergeBracket(['photo001', 'photo002', 'photo003'])).rejects.toThrow(/exactly its 4/);
   });
 });
 

@@ -99,7 +99,7 @@ pub async fn analysis_planes(
         // camera's JPEG has none - so a carve of the cameras' pictures would score every tile
         // against a default noise model. The render is what follows the library.
         from: From::Original,
-        mask: None,
+        weight: crate::composite_tile::Weight::Feather,
     };
     let long = ANALYSIS_LONG.min(w.max(h));
     let out = match w >= h {

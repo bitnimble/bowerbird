@@ -1,3 +1,5 @@
+import { COMPOSITE_KINDS_SQL } from '../../schemas/photos';
+
 /**
  * Whether any row this one composes carries a develop document, for a `photos` aliased as `alias`.
  *
@@ -25,5 +27,5 @@ const INPUTS_EDITED_STAMP = (alias: string, stampOf: EditStamp): string => `(SEL
 export const BUILT_FROM_STAMP = (alias: string, stampOf: EditStamp = storedStamp): string => `NULLIF(MAX(
     COALESCE((SELECT ${stampOf('oe')} FROM photo_edits oe WHERE oe.photo_id = ${alias}id), ''),
     COALESCE(${INPUTS_EDITED_STAMP(alias, stampOf)}, ''),
-    COALESCE(CASE WHEN json_extract(${alias}recipe, '$.kind') IN ('panorama', 'assembly')
+    COALESCE(CASE WHEN json_extract(${alias}recipe, '$.kind') IN (${COMPOSITE_KINDS_SQL})
                   THEN ${alias}stamp_placement END, '')), '')`;

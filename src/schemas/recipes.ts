@@ -35,6 +35,8 @@ export const RecipeSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('file'), path: z.string().min(1) }),
   CompositionSchema.extend({ kind: z.literal('panorama') }),
   AssemblyRecipeSchema.extend({ kind: z.literal('assembly') }),
+  CompositionSchema.extend({ kind: z.literal('exposureBracket') }),
+  CompositionSchema.extend({ kind: z.literal('pixelShift') }),
 ]);
 export type Recipe = z.infer<typeof RecipeSchema>;
 
@@ -138,5 +140,5 @@ export function isComposite(recipe: StoredRecipe): recipe is Composed {
 
 /** The canvas a composite recipe is composited onto, or null for a recipe with none of its own. */
 export function canvasOf(recipe: StoredRecipe): Composition['canvas'] | null {
-  return recipe.kind === 'panorama' || recipe.kind === 'assembly' ? recipe.canvas : null;
+  return recipe.kind === 'file' || recipe.kind === 'unreadable' ? null : recipe.canvas;
 }

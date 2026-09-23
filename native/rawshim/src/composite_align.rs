@@ -459,6 +459,44 @@ pub async fn align(
     })
 }
 
+/// A sensor-shift burst's recipe, which no search could improve on: every frame is one scene a
+/// photosite apart, and which photosite is the frame's own index (`pixel_shift`). So the canvas is
+/// the first frame, every source lies on it square, and the lens is the one they share.
+pub fn fixed(sources: &[AlignSource<'_>]) -> Result<Aligned, String> {
+    let first = sources
+        .first()
+        .ok_or("a merge is made of at least two photographs")?;
+    if sources.len() < 2 || sources.iter().any(|source| source.size != first.size) {
+        return Err("these frames are not one sensor-shift burst".into());
+    }
+    let mut warnings = Vec::new();
+    let mut lensless = Vec::new();
+    let lenses = shared_lenses(sources, &mut warnings, &mut lensless);
+    let one = Composition::of_one(first.size, lenses[0].clone());
+    let square = one.sources[0].clone();
+    let composition = Composition {
+        sources: sources
+            .iter()
+            .zip(&lenses)
+            .map(|(source, lens)| SourceSpec {
+                photo_id: source.photo_id.to_string(),
+                lens: lens.clone(),
+                ..square.clone()
+            })
+            .collect(),
+        ..one
+    };
+    Ok(Aligned {
+        composition,
+        rms_px: 0.0,
+        dropped: Vec::new(),
+        kept: Vec::new(),
+        radial: Share::measured(0.0, first.size[0].max(first.size[1]) as f64),
+        lensless,
+        warnings,
+    })
+}
+
 /// Only each frame's best few overlaps, which is what a photograph can actually have.
 ///
 /// **A frame in a pan neighbours a handful of others and correlates with dozens.** Measured on a
@@ -989,7 +1027,7 @@ pub(crate) mod tests {
             detail: crate::galosh::Detail::at(0.0, 0.0),
             sources: &files,
             from,
-            mask: None,
+            weight: crate::composite_tile::Weight::Feather,
         };
         pollster::block_on(crate::composite_tile::prepared(p, &request))
             .expect("a window composites")

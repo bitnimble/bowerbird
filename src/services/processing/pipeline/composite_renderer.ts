@@ -1,6 +1,8 @@
 import { AppError } from '../../../errors';
 import type { AssemblyRecipe } from '../../../schemas/assembly';
+import type { AlignShape } from '../../../schemas/jobs';
 import type { Library } from '../../../schemas/libraries';
+import type { CompositeKind } from '../../../schemas/photos';
 import { cameraMatchWithStages } from '../../../schemas/render_stages';
 import { getDataPath } from '../../../utils/paths';
 import { hasEmbeddedJpeg } from '../../../utils/scan';
@@ -21,7 +23,7 @@ export class CompositeRenderer {
     private readonly editsFor: (photoId: string) => { doc: string; stamp: string | null } | null,
     private readonly compositeOf: (
       photoId: string,
-    ) => { kind: 'panorama' | 'assembly'; recipe: unknown; sources: CompositeJobSource[] } | null,
+    ) => { kind: CompositeKind; recipe: unknown; sources: CompositeJobSource[] } | null,
     private readonly targets: RenderTargets,
     private readonly settings: SettingsRepository,
     private readonly announce: (photoId: string, written: RenditionWritten) => void,
@@ -44,11 +46,13 @@ export class CompositeRenderer {
     sources: CompositeJobSource[],
     library: Library,
     on: CompositeWorker,
+    shape: AlignShape,
   ): Promise<string> {
     const recipe = await on.run({
       kind: 'composite',
       cameraMatch: 'lensAndColour',
       want: 'align',
+      shape,
       photoId: libraryId,
       sources,
       dataPath: getDataPath(library),
@@ -273,7 +277,7 @@ export class CompositeRenderer {
     photoId: string,
     sources: CompositeJobSource[],
     recipe: unknown,
-    kind: 'panorama' | 'assembly',
+    kind: CompositeKind,
     library: Library,
     rendition: Rendition,
     hdr: boolean,

@@ -519,7 +519,7 @@ async function buildPanorama(): Promise<void> {
 }
 
 function align(job: Omit<Job, 'targets'>, sources: JobCompositeSource[]): Aligned {
-  const answered = runJob({ ...job, targets: [], composite: { want: 'align', sources } });
+  const answered = runJob({ ...job, targets: [], composite: { want: 'align', shape: 'pan', sources } });
   if (answered.composite == null) throw new Error('the panorama frames did not align');
   return AlignedSchema.parse(JSON.parse(answered.composite));
 }

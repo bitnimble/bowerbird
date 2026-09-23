@@ -22,9 +22,9 @@ export const PhotosPresenterStrings = {
   // What the merge is doing right now, so a minute of nothing visible is a minute the reader can
   // read. The phases are the picture being assembled, not the machinery: nobody merging a
   // panorama wants to be told about strips.
-  mergingToPanorama: (phase: 'aligning' | 'tile' | 'picture') => {
-    if (phase === 'aligning') return 'Merging panorama… finding how the frames overlap';
-    if (phase === 'tile') return 'Merging panorama… building the thumbnail';
-    return 'Merging panorama… rendering the photo';
+  merging: (phase: 'aligning' | 'tile' | 'picture') => {
+    if (phase === 'aligning') return 'Merging… lining up the frames';
+    if (phase === 'tile') return 'Merging… building the thumbnail';
+    return 'Merging… rendering the photo';
   },
 };

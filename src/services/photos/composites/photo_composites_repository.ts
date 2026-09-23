@@ -1,13 +1,23 @@
 import type { Database } from '../../../db/driver';
 import type { AssemblyRecipe } from '../../../schemas/assembly';
+import { captureSequenceOf, type CaptureSequence } from '../../../schemas/capture_sequence';
+import type { StackOrigin } from '../../../schemas/stacks';
 import type { Composition } from '../../../schemas/composition';
 import { displaySize } from '../../../schemas/display_size';
+import type { CompositeKind } from '../../../schemas/photos';
 import { withNewId } from '../../../db/constraints';
 import { framingEdits } from '../../../schemas/recipes';
 import { stamp } from '../../replication/stamps';
 import type { StackMembership } from '../../stacks/stack_membership';
 import { inChunks } from '../photo_batches';
 import type { BasicPhoto, PhotoPathsRepository } from '../paths/photo_paths_repository';
+
+export interface SequencedFrame {
+  photoId: string;
+  stackId: string | null;
+  origin: StackOrigin | null;
+  sequence: CaptureSequence | null;
+}
 
 export class PhotoCompositesRepository {
   constructor(private readonly db: Database, private readonly stacks: StackMembership, private readonly paths: PhotoPathsRepository) {}
@@ -27,7 +37,7 @@ export class PhotoCompositesRepository {
     insertComposite(made: {
       libraryId: string;
       recipe: Composition | AssemblyRecipe;
-      kind: 'panorama' | 'assembly';
+      kind: CompositeKind;
       reference: string;
     }): string {
       const shape = displaySize(made.recipe.canvas[0], made.recipe.canvas[1], framingEdits(made.recipe));
@@ -93,6 +103,28 @@ export class PhotoCompositesRepository {
         ).map((row, at) => [row.id, at]),
       );
       return [...found].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    }
+  /** Which capture each of these photographs is a frame of, and the stack it is in. */
+    sequencesOf(photoIds: readonly string[]): SequencedFrame[] {
+      const found: SequencedFrame[] = [];
+      for (const batch of inChunks(photoIds)) {
+        const rows = this.db
+          .query(
+            `SELECT photos.id, photos.stack_id, stacks.origin, photos.capture_sequence
+               FROM photos LEFT JOIN stacks ON stacks.id = photos.stack_id
+              WHERE photos.id IN (${batch.map(() => '?').join(', ')})`,
+          )
+          .all(...batch) as { id: string; stack_id: string | null; origin: StackOrigin | null; capture_sequence: string | null }[];
+        for (const row of rows) {
+          found.push({
+            photoId: row.id,
+            stackId: row.stack_id,
+            origin: row.origin,
+            sequence: captureSequenceOf(row.capture_sequence),
+          });
+        }
+      }
+      return found;
     }
   /** The frames a composite is made of, in the order its recipe names them (§19.4). */
     framesOf(composedId: string): string[] {

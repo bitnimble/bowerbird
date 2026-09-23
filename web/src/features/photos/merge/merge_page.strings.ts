@@ -1,9 +1,16 @@
+import type { CaptureSequenceKind } from '../../../../../src/schemas/capture_sequence';
 import { MERGE_MAX_FRAMES } from '../photos_store';
 
 export const MergePageStrings = {
   mergePhotos: () => 'Merge photos',
   toPanorama: () => 'To panorama',
   takeBestParts: () => 'Take best parts',
+  bracket: (kind: CaptureSequenceKind | null) => {
+    if (kind === 'pixelShift') return 'Pixel shift';
+    if (kind === 'exposureBracket') return 'Exposure bracket';
+    return 'Bracket';
+  },
+  selectABracketStack: () => 'Select one bracket stack.',
 
   selectAtLeastTwo: () => 'Select at least 2 photos.',
   selectTwelveOrFewer: () => `Select up to ${MERGE_MAX_FRAMES} photos.`,

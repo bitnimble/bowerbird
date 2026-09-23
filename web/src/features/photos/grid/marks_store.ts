@@ -1,4 +1,5 @@
 import { computed, observable } from 'mobx';
+import type { CaptureSequenceKind } from '../../../../../src/schemas/capture_sequence';
 import { type PhotoSummary, type Triage } from '../../../../../src/schemas/photos';
 import { isComposite, MERGE_MAX_FRAMES, type MergeCandidate, type StackSelection } from '../photos_store';
 import { SelectionRanges } from '../selection';
@@ -271,6 +272,12 @@ export class MarksStore {
       photos.some((photo) => photo.stack_size > 1) ||
       (open != null && open.photos.every((photo) => this.selectedMembers.has(photo.id)));
     return whole ? { kind: 'stack', stackId } : { kind: 'partial' };
+  }
+
+  /** The capture a selected whole bracket stack was shot as, or null where the selection is not one. */
+  @computed get selectedBracket(): CaptureSequenceKind | null {
+    if (this.selectedStack.kind !== 'stack') return null;
+    return this.selectedLoadedRows[0]?.bracket_kind ?? null;
   }
 
   @computed get mergeCandidate(): MergeCandidate {

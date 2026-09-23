@@ -44,6 +44,14 @@ export const compositesApi = {
       route(PathSegment.api(), PathSegment.composites(), PathSegment.panorama()),
       PhotoTargetSchema.parse(target),
     ),
+  /** A bracket stack's frames merged into the photograph the camera shot them for. */
+  mergeBracket: (target: PhotoTarget): Promise<CompositePhoto> =>
+    request(
+      CompositePhotoSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.composites(), PathSegment.bracket()),
+      PhotoTargetSchema.parse(target),
+    ),
   /** The frames a panorama is composed from, in the order its recipe names them. */
   listFrames: (id: string, signal?: AbortSignal, activity?: RequestActivity): Promise<PhotoSummary[]> =>
     request(

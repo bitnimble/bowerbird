@@ -83,9 +83,13 @@ export const JobAdjustSchema = z.object({
 });
 export type JobAdjust = z.infer<typeof JobAdjustSchema>;
 
+/** `composite_job::Shape`: what an align is looking for, which decides how it looks. */
+export const AlignShapeSchema = z.enum(['pan', 'exposureBracket', 'pixelShift']);
+export type AlignShape = z.infer<typeof AlignShapeSchema>;
+
 /** `composite_job::Want`: what a composite job asks of its sources, and what that needs. */
 export const CompositeWantSchema = z.discriminatedUnion('want', [
-  z.object({ want: z.literal('align') }),
+  z.object({ want: z.literal('align'), shape: AlignShapeSchema }),
   /** Writes the seam volume to `volumePath`. */
   z.object({ want: z.literal('analyse'), volumePath: z.string() }),
   /** `recipe` is `Composed`, opaque to this side - tagged by its own `kind`, rather than stripped of it. */

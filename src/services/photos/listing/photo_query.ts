@@ -2,7 +2,7 @@ import type { CaptureSequenceKind } from '../../../schemas/capture_sequence';
 import type { Ordering } from '../../../schemas/common';
 import { EditDocSchema } from '../../../schemas/photo_edits';
 import { displaySize } from '../../../schemas/display_size';
-import type { CompositeKind, Triage } from '../../../schemas/photos';
+import { COMPOSITE_KINDS_SQL, type CompositeKind, type Triage } from '../../../schemas/photos';
 import { canvasOf, recipeOf } from '../../../schemas/recipes';
 import type { RenditionSource } from '../../processing/workers/processing_types';
 import { renditionVariant } from '../../processing/renditions/renditions';
@@ -91,7 +91,7 @@ const BRACKET_KIND = `CASE WHEN EXISTS (SELECT 1 FROM stacks s WHERE s.id = phot
 // What a row is composed as, which draws a composite's badge and is what the badge opens. On every
 // read of a row, not just the grid's: the viewer's run and the detail are how a merge is reached
 // straight after it is saved, before any listing has loaded it.
-const COMPOSITE_KIND = `CASE WHEN json_extract(photos.recipe, '$.kind') IN ('panorama', 'assembly')
+const COMPOSITE_KIND = `CASE WHEN json_extract(photos.recipe, '$.kind') IN (${COMPOSITE_KINDS_SQL})
     THEN json_extract(photos.recipe, '$.kind') END AS composite_kind,
   json_array_length(photos.recipe, '$.sources') AS frame_count,
   ${BRACKET_KIND}`;

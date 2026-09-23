@@ -1164,6 +1164,10 @@ export class PhotosPresenter {
     await this.stackActionsPresenter.mergeSelectionToPanorama();
   }
 
+  async mergeSelectedBracket(): Promise<void> {
+    await this.stackActionsPresenter.mergeSelectedBracket();
+  }
+
   async startAssembly(frameIds: string[]): Promise<string | null> {
     return this.stackActionsPresenter.startAssembly(frameIds);
   }

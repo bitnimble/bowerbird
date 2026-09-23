@@ -1,5 +1,6 @@
 import { AppError } from '../../../errors';
 import type { Library } from '../../../schemas/libraries';
+import type { CompositeKind } from '../../../schemas/photos';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
 import { fileRecipe, isComposite } from '../../../schemas/recipes';
 import { getDataPath, getRenditionPath, originalPathOf } from '../../../utils/paths';
@@ -23,7 +24,7 @@ export class PrepareRenderer {
     private readonly libraryOf: (libraryId: string) => Library | null,
     private readonly compositeOf: (
       photoId: string,
-    ) => { kind: 'panorama' | 'assembly'; recipe: unknown; sources: CompositeJobSource[] } | null,
+    ) => { kind: CompositeKind; recipe: unknown; sources: CompositeJobSource[] } | null,
     private readonly targets: RenderTargets,
   ) {}
 

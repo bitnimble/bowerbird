@@ -205,6 +205,168 @@ pub(crate) async fn decode_tile_source(
     halo: usize,
     dust: crate::dust::Known<'_>,
 ) -> Option<Frame> {
+    let region = match region_mosaic(source, view, detail, fit, halo, dust).await? {
+        Region::Mosaic(region) => region,
+        Region::Linear(frame) => return Some(frame),
+    };
+    let gpu = crate::gpu::device()?;
+    let rcd = crate::demosaic::device(gpu)?;
+    let built = match region.halving {
+        true => region.reduced(gpu, rcd).await?,
+        false => {
+            // One span or many, which `spans` already decides: a tile writes straight into the
+            // frame now, so a single-tile region costs nothing that the loop did not.
+            demosaic_in_tiles(
+                gpu,
+                rcd,
+                &region.mosaic,
+                &region.cfa,
+                region.crop,
+                region.colour,
+                orientation_code(region.upright),
+            )
+            .await?
+        }
+    };
+    Some(region.frame(built))
+}
+
+/// A window of a sensor-shift burst, merged on the photosite lattice where a single frame would be
+/// demosaiced. `sources` are the burst's frames in its own order, `pixel_shift::SHIFTS` apart.
+///
+/// **Where the frame is halved, the merge buys nothing**: a halved frame reads one pixel per 2x2 site,
+/// which already has every colour, so the four frames are the same picture below its Nyquist and the
+/// reference alone is the answer.
+pub(crate) async fn decode_shifted_tile(
+    sources: &[rawler::rawsource::RawSource],
+    view: crate::view::View,
+    detail: crate::galosh::Detail,
+    fit: crate::galosh::Fit,
+    halo: usize,
+) -> Option<Frame> {
+    let (first, rest) = sources.split_first()?;
+    if rest.len() + 1 != crate::pixel_shift::SHIFTS.len() {
+        return None;
+    }
+    let Region::Mosaic(reference) = region_mosaic(first, view, detail, fit, halo, crate::dust::Known::Off).await? else {
+        return None;
+    };
+    let gpu = crate::gpu::device()?;
+    let rcd = crate::demosaic::device(gpu)?;
+    if reference.halving {
+        let built = reference.reduced(gpu, rcd).await?;
+        return Some(reference.frame(built));
+    }
+    let (width, height) = (reference.mosaic.width, reference.mosaic.height);
+    let rgb = crate::pixel_shift::plane(gpu, width, height);
+    crate::pixel_shift::scatter(gpu, &reference.mosaic, &reference.cfa, crate::pixel_shift::SHIFTS[0], &rgb)?;
+    for (source, shift) in rest.iter().zip(&crate::pixel_shift::SHIFTS[1..]) {
+        // The reference's fit, so every frame is denoised as the one it is merged into.
+        let fit = reference.noise.map_or(fit, crate::galosh::Fit::Given);
+        let Region::Mosaic(frame) = region_mosaic(source, view, detail, fit, halo, crate::dust::Known::Off).await? else {
+            return None;
+        };
+        if (frame.mosaic.width, frame.mosaic.height) != (width, height) || frame.cfa != reference.cfa {
+            return None;
+        }
+        crate::pixel_shift::scatter(gpu, &frame.mosaic, &frame.cfa, *shift, &rgb)?;
+    }
+
+    let (crop_left, crop_top, crop_w, crop_h) = reference.crop;
+    let orientation = orientation_code(reference.upright);
+    // The reference's photosites are what the clipping asks about, which is why its mosaic stays.
+    let (_shape, shape_group) = crate::demosaic::shape_group(gpu, rcd, &reference.cfa, &reference.mosaic, 0);
+    let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize)| crate::demosaic::Placement {
+        stride: crate::px::Span::exact(width),
+        crop: crate::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
+        dest: crate::px::At::exact(dest.0, dest.1),
+        frame: crate::px::Size::exact(crop_w, crop_h),
+        orientation,
+        reduce: 1,
+    };
+    let (out_w, out_h) = placed((0, 0), (0, 0, 1, 1)).out();
+    let built = crate::resident::Resident::empty(gpu, out_w, out_h);
+    for (ty0, ty1) in spans(crop_h) {
+        for (tx0, tx1) in spans(crop_w) {
+            let at = placed((tx0, ty0), (crop_left + tx0, crop_top + ty0, tx1 - tx0, ty1 - ty0));
+            crate::demosaic::assemble_into(
+                gpu,
+                rcd,
+                &rgb,
+                &reference.cfa,
+                &at,
+                reference.colour,
+                built.buffer(),
+                &shape_group,
+            )
+            .await?;
+        }
+    }
+    Some(reference.frame(built))
+}
+
+/// What a window of a RAW is before the demosaic: its mosaic, or for a linear DNG, which has none,
+/// the frame itself.
+enum Region {
+    Mosaic(RegionMosaic),
+    Linear(Frame),
+}
+
+/// One window's region of the sensor, conditioned, cleaned and denoised: everything a decode does
+/// before the demosaic.
+struct RegionMosaic {
+    mosaic: crate::condition::Mosaic,
+    cfa: crate::cfa::Cfa,
+    colour: crate::demosaic::Colour,
+    /// The window inside the region, which is where the margin grown around it ends.
+    crop: (usize, usize, usize, usize),
+    upright: rawler::decoders::Orientation,
+    halving: bool,
+    noise: Option<crate::galosh::NoiseFit>,
+    as_shot: Option<crate::white_balance::AsShot>,
+}
+
+impl RegionMosaic {
+    async fn reduced(
+        &self,
+        gpu: &'static crate::gpu::Gpu,
+        rcd: &'static crate::demosaic::Rcd,
+    ) -> Option<crate::resident::Resident> {
+        let crop = self.crop;
+        let crop = (crop.0 / 2, crop.1 / 2, reduced_span(crop.2, 2), reduced_span(crop.3, 2));
+        let orientation = orientation_code(self.upright);
+        reduced_into(gpu, rcd, &self.mosaic, crop, self.mosaic.width, self.colour, orientation, &self.cfa).await
+    }
+
+    fn frame(&self, built: crate::resident::Resident) -> Frame {
+        Frame {
+            width: built.width,
+            height: built.height,
+            pixels: Pixels::Resident(built),
+            reduced: match self.halving {
+                true => 2,
+                false => 1,
+            },
+            as_shot: self.as_shot,
+            noise: self.noise,
+            // A tile's whole-frame statistics are the photograph's to provide, not this crop's.
+            dust: None,
+            matrix: Some(self.colour.matrix),
+            neutral_ceiling: neutral_ceiling_of(self.colour.ceiling),
+            wb_gains: self.colour.ceiling,
+            stated_white: None,
+        }
+    }
+}
+
+async fn region_mosaic(
+    source: &rawler::rawsource::RawSource,
+    view: crate::view::View,
+    detail: crate::galosh::Detail,
+    fit: crate::galosh::Fit,
+    halo: usize,
+    dust: crate::dust::Known<'_>,
+) -> Option<Region> {
     // The window in the photograph's own pixels, which is the only space this function speaks.
     let window = view.window.raw();
     let tile = crate::Tile {
@@ -225,7 +387,8 @@ pub(crate) async fn decode_tile_source(
     // A DNG is read whole whatever `dummy` says, so a linear one is already here to window.
     if is_linear(&shape) {
         let held = linear(decoder.as_ref(), shape, upright).await;
-        return held.map_err(|why| crate::warn(&format!("rawshim: {why}"))).ok()?.window(view.window, view.scale);
+        let held = held.map_err(|why| crate::warn(&format!("rawshim: {why}"))).ok()?;
+        return held.window(view.window, view.scale).map(Region::Linear);
     }
     let (frame_w, frame_h) = (shape.width, shape.height);
     let (origin, extent) = shape.crop_area.map_or(((0, 0), (frame_w, frame_h)), |area| {
@@ -332,38 +495,16 @@ pub(crate) async fn decode_tile_source(
     // and is read; this one is predicted, so a 6x6 pattern takes the demosaic until `Scale` carries
     // a third variant - which needs the CFA's period to reach whoever builds the view.
     let halving = halve && crop.0 % 2 == 0 && crop.1 % 2 == 0 && cfa.is_bayer();
-    let built = match halving {
-        true => {
-            let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
-            let crop = (crop.0 / 2, crop.1 / 2, reduced_span(crop.2, 2), reduced_span(crop.3, 2));
-            reduced_into(gpu, rcd, &mosaic, crop, region_w, colour, orientation_code(upright), &cfa)
-                .await?
-        }
-        false => {
-            let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
-            // One span or many, which `spans` already decides: a tile writes straight into the
-            // frame now, so a single-tile region costs nothing that the loop did not.
-            demosaic_in_tiles(gpu, rcd, &mosaic, &cfa, crop, colour, orientation_code(upright))
-                .await?
-        }
-    };
-    Some(Frame {
-        width: built.width,
-        height: built.height,
-        pixels: Pixels::Resident(built),
-        reduced: match halving {
-            true => 2,
-            false => 1,
-        },
+    Some(Region::Mosaic(RegionMosaic {
         as_shot: as_shot_of(gpu?, image).await,
+        mosaic,
+        cfa,
+        colour,
+        crop,
+        upright,
+        halving,
         noise,
-        // A tile's whole-frame statistics are the photograph's to provide, not this crop's.
-        dust: None,
-        matrix: Some(colour.matrix),
-        neutral_ceiling: neutral_ceiling_of(colour.ceiling),
-        wb_gains: colour.ceiling,
-        stated_white: None,
-    })
+    }))
 }
 
 /// The whole frame, at the sensor's own resolution and with nothing taken off the glass.

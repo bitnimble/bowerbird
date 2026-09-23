@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { Logger } from '../../../logger';
 import type { Library } from '../../../schemas/libraries';
+import type { CompositeKind } from '../../../schemas/photos';
 import { isComposite } from '../../../schemas/recipes';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import {
@@ -101,7 +102,7 @@ export class ProcessingService extends RenderService {
     libraryOf: (libraryId: string) => Library | null = () => null,
     compositeOf: (
       photoId: string,
-    ) => { kind: 'panorama' | 'assembly'; recipe: unknown; sources: CompositeJobSource[] } | null = () => null,
+    ) => { kind: CompositeKind; recipe: unknown; sources: CompositeJobSource[] } | null = () => null,
     /**
      * `run`, with what each render allocates kept for the next: `rawshim_job.holdingRenderMemory`,
      * which a batch runs inside and a one-off render does not. Defaulted so a test, whose workers

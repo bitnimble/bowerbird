@@ -1,3 +1,4 @@
+import { COMPOSITE_KINDS_SQL } from '../schemas/photos';
 import { renditionVariant } from '../services/processing/renditions/renditions';
 import { replicationTriggers } from '../services/replication/units';
 
@@ -21,7 +22,7 @@ export function photoInputTriggers(): string {
     INSERT OR IGNORE INTO photo_sources (library_id, composed_id, photo_id, at)
       SELECT NEW.library_id, NEW.id, json_extract(source.value, '$.photoId'), source.key
         FROM json_each(NEW.recipe, '$.sources') AS source
-       WHERE json_extract(NEW.recipe, '$.kind') IN ('panorama', 'assembly')
+       WHERE json_extract(NEW.recipe, '$.kind') IN (${COMPOSITE_KINDS_SQL})
          AND json_type(NEW.recipe, '$.sources') = 'array';`;
   return `
     CREATE TRIGGER IF NOT EXISTS photos_index_inputs_ins AFTER INSERT ON photos BEGIN ${index} END;

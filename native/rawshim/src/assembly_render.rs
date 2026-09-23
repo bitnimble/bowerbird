@@ -85,7 +85,7 @@ pub async fn lowpass(
         scale,
         // Every source's own lowpass, whatever the weights say: the bands are what the blend mixes
         // *between*, so a source gathered here at no weight is still a source the blend reads.
-        mask: None,
+        weight: crate::composite_tile::Weight::Feather,
         ..request.clone()
     };
     let levels = crate::composite_tile::layers_of(spec, &coarse_request, |i, layer, _| {
@@ -140,7 +140,7 @@ pub async fn prepared(
         .map(|tile| slot_of[recipe.pick[tile]].expect("a picked source has a slot"))
         .collect();
     let masked = crate::composite_tile::CompositeRequest {
-        mask: Some(crate::composite_tile::Mask {
+        weight: crate::composite_tile::Weight::Mask(crate::composite_tile::Mask {
             signed: &fields.signed,
             tile_of: &fields.tile_of,
             warps: &fields.warps,

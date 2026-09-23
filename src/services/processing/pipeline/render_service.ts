@@ -4,6 +4,8 @@ import type { AssemblyRecipe } from '../../../schemas/assembly';
 import type { ExportOptions } from '../../../schemas/export';
 import type { Job } from '../../../schemas/jobs';
 import type { Library } from '../../../schemas/libraries';
+import type { AlignShape } from '../../../schemas/jobs';
+import type { CompositeKind } from '../../../schemas/photos';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
 import { renditionPathFor, stagedDescriptorPath } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
@@ -51,7 +53,7 @@ export abstract class RenderService {
     protected readonly libraryOf: (libraryId: string) => Library | null,
     protected readonly compositeOf: (
       photoId: string,
-    ) => { kind: 'panorama' | 'assembly'; recipe: unknown; sources: CompositeJobSource[] } | null,
+    ) => { kind: CompositeKind; recipe: unknown; sources: CompositeJobSource[] } | null,
   ) {
     this.targets = new RenderTargets(settings);
     this.composites = new CompositeRenderer(photoProcessing, editsFor, compositeOf, this.targets, settings, (photoId, written) =>
@@ -176,8 +178,9 @@ export abstract class RenderService {
     sources: CompositeJobSource[],
     library: Library,
     on: CompositeWorker,
+    shape: AlignShape,
   ): Promise<string> {
-    return this.composites.alignComposite(libraryId, sources, library, on);
+    return this.composites.alignComposite(libraryId, sources, library, on, shape);
   }
 
   async analyseAssembly(
@@ -223,7 +226,7 @@ export abstract class RenderService {
     photoId: string,
     sources: CompositeJobSource[],
     recipe: unknown,
-    kind: 'panorama' | 'assembly',
+    kind: CompositeKind,
     library: Library,
     rendition: Rendition,
     hdr: boolean,

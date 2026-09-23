@@ -1,6 +1,7 @@
 import { AppError } from '../../../errors';
 import { CompositionSchema, canvasLongEdgeFor } from '../../../schemas/composition';
 import type { ExportOptions } from '../../../schemas/export';
+import type { CompositeKind } from '../../../schemas/photos';
 import { renditionPathFor } from '../../../utils/paths';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import { encoderQuality } from '../analysis/quality';
@@ -26,14 +27,15 @@ export class RenderTargets {
     dataPath: string,
     photoId: string,
     recipe: unknown,
-    kind: 'panorama' | 'assembly',
+    kind: CompositeKind,
     rendition: Rendition,
     hdr: boolean,
     source: RenditionSource,
   ): RenditionTarget {
-    const target = this.target(dataPath, photoId, rendition, hdr, source, kind === 'panorama');
+    const wide = kind === 'panorama';
+    const target = this.target(dataPath, photoId, rendition, hdr, source, wide);
     const parsed = CompositionSchema.safeParse(recipe);
-    if (kind !== 'assembly' || !parsed.success || target.size === 0) return target;
+    if (wide || !parsed.success || target.size === 0) return target;
     return { ...target, size: canvasLongEdgeFor(parsed.data, target.size) };
   }
 
@@ -93,8 +95,8 @@ export class RenderTargets {
      * Whether the row these are cut from is a *wide* canvas - a panorama (§19.4) - rather than a
      * photograph, which wants no more room than one frame's own tile gives it.
      *
-     * An assembly is not wide: its crop is about one frame's worth of picture however far apart its
-     * canvas's corners are, and `composedTarget` is what turns a size for the picture into the
+     * No other composite is wide: its crop is about one frame's worth of picture however far apart
+     * its canvas's corners are, and `composedTarget` is what turns a size for the picture into the
      * canvas that holds it.
      */
     wide = false,

@@ -106,6 +106,18 @@ mod tests {
                 crate::composite_tile::params_block(),
             ),
             (
+                "composite_blend.wgsl",
+                "Params",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/composite_blend.wgsl")).to_string(),
+                crate::composite_tile::blend_block(),
+            ),
+            (
+                "pixel_shift.wgsl",
+                "Params",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift.wgsl")).to_string(),
+                crate::pixel_shift::params_block(),
+            ),
+            (
                 "rcd.wgsl",
                 "Shape",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/rcd.wgsl")).to_string(),

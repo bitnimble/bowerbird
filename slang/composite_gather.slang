@@ -41,9 +41,9 @@ struct Params {
     float inv_half2;
     uint projection;
     uint through;
-    /// Non-zero where `mask` holds this source's weight, which is §5.2's assembly; zero for a
-    /// panorama, whose weight is the feather below.
-    uint masked;
+    /// Where the weight comes from: `WEIGHED_FEATHER`, `WEIGHED_MASK` or `WEIGHED_FLAT`
+    /// (`composite_tile::Weighed`).
+    uint weighting;
     /// How many floats `mask` strides by, and which of them is this source's.
     uint mask_stride;
     uint mask_slot;
@@ -91,6 +91,13 @@ static const uint EQUIRECTANGULAR = 2;
 static const uint THROUGH_CORRECTED = 0;
 static const uint THROUGH_LENS = 1;
 
+/// A panorama's: how deep inside its own frame a pixel sits.
+static const uint WEIGHED_FEATHER = 0;
+/// An assembly's: §5.2's field, which `mask` holds.
+static const uint WEIGHED_MASK = 1;
+/// An exposure bracket's: one wherever the source reaches, the blend doing the weighing.
+static const uint WEIGHED_FLAT = 2;
+
 /// How sharply the feather favours the source a pixel sits deepest inside.
 ///
 /// **A soft feather over a panorama's overlap is a ghost, and the overlap is a third of a frame.**
@@ -135,7 +142,7 @@ TileWarp correction(uint pixel)
     mine.t = params.warp_t;
     mine.gain = 1.0;
     mine.pad = 0.0;
-    if (params.masked == 0u) { return mine; }
+    if (params.weighting != WEIGHED_MASK) { return mine; }
     let tile = tile_of[pixel * params.mask_stride + params.mask_slot];
     if (tile == NO_TILE) { return mine; }
     return warps[tile];
@@ -215,7 +222,15 @@ float feather(float2 pinhole)
 /// What this source is worth at an output pixel it does not cover.
 float weightless()
 {
-    return params.masked != 0u ? NOT_REACHED : 0.0;
+    return params.weighting == WEIGHED_MASK ? NOT_REACHED : 0.0;
+}
+
+/// What this source is worth at an output pixel it does cover.
+float reached_weight(uint pixel, float2 pinhole)
+{
+    if (params.weighting == WEIGHED_MASK) { return mask[pixel * params.mask_stride + params.mask_slot]; }
+    if (params.weighting == WEIGHED_FLAT) { return 1.0; }
+    return feather(pinhole);
 }
 
 /// One output pixel of this layer, black and weightless where the source does not reach it.
@@ -254,9 +269,7 @@ float3 gathered(uint pixel)
         weight[pixel] = weightless();
         return float3(0.0);
     }
-    weight[pixel] = params.masked != 0u
-        ? mask[pixel * params.mask_stride + params.mask_slot]
-        : feather(pinhole);
+    weight[pixel] = reached_weight(pixel, pinhole);
     return pixel_out;
 }
 

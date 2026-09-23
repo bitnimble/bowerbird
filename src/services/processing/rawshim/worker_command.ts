@@ -108,7 +108,7 @@ export function toCompositeCommand(job: CompositeJob): Job {
 function wantOf(job: CompositeJob): CompositeWant {
   switch (job.want) {
     case 'align':
-      return { want: job.want };
+      return { want: job.want, shape: job.shape };
     case 'analyse':
       return { want: job.want, volumePath: job.volumePath };
     case 'render':

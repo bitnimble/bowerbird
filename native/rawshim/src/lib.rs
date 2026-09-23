@@ -208,6 +208,7 @@ pub mod composition;
 /// One rectangle of a composite's canvas, gathered source by source and blended.
 pub mod composite_tile;
 pub mod parallel;
+pub mod pixel_shift;
 /// One picture of a recipe, coded and handed over, for a client that will grade it itself.
 ///
 /// A rendition stopped one stage early, so a reader dragging a slider and the export they are

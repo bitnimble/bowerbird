@@ -1240,9 +1240,9 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     if let Some(pano) = &job.composite {
         use crate::composite_job::Want;
         let answered = match &pano.want {
-            Want::Align => {
+            Want::Align { shape } => {
                 let gpu = crate::gpu::device().ok_or(NO_ADAPTER)?;
-                Some((crate::composite_job::align(gpu, pano)?, "align"))
+                Some((crate::composite_job::align(gpu, pano, *shape)?, "align"))
             }
             Want::Analyse { volume_path } => {
                 Some((crate::assembly_job::analyse(pano, volume_path)?, "analyse"))

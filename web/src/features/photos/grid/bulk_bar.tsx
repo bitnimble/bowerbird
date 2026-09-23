@@ -55,7 +55,7 @@ import { isComposite, mergeJobPath, triagePath, type MergeCandidate, type StackS
 // rarely, in three groups: what the selection *is*, where it is filed, and what
 // can be done to the photographs themselves.
 type StackAction = 'stack' | 'unstack' | 'triage';
-type MergeAction = 'panorama' | 'assembly';
+type MergeAction = 'panorama' | 'assembly' | 'bracket';
 type FilingAction = 'remove' | 'banner';
 type PhotoAction = 'export' | 'reveal' | 'thumbnails' | 'metadata' | 'hide' | 'unhide' | 'bin';
 
@@ -257,6 +257,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   const marks = store.selectedMarks;
   const selectedStack = store.selectedStack;
   const mergeCandidate = store.mergeCandidate;
+  const selectedBracket = store.selectedBracket;
   // The banner is the selection's first photograph, so there is nothing to offer
   // when the selection reaches only rows this client is not holding.
   const thumbnail =
@@ -418,9 +419,16 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                         disabled: mergeCandidate.kind !== 'ready',
                         tooltip: mergeRefusal(mergeCandidate),
                       },
+                      {
+                        value: 'bracket' as const,
+                        label: MergePageStrings.bracket(selectedBracket),
+                        disabled: selectedBracket == null,
+                        tooltip: selectedBracket == null ? MergePageStrings.selectABracketStack() : undefined,
+                      },
                     ]}
                     onSelect={(action: MergeAction) => {
                       if (action === 'panorama') void photos.mergeSelectionToPanorama();
+                      else if (action === 'bracket') void photos.mergeSelectedBracket();
                       else if (mergeCandidate.kind === 'ready') {
                         const source = listing.source;
                         void photos.startAssembly(mergeCandidate.frames.map((frame) => frame.id)).then((jobId) => {
