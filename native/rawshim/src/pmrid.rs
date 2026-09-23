@@ -1718,6 +1718,81 @@ mod tests {
         assert!(fresh == reused, "the second frame read what the first left in its arena");
     }
 
+    /// What each arm costs over a whole photograph on this adapter, and how far apart their
+    /// pictures are.
+    ///
+    /// **A report more than a test**: the times go to stderr past the harness's capture, so a plain
+    /// `bun run test:native pmrid_arms --features fixtures` prints them. With the arena held, as a
+    /// render queue holds it, so what is timed is the network rather than an allocation. What is
+    /// asserted is only that the two arms paint the same picture, which the synthetic comparison
+    /// beside this one cannot say about a frame with real highlights in it.
+    #[cfg(feature = "fixtures")]
+    #[test]
+    fn pmrid_arms_on_a_photograph() {
+        use std::io::Write;
+        const RUNS: usize = 5;
+        let Some(gpu) = crate::gpu::device() else { return };
+        let tensors = super::device(gpu).expect("the network built");
+        let wgsl = super::build_kernels(gpu, super::weights().expect("the weights"), false);
+        let mut report = std::io::stderr();
+        if tensors.coop.is_none() {
+            let _ = writeln!(report, "pmrid on {}: no matrix arm on this adapter", gpu.adapter);
+            return;
+        }
+
+        super::hold_arenas();
+        for path in [crate::fixture_tests::sony(), crate::fixture_tests::clipped()] {
+            let bytes = std::fs::read(&path).expect("the fixture reads");
+            let held = pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("held");
+            let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
+            let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
+            let gains = crate::decode_rawler::channel_ceilings(&image);
+            let (cfa, mosaic) = (held.cfa(), held.device_mosaic());
+            let detail = crate::galosh::Detail::at(100.0, 100.0);
+            let run = |network: &super::Pmrid| {
+                let mut frame = mosaic.duplicate(gpu);
+                gpu.block_until_done();
+                let started = std::time::Instant::now();
+                super::denoise(gpu, network, &mut frame, &cfa, gains, detail, fit);
+                gpu.block_until_done();
+                (started.elapsed(), frame)
+            };
+
+            // The first of each compiles whatever pipelines the driver has not cached.
+            let (_, from_tensors) = run(tensors);
+            let (_, from_wgsl) = run(&wgsl);
+            let mut fastest_tensors = std::time::Duration::MAX;
+            let mut fastest_wgsl = std::time::Duration::MAX;
+            for _ in 0..RUNS {
+                fastest_tensors = fastest_tensors.min(run(tensors).0);
+                fastest_wgsl = fastest_wgsl.min(run(&wgsl).0);
+            }
+
+            let read = |frame: &crate::condition::Mosaic| {
+                pollster::block_on(frame.read(gpu)).expect("the mosaic reads back")
+            };
+            let (a, b) = (read(&from_tensors), read(&from_wgsl));
+            let apart: Vec<f64> =
+                a.iter().zip(&b).map(|(a, b)| f64::from((a - b).abs()) * 255.0).collect();
+            let mean = apart.iter().sum::<f64>() / apart.len() as f64;
+            let worst = apart.iter().copied().fold(0.0, f64::max);
+            let name = path.file_name().expect("a file").to_string_lossy();
+            let megapixels = (mosaic.width * mosaic.height) as f64 / 1e6;
+            let _ = writeln!(
+                report,
+                "pmrid on {}, {name} ({megapixels:.1}MP), fastest of {RUNS}:\n  \
+                 matrix units {:>7.1}ms\n  WGSL         {:>7.1}ms  ({:.2}x the matrix units)\n  \
+                 apart: {mean:.4} codes of 255 on average, {worst:.2} at the worst photosite",
+                gpu.adapter,
+                fastest_tensors.as_secs_f64() * 1e3,
+                fastest_wgsl.as_secs_f64() * 1e3,
+                fastest_wgsl.as_secs_f64() / fastest_tensors.as_secs_f64(),
+            );
+            assert!(mean < 0.05, "{name}: the two arms are {mean:.4} codes apart on average");
+        }
+        super::release_arenas();
+    }
+
     /// Every shader holds the arena in the type the host sizes it for: `float` in the WGSL pass a
     /// page runs, `half` in the one beside the matrix units and in the matrix units themselves.
     ///
