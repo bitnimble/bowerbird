@@ -24,6 +24,7 @@ import {
   makeOnce,
   pin,
   pinnedHome,
+  pkgConfig,
   unpack,
 } from './pinned';
 
@@ -77,22 +78,24 @@ function main(): void {
  * highway it finds through vcpkg's own cmake config and brotli through `pkg-config`, but lcms2 it
  * looks for with a find module of its own, which comes back with neither the library nor the
  * header on a Windows runner - where `pkg-config --modversion lcms2`, a few lines above, answered.
- * So it is handed both. Off Windows this is empty and the distribution's own search is what runs.
+ * So it is handed both, from that same `.pc`. Off Windows this is empty and the distribution's own
+ * search is what runs.
  *
- * The file is looked for rather than named, since which of these vcpkg writes is the port's to
- * decide, and an absent one is worth saying before a cmake configure says it less clearly.
+ * The file is checked before cmake is given it, since an absent one is worth saying before a cmake
+ * configure says it less clearly.
  */
 function lcms2(): string[] {
-  const root = process.env.VCPKG_INSTALLATION_ROOT;
-  const triplet = process.env.VCPKG_TARGET_TRIPLET;
-  if (root == null || triplet == null) return [];
-  const installed = resolve(root, 'installed', triplet);
-  const names = ['lcms2.lib', 'liblcms2.lib', 'lcms2_static.lib'];
-  const library = names.map((name) => resolve(installed, 'lib', name)).find(existsSync);
-  if (library == null) {
-    throw new Error(`none of ${names.join(', ')} is under ${resolve(installed, 'lib')}`);
-  }
-  return [`-DLCMS2_LIBRARY=${library}`, `-DLCMS2_INCLUDE_DIR=${resolve(installed, 'include')}`];
+  if (process.platform !== 'win32') return [];
+  const ask = (question: string): string => {
+    const answer = pkgConfig([question, 'lcms2']);
+    if (answer == null) throw new Error(`pkg-config knows no lcms2 to answer ${question} about`);
+    return answer;
+  };
+  const named = ask('--libs-only-l').split(/\s+/).find((it) => it.startsWith('-l'));
+  if (named == null) throw new Error('lcms2.pc names no library to link');
+  const library = resolve(ask('--variable=libdir'), `${named.slice(2)}.lib`);
+  if (!existsSync(library)) throw new Error(`lcms2.pc names ${library}, which is not there`);
+  return [`-DLCMS2_LIBRARY=${library}`, `-DLCMS2_INCLUDE_DIR=${ask('--variable=includedir')}`];
 }
 
 function build(): void {

@@ -393,35 +393,13 @@ fn pkg_config(args: &[&str]) -> Option<String> {
 /// succeeded, and vcpkg's tree is in nobody's, where the same failure reads `LNK1104: cannot open
 /// file 'aom.lib'`.
 fn codec_search_path() {
-    vcpkg_search_path();
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
     for name in ["aom", "dav1d", "libsharpyuv", "libhwy", "libbrotlienc", "lcms2"] {
         let answer = pkg_config(&["--libs-only-L", name]).unwrap_or_default();
         for directory in answer.split_whitespace().filter_map(|it| it.strip_prefix("-L")) {
             println!("cargo:rustc-link-search=native={directory}");
         }
     }
-}
-
-/// The same, for the one tree no `pkg-config` on the machine knows how to find.
-///
-/// Read from vcpkg's own variables rather than one of ours, so the CI step that installs the
-/// ports is the only place the triplet is written down.
-fn vcpkg_search_path() {
-    println!("cargo:rerun-if-env-changed=VCPKG_INSTALLATION_ROOT");
-    println!("cargo:rerun-if-env-changed=VCPKG_TARGET_TRIPLET");
-    let (Ok(root), Ok(triplet)) =
-        (env::var("VCPKG_INSTALLATION_ROOT"), env::var("VCPKG_TARGET_TRIPLET"))
-    else {
-        return;
-    };
-    let lib = PathBuf::from(root).join("installed").join(triplet).join("lib");
-    assert!(
-        lib.is_dir(),
-        "{}: VCPKG_TARGET_TRIPLET names a triplet with no installed tree, so the codecs under \
-         libavif and libjxl would not be found at the link.",
-        lib.display(),
-    );
-    println!("cargo:rustc-link-search=native={}", lib.display());
 }
 
 fn target_os() -> String {

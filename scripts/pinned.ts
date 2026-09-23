@@ -69,18 +69,23 @@ export function linkPinned(name: string, home: string): void {
  */
 export const CMAKE_CONFIG: readonly string[] = process.platform === 'win32' ? ['--config', 'Release'] : [];
 
+/** What a system library reports for its version, or null where there is none. */
+export function installedVersion(name: string): string | null {
+  return pkgConfig(['--modversion', name]);
+}
+
 /**
- * What a system library reports for its version, or null where there is none.
+ * `pkg-config`'s answer, or null where it has never heard of what was asked about.
  *
  * **Two names, because the binary is not called the same thing everywhere.** The Unixes ship
  * `pkg-config`; vcpkg's tree and MSYS2 ship `pkgconf`, which answers the same queries under a
  * different name, and a Windows runner has neither until one is installed. Asking for only the
  * first is how a getter refuses on a machine that has every library it wants.
  */
-export function installedVersion(name: string): string | null {
+export function pkgConfig(args: readonly string[]): string | null {
   let asked = false;
   for (const tool of ['pkg-config', 'pkgconf']) {
-    const answer = spawnSync(tool, ['--modversion', name], { encoding: 'utf8' });
+    const answer = spawnSync(tool, args, { encoding: 'utf8' });
     // `error` is the tool not being there at all, where a non-zero status is it answering that
     // it has never heard of the library. Told apart because the message below is otherwise a
     // lie in the one case a reader cannot check: an image holding every library and no
@@ -89,9 +94,7 @@ export function installedVersion(name: string): string | null {
     if (answer.status === 0) return answer.stdout.trim();
   }
   if (!asked) {
-    throw new Error(
-      `neither pkg-config nor pkgconf is installed, so whether ${name} is here cannot be asked`,
-    );
+    throw new Error(`neither pkg-config nor pkgconf is installed, so \`${args.join(' ')}\` cannot be asked`);
   }
   return null;
 }

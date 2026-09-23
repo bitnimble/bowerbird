@@ -241,7 +241,7 @@ jobs:
       - name: vcpkg's builds, from last time
         if: runner.os == 'Windows'
         id: vcpkg-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/vcpkg-archives
           key: vcpkg-${{ hashFiles('.github/workflows/release.yml') }}
@@ -258,25 +258,24 @@ jobs:
             aom dav1d libwebp highway brotli lcms
           installed="$VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md"
           # **`pkgconf` is a dependency of the build, not a convenience.** This image ships no
-          # `pkg-config` of any name, and two things want one: the getters, which ask whether
-          # each library is there before building against it, and cmake's own `FindPkgConfig`,
+          # `pkg-config` of any name, and three things want one: the getters, which ask whether
+          # each library is there before building against it; cmake's own `FindPkgConfig`,
           # which is how libavif locates dav1d - dav1d is a meson project and publishes a `.pc`
-          # rather than a cmake config. `vcpkg install pkgconf` is a host tool, so it takes the
-          # default triplet rather than the static one the libraries use.
+          # rather than a cmake config; and `build.rs`, which takes each codec's directory and
+          # link name from its `.pc`, vcpkg's `lib` being in no linker's default. `vcpkg install
+          # pkgconf` is a host tool, so it takes the default triplet rather than the static one
+          # the libraries use.
           "$VCPKG_INSTALLATION_ROOT/vcpkg" install pkgconf
           echo "$VCPKG_INSTALLATION_ROOT/installed/x64-windows/tools/pkgconf" >> "$GITHUB_PATH"
           echo "PKG_CONFIG_PATH=$installed/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "CMAKE_TOOLCHAIN_FILE=$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" >> "$GITHUB_ENV"
-          # Read by `build.rs`, which adds the install tree to the link search: vcpkg's `lib` is
-          # in no linker's default, so without it the final link cannot open `aom.lib`.
-          echo "VCPKG_TARGET_TRIPLET=x64-windows-static-md" >> "$GITHUB_ENV"
           # bindgen runs its own clang and finds it by this rather than by PATH. The runner
           # image ships LLVM; naming the directory is all that is missing.
           echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
         shell: bash
       # Saved here rather than by the post step, which only runs for a job that passed.
       - if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/vcpkg-archives
           key: vcpkg-${{ hashFiles('.github/workflows/release.yml') }}
@@ -293,7 +292,7 @@ jobs:
       # or a flag moving misses the cache and rebuilds, which is exactly what it should do.
       - name: The pinned trees, from last time
         id: pinned-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
@@ -304,7 +303,7 @@ jobs:
         shell: bash
       # Saved as soon as the trees exist, for the reason vcpkg's are above.
       - if: steps.pinned-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
@@ -383,13 +382,13 @@ jobs:
         working-directory: web
       - name: The pinned trees, from last time
         id: pinned-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
       - run: bun run get:shell
       - if: steps.pinned-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
