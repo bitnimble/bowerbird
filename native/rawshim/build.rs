@@ -303,8 +303,8 @@ fn libavif() -> Option<PathBuf> {
     // fixtures were recorded against.
     println!("cargo:rustc-link-search=native={}/lib", home.display());
     println!("cargo:rustc-link-lib=static=avif");
-    for (module, otherwise) in [("aom", "aom"), ("dav1d", "dav1d"), ("libsharpyuv", "sharpyuv")] {
-        link_shared(module, otherwise);
+    for module in ["aom", "dav1d", "libsharpyuv"] {
+        link_shared(module);
     }
     println!("cargo:rerun-if-changed={}/include/avif/avif.h", home.display());
     Some(home)
@@ -331,14 +331,8 @@ fn libjxl() -> PathBuf {
     for part in ["jxl", "jxl_threads", "jxl_cms"] {
         println!("cargo:rustc-link-lib=static={part}");
     }
-    for (module, otherwise) in [
-        ("libhwy", "hwy"),
-        ("libbrotlienc", "brotlienc"),
-        ("libbrotlidec", "brotlidec"),
-        ("libbrotlicommon", "brotlicommon"),
-        ("lcms2", "lcms2"),
-    ] {
-        link_shared(module, otherwise);
+    for module in ["libhwy", "libbrotlienc", "libbrotlidec", "libbrotlicommon", "lcms2"] {
+        link_shared(module);
     }
     // libjxl is C++, so whichever standard library the toolchain that built it carries comes with
     // it, and the three targets here do not agree. Apple's clang is libc++ and ships no linkable
@@ -365,21 +359,30 @@ fn libjxl() -> PathBuf {
 /// carries the same prefix, so asking is the whole of the fix and it costs nothing to ask for
 /// the five that were already right.
 ///
-/// `otherwise` is for a machine with no `pkg-config`, which is a Linux developer's: there the
-/// names are the plain ones and nothing has ever needed the file to be found.
-fn link_shared(module: &str, otherwise: &str) {
-    let asked = Command::new("pkg-config").args(["--libs-only-l", module]).output();
-    let named: Vec<String> = match &asked {
-        Ok(it) if it.status.success() => String::from_utf8_lossy(&it.stdout)
-            .split_whitespace()
-            .filter_map(|it| it.strip_prefix("-l").map(str::to_owned))
-            .collect(),
-        _ => Vec::new(),
-    };
-    match named.is_empty() {
-        true => println!("cargo:rustc-link-lib={otherwise}"),
-        false => named.iter().for_each(|it| println!("cargo:rustc-link-lib={it}")),
+/// No fallback to a name written here: that is the guess this replaces, and a guess that fires
+/// silently is how a Windows link came to ask for `sharpyuv.lib` with a correct `.pc` beside it.
+fn link_shared(module: &str) {
+    let answer = pkg_config(&["--libs-only-l", module]).unwrap_or_else(|| {
+        panic!(
+            "neither pkg-config nor pkgconf knows {module}, so there is no name to link it by. \
+             Install its development package, or add the directory holding {module}.pc to \
+             PKG_CONFIG_PATH."
+        )
+    });
+    for name in answer.split_whitespace().filter_map(|it| it.strip_prefix("-l")) {
+        println!("cargo:rustc-link-lib={name}");
     }
+}
+
+/// `pkg-config`'s answer, from whichever of its two names is installed.
+///
+/// vcpkg and MSYS2 ship it only as `pkgconf`, so a Windows build that asks for `pkg-config`
+/// alone gets no answer at all - `scripts/pinned.ts` tries both for the same reason.
+fn pkg_config(args: &[&str]) -> Option<String> {
+    ["pkg-config", "pkgconf"].into_iter().find_map(|tool| {
+        let done = Command::new(tool).args(args).output().ok()?;
+        done.status.success().then(|| String::from_utf8_lossy(&done.stdout).into_owned())
+    })
 }
 
 /// Where the six libraries under libavif and libjxl are, on a target whose linker does not
@@ -392,13 +395,8 @@ fn link_shared(module: &str, otherwise: &str) {
 fn codec_search_path() {
     vcpkg_search_path();
     for name in ["aom", "dav1d", "libsharpyuv", "libhwy", "libbrotlienc", "lcms2"] {
-        let Ok(asked) = Command::new("pkg-config").args(["--libs-only-L", name]).output() else {
-            return;
-        };
-        for directory in String::from_utf8_lossy(&asked.stdout)
-            .split_whitespace()
-            .filter_map(|it| it.strip_prefix("-L"))
-        {
+        let answer = pkg_config(&["--libs-only-L", name]).unwrap_or_default();
+        for directory in answer.split_whitespace().filter_map(|it| it.strip_prefix("-L")) {
             println!("cargo:rustc-link-search=native={directory}");
         }
     }
