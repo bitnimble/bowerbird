@@ -12,7 +12,7 @@
 // is a shared object opened by `dlopen`, and the shell tells the server where it
 // landed (`BOWERBIRD_NATIVE_LIB`).
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { elfClosure, machNames } from './native_closure';
 import { assertReferenceFrame, REFERENCE_FRAME } from '../src/services/processing/renditions/reference_frame';
@@ -236,12 +236,16 @@ function underLoaderPath(): void {
  * for.
  */
 function locate(named: string, from: string): string {
-  if (named.startsWith('/')) return named;
+  // Resolved, because Homebrew's prefix is a symlink into its Cellar and the two reach this
+  // walk by different routes: a library linked by path names the Cellar, and the directory
+  // pkg-config reports is the prefix. Left as written, one file arrives under two names and
+  // the clash check below reads them as two libraries.
+  if (named.startsWith('/')) return realpathSync(named);
   const file = basename(named);
   const found = codecDirectories()
     .map((at) => join(at, file))
     .find(existsSync);
-  if (found != null) return found;
+  if (found != null) return realpathSync(found);
   throw new Error(`${from} wants ${named} and no directory pkg-config names holds ${file}`);
 }
 
