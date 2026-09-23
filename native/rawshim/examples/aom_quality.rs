@@ -22,8 +22,8 @@ use rawshim::hdr_args::{Chroma, EncodeOptions};
 use rawshim::image::Strengths;
 use rawshim::light::{DisplayNits, Gain, Light};
 
-const HDR_QUANTIZERS: [i32; 10] = [0, 1, 2, 3, 4, 5, 6, 8, 10, 13];
-const SDR_QUANTIZERS: [i32; 11] = [4, 6, 8, 10, 13, 16, 20, 24, 28, 32, 40];
+const HDR_QUANTIZERS: [i32; 15] = [0, 1, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 26, 32, 40];
+const SDR_QUANTIZERS: [i32; 15] = [0, 2, 4, 6, 8, 10, 13, 16, 20, 24, 28, 32, 40, 50, 63];
 const HDR_SPEED: i32 = 8;
 const SDR_SPEED: i32 = 10;
 

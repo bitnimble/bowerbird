@@ -670,11 +670,14 @@ fn encode_avif<T: Clone>(
         (*encoder.0).maxQuantizer = quantizer;
         // libaom parallelises across tiles, so without them the threads idle.
         (*encoder.0).autoTiling = 1;
-        // libavif moves stills to aom's IQ tune from aom 3.13, which spends up to three quarters
-        // more bytes a quantizer; every quality anchor was measured under SSIM.
-        let status = raw::avifEncoderSetCodecSpecificOption(encoder.0, c"tune".as_ptr(), c"ssim".as_ptr());
-        if status != AVIF_RESULT_OK {
-            return Err(format!("libavif would not set the tune: {}", message(status)));
+        // Named rather than left to libavif, whose default follows the aom it finds: a quantizer
+        // under IQ spends up to three quarters more bytes than under SSIM, and the quality anchors
+        // are IQ's. Not at 0, which libavif encodes lossless and libaom refuses IQ for.
+        if quantizer > 0 {
+            let status = raw::avifEncoderSetCodecSpecificOption(encoder.0, c"tune".as_ptr(), c"iq".as_ptr());
+            if status != AVIF_RESULT_OK {
+                return Err(format!("libavif would not set the tune: {}", message(status)));
+            }
         }
 
         let mut output = Output::empty();

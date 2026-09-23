@@ -82,6 +82,10 @@ required-features = ["renditions"]
 name = "aom_quality"
 required-features = ["renditions"]
 
+[[example]]
+name = "avif_diff"
+required-features = ["renditions"]
+
 # Fits the camera match and writes a PQ still, which is both halves of the server's.
 [[example]]
 name = "headroom"
