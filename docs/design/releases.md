@@ -143,7 +143,7 @@ administrator.
 | Platform | Payload |
 |---|---|
 | linux | `bowerbird-app`, `bowerbird-server`, `resources/` |
-| windows | the same, plus the DLLs those two resolve out of their own directory (§23.7.1) |
+| windows | the same, plus the DLLs the shell resolves out of its own directory (§23.7.1) |
 | macOS | a whole `Bowerbird.app` |
 | docker | the image's `/app/payload`: the server, `node_modules`, the three rawshim variants, `web/dist` |
 
@@ -244,70 +244,56 @@ merging them.
 compiler forces otherwise, and that is worth stating because the reverse is easy to assume:
 libjxl builds under `cl.exe` and under `clang-cl`, and libavif always did.
 
-**The six libraries underneath come from vcpkg, on the `x64-windows-static-md` triplet.** aom,
-dav1d and sharpyuv sit under libavif; highway, brotli and lcms2 under libjxl. `-static-md` is
-the load-bearing half of that name: static archives against the *dynamic* C runtime, which is
-the runtime Rust's MSVC target links. So the six end up inside `rawshim.dll` rather than beside
-it, and the only thing the library asks a reader's machine for is the C runtime the shell
-already asks for.
+**The codecs are vcpkg's, built static on every platform.** `bun run get:codecs` installs libavif
+and libjxl and the six libraries under them - aom, dav1d and sharpyuv under libavif; highway,
+brotli and lcms2 under libjxl - on `arm64-osx`, `x64-windows-static-md` and `x64-linux`. On
+Windows `-static-md` is the load-bearing half of the name: static archives against the *dynamic*
+C runtime, which is the runtime Rust's MSVC target links.
 
-**What it costs is where the versions are written down.** A `~/.cache/bowerbird` tree is named
-for the hash of its recipe (`scripts/pinned.ts`), so bumping libavif or adding a cmake flag
-rebuilds rather than reusing; the six below it are pinned by vcpkg's own baseline instead, which
-that hash cannot see. That is the real trade of this arrangement and the thing to remember when
-a Windows encode differs from a Linux one.
+**Every version is written down once, in one vcpkg commit** (`scripts/get-codecs.ts`), which fixes
+each port and the vcpkg tool alike. The tree in `~/.cache/bowerbird` is named for the hash of that
+commit and of `native/rawshim/vcpkg/` (`scripts/pinned.ts`), so moving the commit or editing an
+overlay rebuilds rather than reusing. So the aom that encodes a rendition is the same on every
+machine that builds the app, and the `encode` rows of `bench.budget.json` are recorded against it.
 
-**`lcms` rather than `lcms2`** when asking vcpkg for Little-CMS: the port is named for the
-project where the library is named for its soname, and the wrong one is a "port not found" a
-line into the job.
+Two things in `native/rawshim/vcpkg/` are ours rather than vcpkg's. An overlay libavif builds
+against sharpyuv instead of libyuv: without the first every 4:2:0 encode answers
+`NOT_IMPLEMENTED`, and with the second libavif converts RGB with libyuv's rounding and moves
+every rendition's pixels. And the triplets skip the debug builds nothing links, and pin macOS's
+deployment target to 11.0, Rust's own floor for Apple silicon, rather than whichever macOS the
+build machine runs.
 
 ### 23.7.1 The app carries every library it opens
 
-**What an installed Bowerbird asks a machine for is a C library, a loader and a Vulkan driver
-(§2.1), and of `librawshim`'s own dependencies, nothing.**
-aom, dav1d and sharpyuv under libavif, highway, brotli and
-lcms2 under libjxl, and the compiler's own runtime: on the two Unixes `build-sidecar.ts` walks
-what `librawshim` resolved at build time and ships each one into `resources/native` beside it,
-and on Windows they are already inside it.
+**What an installed Bowerbird asks a machine for is a C library, a C++ runtime, a loader and a
+Vulkan driver (§2.1).** Every codec is inside `librawshim` (§23.7), so a reader's machine can
+neither substitute a different aom nor lack one - which it could when they were shared libraries,
+since nothing declared the dependency and nothing could: Tauri's deb bundler writes its own control
+file and never runs `dpkg-shlibdeps`, and the library is a resource rather than the executable, out
+of reach of a packager that did look.
 
-That is not the same as vendoring them. Which copy the *build* links is unchanged, and
-deliberately the system's, so that what encodes a rendition is a library whose version the
-bench budget and `gpu_fixture`'s pins were recorded against rather than a fork of it. What
-changes is that the reader's machine can no longer substitute a different one, or have none -
-which it could, since nothing declared the dependency and nothing could: Tauri's deb bundler
-writes its own control file and never runs `dpkg-shlibdeps`, and the library is a resource
-rather than the executable, out of reach of a packager that did look.
+**On macOS the C++ runtime is the OS's, so there is nothing to carry, and that is checked.**
+`build-sidecar.ts` fails the build on anything `otool -L` names outside `/usr/lib` and `/System`:
+a Homebrew library links on the build machine and is missing on a reader's Mac.
+
+**Linux carries its C++ runtime.** A distribution's libstdc++ is whichever that distribution
+shipped, so `build-sidecar.ts` walks what `librawshim` resolved and ships libstdc++ and libgcc_s
+into `resources/native` beside it - never the C library itself, since two of those in one process
+is not a mismatch that degrades, it is two allocators and two `errno`. Every copy gets `$ORIGIN`,
+not just the library the server opens, a search path not reaching a dependency's own dependencies.
+It is a `DT_RPATH` rather than the `DT_RUNPATH` patchelf writes by default, because the loader
+consults a runpath *after* `LD_LIBRARY_PATH`: an app launched from a shell that names an older
+libstdc++ would otherwise get that one and fail in the way carrying a copy exists to prevent. After
+relocating, every object is walked again and anything still naming a path outside the tree fails
+the build.
 
 **What the Linux artefacts then ask of a machine is glibc, and the runner decides which.** The
 deb and the AppImage are built on Ubuntu 24.04, so `librawshim.so` and the libstdc++ beside it
 want `GLIBC_2.38` and neither will start on Ubuntu 22.04 or Debian 12. That floor follows the
 runner rather than being chosen, and raising it is what moving off a retired image costs.
 
-**Two platforms find them a different way; the third has nothing to find.** Windows links its
-six statically and so carries no closure at all (§23.7), which leaves the two Unixes.
-
-An ELF names a search path of its own, so every copy gets `$ORIGIN`, not just the library the
-server opens, a search path not reaching a dependency's own dependencies. It is a `DT_RPATH`
-rather than the `DT_RUNPATH` patchelf writes by default, because the loader consults a runpath
-*after* `LD_LIBRARY_PATH`: an app launched from a shell that names an older libstdc++ would
-otherwise get that one and fail in the way carrying a copy exists to prevent.
-
-A Mach-O names each dependency by the path it was linked at, so the walk is this script's own -
-`otool` reports one file rather than a closure - and every name in every copy is rewritten to
-`@loader_path`, after which each is re-signed, an edited load command having invalidated the
-signature and Apple silicon refusing to map a library whose signature does not hold. Ad-hoc,
-which is what an unnotarised build ships anyway; were a signing identity ever configured, the
-hardened runtime's library validation would refuse these, and they would have to be signed
-with it.
-
-The C library itself is never carried on either: two of those in one process is not a mismatch
-that degrades, it is two allocators and two `errno`. What guards the rest is a check of the
-outcome rather than of each way of getting it wrong - after relocating, every object is walked
-again and anything still naming a path outside the tree fails the build, which is the only
-thing that catches a dependency Homebrew left as an `@rpath` it could not place.
-
-**Windows has nothing to relocate**, its six codecs being static archives inside `rawshim.dll`
-(§23.7 above). What still goes beside the executables is whatever the *shell* imports, Tauri's
+**Windows has nothing to carry** of `rawshim.dll`'s own, the MSVC C++ runtime being the C runtime
+the shell already asks for. What still goes beside the executables is whatever the *shell* imports, Tauri's
 `WebView2Loader.dll` among them: `build-payload.ts` copies every DLL cargo left in the release
 directory into the tarball's root, where the supervisor unpacks it beside the executables it
 starts, so a fresh install and an in-place update resolve alike.

@@ -22,10 +22,12 @@ coverage
 # first would shadow the image's own.
 **/target
 # Built by the image's own stages, from the version of the source the image has.
-# A host copy of either arrives ahead of the build that would produce it: the
-# `native` stage's `get-slangc.ts` finds a compiler and skips the fetch, and
-# `COPY web ./web` lands host-built assets on top of the ones vite just wrote.
+# A host copy arrives ahead of the build that would produce it: the `native`
+# stage's `get-slangc.ts` finds a compiler and skips the fetch, `.codecs` is a
+# symlink into the host's cache that `native` then copies the image's tree onto,
+# and `COPY web ./web` lands host-built assets on top of the ones vite just wrote.
 native/rawshim/.slangc
+native/rawshim/.codecs
 native/rawshim/pkg
 web/dist
 web/test-results

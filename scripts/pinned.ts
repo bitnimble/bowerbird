@@ -3,8 +3,8 @@
 //
 // Every getter's "is it already here" is a file existing, and a version bump or a changed build
 // flag leaves the old tree exactly where the new one goes. Silent, and it reaches the application:
-// a libavif built before `AVIF_LIBSHARPYUV` was asked for stayed in `.libavif` and answered
-// `NOT_IMPLEMENTED` to every 4:2:0 encode, which is every grid tile in a library.
+// a libavif built without sharpyuv answers `NOT_IMPLEMENTED` to every 4:2:0 encode, which is every
+// grid tile in a library, and a tree from before the flag would sit where the new one belongs.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -57,46 +57,6 @@ export function linkPinned(name: string, home: string): void {
   // A directory symlink on Windows needs Developer Mode or elevation; a junction needs neither
   // and is the same thing to every reader of the path.
   symlinkSync(home, pinnedLink(name), process.platform === 'win32' ? 'junction' : undefined);
-}
-
-/**
- * What `cmake --build` and `cmake --install` need on Windows, whose default generator is Visual
- * Studio: a multi-config generator ignores `CMAKE_BUILD_TYPE` and takes the configuration here
- * instead. Every other generator ignores it.
- *
- * Deliberately not a configure flag. The configure flags are the recipe a tree is named by
- * (`pin`), so anything added there rebuilds libavif on every machine that already has it.
- */
-export const CMAKE_CONFIG: readonly string[] = process.platform === 'win32' ? ['--config', 'Release'] : [];
-
-/** What a system library reports for its version, or null where there is none. */
-export function installedVersion(name: string): string | null {
-  return pkgConfig(['--modversion', name]);
-}
-
-/**
- * `pkg-config`'s answer, or null where it has never heard of what was asked about.
- *
- * **Two names, because the binary is not called the same thing everywhere.** The Unixes ship
- * `pkg-config`; vcpkg's tree and MSYS2 ship `pkgconf`, which answers the same queries under a
- * different name, and a Windows runner has neither until one is installed. Asking for only the
- * first is how a getter refuses on a machine that has every library it wants.
- */
-export function pkgConfig(args: readonly string[]): string | null {
-  let asked = false;
-  for (const tool of ['pkg-config', 'pkgconf']) {
-    const answer = spawnSync(tool, args, { encoding: 'utf8' });
-    // `error` is the tool not being there at all, where a non-zero status is it answering that
-    // it has never heard of the library. Told apart because the message below is otherwise a
-    // lie in the one case a reader cannot check: an image holding every library and no
-    // `pkg-config` reports the first library as missing, and installing it changes nothing.
-    if (answer.error == null) asked = true;
-    if (answer.status === 0) return answer.stdout.trim();
-  }
-  if (!asked) {
-    throw new Error(`neither pkg-config nor pkgconf is installed, so \`${args.join(' ')}\` cannot be asked`);
-  }
-  return null;
 }
 
 /**

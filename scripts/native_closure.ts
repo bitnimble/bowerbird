@@ -1,6 +1,6 @@
 // What `rawshim` needs from outside itself, parsed out of the two loaders that name anything
-// (DESIGN §23.7.1). `build-sidecar.ts` is what then copies and relocates. Windows has no arm
-// here: its codecs are static, so `rawshim.dll` asks for nothing the shell does not.
+// (DESIGN §23.7.1). `build-sidecar.ts` is what then carries the Linux runtime and refuses anything
+// on macOS. Windows has no arm here: `rawshim.dll` asks for nothing the shell does not.
 
 /**
  * The glibc members no application may carry a second copy of.
@@ -47,12 +47,12 @@ function resolvedPaths(walk: string): string[] {
 }
 
 /**
- * Every name one Mach-O will look for, less the ones the OS owns and its own.
+ * Every name one Mach-O will look for, less the ones the OS owns and its own - so what a reader's
+ * Mac would have to supply.
  *
- * `@`-prefixed entries come back too, and deliberately: they are nobody's to *copy*, being
- * relative to a search path already, but dropping them silently is how a library ships still
- * asking the reader's machine for something (`refuseStrangers`). A dylib's own install name is
- * dropped by sharing the file's basename, since after relocation it is `@loader_path/<itself>`.
+ * `@`-prefixed entries come back too, and deliberately: an `@rpath` name is still a library asked
+ * of whatever search path the process has. A dylib's own install name is dropped by sharing the
+ * file's basename.
  */
 export function machNames(listing: string, self: string): string[] {
   return listing

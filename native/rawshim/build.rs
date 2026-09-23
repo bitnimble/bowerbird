@@ -26,8 +26,8 @@ fn main() {
     if env::var("CARGO_FEATURE_RENDITIONS").is_err() {
         return;
     }
-    codec_search_path();
-    std::fs::write(out.join("bindings.rs"), server_bindings().to_string()).expect("write bindings");
+    let include = codecs();
+    std::fs::write(out.join("bindings.rs"), server_bindings(&include).to_string()).expect("write bindings");
 }
 
 /// PMRID's published weights, which `src/pmrid.rs` embeds.
@@ -244,179 +244,48 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .allowlist_function("avifRGBImageFreePixels")
 }
 
-fn server_bindings() -> bindgen::Bindings {
-    // The library avifenc is a thin wrapper around. Linking it means the still's
-    // encode stops being two child processes with the whole frame passed between
-    // them, and becomes a pointer.
-    let avif = libavif();
-    let jxl = libjxl();
-
-    let mut builder = bindgen::Builder::default().header("wrapper.h");
-    for home in [avif, Some(jxl)].into_iter().flatten() {
-        builder = builder.clang_arg(format!("-I{}/include", home.display()));
-    }
+fn server_bindings(include: &Path) -> bindgen::Bindings {
+    let builder = bindgen::Builder::default()
+        .header("wrapper.h")
+        .clang_arg(format!("-I{}", include.display()));
     jxl_functions(avif_functions(builder))
         .generate()
         .expect("bindgen failed against the pinned libavif and libjxl headers")
 }
 
-/// The libavif this build links, which is the pinned one and not the distribution's.
+/// libavif and libjxl, and the six libraries under them, from the tree `get:codecs` built, linked
+/// statically; returns the directory their headers are in.
 ///
-/// **The gain map API is why.** It arrived in 1.1 behind a compile flag and settled in 1.2; Ubuntu
-/// 24.04 ships 1.0.4 and Debian trixie 1.1.1 with the flag off, so a build against either has no
-/// gain map symbols at all - and an AVIF that carries one would decode to its standard-range base
-/// on one machine and its full range on another, which is a photograph whose brightness depends on
-/// where it was read.
+/// The link itself is the getter's to work out, from the tree's own `pkgconf`, and this only passes
+/// it on: which libraries, in what order, and which are the platform's rather than the tree's -
+/// the C++ runtime libjxl and highway need among them, which libjxl's `.pc` names for whichever
+/// toolchain built it.
 ///
-/// Refused rather than fallen back to, naming the command that fixes it, for `slangc`'s reason: a
-/// silent fall-back is a feature quietly absent from a build that looks complete.
-fn libavif() -> Option<PathBuf> {
-    println!("cargo:rerun-if-env-changed=BOWERBIRD_LIBAVIF");
-    let home = env::var("BOWERBIRD_LIBAVIF")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".libavif"));
-    assert!(
-        home.join("include/avif/avif.h").exists(),
-        "{}: no libavif here.\nThe distribution's is too old to read a gain map, so this build \
-         wants the pinned one:\n\n    bun run get:libavif\n\nOr point BOWERBIRD_LIBAVIF at a \
-         libavif 1.2 or newer.",
-        home.display(),
-    );
-    // `avif.rs` asks for sharpyuv's chroma solver on every 4:2:0 encode, and a libavif built
-    // without it compiles a stub that answers `NOT_IMPLEMENTED` - so a tree from before the flag
-    // was asked for builds and links, and then fails every grid tile in a library. The `.pc` names
-    // it when the flag took.
-    let pc = home.join("lib/pkgconfig/libavif.pc");
-    let describes = std::fs::read_to_string(&pc).unwrap_or_default();
-    assert!(
-        describes.contains("libsharpyuv"),
-        "{}: this libavif was built without sharpyuv, and every 4:2:0 encode would fail.\n\n    \
-         BOWERBIRD_REBUILD_LIBAVIF=1 bun run get:libavif",
-        home.display(),
-    );
-    // The library itself, not only its header: a rebuilt libavif is a different archive under an
-    // unchanged `avif.h`, and without this the crate links yesterday's copy.
-    println!("cargo:rerun-if-changed={}", pc.display());
-    println!("cargo:rerun-if-changed={}", archive(&home, "avif").display());
-    // Static, so nothing has to find this directory again at run time. The codecs underneath it
-    // are the system's and stay dynamic, which is what keeps the encoder the one the bench and the
-    // fixtures were recorded against.
-    println!("cargo:rustc-link-search=native={}/lib", home.display());
-    println!("cargo:rustc-link-lib=static=avif");
-    for module in ["aom", "dav1d", "libsharpyuv"] {
-        link_shared(module);
-    }
-    println!("cargo:rerun-if-changed={}/include/avif/avif.h", home.display());
-    Some(home)
-}
-
-/// The libjxl this build links, which is the pinned one for `libavif`'s reason above.
-///
-/// The distributions ship 0.7, whose encoder predates the API settling in 0.10 and whose defaults
-/// produce a visibly different file from the same request - and an export is bytes a reader keeps,
-/// so which machine wrote them must not be visible in them.
-fn libjxl() -> PathBuf {
-    println!("cargo:rerun-if-env-changed=BOWERBIRD_LIBJXL");
-    let home = env::var("BOWERBIRD_LIBJXL")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".libjxl"));
-    assert!(
-        home.join("include/jxl/encode.h").exists(),
-        "{}: no libjxl here.\nThe distribution's predates the encoder settling, so this build \
-         wants the pinned one:\n\n    bun run get:libjxl\n\nOr point BOWERBIRD_LIBJXL at a libjxl \
-         0.10 or newer.",
-        home.display(),
-    );
-    println!("cargo:rustc-link-search=native={}/lib", home.display());
-    for part in ["jxl", "jxl_threads", "jxl_cms"] {
-        println!("cargo:rustc-link-lib=static={part}");
-    }
-    for module in ["libhwy", "libbrotlienc", "libbrotlidec", "libbrotlicommon", "lcms2"] {
-        link_shared(module);
-    }
-    // libjxl is C++, so whichever standard library the toolchain that built it carries comes with
-    // it, and the three targets here do not agree. Apple's clang is libc++ and ships no linkable
-    // libstdc++ at all, so asking for one there is a missing-library error rather than a slower
-    // path; MSVC's C++ runtime is the linker's own and naming any is an error.
-    match (target_os().as_str(), env::var("CARGO_CFG_TARGET_ENV").as_deref()) {
-        (_, Ok("msvc")) => {}
-        ("macos" | "ios", _) => println!("cargo:rustc-link-lib=c++"),
-        _ => println!("cargo:rustc-link-lib=stdc++"),
-    }
-    println!("cargo:rerun-if-changed={}/include/jxl/encode.h", home.display());
-    // The archive too, for the reason libavif's is watched: a rebuilt library under an unchanged
-    // header is a link nothing would otherwise redo.
-    println!("cargo:rerun-if-changed={}", archive(&home, "jxl").display());
-    home
-}
-
-/// One package on the link line, under the name that package's own `.pc` gives it.
-///
-/// **A library's file is named by the platform and its package by the project, and on MSVC the
-/// two part ways.** libwebp prefixes every archive with `lib` there to match what its old nmake
-/// build produced, so the sharpyuv libavif wants is `libsharpyuv.lib` against `libsharpyuv.so`
-/// everywhere else - and `-l sharpyuv` names a file that exists on one of them. The `.pc`
-/// carries the same prefix, so asking is the whole of the fix and it costs nothing to ask for
-/// the five that were already right.
-///
-/// No fallback to a name written here: that is the guess this replaces, and a guess that fires
-/// silently is how a Windows link came to ask for `sharpyuv.lib` with a correct `.pc` beside it.
-fn link_shared(module: &str) {
-    let answer = pkg_config(&["--libs-only-l", module]).unwrap_or_else(|| {
-        panic!(
-            "neither pkg-config nor pkgconf knows {module}, so there is no name to link it by. \
-             Install its development package, or add the directory holding {module}.pc to \
-             PKG_CONFIG_PATH."
-        )
+/// Refused rather than fallen back to, naming the command that fixes it: the distributions'
+/// libavif is too old to read a gain map, and a silent fall-back is a feature quietly absent from
+/// a build that looks complete.
+fn codecs() -> PathBuf {
+    let home = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".codecs");
+    let link = home.join("link.txt");
+    let lines = std::fs::read_to_string(&link).unwrap_or_else(|_| {
+        panic!("{}: no codecs here. This build links the pinned ones:\n\n    bun run get:codecs", home.display())
     });
-    for name in answer.split_whitespace().filter_map(|it| it.strip_prefix("-l")) {
-        println!("cargo:rustc-link-lib={name}");
-    }
-}
+    // A rebuilt tree is a new directory behind the same link, and so a new file here.
+    println!("cargo:rerun-if-changed={}", link.display());
 
-/// `pkg-config`'s answer, from whichever of its two names is installed.
-///
-/// vcpkg and MSYS2 ship it only as `pkgconf`, so a Windows build that asks for `pkg-config`
-/// alone gets no answer at all - `scripts/pinned.ts` tries both for the same reason.
-fn pkg_config(args: &[&str]) -> Option<String> {
-    ["pkg-config", "pkgconf"].into_iter().find_map(|tool| {
-        let done = Command::new(tool).args(args).output().ok()?;
-        done.status.success().then(|| String::from_utf8_lossy(&done.stdout).into_owned())
-    })
-}
-
-/// Where the six libraries under libavif and libjxl are, on a target whose linker does not
-/// already know.
-///
-/// Only Linux's puts them somewhere it already searches. Homebrew's prefix is not in Apple's
-/// default, so a macOS link fails with `ld: library 'aom' not found` after everything else
-/// succeeded, and vcpkg's tree is in nobody's, where the same failure reads `LNK1104: cannot open
-/// file 'aom.lib'`.
-fn codec_search_path() {
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
-    for name in ["aom", "dav1d", "libsharpyuv", "libhwy", "libbrotlienc", "lcms2"] {
-        let answer = pkg_config(&["--libs-only-L", name]).unwrap_or_default();
-        for directory in answer.split_whitespace().filter_map(|it| it.strip_prefix("-L")) {
-            println!("cargo:rustc-link-search=native={directory}");
+    let mut include = None;
+    for line in lines.lines() {
+        match line.split_once(' ') {
+            Some(("include", at)) => include = Some(home.join(at)),
+            Some(("search", at)) => println!("cargo:rustc-link-search=native={}", home.join(at).display()),
+            Some(("static", library)) => println!("cargo:rustc-link-lib=static={library}"),
+            Some(("dylib", library)) => println!("cargo:rustc-link-lib={library}"),
+            _ => panic!("{}: `{line}` is not a line `get:codecs` writes", link.display()),
         }
     }
+    include.unwrap_or_else(|| panic!("{}: names no include directory", link.display()))
 }
 
-fn target_os() -> String {
-    env::var("CARGO_CFG_TARGET_OS").unwrap_or_default()
-}
-
-/// A static library as the target's linker names it on disk.
-///
-/// Named rather than spelled `lib<name>.a` inline, which is what MSVC does not call it - and a
-/// `rerun-if-changed` on a path that does not exist is a build script cargo re-runs on every
-/// build, regenerating the bindings and recompiling the crate on a tree where nothing changed.
-fn archive(home: &Path, name: &str) -> PathBuf {
-    match env::var("CARGO_CFG_TARGET_ENV").as_deref() {
-        Ok("msvc") => home.join(format!("lib/{name}.lib")),
-        _ => home.join(format!("lib/lib{name}.a")),
-    }
-}
 
 /// JPEG XL, which only an export writes.
 fn jxl_functions(builder: bindgen::Builder) -> bindgen::Builder {

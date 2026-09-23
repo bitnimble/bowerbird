@@ -1,0 +1,14 @@
+{
+  "$comment": "What `bun run get:codecs` installs: libavif and libjxl, and aom, dav1d, sharpyuv, highway, brotli and lcms2 under them, static, at the versions the vcpkg commit in scripts/get-codecs.ts fixes. pkgconf is how that getter reads the link line back out.",
+  "dependencies": [
+    {
+      "name": "libavif",
+      "features": ["aom", "dav1d"]
+    },
+    "libjxl",
+    {
+      "name": "pkgconf",
+      "host": true
+    }
+  ]
+}

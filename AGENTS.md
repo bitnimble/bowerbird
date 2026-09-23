@@ -128,43 +128,43 @@ forgets. That directory is gitignored like every other emitted WGSL.
 points the build at another one. A build with neither fails naming both, rather than quietly
 leaving a stage out.
 
-## libavif is pinned too, and built rather than installed
+## The codecs are pinned too, through vcpkg, and linked statically
 
-`bun run get:libavif` builds it into `native/rawshim/.libavif`; `BOWERBIRD_LIBAVIF` points the
-build at another one, and a build with neither fails naming the command. Same reasoning as the
-compiler above, and one extra: **the distributions' libavif cannot read a gain map at all.** The
-API arrived in 1.1 behind a compile flag and settled in 1.2, where Ubuntu 24.04 ships 1.0.4 and
-Debian trixie 1.1.1 with the flag off - so an HDR AVIF would open at its standard range on one
-machine and its full range on another.
+`bun run get:codecs` builds libavif and libjxl, and aom, dav1d, sharpyuv, highway, brotli and
+lcms2 under them, into `native/rawshim/.codecs`, and a build without it fails naming the command.
+It is vcpkg at one commit, which fixes every library's version on every machine that builds this
+application, so the aom that encodes a rendition is the same wherever the app was built (DESIGN
+§23.7). Same reasoning as the compiler above, and one extra: **the distributions' libavif cannot
+read a gain map at all.** The API arrived in 1.1 behind a compile flag and settled in 1.2, where
+Ubuntu 24.04 ships 1.0.4 and Debian trixie 1.1.1 with the flag off - so an HDR AVIF would open at
+its standard range on one machine and its full range on another. libjxl's ship 0.7, which predates
+its encoder API settling in 0.10.
 
-It links **statically**, against the **system's** libaom and libdav1d. What moves here is the
-container and the colour conversion around an encoder that does not. **An installed app carries
-that encoder**: `build-sidecar.ts` ships what `librawshim` resolved at build time, so which libaom
-encodes a rendition is the build machine's to decide and never the reader's (DESIGN §23.7.1) -
-and the four machines that build this application do not agree, which is an argument for pinning
-aom rather than against it. What that would cost is the `encode` rows of `bench.budget.json` and a
-`BOWERBIRD_WRITE_BUDGET=1` run; no committed fixture holds an AVIF, the snapshots all being PNG.
+Everything links **statically**, so `librawshim` asks a reader's machine for nothing but its C and
+C++ runtimes. `native/rawshim/vcpkg/` is the manifest and the two things vcpkg's defaults get
+wrong for us: an overlay libavif built against sharpyuv rather than libyuv, and triplets that skip
+the debug builds and pin macOS's deployment target. **Moving the vcpkg commit moves the encoder**,
+so it re-records the `encode` rows of `bench.budget.json` (`BOWERBIRD_WRITE_BUDGET=1`) in the same
+commit; no committed fixture holds an AVIF, the snapshots all being PNG.
 
-**libjxl is pinned the same way**, by `bun run get:libjxl` into `native/rawshim/.libjxl`, with
-`BOWERBIRD_LIBJXL` pointing elsewhere and a build that finds neither failing by name. Only an
-export writes JXL, but the reason is the same shape: the distributions ship 0.7, which predates
-the encoder API settling in 0.10, so the same request produces a different file depending on the
-machine. Static against the system's highway, brotli and lcms2.
+On Linux and macOS vcpkg wants a compiler, git, pkg-config, python3, zip and unzip installed, and
+nasm on x86, and the getter names whichever is missing before it starts. It fetches its own cmake
+and ninja, and on Windows everything.
 
-**All four getters replace a tree made from an older recipe.** Each records the version and what it
-was made with (`scripts/pinned.ts`) - the cmake flags for the two it builds, the asset name for the
-compiler, the file hashes for the driver - and reuses what is there only when both still match, so
-bumping a version or adding a flag rebuilds rather than leaving the old tree where the build will
-find it. That is not hypothetical: a libavif built before `AVIF_LIBSHARPYUV` was asked
-for compiles the stub, which answers `NOT_IMPLEMENTED` to every 4:2:0 encode, which is every grid
-tile in a library. `build.rs` refuses that tree by name as well.
+**All three getters replace a tree made from an older recipe.** Each records what it was made from
+(`scripts/pinned.ts`) - the vcpkg commit and every file under `native/rawshim/vcpkg/` for the
+codecs, the asset name for the compiler, the file hashes for the driver - and reuses what is there
+only when that still matches, so bumping a version or adding a flag rebuilds rather than leaving
+the old tree where the build will find it. That is not hypothetical: a libavif built without
+sharpyuv compiles the stub, which answers `NOT_IMPLEMENTED` to every 4:2:0 encode, which is every
+grid tile in a library. `get:codecs` refuses that tree by name as well.
 
-**None of the four trees is in the checkout.** Each lives under `~/.cache/bowerbird/<name>/`, in a
+**None of the three trees is in the checkout.** Each lives under `~/.cache/bowerbird/<name>/`, in a
 directory named for its recipe, and `native/rawshim/.<name>` is a symlink into it - so the
-worktrees on a machine share one build of libavif, and two of them on different pins coexist
+worktrees on a machine share one build of the codecs, and two of them on different pins coexist
 instead of taking turns deleting each other's. A worktree still runs the getter, which is then a
-symlink rather than a compile. `XDG_CACHE_HOME` moves the cache; the `BOWERBIRD_*` variables above
-still point a build at a tree of its own.
+symlink rather than a compile. `XDG_CACHE_HOME` moves the cache; `BOWERBIRD_SLANGC` still points a
+build at a compiler of its own.
 
 Two things about the emitted WGSL a reader will meet:
 

@@ -307,8 +307,7 @@ fn rotate_samples(samples: Vec<u16>, width: usize, height: usize, angle: u8) -> 
 ///
 /// **libavif reads it, which took the pinned build.** The API arrived in 1.1 behind a compile flag
 /// and settled in 1.2; Ubuntu's 1.0.4 and Debian's 1.1.1 have no gain map symbols at all, so
-/// `scripts/get-libavif.ts` builds the version this needs against the same system libaom the
-/// encoder already used - the container moves and what a rendition *is* does not.
+/// `scripts/get-codecs.ts` builds the version this needs.
 ///
 /// The terms come back in ISO 21496-1's own shape, which is the shape `linearise` applies, so
 /// nothing here re-derives them. None where the file carries no map, which is most AVIFs.
@@ -418,7 +417,7 @@ pub(crate) fn encode_still_rotated(
         return Err(format!("frame is {} samples, expected {}", pq.len(), width * height * 3));
     }
     encode_avif(pq, 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH, options.format,
-        &options.cicp, (options.quantizer, options.quantizer), options.speed, rotate)
+        &options.cicp, options.quantizer, options.speed, rotate)
 }
 
 /// `encode_still` to a file, for the renditions.
@@ -472,7 +471,7 @@ pub(crate) fn encode_rgb8_rotated(
         true => AVIF_PIXEL_FORMAT_YUV444,
         false => AVIF_PIXEL_FORMAT_YUV420,
     };
-    encode_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &cicp, (quantizer, quantizer), speed, rotate)
+    encode_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &cicp, quantizer, speed, rotate)
 }
 
 /// `encode_rgb8` to a file, for the renditions.
@@ -626,12 +625,7 @@ fn encode_avif<T: Clone>(
     depth: u32,
     format: raw::avifPixelFormat,
     cicp: &Cicp,
-    // Both ends of libavif's quantizer pair, and a pair rather than one number because
-    // it is what the encoder is actually given: libavif quantises on the *midpoint* of
-    // the two, so a caller that names only one end has already decided something it
-    // probably did not mean to. Production passes the same value twice; the test that
-    // pins the midpoint rule is the one caller that does not.
-    quantizers: (i32, i32),
+    quantizer: i32,
     speed: i32,
     rotate: u16,
 ) -> Result<Vec<u8>, String> {
@@ -663,15 +657,12 @@ fn encode_avif<T: Clone>(
         let encoder = Encoder::new()?;
         (*encoder.0).maxThreads = max_threads();
         (*encoder.0).speed = speed;
-        // Both ends, not `--min 0 --max N`. libavif takes the **midpoint** of
-        // the pair, so a floor of 0 quietly halved every quantizer this app
-        // asked for - and the video, whose `-crf` libaom reads literally, was
-        // encoded at twice the still's. Measured on a 24MP frame at 3840: the
-        // still scored SSIM 0.9802 against a near-lossless reference where its
-        // twin scored 0.9529, which is the blocking and chroma loss that made
-        // this findable at all.
-        (*encoder.0).minQuantizer = quantizers.0;
-        (*encoder.0).maxQuantizer = quantizers.1;
+        // Both ends, not `--min 0 --max N`. libavif derives the encode's quality from the
+        // **midpoint** of the pair, so a floor of 0 quietly halved every quantizer this app
+        // asked for (DESIGN §10.7); and libaom takes the pair as the bounds of every block's
+        // own quantizer, so a range is a different encode from its midpoint besides.
+        (*encoder.0).minQuantizer = quantizer;
+        (*encoder.0).maxQuantizer = quantizer;
         // libaom parallelises across tiles, so without them the threads idle.
         (*encoder.0).autoTiling = 1;
 
@@ -882,18 +873,12 @@ mod tests {
         assert!(decode(&[0u8; 64]).is_err());
     }
 
-    /// libavif quantises on the **midpoint** of the quantizer pair, which is the claim
-    /// the whole rescale rests on (§10.7): `min 0 / max 2N` and `min N / max N` have to
-    /// be the same encode, or halving every default and migrating every tuned value
-    /// silently moved the quality of every rendition this app writes.
-    ///
-    /// It was established by running `avifenc` at both settings and comparing file sizes.
-    /// That is a fact about the linked library's version, not about this code - libavif
-    /// only derives `quality` from the pair when `quality` is left at its default, and a
-    /// build against 0.x would send min and max to the encoder directly and break the
-    /// equivalence with nothing to say so. So it is asserted where it can fail loudly.
+    /// The quantizer a caller names is the one the encoder works at: each step down spends more
+    /// bytes. A quantizer lost on the way to libaom - clamped, ignored, or read as the midpoint
+    /// of a range that starts at 0, which is how this app once encoded everything at half its
+    /// setting (§10.7) - comes out as two sizes out of order or the same.
     #[test]
-    fn the_quantizer_pair_is_read_as_its_midpoint() {
+    fn a_lower_quantizer_spends_more_bytes() {
         // Something with detail to spend bits on: a flat frame encodes to the same few
         // bytes at any quantizer and would pass this without meaning anything.
         let (width, height) = (64usize, 64usize);
@@ -907,7 +892,7 @@ mod tests {
             }
         }
 
-        let encode = |min: i32, max: i32| {
+        let bytes = |quantizer: i32| {
             encode_avif(
                 std::borrow::Cow::Borrowed(&frame),
                 16,
@@ -917,20 +902,18 @@ mod tests {
                 AVIF_DEPTH,
                 AVIF_PIXEL_FORMAT_YUV444,
                 &Cicp { primaries: 9, transfer: 16, matrix: 9 },
-                (min, max),
+                quantizer,
                 10,
                 0,
             )
             .expect("the encode")
+            .len()
         };
 
-        let pair = encode(0, 26);
-        let midpoint = encode(13, 13);
-        let tighter = encode(6, 6);
-
-        assert_eq!(pair, midpoint, "min 0 / max 26 is not the same encode as min 13 / max 13");
-        // And that the knob does something at all, so the equality above cannot be two
-        // encodes that ignored their quantizers.
-        assert_ne!(midpoint, tighter, "the quantizer changed nothing");
+        let sizes = [26, 13, 6].map(|quantizer| (quantizer, bytes(quantizer)));
+        assert!(
+            sizes.windows(2).all(|pair| pair[0].1 < pair[1].1),
+            "bytes by quantizer should rise as it falls: {sizes:?}"
+        );
     }
 }

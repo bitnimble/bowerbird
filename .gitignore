@@ -188,10 +188,8 @@ native/rawshim/pkg/
 # slash: these are files here, and a directory pattern would not match them.
 # `bun run get:slangc`, a toolchain rather than a source.
 native/rawshim/.slangc
-# `bun run get:libavif`.
-native/rawshim/.libavif
-# `bun run get:libjxl`.
-native/rawshim/.libjxl
+# `bun run get:codecs`.
+native/rawshim/.codecs
 # `bun run get:swiftshader`, wanted only on a machine with no GPU.
 native/rawshim/.swiftshader
 # PMRID's published weights, unpacked by `bun run get:pmrid` for the prototype that reads them.

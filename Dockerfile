@@ -1,6 +1,6 @@
 # Bowerbird backend. Every pixel operation goes through native/rawshim, which links
-# libavif and libjxl, so the image ships their codecs as system libraries. The RAW
-# decoder is rawler and the lens database is `lensdb`; neither needs anything installed.
+# libavif, libjxl and every codec under them statically. The RAW decoder is rawler
+# and the lens database is `lensdb`; neither needs anything installed.
 #
 # Debian rather than Alpine, which would save ~50MB of base. The original reason no
 # longer holds - it was that Alpine's `vips` is built without libheif and so cannot
@@ -62,13 +62,13 @@ RUN printf '%s\n' \
 #
 # The driver alone is not enough: the host's render node has to reach the container
 # too, which is `devices:` and `group_add:` in the compose files.
-# libaom3, libdav1d7 and libsharpyuv0 are named rather than left to arrive under libavif16, which
-# is here for the `dev` stage's command-line tools: the binary links the pinned libavif statically
-# and those three dynamically, so they are this image's dependency now and not that package's.
-# libhwy1, libbrotli1 and liblcms2-2 are the same arrangement under the pinned libjxl.
+#
+# No codecs: `rawshim` links all of them statically (`codecs` below). libstdc++6 is named because
+# libjxl and highway are C++, and the runtime they need is the one thing of theirs that stays
+# dynamic - mesa happens to pull it in today, which is not a reason to rely on it.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libavif16 libaom3 libdav1d7 libsharpyuv0 libhwy1 libbrotli1 liblcms2-2 \
+     libstdc++6 \
      mesa-vulkan-drivers libegl1 \
   && rm /usr/share/vulkan/icd.d/lvp_icd.json \
   && rm -rf /var/lib/apt/lists/*
@@ -143,6 +143,23 @@ RUN bun install --frozen-lockfile
 COPY scripts/get-pmrid.ts ./scripts/
 RUN bun run scripts/get-pmrid.ts
 
+# libavif, libjxl and the six libraries under them, static, through the getter a development
+# machine runs: one vcpkg commit fixes every version (`get-codecs.ts`), so the aom a container
+# encodes with is the aom every other build does. A stage of its own, copied into `native`, so that
+# an edit to the crate does not rebuild aom: nothing here reads the crate.
+#
+# What vcpkg wants from apt and does not fetch itself on Linux: a compiler, git, nasm for aom and
+# dav1d's assembly, python3 for dav1d's meson, pkg-config, and zip for its binary cache. cmake and
+# ninja it downloads at the versions it pins.
+FROM base AS codecs
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+     build-essential ca-certificates curl git nasm pkg-config python3 tar unzip zip \
+  && rm -rf /var/lib/apt/lists/*
+COPY scripts/pinned.ts scripts/get-codecs.ts ./scripts/
+COPY native/rawshim/vcpkg ./native/rawshim/vcpkg
+RUN bun run scripts/get-codecs.ts
+
 # What the tests and the maintainer's scripts need and the app does not
 # (`docker-compose.dev.yml`): ffprobe, to read back what an encode produced with a
 # decoder that is not ours, and the pair `scripts/demo-assets.ts` drives to build the
@@ -195,26 +212,10 @@ RUN bun install --frozen-lockfile --production
 # The entrypoint picks between them by running each, so nothing here has to predict
 # what the host supports.
 FROM base AS native
-# The -dev half of what base installs. This stage has to inherit base rather than fork
-# beside it: the codecs the pinned libavif and libjxl link dynamically are only right against
-# the library the headers describe, and inheriting is what makes them the same package at the
-# same version.
-#
-# The same set is what a development machine needs, and there is no substitute for any of
-# them: without the -dev packages the crate does not link, and without libclang-dev bindgen
-# cannot parse the headers it does have.
-#
-# libavif and libjxl are not among them: the two `get-` scripts below build the pinned ones, and
-# what they need from apt is the libraries underneath them and cmake to drive the builds.
-#
-# `pkg-config` is named because two things ask for it and neither installs it: the getters, which
-# check each library is here before building against it, and cmake's `FindPkgConfig`, which is how
-# libavif locates dav1d. Nothing in this list depends on it, so leaving it out is a build that
-# reports the first library as missing on an image that holds every one of them.
+# The codecs arrive built, from `codecs`; what the crate needs from apt is a linker and
+# libclang-dev, without which bindgen cannot parse their headers.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     libaom-dev libdav1d-dev libsharpyuv-dev cmake pkg-config \
-     libhwy-dev libbrotli-dev liblcms2-dev \
      build-essential ca-certificates curl git libclang-dev \
   && rm -rf /var/lib/apt/lists/*
 # Downloaded to a file rather than piped into sh: in a pipeline the exit status is
@@ -230,22 +231,7 @@ COPY native ./native
 # stage that produces a picture has one implementation and it is these files (§0.4).
 COPY slang ./slang
 COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
-# `pinned.ts` for the two getters below: both record the version and the flags their tree was
-# built with through it, and a stage that copies only the getter fails on
-# `Cannot find module './pinned'` the first time anything builds this image.
-COPY scripts/pinned.ts ./scripts/pinned.ts
-# libavif, for the same reason and through the same arrangement: the pinned version is stated once,
-# in the script a development machine runs. **apt's is too old to read a gain map** - trixie ships
-# 1.1.1 with the API still behind the compile flag it was removed from in 1.2 - so an AVIF's
-# highlights would depend on which machine opened it. Built against the system libaom and libdav1d
-# installed above, so what a rendition *is* does not move with this.
-COPY scripts/get-libavif.ts ./scripts/get-libavif.ts
-RUN bun run scripts/get-libavif.ts
-# libjxl, the same arrangement again. apt's is 0.7, which predates the encoder API settling in
-# 0.10, so the same export request would produce a different file here than on a machine with a
-# current one. Built against the system highway, brotli and lcms2 installed above.
-COPY scripts/get-libjxl.ts ./scripts/get-libjxl.ts
-RUN bun run scripts/get-libjxl.ts
+COPY --from=codecs /app/native/rawshim/.codecs ./native/rawshim/.codecs
 COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
 # One target dir, emptied between levels. Changing target-cpu invalidates every
 # artefact, so a dir per level caches nothing that three passes over one does not -

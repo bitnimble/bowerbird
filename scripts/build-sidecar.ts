@@ -12,7 +12,7 @@
 // is a shared object opened by `dlopen`, and the shell tells the server where it
 // landed (`BOWERBIRD_NATIVE_LIB`).
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { elfClosure, machNames } from './native_closure';
 import { assertReferenceFrame, REFERENCE_FRAME } from '../src/services/processing/renditions/reference_frame';
@@ -135,20 +135,20 @@ function shipTheAddon(triple: string): void {
 /**
  * Every shared library `rawshim` needs, carried by the app rather than found (DESIGN §23.7.1).
  *
- * **Windows has none**, which is the point of building it with MSVC against vcpkg's static
- * triplet: the six codecs are archives linked into `rawshim.dll`, so the only thing it asks the
- * machine for is the C runtime the shell already asks for.
+ * The codecs are static everywhere (`get-codecs.ts`), so on Windows and macOS there is nothing to
+ * carry: the C and C++ runtimes are the OS's own. Linux's are not - a distribution's libstdc++ is
+ * whatever that distribution shipped - so they travel with the app.
  */
 function shipTheClosure(triple: string): void {
   if (triple.includes('windows')) return;
-  // Each arm drives the target's own loader tools, which only the target has: a macOS closure
-  // assembled from Linux would reach for `otool` and fail as a missing command rather than as
-  // the cross build it is.
+  // Each arm drives the target's own loader tools, which only the target has: a macOS check run
+  // from Linux would reach for `otool` and fail as a missing command rather than as the cross
+  // build it is.
   const platform = triple.includes('apple') ? 'darwin' : 'linux';
   if (platform !== process.platform) {
-    throw new Error(`the libraries ${triple} needs can only be gathered on ${triple}: assemble that app there`);
+    throw new Error(`the libraries ${triple} needs can only be read on ${triple}: assemble that app there`);
   }
-  if (triple.includes('apple')) return underLoaderPath();
+  if (triple.includes('apple')) return askNothingOfMacos();
   underOrigin();
 }
 
@@ -164,8 +164,8 @@ function underOrigin(): void {
   for (const at of relocated) {
     // `DT_RPATH` and not the `DT_RUNPATH` patchelf writes by default: the loader consults a
     // runpath *after* `LD_LIBRARY_PATH`, so an app launched from a shell that names an older
-    // libstdc++ or aom - conda, Steam, a `~/.local/lib` - would get that one instead of the
-    // copy beside it, which is the failure this carrying exists to prevent.
+    // libstdc++ - conda, Steam, a `~/.local/lib` - would get that one instead of the copy beside
+    // it, which is the failure this carrying exists to prevent.
     run('patchelf', ['--force-rpath', '--set-rpath', '$ORIGIN', at]);
   }
   for (const at of relocated) refuseStrangers(at, elfClosure(walk('ldd', at)));
@@ -173,111 +173,21 @@ function underOrigin(): void {
 }
 
 /**
- * macOS, where a Mach-O names each dependency by the path it was linked at.
- *
- * Re-signed after the last edit, because editing a load command invalidates the signature and
- * Apple silicon will not map a library whose signature does not hold.
+ * macOS, where `rawshim` should ask for nothing but Apple's own libraries, and is refused if it
+ * does: a Homebrew library named here links on the build machine and fails to load on a reader's.
  */
-function underLoaderPath(): void {
-  // Every name written anywhere in the closure, to the file it resolves to. **Keyed by the name
-  // rather than by the file, because one library is regularly asked for under several.** brotli's
-  // common half is `/opt/homebrew/...` to `rawshim`, which linked against it by path, and
-  // `@rpath/libbrotlicommon.1.dylib` to brotli's own siblings - and each of those strings is one
-  // `install_name_tool -change` has to be given.
-  const carried = new Map<string, string>();
-  const pending = [shippedLibrary()];
-  while (pending.length > 0) {
-    const at = pending.pop()!;
-    for (const dependency of machNames(walk('otool', at, '-L'), basename(at))) {
-      if (carried.has(dependency)) continue;
-      const from = locate(dependency, at);
-      // One directory, so a filename is the whole name: two *different* libraries sharing one
-      // would overwrite each other and both be rewritten to the survivor, which is a missing
-      // symbol at first use rather than anything the checks below could see.
-      const clash = [...carried.values()].find((it) => basename(it) === basename(from) && it !== from);
-      if (clash != null) throw new Error(`${from} and ${clash} share a filename`);
-      // Carried and walked once per file, however many names reach it.
-      const seen = [...carried.values()].includes(from);
-      carried.set(dependency, from);
-      if (seen) continue;
-      carry(from, NATIVE);
-      pending.push(from);
-    }
+function askNothingOfMacos(): void {
+  const library = shippedLibrary();
+  const foreign = machNames(walk('otool', library, '-L'), basename(library));
+  if (foreign.length > 0) {
+    throw new Error(`${library} needs ${foreign.join(', ')}, which no reader's Mac has: link it statically`);
   }
-  const shipped = [...new Set([...carried.values()].map((file) => join(NATIVE, basename(file))))];
-  for (const at of shipped) run('install_name_tool', ['-id', `@loader_path/${basename(at)}`, at]);
-  const relocated = [shippedLibrary(), ...shipped];
-  for (const at of relocated) {
-    for (const [was, file] of carried) {
-      run('install_name_tool', ['-change', was, `@loader_path/${basename(file)}`, at]);
-    }
-    run('codesign', ['--force', '--sign', '-', at]);
-  }
-  for (const at of relocated) refuseStrangers(at, machNames(walk('otool', at, '-L'), basename(at)));
-  console.log(`closure: ${NATIVE} (${shipped.length} libraries, @loader_path)`);
+  console.log(`closure: ${library} needs nothing but macOS`);
 }
 
-/**
- * The file a Mach-O dependency names, asked of `pkg-config` rather than worked out.
- *
- * **A Mach-O names what to load, not where it is**, and half of what this walk meets is written
- * `@rpath/libbrotlicommon.1.dylib` - a name the loader resolves against a search path that is
- * itself relative to whichever file is asking. Following that by hand means reading `LC_RPATH`
- * out of every library, expanding `@loader_path` against the right one of two copies of the file,
- * and getting the same answer the loader would. Every part of that is a chance to be subtly wrong,
- * and there is no `ldd` here to check it against.
- *
- * So it is not followed. The six libraries under libavif and libjxl are packages, `pkg-config`
- * says where each one put its files, and `build.rs` already told the linker the same thing - so
- * the directory the loader bound against is the directory pkg-config names, by construction.
- *
- * Refused by name rather than skipped: an unresolved dependency that reached the end would be a
- * library still asking the reader's machine for something, which is what carrying a closure is
- * for.
- */
-function locate(named: string, from: string): string {
-  // Resolved, because Homebrew's prefix is a symlink into its Cellar and the two reach this
-  // walk by different routes: a library linked by path names the Cellar, and the directory
-  // pkg-config reports is the prefix. Left as written, one file arrives under two names and
-  // the clash check below reads them as two libraries.
-  if (named.startsWith('/')) return realpathSync(named);
-  const file = basename(named);
-  const found = codecDirectories()
-    .map((at) => join(at, file))
-    .find(existsSync);
-  if (found != null) return realpathSync(found);
-  throw new Error(`${from} wants ${named} and no directory pkg-config names holds ${file}`);
-}
-
-/**
- * Where the packages under libavif and libjxl are installed, each asked for once.
- *
- * The same six `build.rs` names to the linker. A module `pkg-config` has never heard of is not an
- * error here: it is a library that was linked some other way, and `locate` refuses by name if
- * nothing holds the file.
- */
-function codecDirectories(): readonly string[] {
-  if (CODEC_DIRECTORIES != null) return CODEC_DIRECTORIES;
-  const modules = ['aom', 'dav1d', 'libsharpyuv', 'libhwy', 'libbrotlienc', 'libbrotlidec', 'libbrotlicommon', 'lcms2'];
-  const directories = modules.flatMap((module) => {
-    const asked = spawnSync('pkg-config', ['--variable=libdir', module], { encoding: 'utf8' });
-    return asked.status === 0 ? [asked.stdout.trim()] : [];
-  });
-  CODEC_DIRECTORIES = [...new Set(directories.filter((at) => at !== ''))];
-  return CODEC_DIRECTORIES;
-}
-
-let CODEC_DIRECTORIES: readonly string[] | null = null;
-
-/**
- * Nothing the app opens may come from outside the tree it carries.
- *
- * The outcome rather than each way of getting it wrong: a dependency named through an `@rpath`
- * the library already had is one this cannot carry and Homebrew is free to leave. `@loader_path`
- * is what this script wrote, and so the one relative name that passes.
- */
+/** Nothing the app opens may come from outside the tree it carries. */
 function refuseStrangers(library: string, named: string[]): void {
-  const strangers = named.filter((path) => !path.startsWith(`${NATIVE}/`) && !path.startsWith('@loader_path/'));
+  const strangers = named.filter((path) => !path.startsWith(`${NATIVE}/`));
   if (strangers.length > 0) {
     throw new Error(`${library} still reaches outside what this app carries: ${strangers.join(', ')}`);
   }
