@@ -250,13 +250,20 @@ COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
 # One target dir, emptied between levels. Changing target-cpu invalidates every
 # artefact, so a dir per level caches nothing that three passes over one does not -
 # it only holds all three at once, 2.5GB apiece, which a GitHub runner cannot fit.
+#
+# The target is named so that `RUSTFLAGS` reaches the library and not the build scripts:
+# without it cargo compiles those for the same target-cpu and then *runs* them, and a builder
+# whose own CPU is older than the level being asked for dies on `SIGILL` partway up the
+# dependency tree. Which builder a job lands on is nobody's choice, so this is a coin toss
+# rather than a machine to blame.
 RUN set -eu; \
   for level in x86-64 x86-64-v3 x86-64-v4; do \
     RUSTFLAGS="-C target-cpu=$level" cargo build --release \
       --manifest-path native/rawshim/Cargo.toml \
+      --target x86_64-unknown-linux-gnu \
       --target-dir /build/target; \
     mkdir -p "/build/$level"; \
-    mv /build/target/release/librawshim.so "/build/$level/librawshim.so"; \
+    mv /build/target/x86_64-unknown-linux-gnu/release/librawshim.so "/build/$level/librawshim.so"; \
     rm -rf /build/target; \
   done
 
