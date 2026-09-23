@@ -1,7 +1,7 @@
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { newId } from '../../schemas/id';
-import type { EditConflict, EditDoc, EditState } from '../../schemas/photo_edits';
+import { diffEdits, type EditCheckpoint, type EditConflict, type EditDoc, type EditState } from '../../schemas/photo_edits';
 import type { PhotoListingRepository } from '../photos/listing/photo_listing_repository';
 import { listConflicts, resolveConflict } from './conflicts';
 import type { PhotoEditsRepository } from './photo_edits_repository';
@@ -46,11 +46,23 @@ export class PhotoEditsService {
      * one that chose would go on offering a decision that has already been made.
      */
     private readonly changed: (libraryId: string) => void = () => {},
+    /** Vouch for the copies built from this photo's document as it stood at `stamp` (`finish`). */
+    private readonly vouch: (photoId: string, stamp: string | null) => void = () => {},
   ) {}
 
   get(photoId: string): EditState {
     this.require(photoId);
     return this.edits.get(photoId);
+  }
+
+  checkpoint(photoId: string): EditCheckpoint {
+    this.require(photoId);
+    return this.edits.checkpoint(photoId);
+  }
+
+  restore(photoId: string, rev: number, checkpoint: Pick<EditCheckpoint, 'doc' | 'cursor' | 'history'>, session: string): EditState {
+    this.require(photoId);
+    return this.edits.restore(photoId, rev, checkpoint, session);
   }
 
   save(photoId: string, doc: EditDoc, rev: number, session?: string): EditState {
@@ -75,9 +87,15 @@ export class PhotoEditsService {
    * being newer than the render, so a reader who opened the editor and changed
    * nothing, or who closes it twice, queues nothing - and a photo already rebuilt
    * since its last edit stops matching on its own.
+   *
+   * `opened` is what the editor opened on. Where the document has come back to it, the
+   * copies built from it are vouched for first, so the queue finds nothing to rebuild.
    */
-  finish(photoId: string): void {
+  finish(photoId: string, opened?: { doc: EditDoc; stamp: string | null }): void {
     this.require(photoId);
+    if (opened != null && diffEdits(opened.doc, this.edits.get(photoId).doc) == null) {
+      this.vouch(photoId, opened.stamp);
+    }
     this.rebuild([photoId]);
   }
 

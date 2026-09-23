@@ -302,6 +302,15 @@ export const EditStateSchema = z.object({
 });
 export type EditState = z.infer<typeof EditStateSchema>;
 
+/** The state with the undo stack behind it, which is what `restore` puts back. */
+export const EditCheckpointSchema = EditStateSchema.extend({
+  cursor: z.number().int().min(0),
+  history: EditHistorySchema,
+  /** The document's replication stamp, null where it has never been written. */
+  stamp: z.string().nullable(),
+});
+export type EditCheckpoint = z.infer<typeof EditCheckpointSchema>;
+
 /**
  * An editor session's id (docs/replication.md §5.3).
  *
@@ -352,6 +361,24 @@ export const EditConflictsQuerySchema = z.object({ library_id: z.string().option
 
 export const StepEditsRequestSchema = z.object({ rev: z.number().int().min(0) });
 export type StepEditsRequest = z.infer<typeof StepEditsRequestSchema>;
+
+export const RestoreEditsRequestSchema = z
+  .object({
+    rev: z.number().int().min(0),
+    session: EditSessionIdSchema,
+    doc: EditDocSchema,
+    cursor: z.number().int().min(0),
+    history: EditHistorySchema,
+  })
+  .refine((request) => request.cursor <= request.history.length, 'the cursor must be inside the history');
+export type RestoreEditsRequest = z.infer<typeof RestoreEditsRequestSchema>;
+
+export const FinishEditsRequestSchema = z.object({
+  // What the editor opened on. A document that has come back to it is the picture already on disk,
+  // so its copies are vouched for rather than rebuilt.
+  opened: z.object({ doc: EditDocSchema, stamp: z.string().nullable() }).optional(),
+});
+export type FinishEditsRequest = z.infer<typeof FinishEditsRequestSchema>;
 
 /**
  * Whether one field of a document still holds what it held.

@@ -51,6 +51,8 @@ export const PhotoDetailStrings = {
   finishPerspective: () => 'Finish perspective',
   /** The terminal affirmative: finish the grade, finish the session, close the dialog. */
   done: () => 'Done',
+  /** Leave the editor with every edit from this session dropped. */
+  cancel: () => 'Cancel',
   /** Reverse the last thing done - an edit, a round, a bin, a folder rule. */
   undo: () => 'Undo',
   redo: () => 'Redo',

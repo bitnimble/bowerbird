@@ -1,9 +1,13 @@
 import {
+  type EditCheckpoint,
+  EditCheckpointSchema,
   type EditConflict,
   EditConflictsSchema,
   type EditDoc,
   type EditState,
   EditStateSchema,
+  FinishEditsRequestSchema,
+  RestoreEditsRequestSchema,
   SaveEditsRequestSchema,
   StepEditsRequestSchema,
 } from '../../../src/schemas/photo_edits';
@@ -41,11 +45,35 @@ export const photoEditsApi = {
       route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.redo()),
       StepEditsRequestSchema.parse({ rev }),
     ),
+  checkpoint: (photoId: string): Promise<EditCheckpoint> =>
+    request(
+      EditCheckpointSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.checkpoint()),
+    ),
+  restore: (photoId: string, rev: number, checkpoint: EditCheckpoint, session: string): Promise<EditState> =>
+    request(
+      EditStateSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.restore()),
+      RestoreEditsRequestSchema.parse({
+        rev,
+        session,
+        doc: checkpoint.doc,
+        cursor: checkpoint.cursor,
+        history: checkpoint.history,
+      }),
+    ),
   // The editor has closed: build the picture the reader ended up with. None of the
   // writes above rebuild anything, because a slider release says nothing about whether
   // they are finished - so this is the one moment worth spending a render on.
-  finish: (photoId: string): Promise<void> =>
-    request(NothingSchema, 'POST', route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.done())),
+  finish: (photoId: string, opened?: Pick<EditCheckpoint, 'doc' | 'stamp'>): Promise<void> =>
+    request(
+      NothingSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.done()),
+      FinishEditsRequestSchema.parse({ opened: opened == null ? undefined : { doc: opened.doc, stamp: opened.stamp } }),
+    ),
 
   // The divergences waiting on a person (§5.3), and the choice that ends one.
   listConflicts: (libraryId?: string, activity: RequestActivity = 'interactive'): Promise<EditConflict[]> =>

@@ -5,7 +5,7 @@ import { renditionVariant, type RenditionVariant } from '../../processing/rendit
 import { FULL_VARIANT_OF_LIBRARY, RenditionsRepository, type Made } from '../../processing/renditions/renditions_repository';
 import type { StoredRecipe } from '../../../schemas/recipes';
 import { inChunks } from '../photo_batches';
-import { BUILT_FROM_STAMP, INPUTS_EDITED } from '../photo_edit_sql';
+import { BUILT_FROM_STAMP, INPUTS_EDITED, type EditStamp } from '../photo_edit_sql';
 import { withRecipe } from '../paths/photo_paths_repository';
 import { hiddenIs, orderByClause } from '../listing/photo_query';
 
@@ -191,6 +191,23 @@ export class PhotoProcessingRepository {
         edited_from: row.edited_from,
         failed: row.processing_error != null,
       };
+    }
+  /**
+     * `photoId`'s document is back to the one it held at `stamp`: every copy built from exactly
+     * that state - its own, and each composite it is a frame of - is vouched for at the stamp
+     * standing now, rather than rebuilt into the same picture.
+     */
+    vouchCameHome(photoId: string, stamp: string | null): void {
+      const asOpened: EditStamp = (alias) => `CASE WHEN ${alias}.photo_id = ?1 THEN ?2 ELSE ${alias}.stamp END`;
+      this.db
+        .query(
+          `UPDATE renditions
+              SET built_from = (SELECT ${BUILT_FROM_STAMP('p.')} FROM photos p WHERE p.id = renditions.photo_id)
+            WHERE built_at IS NOT NULL
+              AND (photo_id = ?1 OR photo_id IN (SELECT c.composed_id FROM photo_sources c WHERE c.photo_id = ?1))
+              AND built_from IS (SELECT ${BUILT_FROM_STAMP('p.', asOpened)} FROM photos p WHERE p.id = renditions.photo_id)`,
+        )
+        .run(photoId, stamp);
     }
   /** The stamp a copy of this row records it was built from, read before the build. */
     builtFromOf(photoId: string): string | null {

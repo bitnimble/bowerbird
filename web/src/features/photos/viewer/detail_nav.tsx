@@ -380,6 +380,16 @@ export const DetailNav = observer(function DetailNav({
           mid-edit is not something to leave one press away. */}
       {editing ? (
         <>
+          <Button
+            disabled={edit == null}
+            onClick={() =>
+              void edit?.presenter.cancel().then((restored) => {
+                if (restored) onDone();
+              })
+            }
+          >
+            {PhotoDetailStrings.cancel()}
+          </Button>
           {/* Inside a geometry tool this leaves the *tool*, not the editor. Same corner and
               same weight, because it is the same gesture as far as the reader is concerned -
               finish what is open - and one that closed the whole grade from under a

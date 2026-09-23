@@ -1,9 +1,12 @@
 import { Hono } from 'hono';
 import { AppError } from '../../errors';
 import {
+  EditCheckpointSchema,
   EditConflictsQuerySchema,
   EditConflictsSchema,
   EditStateSchema,
+  FinishEditsRequestSchema,
+  RestoreEditsRequestSchema,
   SaveEditsRequestSchema,
   StepEditsRequestSchema,
 } from '../../schemas/photo_edits';
@@ -49,15 +52,26 @@ export class PhotoEditsApi {
       return c.json(respond(EditStateSchema, this.service.redo(this.id(c.req.param('id')), rev)));
     });
 
+    // What the editor reads on opening, so that a cancel can put all of it back with `restore`.
+    app.get(route(PathSegment.photos(), PathSegment.param('id'), PathSegment.edits(), PathSegment.checkpoint()), (c) =>
+      c.json(respond(EditCheckpointSchema, this.service.checkpoint(this.id(c.req.param('id'))))),
+    );
+
+    app.post(route(PathSegment.photos(), PathSegment.param('id'), PathSegment.edits(), PathSegment.restore()), async (c) => {
+      const { rev, session, ...checkpoint } = RestoreEditsRequestSchema.parse(await c.req.json());
+      return c.json(respond(EditStateSchema, this.service.restore(this.id(c.req.param('id')), rev, checkpoint, session)));
+    });
+
     // The editor has closed. Queues the rebuild none of the writes above do, because a
     // slider release says nothing about whether the reader is finished and rebuilding
     // on one spends seconds of GPU on a frame they are about to change again.
     //
-    // No body and no revision: this is not a write, it asks for the picture the stored
-    // document already describes. 204 for the same reason - there is no new state to
-    // report, and the client is navigating away as it calls this.
-    app.post(route(PathSegment.photos(), PathSegment.param('id'), PathSegment.edits(), PathSegment.done()), (c) => {
-      this.service.finish(this.id(c.req.param('id')));
+    // No revision: this is not a write, it asks for the picture the stored document
+    // already describes. 204 for the same reason - there is no new state to report, and
+    // the client is navigating away as it calls this.
+    app.post(route(PathSegment.photos(), PathSegment.param('id'), PathSegment.edits(), PathSegment.done()), async (c) => {
+      const { opened } = FinishEditsRequestSchema.parse(await c.req.json());
+      this.service.finish(this.id(c.req.param('id')), opened);
       return c.body(null, 204);
     });
 

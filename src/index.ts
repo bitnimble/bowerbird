@@ -223,6 +223,7 @@ const photoEditsService = new PhotoEditsService(
   photoListingRepo,
   (ids) => processingService.rebuildEdited(ids),
   replicationChanged,
+  (photoId, stamp) => photoProcessingRepo.vouchCameHome(photoId, stamp),
 );
 const shootsService = new ShootsService(shootsRepo, photoPathsRepo, photoStateRepo, librariesRepo, folderRulesRepo);
 const scanConcurrency = (): number => settingsRepo.get().scan_concurrency;

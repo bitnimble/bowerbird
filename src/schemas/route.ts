@@ -24,6 +24,7 @@ export const PathSegment = {
   cancel: segment('cancel'),
   changes: segment('changes'),
   check: segment('check'),
+  checkpoint: segment('checkpoint'),
   commit: segment('commit'),
   composites: segment('composites'),
   conflicts: segment('conflicts'),

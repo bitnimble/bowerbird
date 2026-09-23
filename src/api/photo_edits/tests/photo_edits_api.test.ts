@@ -15,6 +15,7 @@ function buildApp(over: Partial<PhotoEditsService> = {}) {
     save: jest.fn(() => state),
     undo: jest.fn(() => state),
     redo: jest.fn(() => state),
+    restore: jest.fn(() => state),
     finish: jest.fn(),
     ...over,
   } as unknown as PhotoEditsService;
@@ -44,6 +45,19 @@ describe('PhotoEditsApi', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(state);
     expect(service.get).toHaveBeenCalledWith('p1');
+  });
+
+  it('answers a checkpoint with the undo history and the stamp behind the document', async () => {
+    const checkpoint = { ...state, cursor: 1, history: [{ from: { exposure: 0 }, to: { exposure: 1 } }], stamp: 'stamp' };
+    const { app, service } = buildApp({ checkpoint: jest.fn(() => checkpoint) });
+
+    const response = await app.request(
+      route(PathSegment.api(), PathSegment.photos(), 'p1', PathSegment.edits(), PathSegment.checkpoint()),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(checkpoint);
+    expect(service.checkpoint).toHaveBeenCalledWith('p1');
   });
 
   it('passes the whole document and its revision through to the service', async () => {
@@ -98,15 +112,33 @@ describe('PhotoEditsApi', () => {
     expect(service.redo).toHaveBeenCalledWith('p1', 2);
   });
 
-  it('takes the editor closing as the moment to build, with no body and no revision', async () => {
+  it('restores a checkpoint, and refuses one whose cursor is past its history', async () => {
     const { app, service } = buildApp();
+    const path = route(PathSegment.api(), PathSegment.photos(), 'p1', PathSegment.edits(), PathSegment.restore());
+    const history = [{ from: { exposure: 0 }, to: { exposure: 1 } }];
 
-    const response = await post(app, route(PathSegment.api(), PathSegment.photos(), 'p1', PathSegment.edits(), PathSegment.done()), {});
+    const past = await post(app, path, { rev: 2, session: 'session1', doc: neutralEdits(), cursor: 2, history });
+    expect(past.status).toBe(400);
+    expect(service.restore).not.toHaveBeenCalled();
+
+    const response = await post(app, path, { rev: 2, session: 'session1', doc: neutralEdits(), cursor: 1, history });
+    expect(response.status).toBe(200);
+    expect(service.restore).toHaveBeenCalledWith('p1', 2, { doc: neutralEdits(), cursor: 1, history }, 'session1');
+  });
+
+  it('takes the editor closing as the moment to build, with no revision', async () => {
+    const { app, service } = buildApp();
+    const path = route(PathSegment.api(), PathSegment.photos(), 'p1', PathSegment.edits(), PathSegment.done());
+
+    const response = await post(app, path, {});
 
     // 204: this is not a write and there is no new state to report - the client is
     // navigating away as it calls it.
     expect(response.status).toBe(204);
-    expect(service.finish).toHaveBeenCalledWith('p1');
+    expect(service.finish).toHaveBeenCalledWith('p1', undefined);
+
+    await post(app, path, { opened: { doc: neutralEdits(), stamp: 'stamp' } });
+    expect(service.finish).toHaveBeenLastCalledWith('p1', { doc: neutralEdits(), stamp: 'stamp' });
   });
 
   it('reports a revision that has moved on as a conflict rather than a failure', async () => {

@@ -148,6 +148,47 @@ describe('PhotoEditsRepository undo and redo', () => {
   });
 });
 
+describe('PhotoEditsRepository.checkpoint', () => {
+  it('answers a photo nobody has edited with an empty history and no stamp', () => {
+    expect(repo.checkpoint(PHOTO)).toEqual({
+      doc: neutralEdits(),
+      rev: 0,
+      canUndo: false,
+      canRedo: false,
+      cursor: 0,
+      history: [],
+      stamp: null,
+    });
+  });
+});
+
+describe('PhotoEditsRepository.restore', () => {
+  it('puts back the document and the undo stack a checkpoint read, redo tail included', () => {
+    save({ exposure: 1.0 });
+    save({ contrast: 40 });
+    const back = repo.undo(PHOTO, 2);
+    const opened = repo.checkpoint(PHOTO);
+
+    // A session that undid below where it opened and then branched, which overwrote the step the
+    // checkpoint's redo pointed at.
+    const below = repo.undo(PHOTO, back.rev);
+    const branched = repo.save(PHOTO, { ...below.doc, shadows: -25 }, below.rev, 'session');
+    const restored = repo.restore(PHOTO, branched.rev, opened, 'session');
+
+    expect(restored.doc).toEqual(opened.doc);
+    expect(restored.rev).toBe(branched.rev + 1);
+    expect(repo.checkpoint(PHOTO)).toEqual({ ...opened, rev: restored.rev, stamp: expect.any(String) });
+    expect(repo.redo(PHOTO, restored.rev).doc.contrast).toBe(40);
+  });
+
+  it('refuses a restore built on a stale revision', () => {
+    const opened = repo.checkpoint(PHOTO);
+    save({ exposure: 1.0 });
+
+    expect(() => repo.restore(PHOTO, 0, opened, 'session')).toThrow(/revision 1, not 0/);
+  });
+});
+
 describe('PhotoEditsRepository replication', () => {
   function stored(): string | null {
     const row = db.query('SELECT stamp FROM photo_edits WHERE photo_id = ?').get(PHOTO) as {
