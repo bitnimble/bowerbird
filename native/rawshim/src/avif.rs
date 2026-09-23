@@ -66,8 +66,10 @@ const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = 0;
 /// measured on a red hood, R's 99th-percentile Laplacian went 2174 codes to 8630 through a
 /// *lossless* 4:2:0 encode, and was unchanged through 4:4:4. The solver picks the block's chroma
 /// so that the reconstruction lands closest to the source given each pixel's own Y', which is the
-/// leak term, and it knows the transfer it is working under.
+/// leak term.
 const AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV: raw::avifChromaDownsampling = 4;
+/// The curve that solver works under, sRGB's for every file, a PQ still's included.
+const SHARP_YUV_TRANSFER: u16 = 13;
 const AVIF_RESULT_OK: raw::avifResult = 0;
 const AVIF_PLANES_YUV: raw::avifPlanesFlags = 1;
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
@@ -598,6 +600,9 @@ unsafe fn one_band(
         source.pixels = pixels.add(top * row_bytes) as *mut u8;
         source.rowBytes = row_bytes as u32;
         source.chromaDownsampling = AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV;
+        // The view only, so the file keeps its own. Told PQ, libsharpyuv solves in linear light:
+        // 5x the time, and several times the p99.9 speckle it is here to remove (`aom_quality`).
+        view.transferCharacteristics = SHARP_YUV_TRANSFER;
         match raw::avifImageRGBToYUV(&mut view, &source) {
             AVIF_RESULT_OK => Ok(()),
             status => Err(format!("libavif could not convert to YUV: {}", message(status))),
@@ -665,6 +670,12 @@ fn encode_avif<T: Clone>(
         (*encoder.0).maxQuantizer = quantizer;
         // libaom parallelises across tiles, so without them the threads idle.
         (*encoder.0).autoTiling = 1;
+        // libavif moves stills to aom's IQ tune from aom 3.13, which spends up to three quarters
+        // more bytes a quantizer; every quality anchor was measured under SSIM.
+        let status = raw::avifEncoderSetCodecSpecificOption(encoder.0, c"tune".as_ptr(), c"ssim".as_ptr());
+        if status != AVIF_RESULT_OK {
+            return Err(format!("libavif would not set the tune: {}", message(status)));
+        }
 
         let mut output = Output::empty();
         let status = raw::avifEncoderWrite(encoder.0, image.0, &mut output.0);
@@ -865,6 +876,46 @@ mod tests {
             let encoded = encode_rgb8(std::borrow::Cow::Borrowed(&frame), width, height, 30, 10, false);
             assert!(encoded.is_ok(), "{width}x{height}: {:?}", encoded.err());
         }
+    }
+
+    /// A saturated red with white sparkle over it, the hood 4:2:0 speckled (§10.7): green swings
+    /// per pixel from the floor, and the block's chroma has to hand red none of that swing.
+    #[test]
+    fn a_subsampled_still_keeps_a_saturated_colour_clean() {
+        let (width, height) = (128usize, 128usize);
+        let mut frame = vec![0u16; width * height * 3];
+        for (i, pixel) in frame.chunks_exact_mut(3).enumerate() {
+            let sparkle = (i.wrapping_mul(2_654_435_761) >> 7) % 5 == 0;
+            pixel.copy_from_slice(&match sparkle {
+                true => [44_000, 38_000, 36_000],
+                false => [40_000, 3_000, 9_000],
+            });
+        }
+
+        let bytes = encode_still(
+            std::borrow::Cow::Borrowed(&frame),
+            width,
+            height,
+            &StillOptions {
+                cicp: Cicp { primaries: 9, transfer: 16, matrix: 9 },
+                format: AVIF_PIXEL_FORMAT_YUV420,
+                quantizer: 0,
+                speed: 10,
+            },
+        )
+        .expect("the encode");
+        let (back, _, _) = decode_at(&bytes, 16).expect("the decode");
+
+        let mut worst: Vec<u16> = frame
+            .chunks_exact(3)
+            .zip(back.chunks_exact(3))
+            .map(|(wrote, read)| (0..3).map(|c| wrote[c].abs_diff(read[c])).max().expect("3 channels"))
+            .collect();
+        let at = worst.len() * 999 / 1000;
+        let (_, speckle, _) = worst.select_nth_unstable(at);
+        let steps = f64::from(*speckle) / 65535.0 * 1023.0;
+        // Solved under sRGB's curve this reads 202; under PQ's, 388.
+        assert!(steps < 300.0, "p99.9 worst channel {steps:.1} PQ steps off");
     }
 
     #[test]

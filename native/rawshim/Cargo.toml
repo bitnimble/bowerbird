@@ -78,6 +78,10 @@ required-features = ["renditions"]
 name = "hdrq"
 required-features = ["renditions"]
 
+[[example]]
+name = "aom_quality"
+required-features = ["renditions"]
+
 # Fits the camera match and writes a PQ still, which is both halves of the server's.
 [[example]]
 name = "headroom"

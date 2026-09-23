@@ -217,6 +217,7 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .allowlist_function("avifEncoderCreate")
         .allowlist_function("avifEncoderDestroy")
         .allowlist_function("avifEncoderWrite")
+        .allowlist_function("avifEncoderSetCodecSpecificOption")
         .allowlist_function("avifRWDataFree")
         .allowlist_function("avifResultToString")
         // The decode half reads renditions back for a JPEG download, which is what libvips

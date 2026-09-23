@@ -38,9 +38,9 @@
         "code": 2.2,
         "resize": 0.6,
         "grade": 23.2,
-        "encode": 180,
+        "encode": 132.3,
         "peak": 0.2,
-        "total": 971.4
+        "total": 923.7
       },
       "IMG_5360.CR3": {
         "file": 13.4,
@@ -54,9 +54,9 @@
         "code": 2.2,
         "resize": 4.1,
         "grade": 21.6,
-        "encode": 193.9,
+        "encode": 124.9,
         "peak": 0.2,
-        "total": 911.4
+        "total": 842.4
       },
       "DSC00853.ARW": {
         "file": 168.6,
@@ -70,9 +70,9 @@
         "code": 2.2,
         "resize": 0.6,
         "grade": 22,
-        "encode": 177.9,
+        "encode": 138.1,
         "peak": 0.2,
-        "total": 1044.3
+        "total": 1004.5
       }
     },
     "AMD Ryzen 7 7800X3D 8-Core Processor (RADV RAPHAEL_MENDOCINO) (IntegratedGpu, Vulkan) via radv": {
@@ -88,9 +88,9 @@
         "code": 2.3,
         "resize": 0.7,
         "grade": 307.8,
-        "encode": 178,
+        "encode": 113.8,
         "peak": 1.1,
-        "total": 2213.9
+        "total": 2149.7
       },
       "IMG_5360.CR3": {
         "file": 13.6,
@@ -104,9 +104,9 @@
         "code": 2.2,
         "resize": 0.8,
         "grade": 329,
-        "encode": 184,
+        "encode": 124.2,
         "peak": 1,
-        "total": 2495.3
+        "total": 2435.5
       },
       "DSC00853.ARW": {
         "file": 168.9,
@@ -120,9 +120,9 @@
         "code": 2.3,
         "resize": 0.7,
         "grade": 360.6,
-        "encode": 164.6,
+        "encode": 136.8,
         "peak": 1.1,
-        "total": 3809.9
+        "total": 3782.1
       }
     }
   }
