@@ -150,8 +150,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }},wasm32-unknown-unknown
+      # `cache-on-failure`, because the default saves only from a job that passed, and a job
+      # that fails in its last minute has still compiled every dependency - which the next run
+      # then compiles again, for as many runs as it takes to get one green.
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: |
             native/rawshim
             src-tauri
@@ -183,11 +187,27 @@ jobs:
       #
       # `lcms` rather than `lcms2`: the port is named for the project, the library for its
       # soname, and asking for the latter is a "port not found" one line into the job.
+      #
+      # vcpkg builds every port from source, so the archives it made last time are restored
+      # first and handed to it as a binary cache. It checks each against the ABI hash of the
+      # port, the triplet and the compiler before using it, so the key only decides when a new
+      # entry is written: a stale one is a per-port rebuild, never a wrong library.
+      - name: vcpkg's builds, from last time
+        if: runner.os == 'Windows'
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-archives
+          key: vcpkg-${{ hashFiles('.github/workflows/release.yml') }}
+          restore-keys: vcpkg-
       - name: Windows build dependencies
         if: runner.os == 'Windows'
+        env:
+          VCPKG_BINARY_SOURCES: clear;files,${{ runner.temp }}/vcpkg-archives,readwrite
         run: |
           set -eu
           test -n "${VCPKG_INSTALLATION_ROOT:-}" || { echo "no vcpkg on this image"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/vcpkg-archives"
           "$VCPKG_INSTALLATION_ROOT/vcpkg" install --triplet x64-windows-static-md \
             aom dav1d libwebp highway brotli lcms
           installed="$VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md"
@@ -208,6 +228,12 @@ jobs:
           # image ships LLVM; naming the directory is all that is missing.
           echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
         shell: bash
+      # Saved here rather than by the post step, which only runs for a job that passed.
+      - if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-archives
+          key: vcpkg-${{ hashFiles('.github/workflows/release.yml') }}
 
       # Two installs, because `web` is its own package with its own lockfile: vite, React
       # and the plugins are only in that one, and `tauri build` runs the web build.
@@ -220,7 +246,8 @@ jobs:
       # (`scripts/pinned.ts`), so the getters' own sources are the whole of the key: a version
       # or a flag moving misses the cache and rebuilds, which is exactly what it should do.
       - name: The pinned trees, from last time
-        uses: actions/cache@v4
+        id: pinned-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
@@ -229,6 +256,12 @@ jobs:
       # development machine runs so the version is stated once (`scripts/pinned.ts`).
       - run: bun run get:all
         shell: bash
+      # Saved as soon as the trees exist, for the reason vcpkg's are above.
+      - if: steps.pinned-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bowerbird
+          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
 
       - name: Stamp the version the tag names
         if: env.TAG != ''
@@ -293,6 +326,7 @@ jobs:
           targets: aarch64-linux-android,wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: native/rawshim,src-tauri
 
       - run: sdkmanager --install "ndk;27.2.12479018"
@@ -300,11 +334,17 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: web
       - name: The pinned trees, from last time
-        uses: actions/cache@v4
+        id: pinned-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
       - run: bun run get:shell
+      - if: steps.pinned-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bowerbird
+          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
       - name: Stamp the version the tag names
         if: env.TAG != ''
         run: bun run scripts/set-version.ts "$TAG"
