@@ -29,6 +29,9 @@ export const BRACKET_GAP_SECONDS = 600;
  * imported) is no capture, and neither is one short of the count its body stated. A group key,
  * where there is one, has to match as well, which is what keeps two bursts fired in the same
  * second apart.
+ *
+ * A frame with no index - Canon's focus bracketing - is placed by when it was taken, and its run
+ * ends at the count its body stated.
  */
 export function bracketsOf(frames: readonly SequencedFrame[]): Bracket[] {
   const lanes = new Map<string, SequencedFrame[]>();
@@ -40,7 +43,9 @@ export function bracketsOf(frames: readonly SequencedFrame[]): Bracket[] {
   }
   const found: Bracket[] = [];
   for (const lane of lanes.values()) {
-    lane.sort((a, b) => a.timestamp - b.timestamp || a.sequence.index - b.sequence.index);
+    lane.sort(
+      (a, b) => a.timestamp - b.timestamp || (a.sequence.index ?? 0) - (b.sequence.index ?? 0) || a.id.localeCompare(b.id),
+    );
     let run: SequencedFrame[] = [];
     for (const frame of lane) {
       const previous = run.at(-1);
@@ -58,8 +63,9 @@ export function bracketsOf(frames: readonly SequencedFrame[]): Bracket[] {
 
 function continues(previous: SequencedFrame, next: SequencedFrame, length: number): boolean {
   const [was, is] = [previous.sequence, next.sequence];
+  const follows = was.index == null || is.index == null ? was.index == is.index : is.index === was.index + 1;
   return (
-    is.index === was.index + 1 &&
+    follows &&
     is.group === was.group &&
     is.count === was.count &&
     (was.count == null || length < was.count) &&
@@ -69,7 +75,7 @@ function continues(previous: SequencedFrame, next: SequencedFrame, length: numbe
 
 function isWhole(run: readonly SequencedFrame[]): boolean {
   const first = run[0];
-  if (first == null || run.length < 2 || first.sequence.index !== 1) return false;
+  if (first == null || run.length < 2 || (first.sequence.index != null && first.sequence.index !== 1)) return false;
   return first.sequence.count == null || run.length === first.sequence.count;
 }
 

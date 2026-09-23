@@ -257,51 +257,33 @@ pub(crate) async fn decode_shifted_tile(
         let built = reference.reduced(gpu, rcd).await?;
         return Some(reference.frame(built));
     }
-    let (width, height) = (reference.mosaic.width, reference.mosaic.height);
-    let rgb = crate::pixel_shift::plane(gpu, width, height);
-    crate::pixel_shift::scatter(gpu, &reference.mosaic, &reference.cfa, crate::pixel_shift::SHIFTS[0], &rgb)?;
-    for (source, shift) in rest.iter().zip(&crate::pixel_shift::SHIFTS[1..]) {
+    let merged = crate::pixel_shift::Merged::over(gpu, reference.mosaic.width, reference.mosaic.height);
+    merged.scatter(gpu, &reference.mosaic, &reference.cfa, 0)?;
+    for (at, source) in rest.iter().enumerate() {
         // The reference's fit, so every frame is denoised as the one it is merged into.
         let fit = reference.noise.map_or(fit, crate::galosh::Fit::Given);
         let Region::Mosaic(frame) = region_mosaic(source, view, detail, fit, halo, crate::dust::Known::Off).await? else {
             return None;
         };
-        if (frame.mosaic.width, frame.mosaic.height) != (width, height) || frame.cfa != reference.cfa {
+        if !merged.fits(&frame.mosaic) || frame.cfa != reference.cfa {
             return None;
         }
-        crate::pixel_shift::scatter(gpu, &frame.mosaic, &frame.cfa, *shift, &rgb)?;
+        merged.scatter(gpu, &frame.mosaic, &frame.cfa, at + 1)?;
     }
-
-    let (crop_left, crop_top, crop_w, crop_h) = reference.crop;
-    let orientation = orientation_code(reference.upright);
-    // The reference's photosites are what the clipping asks about, which is why its mosaic stays.
-    let (_shape, shape_group) = crate::demosaic::shape_group(gpu, rcd, &reference.cfa, &reference.mosaic, 0);
-    let placed = |dest: (usize, usize), inner: (usize, usize, usize, usize)| crate::demosaic::Placement {
-        stride: crate::px::Span::exact(width),
-        crop: crate::px::Rect::exact(inner.0, inner.1, inner.2, inner.3),
-        dest: crate::px::At::exact(dest.0, dest.1),
-        frame: crate::px::Size::exact(crop_w, crop_h),
-        orientation,
-        reduce: 1,
-    };
-    let (out_w, out_h) = placed((0, 0), (0, 0, 1, 1)).out();
-    let built = crate::resident::Resident::empty(gpu, out_w, out_h);
-    for (ty0, ty1) in spans(crop_h) {
-        for (tx0, tx1) in spans(crop_w) {
-            let at = placed((tx0, ty0), (crop_left + tx0, crop_top + ty0, tx1 - tx0, ty1 - ty0));
-            crate::demosaic::assemble_into(
-                gpu,
-                rcd,
-                &rgb,
-                &reference.cfa,
-                &at,
-                reference.colour,
-                built.buffer(),
-                &shape_group,
-            )
-            .await?;
-        }
-    }
+    // The reference's own demosaic under the merge, which is what a site the frames disagree about
+    // takes instead (`pixel_shift::Merged::settle`).
+    let noise = reference.noise.map(|fit| fit.model());
+    let built = demosaic_settled_in_tiles(
+        gpu,
+        rcd,
+        &reference.mosaic,
+        &reference.cfa,
+        reference.crop,
+        reference.colour,
+        orientation_code(reference.upright),
+        &|recording, rgb, window| merged.settle(gpu, recording, rgb, window, noise),
+    )
+    .await?;
     Some(reference.frame(built))
 }
 
@@ -1724,6 +1706,25 @@ async fn demosaic_in_tiles(
     colour: crate::demosaic::Colour,
     orientation: u32,
 ) -> Option<crate::resident::Resident> {
+    demosaic_settled_in_tiles(gpu, rcd, mosaic, cfa, crop, colour, orientation, &|_, _, _| ()).await
+}
+
+/// A tile's RCD plane, and the rectangle of the mosaic it covers as `(left, top, width, height)`.
+type Settle<'a> = dyn Fn(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer, (usize, usize, usize, usize)) + 'a;
+
+/// [`demosaic_in_tiles`], with each tile's plane handed to `settle` before it is coloured
+/// (`demosaic::demosaic_settled_into`).
+#[allow(clippy::too_many_arguments)]
+async fn demosaic_settled_in_tiles(
+    gpu: &'static crate::gpu::Gpu,
+    rcd: &'static crate::demosaic::Rcd,
+    mosaic: &crate::condition::Mosaic,
+    cfa: &crate::cfa::Cfa,
+    crop: (usize, usize, usize, usize),
+    colour: crate::demosaic::Colour,
+    orientation: u32,
+    settle: &Settle<'_>,
+) -> Option<crate::resident::Resident> {
     let (width, height) = (mosaic.width, mosaic.height);
     let (crop_left, crop_top, crop_w, crop_h) = crop;
 
@@ -1790,7 +1791,7 @@ async fn demosaic_in_tiles(
             // hoist. The seven dispatches that follow hide the allocation.
             let (_shape, shape_group) =
                 crate::demosaic::shape_group(gpu, rcd, cfa, &window, crate::demosaic::MARGIN);
-            crate::demosaic::demosaic_into(
+            crate::demosaic::demosaic_settled_into(
                 gpu,
                 rcd,
                 &window,
@@ -1799,6 +1800,7 @@ async fn demosaic_in_tiles(
                 colour,
                 frame.buffer(),
                 &shape_group,
+                |recording, rgb| settle(recording, rgb, (left, top, region_w, region_h)),
             )
             .await?;
         }

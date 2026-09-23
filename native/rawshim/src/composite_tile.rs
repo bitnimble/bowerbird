@@ -398,6 +398,7 @@ fn blend_kernel(gpu: &'static crate::gpu::Gpu, entry: &str) -> crate::hdr_fit::K
             (4, WRITE),
             (5, WRITE),
             (6, READ),
+            (7, WRITE),
         ],
         &[],
     )
@@ -406,6 +407,70 @@ fn blend_kernel(gpu: &'static crate::gpu::Gpu, entry: &str) -> crate::hdr_fit::K
 fn adding(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
     static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| blend_kernel(gpu, "composite_add"))
+}
+
+fn sharpness(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
+    use crate::hdr_fit::{READ, UNIFORM, WRITE};
+    static BUILT: std::sync::OnceLock<crate::hdr_fit::Kernel> = std::sync::OnceLock::new();
+    BUILT.get_or_init(|| {
+        crate::hdr_fit::kernel(
+            gpu,
+            "composite_sharpness",
+            include_str!(concat!(env!("OUT_DIR"), "/wgsl/composite_sharpness.wgsl")),
+            &[(0, UNIFORM), (1, READ), (2, WRITE), (3, READ)],
+            &[],
+        )
+    })
+}
+
+/// A focus bracket's layer weighed by how sharp it is (`Weight::Sharpness`), over the reach its
+/// gather wrote.
+fn weigh_sharpness(
+    gpu: &'static crate::gpu::Gpu,
+    base: &'static crate::base::Base,
+    layer: &Layer,
+    (width, height): (usize, usize),
+) {
+    let kernel = sharpness(gpu);
+    let mut recording = gpu.record();
+    let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("pano sharpness params"),
+        contents: &sharpness_params(width, height),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    recording.holding(layer.rgb.buffer());
+    recording.holding(&layer.weight);
+    let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("pano sharpness"),
+        layout: &kernel.layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: layer.rgb.buffer().as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: layer.weight.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: base.light_of_code().as_entire_binding() },
+        ],
+    });
+    {
+        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        pass.set_pipeline(&kernel.pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        let (x, y) = crate::base::groups(width * height);
+        pass.dispatch_workgroups(x, y, 1);
+    }
+    recording.submit();
+}
+
+/// `composite_sharpness.slang`'s block, padded to std140's own multiple of sixteen.
+fn sharpness_params(width: usize, height: usize) -> Vec<u8> {
+    let mut block = (width as u32).to_le_bytes().to_vec();
+    block.extend_from_slice(&(height as u32).to_le_bytes());
+    block.resize(16, 0);
+    block
+}
+
+#[cfg(test)]
+pub(crate) fn sharpness_block() -> usize {
+    sharpness_params(1, 1).len()
 }
 
 fn resolving(gpu: &'static crate::gpu::Gpu) -> &'static crate::hdr_fit::Kernel {
@@ -437,9 +502,14 @@ pub struct Blending {
     alpha: crate::gpu::Buffer,
     accumulator: crate::gpu::Buffer,
     uniform: crate::gpu::Buffer,
+    /// The anchoring layer's luma a pixel, for the ones compared against it (`Merit::ghost`).
+    anchor: crate::gpu::Buffer,
     pixels: usize,
     added: usize,
 }
+
+/// `composite_blend.slang`'s mark for a pixel no anchoring layer could vouch for.
+const UNANCHORED: f32 = -1.0;
 
 impl Blending {
     pub fn over(
@@ -465,6 +535,11 @@ impl Blending {
             contents: &blend_params(pixels, Merit::EVEN),
             usage: wgpu::BufferUsages::UNIFORM,
         });
+        let anchor = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pano anchor"),
+            contents: bytemuck::cast_slice(&vec![UNANCHORED; pixels.max(1)]),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         Blending {
             gpu,
             base,
@@ -472,6 +547,7 @@ impl Blending {
             alpha,
             accumulator,
             uniform,
+            anchor,
             pixels,
             added: 0,
         }
@@ -600,6 +676,10 @@ impl Blending {
                     binding: 6,
                     resource: self.base.light_of_code().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.anchor.as_entire_binding(),
+                },
             ],
         })
     }
@@ -616,6 +696,12 @@ pub struct Merit {
     /// the way there. Zero for a layer that is never rolled off - the shortest exposure, so a
     /// highlight every frame clipped is still something rather than black.
     pub clip: f32,
+    /// How far this layer's light may stray from the anchor's before it counts for nothing, which is
+    /// the scene having moved between the frames. Zero compares nothing.
+    pub ghost: crate::light::Stops,
+    /// Whether this layer is the anchor the later ones are compared against, which has to be added
+    /// first.
+    pub anchors: bool,
 }
 
 impl Merit {
@@ -623,6 +709,8 @@ impl Merit {
     pub const EVEN: Merit = Merit {
         scale: 1.0,
         clip: 0.0,
+        ghost: crate::light::Stops::ZERO,
+        anchors: false,
     };
 }
 
@@ -631,7 +719,9 @@ fn blend_params(pixels: usize, merit: Merit) -> Vec<u8> {
     let mut block = (pixels as u32).to_le_bytes().to_vec();
     block.extend_from_slice(&merit.scale.to_le_bytes());
     block.extend_from_slice(&merit.clip.to_le_bytes());
-    block.resize(16, 0);
+    block.extend_from_slice(&(merit.ghost.raw() as f32).to_le_bytes());
+    block.extend_from_slice(&u32::from(merit.anchors).to_le_bytes());
+    block.resize(block.len().next_multiple_of(16), 0);
     block
 }
 
@@ -754,7 +844,14 @@ pub enum Weight<'a> {
     /// An exposure bracket's: every source wherever it reaches, by the light it gathered, rolled
     /// off before it clips ([`Merit`]).
     Exposure,
+    /// A focus bracket's: every source wherever it reaches, by how sharp it is there
+    /// (`composite_sharpness.slang`). Reads its neighbours, so a caller wanting a window that
+    /// matches the next one gathers [`SHARPNESS_HALO`] past it.
+    Sharpness,
 }
+
+/// How far `composite_sharpness.slang` reads past a pixel, rounded up to keep a window even.
+pub const SHARPNESS_HALO: usize = 4;
 
 impl<'a> Weight<'a> {
     pub fn mask(&self) -> Option<Mask<'a>> {
@@ -960,9 +1057,14 @@ async fn prepared_with(
                 taken.neutral_ceiling,
                 &taken.levels,
                 request.reference_white_nits,
+                // First of the layers, by `order_of`.
+                i == spec.reference,
             ),
-            Weight::Feather | Weight::Mask(_) => Merit::EVEN,
+            Weight::Feather | Weight::Mask(_) | Weight::Sharpness => Merit::EVEN,
         };
+        if let Weight::Sharpness = request.weight {
+            weigh_sharpness(gpu, base, &taken.layer, (width, height));
+        }
         blending.add_merited(taken.layer, merit);
     }
 
@@ -1050,7 +1152,7 @@ async fn taken(
     // skips it outright rather than decoding a frame to gather it at no weight.
     let weighed = match &request.weight {
         Weight::Feather => Weighed::Feather,
-        Weight::Exposure => Weighed::Flat,
+        Weight::Exposure | Weight::Sharpness => Weighed::Flat,
         Weight::Mask(held) => match held.slot_of.get(i).copied().flatten() {
             None => return Ok(None),
             Some(slot) => Weighed::Masked(Masked {
@@ -1260,6 +1362,7 @@ fn merit_of(
     neutral_ceiling: f32,
     levels: &crate::tone::Anchored,
     reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    anchors: bool,
 ) -> Merit {
     let ceiling = crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(1.0));
     let clip = f64::from(neutral_ceiling) * source.gain * reference_white_nits.raw()
@@ -1270,8 +1373,17 @@ fn merit_of(
             true => 0.0,
             false => clip as f32,
         },
+        ghost: match anchors {
+            true => crate::light::Stops::ZERO,
+            false => BRACKET_GHOST,
+        },
+        anchors,
     }
 }
+
+/// How far a bracket's frame may disagree with the reference before it is taken for a scene that
+/// moved. Wide of what the header's exposure arithmetic misses by, a tenth of a stop or so.
+const BRACKET_GHOST: crate::light::Stops = crate::light::Stops::exactly(0.5);
 
 /// Every source of the recipe, prepared exactly as [`prepared`] prepares one and handed to `take`
 /// in place of the blend, the reference first (see [`order_of`]). A source the window does not
@@ -2013,6 +2125,51 @@ mod tests {
         );
     }
 
+    /// A focus bracket's layers, one textured and one the same scene blurred flat: the merge keeps
+    /// the texture rather than averaging it with the blur.
+    #[test]
+    fn a_focus_bracket_takes_the_sharp_layer_where_it_is_sharp() {
+        let gpu = drawing();
+        let base = crate::base::device(gpu).expect("the base pipelines");
+        let (w, h) = (16usize, 8usize);
+        let code = |nits: f64| {
+            (crate::tone::pq(crate::light::Light::<crate::light::SceneNits>::measured(nits)).raw()
+                * f64::from(u16::MAX))
+            .round() as u16
+        };
+        let light = |code: u16| {
+            crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(
+                f64::from(code) / f64::from(u16::MAX),
+            ))
+            .raw()
+        };
+        let layer = |nits: &dyn Fn(usize) -> f64| {
+            let samples: Vec<u16> = (0..w * h).flat_map(|at| [code(nits(at % w)); 3]).collect();
+            Layer {
+                rgb: Resident::upload(gpu, &samples, w, h),
+                weight: gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("reach"),
+                    contents: bytemuck::cast_slice(&vec![1.0f32; w * h]),
+                    usage: wgpu::BufferUsages::STORAGE,
+                }),
+            }
+        };
+        let window: Rect<crate::px::Composite> = Rect::exact(0, 0, w, h);
+        let mut blending = Blending::over(gpu, base, window);
+        for sharp in [true, false] {
+            let taken = match sharp {
+                true => layer(&|x| if x % 2 == 0 { 150.0 } else { 300.0 }),
+                false => layer(&|_| 212.0),
+            };
+            weigh_sharpness(gpu, base, &taken, (w, h));
+            blending.add(taken);
+        }
+        let (blended, _) = blending.resolve();
+        let row = pollster::block_on(read_row(gpu, &blended, w));
+        let (even, odd) = (light(row[8]), light(row[9]));
+        assert!((even - 150.0).abs() < 8.0 && (odd - 300.0).abs() < 15.0, "the texture was averaged away: {even}, {odd}");
+    }
+
     /// An exposure bracket's layers, one over the other: each weighed by its merit, and a layer past
     /// its clip counting for nothing.
     #[test]
@@ -2045,15 +2202,24 @@ mod tests {
             light(pollster::block_on(read_row(gpu, &blended, 16))[8])
         };
         let even = Merit::EVEN;
-        let heavy = Merit { scale: 3.0, clip: 0.0 };
+        let heavy = Merit { scale: 3.0, ..Merit::EVEN };
 
         let alone = merged(&[(200.0, even)]);
         assert!((merged(&[(200.0, even), (200.0, heavy)]) - alone).abs() < 1.0, "a frame merged with itself moved");
         let mixed = merged(&[(200.0, even), (400.0, heavy)]);
         assert!((mixed - 350.0).abs() < 7.0, "merit 1 at 200 and 3 at 400 came to {mixed}");
-        let clipped = Merit { scale: 3.0, clip: 300.0 / 10000.0 };
+        let clipped = Merit { clip: 300.0 / 10000.0, ..heavy };
         let dropped = merged(&[(200.0, even), (400.0, clipped)]);
         assert!((dropped - alone).abs() < 1.0, "a layer past its clip still counted: {dropped}");
+
+        // Against an anchor, a layer two stops off it is a scene that moved, and one a tenth of a
+        // stop off is the same scene.
+        let anchor = Merit { anchors: true, ..Merit::EVEN };
+        let wary = Merit { ghost: crate::light::Stops::exactly(0.5), ..heavy };
+        let ghosted = merged(&[(200.0, anchor), (800.0, wary)]);
+        assert!((ghosted - alone).abs() < 1.0, "a layer two stops off the anchor still counted: {ghosted}");
+        let near = merged(&[(200.0, anchor), (215.0, wary)]);
+        assert!((near - 211.25).abs() < 3.0, "a layer agreeing with the anchor was dropped: {near}");
     }
 
     /// A frame every sample of which is the same code, which is what makes a blend's answer

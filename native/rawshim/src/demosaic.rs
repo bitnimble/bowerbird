@@ -472,40 +472,25 @@ pub async fn demosaic_into(
     into: &crate::gpu::Buffer,
     shape_group: &wgpu::BindGroup,
 ) -> Option<()> {
-    let Recorded { recording, rgb, .. } = record(gpu, rcd, mosaic, cfa, shape_group)?;
-    assemble(gpu, rcd, recording, &rgb, cfa, at, colour, into, shape_group).await
+    demosaic_settled_into(gpu, rcd, mosaic, cfa, at, colour, into, shape_group, |_, _| ()).await
 }
 
-/// [`demosaic_into`]'s colour and crop over a plane something other than a demosaic wrote, in RCD's
-/// layout: three `f32` a site of the mosaic `shape_group` describes, which the clipping still reads.
+/// [`demosaic_into`], with `settle` recorded between the demosaic and the colour pass: it is handed
+/// the plane RCD wrote - three `f32` a site of `mosaic` - to rewrite in place.
 #[allow(clippy::too_many_arguments)]
-pub async fn assemble_into(
+pub async fn demosaic_settled_into(
     gpu: &'static crate::gpu::Gpu,
     rcd: &Rcd,
-    rgb: &crate::gpu::Buffer,
+    mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
     at: &Placement,
     colour: Colour,
     into: &crate::gpu::Buffer,
     shape_group: &wgpu::BindGroup,
+    settle: impl FnOnce(&mut crate::gpu::Recording<'static>, &crate::gpu::Buffer),
 ) -> Option<()> {
-    let mut recording = gpu.record();
-    recording.holding(rgb);
-    assemble(gpu, rcd, recording, rgb, cfa, at, colour, into, shape_group).await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn assemble(
-    gpu: &'static crate::gpu::Gpu,
-    rcd: &Rcd,
-    mut recording: crate::gpu::Recording<'static>,
-    rgb: &crate::gpu::Buffer,
-    cfa: &crate::cfa::Cfa,
-    at: &Placement,
-    colour: Colour,
-    into: &crate::gpu::Buffer,
-    shape_group: &wgpu::BindGroup,
-) -> Option<()> {
+    let Recorded { mut recording, rgb, .. } = record(gpu, rcd, mosaic, cfa, shape_group)?;
+    settle(&mut recording, &rgb);
     recording.holding(into);
 
     let assemble_params = recording.init(&wgpu::util::BufferInitDescriptor {

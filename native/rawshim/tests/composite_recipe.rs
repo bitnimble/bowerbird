@@ -42,6 +42,9 @@ fn a_bracket_recipe_is_read_as_its_own_arm() {
         serde_json::from_value(tagged("panorama-recipe.json", "exposureBracket")).expect("it parses");
     assert!(matches!(recipe, CompositeRecipe::ExposureBracket(_)));
     let recipe: CompositeRecipe =
+        serde_json::from_value(tagged("panorama-recipe.json", "focusBracket")).expect("it parses");
+    assert!(matches!(recipe, CompositeRecipe::FocusBracket(_)));
+    let recipe: CompositeRecipe =
         serde_json::from_value(tagged("panorama-recipe.json", "pixelShift")).expect("it parses");
     assert!(matches!(recipe, CompositeRecipe::PixelShift(_)));
 }

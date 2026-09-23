@@ -463,7 +463,7 @@ describe('CompositesService.merge', () => {
 });
 
 /** These photographs as one bracket stack, each the frame of `kind` at its place in `order`. */
-function bracket(kind: CaptureSequenceKind, order: string[], origin = 'bracket'): void {
+function bracket(kind: CaptureSequenceKind, order: string[], origin = 'bracket', indexed = true): void {
   db.query('INSERT INTO stacks (id, library_id, origin, date_created) VALUES (?, ?, ?, ?)').run(
     'burst',
     LIB,
@@ -471,7 +471,7 @@ function bracket(kind: CaptureSequenceKind, order: string[], origin = 'bracket')
     '2026-01-01',
   );
   order.forEach((id, at) => {
-    const sequence = { kind, group: null, index: at + 1, count: order.length };
+    const sequence = { kind, group: null, index: indexed ? at + 1 : null, count: order.length };
     db.query(
       `UPDATE photos SET stack_id = 'burst', stack_state = 'stacked', is_representative = ?, capture_sequence = ?
         WHERE id = ?`,
@@ -500,6 +500,16 @@ describe('CompositesService.mergeBracket', () => {
     expect(photoPaths.getBasicById(photoId)?.recipe.kind).toBe('exposureBracket');
     const align = posted[0];
     expect(align?.want === 'align' && align.shape).toBe('exposureBracket');
+  });
+
+  it('merges a focus bracket that names no shot in the order it was taken', async () => {
+    bracket('focusBracket', ['photo003', 'photo001', 'photo002'], 'bracket', false);
+    const { photoId } = await panoramas.mergeBracket(['photo003', 'photo002', 'photo001']);
+
+    expect(photoPaths.getBasicById(photoId)?.recipe.kind).toBe('focusBracket');
+    expect(photoComposites.framesOf(photoId)).toEqual(['photo001', 'photo002', 'photo003']);
+    const align = posted[0];
+    expect(align?.want === 'align' && align.shape).toBe('focusBracket');
   });
 
   it('refuses frames that are not one bracket stack', async () => {

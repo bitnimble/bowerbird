@@ -42,7 +42,7 @@ const HEADER = {
 } as const;
 
 /** `header::SEQUENCE_*`. */
-const SEQUENCE_KINDS: Record<number, CaptureSequenceKind> = { 1: 'pixelShift', 2: 'exposureBracket' };
+const SEQUENCE_KINDS: Record<number, CaptureSequenceKind> = { 1: 'pixelShift', 2: 'exposureBracket', 3: 'focusBracket' };
 
 function sequenceOf(view: DataView): CaptureSequence | null {
   const kind = SEQUENCE_KINDS[view.getUint32(HEADER.sequenceKind, true)];
@@ -51,7 +51,7 @@ function sequenceOf(view: DataView): CaptureSequence | null {
   return {
     kind,
     group: known(view.getUint32(HEADER.sequenceGroup, true)),
-    index: view.getUint32(HEADER.sequenceIndex, true),
+    index: known(view.getUint32(HEADER.sequenceIndex, true)),
     count: known(view.getUint32(HEADER.sequenceCount, true)),
   };
 }

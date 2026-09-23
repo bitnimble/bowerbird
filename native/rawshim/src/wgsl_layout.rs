@@ -112,10 +112,22 @@ mod tests {
                 crate::composite_tile::blend_block(),
             ),
             (
+                "composite_sharpness.wgsl",
+                "Params",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/composite_sharpness.wgsl")).to_string(),
+                crate::composite_tile::sharpness_block(),
+            ),
+            (
                 "pixel_shift.wgsl",
                 "Params",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift.wgsl")).to_string(),
-                crate::pixel_shift::params_block(),
+                crate::pixel_shift::scatter_block(),
+            ),
+            (
+                "pixel_shift_settle.wgsl",
+                "Params",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift_settle.wgsl")).to_string(),
+                crate::pixel_shift::settle_block(),
             ),
             (
                 "rcd.wgsl",

@@ -10,7 +10,7 @@ import { ViewerRenditionSchema } from './settings';
 export const TriageSchema = z.enum(['untriaged', 'picked', 'rejected']);
 export type Triage = z.infer<typeof TriageSchema>;
 
-export const CompositeKindSchema = z.enum(['panorama', 'assembly', 'exposureBracket', 'pixelShift']);
+export const CompositeKindSchema = z.enum(['panorama', 'assembly', 'exposureBracket', 'focusBracket', 'pixelShift']);
 export type CompositeKind = z.infer<typeof CompositeKindSchema>;
 
 /** Every composite kind, as the list an SQL `IN` takes. */

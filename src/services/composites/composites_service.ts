@@ -175,8 +175,8 @@ export class CompositesService {
 
   /**
    * A bracket stack's frames into the one photograph the camera shot them to make: an exposure
-   * merge or a pixel shift, whichever the frames say they are. In the camera's own order, which
-   * for a pixel shift is where each frame's photosites landed.
+   * merge, a focus merge or a pixel shift, whichever the frames say they are. In the camera's own
+   * order, which for a pixel shift is where each frame's photosites landed.
    */
   async mergeBracket(photoIds: readonly string[]): Promise<CompositePhoto> {
     const frames = this.photoComposites.sequencesOf(photoIds);
@@ -192,9 +192,10 @@ export class CompositesService {
     if (kind === 'pixelShift' && frames.length !== PIXEL_SHIFT_FRAMES) {
       throw new AppError('VALIDATION_ERROR', `a pixel shift is merged from exactly its ${PIXEL_SHIFT_FRAMES} frames`);
     }
-    const ordered = [...frames]
-      .sort((a, b) => (a.sequence?.index ?? 0) - (b.sequence?.index ?? 0))
-      .map((frame) => frame.photoId);
+    // A frame that does not say which shot it was is placed by when it was taken.
+    const ordered = frames.every((frame) => frame.sequence?.index != null) ?
+        [...frames].sort((a, b) => (a.sequence?.index ?? 0) - (b.sequence?.index ?? 0)).map((frame) => frame.photoId)
+      : this.photoComposites.orderedForComposite(photoIds).map((photo) => photo.id);
     return await this.serially(() => this.mergeNow(ordered, kind));
   }
 

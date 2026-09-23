@@ -8,6 +8,7 @@ export const MergePageStrings = {
   bracket: (kind: CaptureSequenceKind | null) => {
     if (kind === 'pixelShift') return 'Pixel shift';
     if (kind === 'exposureBracket') return 'Exposure bracket';
+    if (kind === 'focusBracket') return 'Focus bracket';
     return 'Bracket';
   },
   selectABracketStack: () => 'Select one bracket stack.',

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { CaptureSequence } from '../../../schemas/capture_sequence';
 import { BRACKET_GAP_SECONDS, bracketsOf, type SequencedFrame } from '../brackets';
 
-function frame(id: string, timestamp: number, sequence: Partial<CaptureSequence> & { index: number }): SequencedFrame {
+function frame(id: string, timestamp: number, sequence: Partial<CaptureSequence> & { index: number | null }): SequencedFrame {
   return {
     id,
     shootId: null,
@@ -75,6 +75,23 @@ describe('bracketsOf', () => {
     const frames = [pixelShift('p1', 100, 1), frame('e2', 101, { index: 2 }), frame('e1', 99, { index: 1 })];
 
     expect(bracketsOf(frames)).toEqual([{ kind: 'exposureBracket', photoIds: ['e1', 'e2'] }]);
+  });
+
+  it('places a focus bracket that names no shot by when it was taken, ending at its count', () => {
+    const focus = (id: string, timestamp: number): SequencedFrame =>
+      frame(id, timestamp, { kind: 'focusBracket', index: null, count: 3 });
+    const frames = [focus('f3', 102), focus('f1', 100), focus('f2', 101), focus('g1', 103), focus('g2', 104), focus('g3', 105)];
+
+    expect(bracketsOf(frames)).toEqual([
+      { kind: 'focusBracket', photoIds: ['f1', 'f2', 'f3'] },
+      { kind: 'focusBracket', photoIds: ['g1', 'g2', 'g3'] },
+    ]);
+  });
+
+  it('refuses a focus bracket that names no shot and is short of its count', () => {
+    const frames = [100, 101].map((timestamp) => frame(`f${timestamp}`, timestamp, { kind: 'focusBracket', index: null, count: 3 }));
+
+    expect(bracketsOf(frames)).toEqual([]);
   });
 
   it('never joins frames from two shoots', () => {

@@ -36,6 +36,7 @@ export const RecipeSchema = z.discriminatedUnion('kind', [
   CompositionSchema.extend({ kind: z.literal('panorama') }),
   AssemblyRecipeSchema.extend({ kind: z.literal('assembly') }),
   CompositionSchema.extend({ kind: z.literal('exposureBracket') }),
+  CompositionSchema.extend({ kind: z.literal('focusBracket') }),
   CompositionSchema.extend({ kind: z.literal('pixelShift') }),
 ]);
 export type Recipe = z.infer<typeof RecipeSchema>;

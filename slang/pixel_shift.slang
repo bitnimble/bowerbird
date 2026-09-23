@@ -3,7 +3,7 @@
 // Each frame of a 4-shot burst sits a photosite from the last, round a 2x2 block, so over the four
 // every output site has been read once through red, twice through green and once through blue. One
 // dispatch per frame, each adding its photosites into the channel their filter names; what comes out
-// is the interleaved plane RCD writes, for `assemble.slang` to colour and crop.
+// is the interleaved plane RCD writes, and beside it how far a site's two greens disagree.
 
 struct Params {
     uint width;
@@ -13,11 +13,14 @@ struct Params {
     int dx;
     /// The colour at each position of the 2x2 period, row-major: 0 red, 1 green, 2 blue.
     uint4 colours;
+    /// +1 or -1, so a site's two greens - always one frame of each sign - leave their difference.
+    float green_sign;
 };
 
 [vk::binding(0, 0)] ConstantBuffer<Params> params;
 [vk::binding(1, 0)] StructuredBuffer<float> samples;
 [vk::binding(2, 0)] RWStructuredBuffer<float> rgb;
+[vk::binding(3, 0)] RWStructuredBuffer<float> disagreement;
 
 /// Stepped a whole period back inside at the edge, which keeps the photosite's colour.
 int inside(int at, int extent)
@@ -36,6 +39,11 @@ void scatter(uint3 gid : SV_DispatchThreadID)
     let c = inside(int(gid.x) - params.dx, int(params.width));
     let colour = params.colours[(r % 2) * 2 + c % 2];
     let value = samples[uint(r) * params.width + uint(c)];
-    let at = (gid.y * params.width + gid.x) * 3 + colour;
-    rgb[at] += select(colour == 1, 0.5 * value, value);
+    let site = gid.y * params.width + gid.x;
+    if (colour == 1) {
+        rgb[site * 3 + 1] += 0.5 * value;
+        disagreement[site] += params.green_sign * value;
+        return;
+    }
+    rgb[site * 3 + colour] += value;
 }

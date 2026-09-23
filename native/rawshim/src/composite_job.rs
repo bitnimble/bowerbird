@@ -45,6 +45,9 @@ pub enum Shape {
     /// Frames of one scene from one place at different exposures, each over the whole of the
     /// others (`composite_align::Kind::Burst`).
     ExposureBracket,
+    /// The same, focused at different distances, which a lens breathes across: the burst align frees
+    /// each frame's scale for it.
+    FocusBracket,
     /// A sensor-shift burst, whose frames sit a photosite apart by construction: nothing to search.
     PixelShift,
 }
@@ -61,6 +64,8 @@ pub enum CompositeRecipe {
     Assembly(Box<crate::assembly::Assembly>),
     /// Weighted by the light each frame gathered, rolled off before it clips.
     ExposureBracket(crate::composition::Composition),
+    /// Weighted by how sharp each frame is where it is.
+    FocusBracket(crate::composition::Composition),
     /// Merged on the mosaic, before any demosaic (`pixel_shift`).
     PixelShift(crate::composition::Composition),
 }
@@ -72,6 +77,7 @@ impl CompositeRecipe {
         match self {
             CompositeRecipe::Panorama(spec)
             | CompositeRecipe::ExposureBracket(spec)
+            | CompositeRecipe::FocusBracket(spec)
             | CompositeRecipe::PixelShift(spec) => spec,
             CompositeRecipe::Assembly(assembly) => &assembly.spec,
         }
@@ -80,9 +86,18 @@ impl CompositeRecipe {
     fn weight(&self) -> crate::composite_tile::Weight<'static> {
         match self {
             CompositeRecipe::ExposureBracket(_) => crate::composite_tile::Weight::Exposure,
+            CompositeRecipe::FocusBracket(_) => crate::composite_tile::Weight::Sharpness,
             CompositeRecipe::Panorama(_)
             | CompositeRecipe::Assembly(_)
             | CompositeRecipe::PixelShift(_) => crate::composite_tile::Weight::Feather,
+        }
+    }
+
+    /// How far past a strip its sources are gathered, for a weight that reads its neighbours.
+    fn halo(&self) -> usize {
+        match self {
+            CompositeRecipe::FocusBracket(_) => crate::composite_tile::SHARPNESS_HALO,
+            _ => 0,
         }
     }
 }
@@ -123,13 +138,14 @@ pub const MAX_LONG_EDGE: u32 = 16384;
 const STRIP_BUDGET_BYTES: f64 = 512.0 * 1024.0 * 1024.0;
 
 /// Bytes a strip holds per output pixel: the layer being gathered - three 16-bit samples and the
-/// weight beside them - and the blend's accumulator, its alpha and the strip it resolves into.
+/// weight beside them - and the blend's accumulator, its alpha, its anchor and the strip it
+/// resolves into.
 ///
 /// **Not per source.** `composite_tile::Blending` adds each layer and gives it back, so what a tile
 /// costs is its own pixels however many photographs reach it. Multiplied by the source count, as
 /// it was while a blend was handed every layer at once, a twenty-six frame pan took 180 rows a
 /// strip where 910 fit - and every one of those strips decodes every source that reaches it.
-const STRIP_BYTES_PER_PIXEL: f64 = 10.0 + 16.0 + 4.0 + 6.0;
+const STRIP_BYTES_PER_PIXEL: f64 = 10.0 + 16.0 + 4.0 + 4.0 + 6.0;
 
 /// How many points of a source's border are projected to find the shape it covers.
 const SHAPE_STEPS: usize = 8;
@@ -305,7 +321,7 @@ pub fn align(gpu: &'static crate::gpu::Gpu, pano: &CompositeJob, shape: Shape) -
         ))?,
         // A bracket points every frame at the same place, as a burst does, so its focal is held for
         // the assembly's reason (take-best-parts §3.1) and every source covers the same crop.
-        Shape::ExposureBracket => {
+        Shape::ExposureBracket | Shape::FocusBracket => {
             let mut aligned = pollster::block_on(crate::composite_align::align(
                 gpu,
                 &sources,
@@ -730,6 +746,26 @@ fn overlap(
         .then(|| crate::px::Rect::exact(left, top, right - left, bottom - top))
 }
 
+/// The `wide` by `deep` rectangle at `at` of a tile `across` pixels wide, as a tile of its own.
+fn inner_of(
+    gpu: &'static crate::gpu::Gpu,
+    grown: crate::resident::Resident,
+    across: usize,
+    at: (usize, usize),
+    (wide, deep): (usize, usize),
+) -> crate::resident::Resident {
+    let inner = crate::resident::Resident::empty(gpu, wide, deep);
+    let mut recording = gpu.record();
+    recording.holding(grown.buffer());
+    recording.holding(inner.buffer());
+    for (to, from, bytes) in crate::resident::runs(across, at.0, at.1, wide, deep) {
+        recording.encoder().copy_buffer_to_buffer(grown.buffer(), from, inner.buffer(), to, bytes);
+    }
+    recording.submit();
+    grown.reclaim();
+    inner
+}
+
 /// How a strip of a recipe is drawn.
 enum Drawn {
     Blended,
@@ -899,7 +935,9 @@ pub(crate) fn base(
     let mut hold: Option<crate::assembly_render::Lowpass> = None;
     let drawn = match wanted {
         CompositeRecipe::Assembly(assembly) => Drawn::Assembly(assembly.rendered()?),
-        CompositeRecipe::Panorama(_) | CompositeRecipe::ExposureBracket(_) => Drawn::Blended,
+        CompositeRecipe::Panorama(_) | CompositeRecipe::ExposureBracket(_) | CompositeRecipe::FocusBracket(_) => {
+            Drawn::Blended
+        }
         // Every frame sits on the first's canvas, so the merge is that one source decoded from all
         // of them.
         CompositeRecipe::PixelShift(spec) => Drawn::Shifted(crate::composition::Composition {
@@ -909,6 +947,7 @@ pub(crate) fn base(
         }),
     };
     let burst: Vec<&str> = files.iter().map(|file| file.path).collect();
+    let halo = wanted.halo();
     let mut top = 0;
     while top < height {
         let deep = down.min(height - top);
@@ -956,6 +995,20 @@ pub(crate) fn base(
                 continue;
             }
             let (tile, prepared) = match &drawn {
+                Drawn::Blended if halo > 0 => {
+                    // Past the strip and cut back to it, so a weight reading its neighbours reads the
+                    // same ones either side of a strip's edge rather than the edge twice.
+                    let (reach_left, reach_top) = ((window_left + left).min(halo), (window_top + top).min(halo));
+                    let gathered = crate::px::Rect::exact(
+                        window_left + left - reach_left,
+                        window_top + top - reach_top,
+                        wide + reach_left + halo,
+                        deep + reach_top + halo,
+                    );
+                    let request = crate::composite_tile::CompositeRequest { window: gathered, ..request };
+                    let (grown, prepared) = pollster::block_on(crate::composite_tile::prepared(spec, &request))?;
+                    (inner_of(gpu, grown, wide + reach_left + halo, (reach_left, reach_top), (wide, deep)), prepared)
+                }
                 Drawn::Blended => pollster::block_on(crate::composite_tile::prepared(spec, &request))?,
                 Drawn::Shifted(first) => {
                     let request = crate::composite_tile::CompositeRequest {
