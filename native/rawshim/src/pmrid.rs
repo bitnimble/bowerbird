@@ -321,13 +321,13 @@ fn build(offsets: HashMap<String, usize>) -> (Net, usize) {
 /// straight to the next layer and are dead a dispatch later. Giving every one its own room is four
 /// times the arena, and it is the 2GiB a binding may be that decides how large a tile can get.
 ///
-/// `fused` is whether the matrix units take a depthwise and the 1x1 after it as one dispatch, which
-/// reads the depthwise's input while it writes the 1x1's output, so the two must not share room.
-fn lay_out(net: &Net, prediction: usize, pw: usize, ph: usize, fused: bool) -> (Vec<usize>, usize) {
+/// **A depthwise's input lives through the 1x1 after it**, since the two are taken as one dispatch
+/// that reads the one while it writes the other, so they must not share room.
+fn lay_out(net: &Net, prediction: usize, pw: usize, ph: usize) -> (Vec<usize>, usize) {
     let floats = |plane: &Plane| plane.channels * (pw >> plane.level) * (ph >> plane.level);
     let mut last_read = vec![0usize; net.tensors.len()];
     for (at, layer) in net.layers.iter().enumerate() {
-        last_read[layer.input] = at + usize::from(fused && layer.op == Op::Depthwise);
+        last_read[layer.input] = at + usize::from(layer.op == Op::Depthwise);
         if layer.op == Op::Add || layer.fused {
             last_read[layer.skip] = at;
         }
@@ -370,7 +370,8 @@ fn lay_out(net: &Net, prediction: usize, pw: usize, ph: usize, fused: bool) -> (
 }
 
 /// Where each entry point of `slang/pmrid.slang` sits in [`Pmrid::pipelines`], the pointwise shapes
-/// between `ADD` and `SOW` being [`TILES`]'.
+/// between `ADD` and `SOW` being [`TILES`]', and their separable twins the same order from
+/// `SEPARABLE`.
 const SPATIAL_16: usize = 0;
 const SPATIAL_4: usize = 1;
 const DEPTHWISE: usize = 2;
@@ -378,6 +379,7 @@ const UPSAMPLE: usize = 3;
 const ADD: usize = 4;
 const SOW: usize = 10;
 const REAP: usize = 11;
+const SEPARABLE: usize = 12;
 
 /// `WIDE` and `TALL` in `slang/pmrid.slang`: a workgroup's shape in output pixels.
 const WIDE: u32 = 16;
@@ -394,6 +396,11 @@ const STEP: usize = 16;
 /// channels does most of its work on rows a 16-channel layer does not have.
 const TILES: [(usize, usize, usize); 5] =
     [(5, 32, 128), (6, 16, 128), (7, 32, 64), (8, 32, 32), (9, 16, 64)];
+
+/// `tile_wide` in `slang/pmrid.slang`: how many pixels across a separable tile of `columns` is.
+fn tile_wide(columns: usize) -> usize {
+    if columns >= 128 { 16 } else { 8 }
+}
 
 /// `LANES` in `slang/passthrough/pmrid_coop.slang`: the subgroup a cooperative matrix is shared
 /// across, which is a warp on the cards the sweep ran on and a SIMD group on an Apple one.
@@ -466,8 +473,21 @@ fn tensor_features() -> wgpu::Features {
         | wgpu::Features::SHADER_F16
 }
 
+/// What the forward pass computes on, fastest first. A device builds the fastest it offers of
+/// those no faster than it is asked for.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Arm {
+    /// The 1x1 layers on the matrix units and the rest in WGSL, over a `half` arena.
+    Matrix,
+    /// All of it in WGSL, over a `half` arena, which needs `shader-f16`.
+    Half,
+    /// All of it in WGSL, over a `float` arena.
+    Float,
+}
+
 /// Every kernel of the forward pass, built once for the process.
 pub struct Pmrid {
+    arm: Arm,
     layout: wgpu::BindGroupLayout,
     /// In the order [`SPATIAL_16`] and its neighbours say.
     pipelines: Vec<wgpu::ComputePipeline>,
@@ -476,7 +496,7 @@ pub struct Pmrid {
     coop: Option<Coop>,
     net: Net,
     prediction: usize,
-    /// The bytes an arena cell is held in: `half` beside the matrix units, `float` everywhere else.
+    /// The bytes an arena cell is held in: `float` on [`Arm::Float`], `half` on the others.
     cell: usize,
 }
 
@@ -504,7 +524,7 @@ struct Coop {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Pmrid> {
     static BUILT: std::sync::OnceLock<Option<Pmrid>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Some(build_kernels(gpu, weights()?, true))).as_ref()
+    BUILT.get_or_init(|| Some(build_kernels(gpu, weights()?, Arm::Matrix))).as_ref()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -518,13 +538,13 @@ pub fn device(gpu: &'static crate::gpu::Gpu) -> Option<&'static Pmrid> {
     if let Some(built) = BUILT.with(std::cell::Cell::get) {
         return Some(built);
     }
-    let built: &'static Pmrid = Box::leak(Box::new(build_kernels(gpu, weights()?, true)));
+    let built: &'static Pmrid = Box::leak(Box::new(build_kernels(gpu, weights()?, Arm::Matrix)));
     BUILT.with(|held| held.set(Some(built)));
     Some(built)
 }
 
-/// The forward pass, with the matrix units where `tensors` asks for them and the device has them.
-fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], tensors: bool) -> Pmrid {
+/// The forward pass on the fastest [`Arm`] this device offers that is no faster than `fastest`.
+fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], fastest: Arm) -> Pmrid {
     let manifest: serde_json::Value =
         serde_json::from_str(MANIFEST).expect("the weights manifest parses");
     let offsets: HashMap<String, usize> = manifest["tensors"]
@@ -539,12 +559,19 @@ fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], tensors:
         })
         .collect();
     let (net, prediction) = build(offsets);
-    let coop = tensors.then(|| coop_kernels(gpu, &net, weights)).flatten();
-
+    let coop = (fastest == Arm::Matrix).then(|| coop_kernels(gpu, &net, weights)).flatten();
     let device = gpu.describing();
+    let arm = match coop {
+        Some(_) => Arm::Matrix,
+        None if fastest <= Arm::Half && device.features().contains(wgpu::Features::SHADER_F16) => {
+            Arm::Half
+        }
+        None => Arm::Float,
+    };
+
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("pmrid"),
-        source: wgpu::ShaderSource::Wgsl(forward_pass(coop.is_some()).into()),
+        source: wgpu::ShaderSource::Wgsl(forward_pass(arm != Arm::Float).into()),
     });
     let storage = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
         binding,
@@ -597,6 +624,11 @@ fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], tensors:
         "pointwise_small",
         "sow",
         "reap",
+        "separable",
+        "separable_narrow",
+        "separable_short",
+        "separable_stub",
+        "separable_small",
     ]
     .iter()
     .map(|name| {
@@ -619,29 +651,19 @@ fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], tensors:
     });
     recording.submit();
 
-    let cell = match coop.is_some() {
-        true => std::mem::size_of::<half::f16>(),
-        false => std::mem::size_of::<f32>(),
+    let cell = match arm {
+        Arm::Float => std::mem::size_of::<f32>(),
+        Arm::Matrix | Arm::Half => std::mem::size_of::<half::f16>(),
     };
-    Pmrid { layout, pipelines, weights: held, coop, net, prediction, cell }
+    Pmrid { arm, layout, pipelines, weights: held, coop, net, prediction, cell }
 }
 
-/// `slang/pmrid.slang` as WGSL, holding its arena in `half` when the matrix units run beside it,
-/// and in `float` otherwise ([`Pmrid::cell`]).
-///
-/// **The browser's module carries only the one it can use**: a page has no matrix units, and the
-/// `half` pass is a second copy of the network's WGSL it would download to never compile.
-#[cfg(not(target_arch = "wasm32"))]
+/// `slang/pmrid.slang` as WGSL, holding its arena in `half` or in `float` ([`Pmrid::cell`]).
 fn forward_pass(half: bool) -> &'static str {
     match half {
         true => include_str!(concat!(env!("OUT_DIR"), "/wgsl/pmrid_half.wgsl")),
         false => include_str!(concat!(env!("OUT_DIR"), "/wgsl/pmrid.wgsl")),
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn forward_pass(_half: bool) -> &'static str {
-    include_str!(concat!(env!("OUT_DIR"), "/wgsl/pmrid.wgsl"))
 }
 
 /// The kernel in the driver's own language, and the fragment its matrix instruction is.
@@ -1005,8 +1027,7 @@ fn window(gpu: &crate::gpu::Gpu, pmrid: &Pmrid, width: usize, height: usize) -> 
     let bound = gpu.limits().max_storage_buffer_binding_size as usize / pmrid.cell;
     let most = ARENA_CELLS_MOST.min(bound) as u64;
     // Linear in the packed area, which the halvings divide, so one plane of them says it for all.
-    let (_, cells) =
-        lay_out(&pmrid.net, pmrid.prediction, HALVINGS, HALVINGS, pmrid.coop.is_some());
+    let (_, cells) = lay_out(&pmrid.net, pmrid.prediction, HALVINGS, HALVINGS);
     let binds = |across: usize, down: usize| {
         let packed = (across / 2 * down / 2 / (HALVINGS * HALVINGS)) as u64;
         packed * cells as u64 <= most
@@ -1093,16 +1114,16 @@ struct Edges {
 }
 
 /// Arenas kept between frames while anyone holds them ([`hold_arenas`]), keyed by the shape of
-/// arena they are: packed width, packed height and cell size.
+/// arena they are: packed width, packed height and the arm that built it.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-struct Kept<T> {
+struct Kept<K, T> {
     holds: usize,
-    idle: Vec<((usize, usize, usize), T)>,
+    idle: Vec<(K, T)>,
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-impl<T> Kept<T> {
-    const fn new() -> Kept<T> {
+impl<K: PartialEq, T> Kept<K, T> {
+    const fn new() -> Kept<K, T> {
         Kept { holds: 0, idle: Vec::new() }
     }
 
@@ -1113,7 +1134,7 @@ impl<T> Kept<T> {
         }
     }
 
-    fn take(&mut self, shape: (usize, usize, usize)) -> Option<T> {
+    fn take(&mut self, shape: K) -> Option<T> {
         let at = self.idle.iter().position(|(kept, _)| *kept == shape)?;
         Some(self.idle.swap_remove(at).1)
     }
@@ -1121,7 +1142,7 @@ impl<T> Kept<T> {
     /// **Only the last shape put back is kept**, since a queue renders one camera's frames at a
     /// time and a pool of every size it has met would hold as many arenas. Of that shape, one arena
     /// for each frame that was denoised at once, which is what those frames held anyway.
-    fn put(&mut self, shape: (usize, usize, usize), arena: T) {
+    fn put(&mut self, shape: K, arena: T) {
         if self.holds == 0 {
             return;
         }
@@ -1131,10 +1152,11 @@ impl<T> Kept<T> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-static KEPT: std::sync::Mutex<Kept<Session>> = std::sync::Mutex::new(Kept::new());
+static KEPT: std::sync::Mutex<Kept<(usize, usize, Arm), Session>> =
+    std::sync::Mutex::new(Kept::new());
 
 #[cfg(not(target_arch = "wasm32"))]
-fn kept() -> std::sync::MutexGuard<'static, Kept<Session>> {
+fn kept() -> std::sync::MutexGuard<'static, Kept<(usize, usize, Arm), Session>> {
     KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
@@ -1155,7 +1177,7 @@ pub fn release_arenas() {
 /// The arena and the bindings one tile size needs, built once and dispatched over every tile.
 struct Session {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    shape: (usize, usize, usize),
+    shape: (usize, usize, Arm),
     arena: crate::gpu::Buffer,
     edges: crate::gpu::Buffer,
     /// Held because a bind group does not: dropping these destroys the buffers under it.
@@ -1166,6 +1188,8 @@ struct Session {
     tiles: Vec<usize>,
     /// How the matrix units take each 1x1 layer, where they take it at all.
     matrices: Vec<Option<Matrix>>,
+    /// Which 1x1 layers the WGSL pass takes together with the depthwise before them.
+    separable: Vec<bool>,
     coop_group: Option<wgpu::BindGroup>,
 }
 
@@ -1173,7 +1197,7 @@ impl Session {
     /// An idle arena of this shape where one is kept, or a new one.
     fn take(gpu: &'static crate::gpu::Gpu, pmrid: &Pmrid, pw: usize, ph: usize) -> Session {
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(kept) = kept().take((pw, ph, pmrid.cell)) {
+        if let Some(kept) = kept().take((pw, ph, pmrid.arm)) {
             return kept;
         }
         Session::hold(gpu, pmrid, pw, ph)
@@ -1193,7 +1217,7 @@ impl Session {
 
     fn hold(gpu: &'static crate::gpu::Gpu, pmrid: &Pmrid, pw: usize, ph: usize) -> Session {
         let net = &pmrid.net;
-        let (at, cells) = lay_out(net, pmrid.prediction, pw, ph, pmrid.coop.is_some());
+        let (at, cells) = lay_out(net, pmrid.prediction, pw, ph);
         let mut recording = gpu.record();
         let arena = recording.buffer(&wgpu::BufferDescriptor {
             label: Some("pmrid arena"),
@@ -1207,36 +1231,9 @@ impl Session {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let mut uniforms = Vec::new();
-        for layer in &net.layers {
-            let input = net.tensors[layer.input];
-            let output = net.tensors[layer.output];
-            let params: [u32; 16] = [
-                (pw >> input.level) as u32,
-                (ph >> input.level) as u32,
-                input.channels as u32,
-                (pw >> output.level) as u32,
-                (ph >> output.level) as u32,
-                output.channels as u32,
-                layer.kernel as u32,
-                layer.stride as u32,
-                layer.pad as u32,
-                u32::from(layer.relu),
-                at[layer.input] as u32,
-                at[layer.output] as u32,
-                layer.weights_at as u32,
-                layer.bias_at as u32,
-                at[layer.skip] as u32,
-                u32::from(layer.fused),
-            ];
-            uniforms.push(recording.init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pmrid params"),
-                contents: &params.iter().flat_map(|v| v.to_ne_bytes()).collect::<Vec<u8>>(),
-                usage: wgpu::BufferUsages::UNIFORM,
-            }));
-        }
-        recording.submit();
-
+        let matrices: Vec<Option<Matrix>> = (0..net.layers.len())
+            .map(|index| pmrid.coop.as_ref().and_then(|coop| matrix(net, coop, index, pw, ph)))
+            .collect();
         let tiles: Vec<usize> = net
             .layers
             .iter()
@@ -1249,12 +1246,51 @@ impl Session {
                 false => usize::MAX,
             })
             .collect();
-        let matrices = (0..net.layers.len())
-            .map(|index| pmrid.coop.as_ref().and_then(|coop| matrix(net, coop, index, pw, ph)))
+        let separable: Vec<bool> = (0..net.layers.len())
+            .map(|index| separable_on_wgsl(net, &matrices, &tiles, index))
             .collect();
 
+        let mut uniforms = Vec::new();
+        for (index, layer) in net.layers.iter().enumerate() {
+            // A 1x1 that takes its depthwise reads that depthwise's input, at its kernel and stride.
+            let reads = match separable[index] {
+                true => &net.layers[index - 1],
+                false => layer,
+            };
+            let input = net.tensors[reads.input];
+            let output = net.tensors[layer.output];
+            let params: [u32; 17] = [
+                (pw >> input.level) as u32,
+                (ph >> input.level) as u32,
+                input.channels as u32,
+                (pw >> output.level) as u32,
+                (ph >> output.level) as u32,
+                output.channels as u32,
+                reads.kernel as u32,
+                reads.stride as u32,
+                reads.pad as u32,
+                u32::from(layer.relu),
+                at[reads.input] as u32,
+                at[layer.output] as u32,
+                layer.weights_at as u32,
+                layer.bias_at as u32,
+                at[layer.skip] as u32,
+                u32::from(layer.fused),
+                reads.weights_at as u32,
+            ];
+            let mut contents: Vec<u8> = params.iter().flat_map(|v| v.to_ne_bytes()).collect();
+            // A uniform block is a whole number of sixteen bytes, however many it uses.
+            contents.resize(contents.len().next_multiple_of(16), 0);
+            uniforms.push(recording.init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pmrid params"),
+                contents: &contents,
+                usage: wgpu::BufferUsages::UNIFORM,
+            }));
+        }
+        recording.submit();
+
         Session {
-            shape: (pw, ph, pmrid.cell),
+            shape: (pw, ph, pmrid.arm),
             arena,
             edges,
             groups: Vec::new(),
@@ -1262,6 +1298,7 @@ impl Session {
             at,
             tiles,
             matrices,
+            separable,
             coop_group: None,
         }
     }
@@ -1348,8 +1385,9 @@ impl Session {
             for (at, layer) in net.layers.iter().enumerate() {
                 let output = net.tensors[layer.output];
                 let input = net.tensors[layer.input];
-                // A depthwise the matrix units take together with its 1x1 is that layer's dispatch.
-                if matches!(self.matrices.get(at + 1), Some(Some(Matrix::Separable(_)))) {
+                // A depthwise taken together with its 1x1 is that layer's dispatch.
+                let taken = matches!(self.matrices.get(at + 1), Some(Some(Matrix::Separable(_))));
+                if taken || self.separable.get(at + 1) == Some(&true) {
                     continue;
                 }
                 if let Some(matrix) = self.matrices[at] {
@@ -1410,12 +1448,21 @@ impl Session {
                 // dispatched over pixels and channels rather than over the picture's own shape.
                 if self.tiles[at] != usize::MAX {
                     let (pipeline, rows, columns) = TILES[self.tiles[at]];
-                    let plane = (pw >> output.level) * (ph >> output.level);
+                    let (width, height) = (pw >> output.level, ph >> output.level);
+                    let wide = tile_wide(columns);
+                    let (pipeline, across, down) = match self.separable[at] {
+                        true => (
+                            SEPARABLE + self.tiles[at],
+                            width.div_ceil(wide),
+                            height.div_ceil(columns / wide),
+                        ),
+                        false => (pipeline, (width * height).div_ceil(columns), 1),
+                    };
                     pass.set_pipeline(&pmrid.pipelines[pipeline]);
                     pass.dispatch_workgroups(
-                        plane.div_ceil(columns) as u32,
+                        across as u32,
                         output.channels.div_ceil(rows) as u32,
-                        1,
+                        down as u32,
                     );
                     continue;
                 }
@@ -1505,6 +1552,32 @@ fn matrix(net: &Net, coop: &Coop, index: usize, pw: usize, ph: usize) -> Option<
         true => Some(Matrix::Pointwise(rows)),
         false => Some(Matrix::Separable(rows)),
     }
+}
+
+/// Whether the WGSL pass takes 1x1 layer `index` together with the depthwise before it, in
+/// [`TILES`]`[tiles[index]]`.
+///
+/// **Only where one workgroup covers every output channel.** Each workgroup filters the whole
+/// depth of its patch, so a layer spread over several row blocks filters it once per block, and
+/// that repeated depthwise costs more than the plane it saves writing. On an RTX 3080 over a 24MP
+/// frame: 105.2ms unfused in `half`, 105.2 fusing one block, 115.6 two, 220.7 every layer; in
+/// `float` 122.8, 119.7, 128.6 and 217.8.
+fn separable_on_wgsl(
+    net: &Net,
+    matrices: &[Option<Matrix>],
+    tiles: &[usize],
+    index: usize,
+) -> bool {
+    let layer = &net.layers[index];
+    let Some(spread) = index.checked_sub(1).map(|before| &net.layers[before]) else {
+        return false;
+    };
+    matrices[index].is_none()
+        && tiles[index] != usize::MAX
+        && net.tensors[layer.output].channels <= TILES[tiles[index]].1
+        && matches!((spread.kernel, spread.stride), (3 | 5, 1 | 2))
+        && spread.op == Op::Depthwise
+        && spread.output == layer.input
 }
 
 /// Whether a layer is a matrix multiply the pointwise kernels dispatch as one.
@@ -1724,21 +1797,22 @@ mod tests {
     /// **A report more than a test**: the times go to stderr past the harness's capture, so a plain
     /// `bun run test:native pmrid_arms --features fixtures` prints them. With the arena held, as a
     /// render queue holds it, so what is timed is the network rather than an allocation. What is
-    /// asserted is only that the two arms paint the same picture, which the synthetic comparison
-    /// beside this one cannot say about a frame with real highlights in it.
+    /// asserted is only that the arms paint the same picture, which the synthetic comparison beside
+    /// this one cannot say about a frame with real highlights in it.
     #[cfg(feature = "fixtures")]
     #[test]
     fn pmrid_arms_on_a_photograph() {
         use std::io::Write;
         const RUNS: usize = 5;
         let Some(gpu) = crate::gpu::device() else { return };
-        let tensors = super::device(gpu).expect("the network built");
-        let wgsl = super::build_kernels(gpu, super::weights().expect("the weights"), false);
+        let weights = super::weights().expect("the weights");
+        let arms: Vec<(super::Arm, super::Pmrid)> =
+            [super::Arm::Matrix, super::Arm::Half, super::Arm::Float]
+                .into_iter()
+                .map(|arm| (arm, super::build_kernels(gpu, weights, arm)))
+                .filter(|(arm, kernels)| kernels.arm == *arm)
+                .collect();
         let mut report = std::io::stderr();
-        if tensors.coop.is_none() {
-            let _ = writeln!(report, "pmrid on {}: no matrix arm on this adapter", gpu.adapter);
-            return;
-        }
 
         super::hold_arenas();
         for path in [crate::fixture_tests::sony(), crate::fixture_tests::clipped()] {
@@ -1759,42 +1833,63 @@ mod tests {
             };
 
             // The first of each compiles whatever pipelines the driver has not cached.
-            let (_, from_tensors) = run(tensors);
-            let (_, from_wgsl) = run(&wgsl);
-            let mut fastest_tensors = std::time::Duration::MAX;
-            let mut fastest_wgsl = std::time::Duration::MAX;
+            let answers: Vec<Vec<f32>> = arms
+                .iter()
+                .map(|(_, kernels)| {
+                    pollster::block_on(run(kernels).1.read(gpu)).expect("the mosaic reads back")
+                })
+                .collect();
+            let mut fastest = vec![std::time::Duration::MAX; arms.len()];
             for _ in 0..RUNS {
-                fastest_tensors = fastest_tensors.min(run(tensors).0);
-                fastest_wgsl = fastest_wgsl.min(run(&wgsl).0);
+                for (at, (_, kernels)) in arms.iter().enumerate() {
+                    fastest[at] = fastest[at].min(run(kernels).0);
+                }
             }
 
-            let read = |frame: &crate::condition::Mosaic| {
-                pollster::block_on(frame.read(gpu)).expect("the mosaic reads back")
-            };
-            let (a, b) = (read(&from_tensors), read(&from_wgsl));
-            let apart: Vec<f64> =
-                a.iter().zip(&b).map(|(a, b)| f64::from((a - b).abs()) * 255.0).collect();
-            let mean = apart.iter().sum::<f64>() / apart.len() as f64;
-            let worst = apart.iter().copied().fold(0.0, f64::max);
             let name = path.file_name().expect("a file").to_string_lossy();
             let megapixels = (mosaic.width * mosaic.height) as f64 / 1e6;
             let _ = writeln!(
                 report,
-                "pmrid on {}, {name} ({megapixels:.1}MP), fastest of {RUNS}:\n  \
-                 matrix units {:>7.1}ms\n  WGSL         {:>7.1}ms  ({:.2}x the matrix units)\n  \
-                 apart: {mean:.4} codes of 255 on average, {worst:.2} at the worst photosite",
-                gpu.adapter,
-                fastest_tensors.as_secs_f64() * 1e3,
-                fastest_wgsl.as_secs_f64() * 1e3,
-                fastest_wgsl.as_secs_f64() / fastest_tensors.as_secs_f64(),
+                "pmrid on {}, {name} ({megapixels:.1}MP), fastest of {RUNS}:",
+                gpu.adapter
             );
-            assert!(mean < 0.05, "{name}: the two arms are {mean:.4} codes apart on average");
+            let float = answers.last().expect("every device builds the float arm");
+            let slowest = fastest.last().expect("and times it").as_secs_f64();
+            let mut apart_most = (super::Arm::Float, 0.0);
+            for (at, (arm, _)) in arms.iter().enumerate() {
+                let took = fastest[at].as_secs_f64();
+                if *arm == super::Arm::Float {
+                    let _ = writeln!(report, "  {:<7} {:>7.1}ms", "Float", took * 1e3);
+                    continue;
+                }
+                let apart: Vec<f64> = answers[at]
+                    .iter()
+                    .zip(float)
+                    .map(|(a, b)| f64::from((a - b).abs()) * 255.0)
+                    .collect();
+                let mean = apart.iter().sum::<f64>() / apart.len() as f64;
+                let worst = apart.iter().copied().fold(0.0, f64::max);
+                let _ = writeln!(
+                    report,
+                    "  {:<7} {:>7.1}ms  {:.2}x Float's speed, {mean:.4} codes of 255 from it on \
+                     average, {worst:.2} at the worst photosite",
+                    format!("{arm:?}"),
+                    took * 1e3,
+                    slowest / took,
+                );
+                if mean > apart_most.1 {
+                    apart_most = (*arm, mean);
+                }
+            }
+            let (arm, mean) = apart_most;
+            assert!(mean < 0.05, "{name}: {arm:?} is {mean:.4} codes from Float on average");
         }
         super::release_arenas();
     }
 
     /// Every shader holds the arena in the type the host sizes it for: `float` in the WGSL pass a
-    /// page runs, `half` in the one beside the matrix units and in the matrix units themselves.
+    /// device without `shader-f16` runs, `half` in the one a device with it runs and in the matrix
+    /// units.
     ///
     /// **A mismatch reads as a picture, never as an error**: a `half` arena sized for `float` is
     /// twice the room it needs, and a `float` one sized for `half` is every tensor past the first
@@ -1807,11 +1902,11 @@ mod tests {
         };
         assert!(
             read("../../slang/pmrid.slang").contains("#define STORED float"),
-            "the WGSL pass a page runs does not hold its arena in `float`",
+            "the WGSL pass without `shader-f16` does not hold its arena in `float`",
         );
         assert!(
             read("build.rs").contains("-DSTORED=half"),
-            "the pass beside the matrix units does not hold its arena in `half`",
+            "the WGSL pass with `shader-f16` does not hold its arena in `half`",
         );
         assert!(
             read("../../slang/passthrough/pmrid_coop.slang").contains("typealias Stored = half;"),
@@ -1819,22 +1914,20 @@ mod tests {
         );
     }
 
-    /// The matrix units answer the same picture as the WGSL a page runs.
+    /// Every arm this device builds answers the same picture as the `float` WGSL a page without
+    /// `shader-f16` runs.
     ///
-    /// **This is the rule about a rendition and the editor agreeing, at the one place the two hosts
-    /// genuinely run different kernels.** The editor has no cooperative matrix and no way to hand a
-    /// driver a kernel of its own, so it takes the WGSL pass; a rendition on a device with the
-    /// instruction takes this one, whose arena and accumulator are `half` where the other's are
-    /// `float`. What those cost the picture is what this measures - on whichever arm the adapter
-    /// built, so a Mac is measuring `simdgroup_matrix` here and a Vulkan card its own.
+    /// **This is the rule about a rendition and the editor agreeing, at the one place the hosts
+    /// genuinely run different kernels.** A page takes the WGSL pass, over `half` where it has
+    /// `shader-f16` and `float` where it does not; a rendition on a device with the matrix units
+    /// takes those, over `half`. What `half` costs the picture is what this measures - on whichever
+    /// arms the adapter built, so a Mac is measuring `simdgroup_matrix` here and a Vulkan card its
+    /// own.
     #[test]
-    fn the_tensor_arm_denoises_what_the_wgsl_arm_does() {
+    fn every_arm_denoises_what_the_float_arm_does() {
         let Some(gpu) = crate::gpu::device() else { return };
-        let network = super::device(gpu).expect("the network built");
-        if network.coop.is_none() {
-            return;
-        }
-        let wgsl_only = super::build_kernels(gpu, super::weights().expect("the weights"), false);
+        let weights = super::weights().expect("the weights");
+        let float = super::build_kernels(gpu, weights, super::Arm::Float);
 
         let (width, height) = (512, 512);
         let mut seed = 0x2545_f491_4f6c_dd1du64;
@@ -1863,11 +1956,20 @@ mod tests {
             super::denoise(gpu, kernels, &mut mosaic, &cfa, [1.0, 1.0, 1.0], detail, fit);
             pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back")
         };
-        let (tensors, wgsl) = (filtered(network), filtered(&wgsl_only));
-
-        let worst =
-            tensors.iter().zip(&wgsl).map(|(a, b)| f64::from((a - b).abs())).fold(0.0, f64::max);
-        // 0.08 on this frame, and a quarter of a code is the room another driver's rounding has.
-        assert!(worst * 255.0 < 0.25, "the two arms are {:.4} codes apart", worst * 255.0);
+        let against = filtered(&float);
+        for arm in [super::Arm::Matrix, super::Arm::Half] {
+            let kernels = super::build_kernels(gpu, weights, arm);
+            // A device builds the fastest arm it offers, which may be slower than the one asked.
+            if kernels.arm != arm {
+                continue;
+            }
+            let worst = filtered(&kernels)
+                .iter()
+                .zip(&against)
+                .map(|(a, b)| f64::from((a - b).abs()))
+                .fold(0.0, f64::max);
+            // 0.08 on this frame, and a quarter of a code is the room another driver's rounding has.
+            assert!(worst * 255.0 < 0.25, "{arm:?} is {:.4} codes from Float", worst * 255.0);
+        }
     }
 }

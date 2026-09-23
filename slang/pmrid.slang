@@ -27,6 +27,9 @@ struct Params {
     /// 1 to add `skip_at`'s sample to this layer's own before the ReLU, which is the residual a
     /// separate dispatch would otherwise read both tensors back to do.
     uint fused;
+    /// A 1x1's depthwise, where [`separable`] takes the two as one: its taps. The input, `kernel`,
+    /// `stride` and `pad` are then the depthwise's too.
+    uint taps_at;
 };
 
 [vk::binding(20, 0)] ConstantBuffer<Params> pc;
@@ -42,12 +45,11 @@ typealias Cell = float;
 
 /// What an arena cell is held in, apart from what it is computed in.
 ///
-/// **`float` unless the build says `half`, and it says so for the tensor arm alone.** `build.rs`
-/// compiles this a second time with `STORED` defined, which is the module a device with the
-/// cooperative-matrix kernels takes, since those read and write the arena in place and a matrix
-/// unit's operands are `half`. Everywhere else - a page, and the software adapter - keeps `float`,
-/// because `half` would ask every one of them for `shader-f16`, and the WGSL pass alone does not
-/// move for it on an RTX 3080, since it waits on its loads' latency rather than their size.
+/// **`float` unless the build says `half`, which it does for every device with `shader-f16`.**
+/// `build.rs` compiles this a second time with `STORED` defined: the cooperative-matrix kernels
+/// read and write the arena in place as a matrix unit's `half` operands, and on its own the WGSL
+/// pass takes 101ms over a 24MP frame in `half` against 116 in `float` on an RTX 3080, and 251
+/// against 280 over 64MP. `float` is for whatever lacks the feature, page or host.
 #ifndef STORED
 #define STORED float
 #endif
@@ -226,6 +228,74 @@ static const uint WIDEST_TILE_COLS = 128;
 
 groupshared Cell tile_weights[WIDEST_TILE_ROWS * STEP];
 groupshared Cell tile_samples[STEP * WIDEST_TILE_COLS];
+/// [`spread`]'s patch: the 16KB a browser gives a workgroup, less the two tiles above.
+static const uint SPREAD_PATCH = 16384 / 4 - WIDEST_TILE_ROWS * STEP - STEP * WIDEST_TILE_COLS;
+groupshared Cell spread_patch[SPREAD_PATCH];
+
+/// How many pixels across [`separable`]'s tile of `columns` is.
+uint tile_wide(uint columns)
+{
+    return columns >= 128 ? 16 : 8;
+}
+
+/// Where column `p` of [`tiled`]'s tile is in the output plane, or the plane's size where it falls
+/// past the plane's end or edge.
+uint tile_pixel<let TILE_COLS : uint, let K : uint>(uint3 group, uint p)
+{
+    let plane = pc.out_width * pc.out_height;
+    if (K == 0) { return min(group.x * TILE_COLS + p, plane); }
+    let wide = tile_wide(TILE_COLS);
+    let x = group.x * wide + p % wide;
+    let y = group.z * (TILE_COLS / wide) + p / wide;
+    return x < pc.out_width && y < pc.out_height ? y * pc.out_width + x : plane;
+}
+
+/// One step of `STEP` channels from `first` of the depthwise, over [`tiled`]'s tile of `TILE_COLS`
+/// pixels, into `tile_samples`.
+///
+/// **The patch a tile reaches is staged a few channels at a time**, as many as `spread_patch` holds,
+/// which is what is left of a workgroup's 16KB beside [`tiled`]'s two tiles.
+void spread<let TILE_COLS : uint, let THREADS_HERE : uint, let K : uint, let S : uint>(
+    uint3 group, uint slot, uint first)
+{
+    const uint WIDE_HERE = tile_wide(TILE_COLS);
+    const uint TALL_HERE = TILE_COLS / WIDE_HERE;
+    const uint SPAN = WIDE_HERE * S + K - 1;
+    const uint REACH = SPAN * (TALL_HERE * S + K - 1);
+    const uint FIT = SPREAD_PATCH / REACH;
+    const uint SUB = FIT >= 16 ? 16 : FIT >= 8 ? 8 : FIT >= 4 ? 4 : FIT >= 2 ? 2 : 1;
+    let origin = int2(
+        int(group.x * WIDE_HERE * S) - int(pc.pad), int(group.z * TALL_HERE * S) - int(pc.pad));
+    for (uint sub = 0; sub < STEP; sub += SUB) {
+        for (uint i = slot; i < SUB * REACH; i += THREADS_HERE) {
+            let within = i % REACH;
+            spread_patch[i] = sample(
+                first + sub + i / REACH, origin.y + int(within / SPAN), origin.x + int(within % SPAN));
+        }
+        GroupMemoryBarrierWithGroupSync();
+        for (uint i = slot; i < SUB * TILE_COLS; i += THREADS_HERE) {
+            let row = i / TILE_COLS;
+            let p = i % TILE_COLS;
+            let px = p % WIDE_HERE;
+            let py = p / WIDE_HERE;
+            let taps = pc.taps_at + (first + sub + row) * K * K;
+            var sum = Cell(0.0);
+            [ForceUnroll]
+            for (uint ky = 0; ky < K; ky++) {
+                [ForceUnroll]
+                for (uint kx = 0; kx < K; kx++) {
+                    let value = spread_patch[row * REACH + (py * S + ky) * SPAN + px * S + kx];
+                    sum += value * weights[taps + ky * K + kx];
+                }
+            }
+            let inside =
+                group.x * WIDE_HERE + px < pc.out_width && group.z * TALL_HERE + py < pc.out_height;
+            tile_samples[(sub + row) * TILE_COLS + p] = inside ? sum : Cell(0.0);
+        }
+        // Held until every thread has read the patch the next round overwrites.
+        GroupMemoryBarrierWithGroupSync();
+    }
+}
 
 void store_flat(uint channel, uint at_in_plane, Cell value)
 {
@@ -248,18 +318,24 @@ void store_flat(uint channel, uint at_in_plane, Cell value)
 /// idle. The shapes below are the same tile cut narrower for those, and the host times all of them
 /// against each layer rather than deciding from the shape - 246ms over the frame's 1x1 layers where
 /// the best single shape is 264.
+///
+/// **`K` of zero is a 1x1 over a plane in the arena; otherwise the samples are a depthwise's**, `K`
+/// by `K` at stride `S`, computed for the tile a step at a time straight into `tile_samples` from
+/// the depthwise's own input ([`separable`]). The plane between the two layers is never written, and
+/// a tile of pixels is then a rectangle, [`tile_wide`] across, for the depthwise's reach to be one.
 void tiled<
     let MICRO_ROWS : uint,
     let MICRO_COLS : uint,
     let GEMM_WIDE : uint,
-    let GEMM_TALL : uint>(uint3 group, uint3 local, uint slot)
+    let GEMM_TALL : uint,
+    let K : uint,
+    let S : uint>(uint3 group, uint3 local, uint slot)
 {
     const uint TILE_ROWS = GEMM_TALL * MICRO_ROWS;
     const uint TILE_COLS = GEMM_WIDE * MICRO_COLS;
     const uint THREADS_HERE = GEMM_WIDE * GEMM_TALL;
     let plane = pc.out_width * pc.out_height;
     let first_row = group.y * TILE_ROWS;
-    let first_col = group.x * TILE_COLS;
 
     var sums: Cell[MICRO_ROWS * MICRO_COLS];
     [ForceUnroll]
@@ -277,11 +353,14 @@ void tiled<
                 ? weights[pc.weights_at + row * pc.in_channels + c + i % STEP]
                 : Cell(0.0);
         }
-        for (uint i = slot; i < STEP * TILE_COLS; i += THREADS_HERE) {
-            let column = first_col + i % TILE_COLS;
-            tile_samples[i] = column < plane
-                ? fetch(pc.input_at + (c + i / TILE_COLS) * plane + column)
-                : Cell(0.0);
+        if (K == 0) {
+            for (uint i = slot; i < STEP * TILE_COLS; i += THREADS_HERE) {
+                let at = tile_pixel<TILE_COLS, K>(group, i % TILE_COLS);
+                let channel = c + i / TILE_COLS;
+                tile_samples[i] = at < plane ? fetch(pc.input_at + channel * plane + at) : Cell(0.0);
+            }
+        } else {
+            spread<TILE_COLS, THREADS_HERE, K, S>(group, slot, c);
         }
         GroupMemoryBarrierWithGroupSync();
 
@@ -316,36 +395,52 @@ void tiled<
         if (row >= pc.out_channels) { break; }
         [ForceUnroll]
         for (uint n = 0; n < MICRO_COLS; n++) {
-            let column = first_col + n * GEMM_WIDE + local.x;
-            if (column < plane) { store_flat(row, column, sums[r * MICRO_COLS + n]); }
+            let at = tile_pixel<TILE_COLS, K>(group, n * GEMM_WIDE + local.x);
+            if (at < plane) { store_flat(row, at, sums[r * MICRO_COLS + n]); }
         }
     }
 }
 
-/// A tile of [`tiled`], dispatched over `pixels / (wide * cols)` in x and
-/// `out_channels / (tall * rows)` in y, which the host has to match, and only where `in_channels`
-/// is a multiple of `STEP`.
+/// A tile of [`tiled`] twice: `name`, a 1x1 dispatched over `pixels / (wide * cols)` in x, and
+/// `separable`, the same 1x1 with its depthwise, over the output's [`tile_wide`] columns in x and
+/// its rows in z. Both over `out_channels / (tall * rows)` in y, which the host has to match, and
+/// only where `in_channels` is a multiple of `STEP`. `separable` knows a 3x3 or 5x5 at stride 1
+/// or 2 and nothing else, which the host checks before handing it one.
 ///
 /// **These five differ in the tile, not in what a thread carries.** Sixteen accumulators is where
 /// the thread stops paying: thirty-two of them over the same 32x128 tile - as 128 threads of 4x8,
 /// and as 128 of 8x4 - were measured fastest for one of the 43 layers and for none of them, and
 /// left the frame where it was.
-#define POINTWISE(name, rows, cols, wide, tall)                       \
-    [shader("compute")]                                               \
-    [numthreads(wide, tall, 1)]                                       \
-    void name(                                                        \
-        uint3 group : SV_GroupID,                                     \
-        uint3 local : SV_GroupThreadID,                               \
-        uint slot : SV_GroupIndex)                                    \
-    {                                                                 \
-        tiled<rows, cols, wide, tall>(group, local, slot);            \
+#define POINTWISE(name, separable, rows, cols, wide, tall)                     \
+    [shader("compute")]                                                        \
+    [numthreads(wide, tall, 1)]                                                \
+    void name(                                                                 \
+        uint3 group : SV_GroupID,                                              \
+        uint3 local : SV_GroupThreadID,                                        \
+        uint slot : SV_GroupIndex)                                             \
+    {                                                                          \
+        tiled<rows, cols, wide, tall, 0, 1>(group, local, slot);               \
+    }                                                                          \
+    [shader("compute")]                                                        \
+    [numthreads(wide, tall, 1)]                                                \
+    void separable(                                                            \
+        uint3 group : SV_GroupID,                                              \
+        uint3 local : SV_GroupThreadID,                                        \
+        uint slot : SV_GroupIndex)                                             \
+    {                                                                          \
+        switch (pc.kernel * 10 + pc.stride) {                                  \
+        case 52: tiled<rows, cols, wide, tall, 5, 2>(group, local, slot); break; \
+        case 51: tiled<rows, cols, wide, tall, 5, 1>(group, local, slot); break; \
+        case 32: tiled<rows, cols, wide, tall, 3, 2>(group, local, slot); break; \
+        default: tiled<rows, cols, wide, tall, 3, 1>(group, local, slot); break; \
+        }                                                                      \
     }
 
-POINTWISE(pointwise, 4, 4, 32, 8)
-POINTWISE(pointwise_narrow, 2, 4, 32, 8)
-POINTWISE(pointwise_short, 4, 2, 32, 8)
-POINTWISE(pointwise_stub, 4, 1, 32, 8)
-POINTWISE(pointwise_small, 2, 2, 32, 8)
+POINTWISE(pointwise, separable, 4, 4, 32, 8)
+POINTWISE(pointwise_narrow, separable_narrow, 2, 4, 32, 8)
+POINTWISE(pointwise_short, separable_short, 4, 2, 32, 8)
+POINTWISE(pointwise_stub, separable_stub, 4, 1, 32, 8)
+POINTWISE(pointwise_small, separable_small, 2, 2, 32, 8)
 
 /// The input patch one workgroup of [`depthwise`] reads, which its threads overlap almost entirely:
 /// at stride 2 and a 5x5 kernel that is 36x36 samples for 256 outputs, where reading them a thread
