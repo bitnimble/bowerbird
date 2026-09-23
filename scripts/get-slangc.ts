@@ -7,65 +7,51 @@
 // finds neither. Nothing fetches during a build: a compiler that arrives over the network mid-build
 // is a build whose output depends on the day it ran.
 //
-// **The version is pinned because codegen moves.** Two Slang releases can lower the same source to
-// arithmetic that differs in the last bit, and the snapshots are compared with a tolerance a codegen
-// change can cross. Bumping this is a deliberate act with the fixtures re-read,
-// not a `latest` that shifts under whoever built most recently.
+// Through vcpkg (`vcpkg.ts`), which downloads Slang's own release build rather than compiling it,
+// so the version is the vcpkg commit's. **Moving that commit moves the compiler, and codegen
+// moves with it.** Two Slang releases can lower the same source to arithmetic that differs in the
+// last bit, and the snapshots are compared with a tolerance a codegen change can cross, so a bump
+// is a deliberate act with the fixtures re-read.
 import { spawnSync } from 'node:child_process';
-import { rmSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { linkPinned, makeOnce, pin, pinnedHome, unpack } from './pinned';
+import { readdirSync, rmSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { linkPinned, makeOnce, pinnedHome } from './pinned';
+import { hostPath, vcpkgInstall, vcpkgRecipe, WINDOWS } from './vcpkg';
 
 const NAME = 'slangc';
-const VERSION = '2026.14.1';
-const ROOT = resolve(import.meta.dir, '..');
-
-/** The release asset for this machine, as Slang names them. */
-function asset(): string {
-  const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
-  const named: Partial<Record<NodeJS.Platform, string>> = {
-    linux: 'linux',
-    darwin: 'macos',
-    win32: 'windows',
-  };
-  const platform = named[process.platform];
-  if (platform == null) {
-    throw new Error(`no Slang release for ${process.platform}`);
-  }
-  return `slang-${VERSION}-${platform}-${arch}.tar.gz`;
-}
-
-function run(command: string, args: string[]): void {
-  const done = spawnSync(command, args, { cwd: ROOT, stdio: 'inherit' });
-  if (done.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} exited ${done.status}`);
-  }
-}
+const FEATURE = 'shaders';
+const RECIPE = vcpkgRecipe(FEATURE);
+const HOME = pinnedHome(NAME, RECIPE);
+const INSTALLED = resolve(HOME, 'installed');
+const BINARY = WINDOWS ? 'slangc.exe' : 'slangc';
 
 function main(): void {
-  const name = asset();
-  const recipe = pin(VERSION, [name]);
-  const home = pinnedHome(NAME, recipe);
-  const binary = resolve(home, 'bin', process.platform === 'win32' ? 'slangc.exe' : 'slangc');
-
-  makeOnce(home, recipe, process.env.BOWERBIRD_REFETCH_SLANGC != null, () => {
-    const url = `https://github.com/shader-slang/slang/releases/download/v${VERSION}/${name}`;
-    // curl rather than wget: macOS ships one and not the other, and so does the Debian slim the
-    // container builds on.
-    const tarball = resolve(home, name);
-    run('curl', ['--proto', '=https', '--tlsv1.2', '-fsSL', '-o', tarball, url]);
-    unpack(home, name);
-    rmSync(tarball, { force: true });
-
-    const check = spawnSync(binary, ['-v'], { encoding: 'utf8' });
-    const reported = (check.stdout + check.stderr).trim();
-    if (!reported.startsWith(VERSION)) {
-      throw new Error(`fetched slangc reports ${reported}, wanted ${VERSION}`);
+  makeOnce(HOME, RECIPE, process.env.BOWERBIRD_REFETCH_SLANGC != null, () => {
+    vcpkgInstall(INSTALLED, FEATURE, [], false);
+    // Everything but the compiler's own directory: the port installs Slang a second time as a
+    // library to link, and 300MB of debug symbols, and this tree is cached on every CI runner.
+    const host = dirname(dirname(tools()));
+    for (const entry of readdirSync(host)) {
+      if (entry !== 'tools') rmSync(resolve(host, entry), { recursive: true, force: true });
     }
+    // 150MB that only a CPU target loads; WGSL never does.
+    for (const llvm of ['libslang-llvm.so', 'libslang-llvm.dylib', 'slang-llvm.dll']) {
+      rmSync(resolve(tools(), llvm), { force: true });
+    }
+    // Run from where it landed, so a shared library it cannot find beside it fails here rather
+    // than in the middle of a crate build.
+    const check = spawnSync(resolve(tools(), BINARY), ['-v'], { encoding: 'utf8' });
+    if (check.status !== 0) throw new Error(`slangc does not start: ${check.stderr || check.error?.message}`);
   });
+  // The tools directory itself, which holds the compiler, the libraries it loads and the standard
+  // modules it reads, all beside each other.
+  linkPinned(NAME, tools());
+  const reported = spawnSync(resolve(tools(), BINARY), ['-v'], { encoding: 'utf8' });
+  console.log(`slangc ${(reported.stdout + reported.stderr).trim()} at ${tools()}`);
+}
 
-  linkPinned(NAME, home);
-  console.log(`slangc ${VERSION} at ${binary}`);
+function tools(): string {
+  return hostPath(INSTALLED, 'tools/shader-slang');
 }
 
 main();

@@ -126,7 +126,9 @@ forgets. That directory is gitignored like every other emitted WGSL.
 
 `bun run get:slangc` fetches the pinned compiler into `native/rawshim/.slangc`; `BOWERBIRD_SLANGC`
 points the build at another one. A build with neither fails naming both, rather than quietly
-leaving a stage out.
+leaving a stage out. It comes through vcpkg, at the same commit as the codecs below, so **moving
+that commit moves the compiler too**, and two Slang releases can lower the same source to
+arithmetic that differs in the last bit: a bump re-reads the snapshots.
 
 ## The codecs are pinned too, through vcpkg, and linked statically
 
@@ -153,7 +155,7 @@ and ninja, and on Windows everything.
 
 **All three getters replace a tree made from an older recipe.** Each records what it was made from
 (`scripts/pinned.ts`) - the vcpkg commit and every file under `native/rawshim/vcpkg/` for the
-codecs, the asset name for the compiler, the file hashes for the driver - and reuses what is there
+codecs and the compiler, the file hashes for the driver - and reuses what is there
 only when that still matches, so bumping a version or adding a flag rebuilds rather than leaving
 the old tree where the build will find it. That is not hypothetical: a libavif built without
 sharpyuv compiles the stub, which answers `NOT_IMPLEMENTED` to every 4:2:0 encode, which is every

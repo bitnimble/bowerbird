@@ -122,12 +122,13 @@ COPY scripts/pinned.ts scripts/get-swiftshader.ts ./scripts/
 RUN bun run scripts/get-swiftshader.ts
 
 # The Slang compiler, on the same terms: one stage fetches the pinned build and the three
-# that need it copy the tree, rather than each refetching it.
+# that need it copy the tree, rather than each refetching it. Through vcpkg, like the codecs.
 FROM base AS slangc
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && apt-get install -y --no-install-recommends build-essential ca-certificates curl git tar unzip zip \
   && rm -rf /var/lib/apt/lists/*
-COPY scripts/pinned.ts scripts/get-slangc.ts ./scripts/
+COPY scripts/pinned.ts scripts/vcpkg.ts scripts/get-slangc.ts ./scripts/
+COPY native/rawshim/vcpkg ./native/rawshim/vcpkg
 RUN bun run scripts/get-slangc.ts
 
 # The denoiser's published weights, which `src/pmrid.rs` embeds - so this is a file the crate does
@@ -156,7 +157,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
      build-essential ca-certificates curl git nasm pkg-config python3 tar unzip zip \
   && rm -rf /var/lib/apt/lists/*
-COPY scripts/pinned.ts scripts/get-codecs.ts ./scripts/
+COPY scripts/pinned.ts scripts/vcpkg.ts scripts/get-codecs.ts ./scripts/
 COPY native/rawshim/vcpkg ./native/rawshim/vcpkg
 RUN bun run scripts/get-codecs.ts
 
@@ -188,7 +189,7 @@ COPY --from=swiftshader /app/native/rawshim/.swiftshader/libvk_swiftshader.so /a
 # `native/rawshim/.slangc` is a symlink into the *host's* cache and dangles in here, so the
 # Vite plugin that compiles the browser's shaders finds this one on PATH instead.
 COPY --from=slangc /app/native/rawshim/.slangc /opt/slangc
-ENV PATH="/opt/slangc/bin:${PATH}"
+ENV PATH="/opt/slangc:${PATH}"
 
 # Dependencies as a cacheable layer.
 FROM base AS deps

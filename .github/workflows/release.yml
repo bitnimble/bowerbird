@@ -241,7 +241,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'native/rawshim/vcpkg/**') }}
+          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
 
       # vcpkg's archive of each port it built, for when the trees above miss: a recipe change then
       # rebuilds only the ports it touched. vcpkg checks each against the ABI hash of the port, the
@@ -253,11 +253,11 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/rawshim/vcpkg/**', 'scripts/get-codecs.ts') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/rawshim/vcpkg/**', 'scripts/vcpkg.ts') }}
           restore-keys: vcpkg-${{ runner.os }}-
 
       # The pinned compiler and the pinned codecs, fetched through the same scripts a
-      # development machine runs so the version is stated once (`scripts/pinned.ts`).
+      # development machine runs so the version is stated once (`scripts/vcpkg.ts`).
       - run: |
           mkdir -p "$RUNNER_TEMP/vcpkg-archives"
           bun run get:all
@@ -270,12 +270,12 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'native/rawshim/vcpkg/**') }}
+          key: pinned-${{ runner.os }}-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
       - if: steps.pinned-cache.outputs.cache-hit != 'true' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/vcpkg-archives
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/rawshim/vcpkg/**', 'scripts/get-codecs.ts') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/rawshim/vcpkg/**', 'scripts/vcpkg.ts') }}
 
       - name: Stamp the version the tag names
         if: env.TAG != ''
@@ -352,13 +352,13 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
+          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
       - run: bun run get:shell
       - if: steps.pinned-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/bowerbird
-          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts') }}
+          key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
       - name: Stamp the version the tag names
         if: env.TAG != ''
         run: bun run scripts/set-version.ts "$TAG"

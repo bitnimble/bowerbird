@@ -30,7 +30,7 @@ function slangc(): string {
   const named = process.env.BOWERBIRD_SLANGC;
   if (named != null && existsSync(named)) return named;
   const binary = process.platform === 'win32' ? 'slangc.exe' : 'slangc';
-  const pinned = resolve(ROOT, 'native/rawshim/.slangc/bin', binary);
+  const pinned = resolve(ROOT, 'native/rawshim/.slangc', binary);
   if (existsSync(pinned)) return pinned;
   for (const at of (process.env.PATH ?? '').split(delimiter)) {
     const candidate = join(at, binary);

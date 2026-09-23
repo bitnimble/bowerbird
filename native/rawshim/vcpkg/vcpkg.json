@@ -1,14 +1,28 @@
 {
-  "$comment": "What `bun run get:codecs` installs: libavif and libjxl, and aom, dav1d, sharpyuv, highway, brotli and lcms2 under them, static, at the versions the vcpkg commit in scripts/get-codecs.ts fixes. pkgconf is how that getter reads the link line back out.",
-  "dependencies": [
-    {
-      "name": "libavif",
-      "features": ["aom", "dav1d"]
+  "$comment": "Everything this repo takes from vcpkg, at the versions the vcpkg commit in scripts/vcpkg.ts fixes. One feature per getter, so a machine that only compiles shaders never builds a codec.",
+  "features": {
+    "codecs": {
+      "description": "`bun run get:codecs`: libavif and libjxl, and aom, dav1d, sharpyuv, highway, brotli and lcms2 under them, static. pkgconf is how the getter reads the link line back out.",
+      "dependencies": [
+        {
+          "name": "libavif",
+          "features": ["aom", "dav1d"]
+        },
+        "libjxl",
+        {
+          "name": "pkgconf",
+          "host": true
+        }
+      ]
     },
-    "libjxl",
-    {
-      "name": "pkgconf",
-      "host": true
+    "shaders": {
+      "description": "`bun run get:slangc`: the Slang compiler, which vcpkg downloads prebuilt rather than building.",
+      "dependencies": [
+        {
+          "name": "shader-slang",
+          "host": true
+        }
+      ]
     }
-  ]
+  }
 }

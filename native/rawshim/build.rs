@@ -134,7 +134,7 @@ fn slangc() -> PathBuf {
         .map(PathBuf::from)
         .ok()
         .filter(|it| it.exists())
-        .or_else(|| Some(PathBuf::from(".slangc/bin").join(binary)).filter(|it| it.exists()))
+        .or_else(|| Some(PathBuf::from(".slangc").join(binary)).filter(|it| it.exists()))
         .or_else(|| {
             env::split_paths(&env::var_os("PATH")?).map(|at| at.join(binary)).find(|it| it.exists())
         })
