@@ -40,6 +40,7 @@ function metadata(mtime: Date, size: number): FileMetadata {
     cameraMake: null,
     cameraModel: null,
     lensModel: null,
+    sequence: null,
     mtime: mtime.toISOString(),
     fileSize: size,
   };

@@ -1,3 +1,4 @@
+import type { CaptureSequence } from '../../../schemas/capture_sequence';
 import { extractEmbedded, readHeaderFields, scrubExif } from './rawshim_ops';
 
 // The RAW file's own metadata and its embedded preview, both by way of
@@ -51,6 +52,7 @@ export interface RawHeader {
   cameraMake: string | null;
   cameraModel: string | null;
   lensModel: string | null;
+  sequence: CaptureSequence | null;
 }
 
 // EXIF DateTimeOriginal carries no timezone, and `bb_read_header` reads it as UTC, so the
@@ -88,5 +90,6 @@ export function readRawHeader(filePath: string): RawHeader {
     cameraMake: fields.cameraMake,
     cameraModel: fields.cameraModel,
     lensModel: fields.lensModel,
+    sequence: fields.sequence,
   };
 }

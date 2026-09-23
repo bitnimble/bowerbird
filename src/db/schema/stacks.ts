@@ -3,7 +3,7 @@ import { oneOf } from './checks';
 import { libraries } from './libraries';
 import { photos } from './photos';
 
-export const STACK_ORIGINS = ['auto', 'manual'] as const;
+export const STACK_ORIGINS = ['auto', 'manual', 'bracket'] as const;
 
 // A group of photographs of one shot: a burst, or several takes of a scene (§19). Library-wide, so
 // a stack transcends the shoots and albums its members happen to sit in.
@@ -12,6 +12,10 @@ export const STACK_ORIGINS = ['auto', 'manual'] as const;
 // already-stacked photos so that changing the threshold re-forms stacks, and without it that pass
 // would dissolve a manual stack whose members are not alike, which is the case manual stacking
 // exists for. A human touching a stack makes it 'manual' and detection lets it be.
+//
+// 'bracket' is a capture the camera ran as one - a pixel-shift burst, an exposure bracket - grouped
+// off the frames' own metadata (BracketsService): exactly its frames, which perceptual detection
+// neither joins nor dissolves.
 export const stacks = sqliteTable(
   'stacks',
   {

@@ -1,3 +1,4 @@
+import type { CaptureSequenceKind } from '../../../schemas/capture_sequence';
 import type { Ordering } from '../../../schemas/common';
 import { EditDocSchema } from '../../../schemas/photo_edits';
 import { displaySize } from '../../../schemas/display_size';
@@ -82,12 +83,18 @@ export const RENDITIONS_BUILT_AT = `${renditionsBuiltAt(
 // drawn from turns on whether it has one at all (§18.5), and a listing that carried every
 // develop document would read a page of JSON to answer a boolean.
 //
+// Which capture the camera ran, where this row is one frame of a bracket stack: what the merge menu
+// offers for the stack, and whether it offers anything.
+const BRACKET_KIND = `CASE WHEN EXISTS (SELECT 1 FROM stacks s WHERE s.id = photos.stack_id AND s.origin = 'bracket')
+    THEN json_extract(photos.capture_sequence, '$.kind') END AS bracket_kind`;
+
 // What a row is composed as, which draws a composite's badge and is what the badge opens. On every
 // read of a row, not just the grid's: the viewer's run and the detail are how a merge is reached
 // straight after it is saved, before any listing has loaded it.
 const COMPOSITE_KIND = `CASE WHEN json_extract(photos.recipe, '$.kind') IN ('panorama', 'assembly')
     THEN json_extract(photos.recipe, '$.kind') END AS composite_kind,
-  json_array_length(photos.recipe, '$.sources') AS frame_count`;
+  json_array_length(photos.recipe, '$.sources') AS frame_count,
+  ${BRACKET_KIND}`;
 
 // `frames_edited` beside it answers the same question one row further out, and the two are not
 // interchangeable on a composite: its own document is the framing the merge wrote, which the
@@ -250,6 +257,7 @@ export interface SummaryRow {
   stack_id: string | null;
   composite_kind: CompositeKind | null;
   frame_count: number | null;
+  bracket_kind: CaptureSequenceKind | null;
   // Absent from the queries that read a photo rather than a listing; those rows
   // stand for themselves, which is a stack of one.
   stack_size?: number;
@@ -343,6 +351,7 @@ export function toSummary(row: SummaryRow, ordering: Ordering): UnresolvedSummar
     stack_size: row.stack_size ?? 1,
     composite_kind: row.composite_kind,
     frame_count: row.frame_count ?? 0,
+    bracket_kind: row.bracket_kind,
   };
 }
 
@@ -421,6 +430,7 @@ export function toDetail(row: DetailRow, albumIds: string[]): UnresolvedDetail {
     stack_size: 1,
     composite_kind: row.composite_kind,
     frame_count: row.frame_count ?? 0,
+    bracket_kind: row.bracket_kind,
     // All resolved by the service, which knows the library: they need its data
     // directory to stat or to build a path from, and its rendition settings. The
     // repository has no business doing either.

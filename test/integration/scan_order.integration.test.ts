@@ -38,6 +38,7 @@ function blank(size: number): FileMetadata {
     cameraMake: null,
     cameraModel: null,
     lensModel: null,
+    sequence: null,
     mtime: new Date().toISOString(),
     fileSize: size,
   };

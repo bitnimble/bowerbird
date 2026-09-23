@@ -95,6 +95,7 @@ function addPhoto(peer: Peer, id: string, relPath: string, onDisk: boolean): voi
     camera_make: null,
     camera_model: null,
     lens_model: null,
+    capture_sequence: null,
   });
 }
 

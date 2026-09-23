@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CaptureSequenceKindSchema } from './capture_sequence';
 import { OrderingSchema, PaginationSchema, PhotoIdListSchema, RenditionSourceSchema, SoftDeleteFilterSchema, IdSchema } from './common';
 import { JobSchema } from './jobs';
 import { StoredRecipeSchema } from './recipes';
@@ -69,6 +70,8 @@ export const PhotoSummarySchema = z.object({
   composite_kind: CompositeKindSchema.nullable(),
   /** How many frames a composite stands for; 0 for an ordinary photograph. */
   frame_count: z.number().int(),
+  // The capture the camera ran, where this row is a frame of a bracket stack; null otherwise.
+  bracket_kind: CaptureSequenceKindSchema.nullable(),
   // Whether this photo has develop settings stored. An input to `shown_rendition` below -
   // the camera's own JPEG cannot carry an edit, so an edited photo is drawn from the
   // rendition whatever its library serves - and a client can use it to say so, since

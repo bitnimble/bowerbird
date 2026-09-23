@@ -119,6 +119,7 @@ function addPhoto(device: ReturnType<typeof makeDevice>, id: string, relPath: st
     camera_make: null,
     camera_model: null,
     lens_model: null,
+    capture_sequence: null,
   });
 }
 

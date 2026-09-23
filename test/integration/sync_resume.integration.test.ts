@@ -42,6 +42,7 @@ function metadata(absPath: string): FileMetadata {
     cameraMake: null,
     cameraModel: null,
     lensModel: null,
+    sequence: null,
     mtime: stats.mtime.toISOString(),
     fileSize: stats.size,
   };

@@ -1,6 +1,7 @@
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Stats } from 'node:fs';
+import type { CaptureSequence } from '../../../schemas/capture_sequence';
 import { stagedDescriptorPath } from '../../../utils/paths';
 import { dustSettings } from '../../../schemas/dust_settings';
 import { adjustOf } from '../../../schemas/edit_adjust';
@@ -31,6 +32,7 @@ export interface FileMetadata {
   cameraMake: string | null;
   cameraModel: string | null;
   lensModel: string | null;
+  sequence: CaptureSequence | null;
   mtime: string; // filesystem mtime, ISO datetime
   fileSize: number; // bytes
 }
@@ -147,6 +149,7 @@ async function withTile(filePath: string, stage: TileStage): Promise<RawHeader> 
       cameraMake: fields.cameraMake,
       cameraModel: fields.cameraModel,
       lensModel: fields.lensModel,
+      sequence: fields.sequence,
     };
   } catch (err) {
     log.debug('could not build a tile during the scan; the rendition pass will', { file: filePath, err });
@@ -174,6 +177,7 @@ function fileMetadata(header: RawHeader, dateTakenOffset: string | null, stats: 
     cameraMake: header.cameraMake,
     cameraModel: header.cameraModel,
     lensModel: header.lensModel,
+    sequence: header.sequence,
     mtime: stats.mtime.toISOString(),
     fileSize: stats.size,
   };

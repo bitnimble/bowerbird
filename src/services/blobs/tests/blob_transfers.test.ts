@@ -130,6 +130,7 @@ function addPhoto(peer: Peer, id: string, relPath: string, bytes?: string): void
     camera_make: null,
     camera_model: null,
     lens_model: null,
+    capture_sequence: null,
   });
 }
 

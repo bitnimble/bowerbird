@@ -55,6 +55,8 @@ export const photos = sqliteTable(
     cameraMake: text('camera_make'),
     cameraModel: text('camera_model'),
     lensModel: text('lens_model'),
+    // The multi-shot capture the body says this frame is one of (CaptureSequenceSchema), as JSON.
+    captureSequence: text('capture_sequence'),
     deletedFromPath: text('deleted_from_path'), // file_path before the Bin move, so restore can put it back (§12.3)
     deletedBatch: text('deleted_batch'), // which bin took it, so an undo names the operation not every id (§12.3)
     rating: integer('rating').notNull().default(0),

@@ -38,6 +38,8 @@ export interface ScanInsert {
   camera_make: string | null;
   camera_model: string | null;
   lens_model: string | null;
+  /** `CaptureSequenceSchema` as JSON. */
+  capture_sequence: string | null;
   /**
    * An unclaimed file found under the bin comes in already binned (§9.1.1), with
    * where it would restore to and no rendition work queued: `PENDING_PROCESSING`
@@ -65,6 +67,7 @@ export interface ScanModification {
   camera_make: string | null;
   camera_model: string | null;
   lens_model: string | null;
+  capture_sequence: string | null;
 }
 
 // Fields the scan quick-check needs to decide whether to re-open a file (§9.1).
@@ -198,13 +201,13 @@ export class PhotoScanRepository {
              is_missing, is_deleted, date_taken, date_taken_offset, date_added, date_updated,
              deleted_from_path,
              latitude, longitude, iso, shutter_speed, aperture, focal_length,
-             camera_make, camera_model, lens_model, rating,
+             camera_make, camera_model, lens_model, capture_sequence, rating,
              -- The verdict and the stacking are left unstamped: this import has no
              -- opinion about either, and a NULL stamp is how a peer says so - anyone
              -- else's rating then wins rather than racing a default.
              stamp_imported, stamp_placement${binned ? ', stamp_bin' : ''})
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ${binned ? 1 : 0}, ?, ?, ?, ?, ${binned ? '?' : 'NULL'},
-             ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?${binned ? ', ?' : ''})`,
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?${binned ? ', ?' : ''})`,
         )
         .run(
           record.id,
@@ -235,6 +238,7 @@ export class PhotoScanRepository {
           record.camera_make,
           record.camera_model,
           record.lens_model,
+          record.capture_sequence,
           ...(binned ? [at, at, at] : [at, at]),
         );
     }
@@ -250,7 +254,7 @@ export class PhotoScanRepository {
         .query(
           `UPDATE photos SET file_hash = ?, width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?,
             date_updated = ?, file_size = ?, latitude = ?, longitude = ?, iso = ?, shutter_speed = ?,
-            aperture = ?, focal_length = ?, camera_make = ?, camera_model = ?, lens_model = ?,
+            aperture = ?, focal_length = ?, camera_make = ?, camera_model = ?, lens_model = ?, capture_sequence = ?,
             -- rendition_source cleared with the flag that re-queues them, for the same reason
             -- queueRenditionRebuildForLibrary clears it: the column says what the *last* build
             -- used, and toStages reads it to decide whether a viewer rendition is owed at all.
@@ -278,6 +282,7 @@ export class PhotoScanRepository {
           fields.camera_make,
           fields.camera_model,
           fields.lens_model,
+          fields.capture_sequence,
           moved,
           photoId,
         );
@@ -290,7 +295,8 @@ export class PhotoScanRepository {
       const held = this.db
         .query(
           `SELECT width, height, orientation, date_taken, date_taken_offset, file_size, latitude, longitude,
-                  iso, shutter_speed, aperture, focal_length, camera_make, camera_model, lens_model
+                  iso, shutter_speed, aperture, focal_length, camera_make, camera_model, lens_model,
+                  capture_sequence
              FROM photos WHERE id = ?`,
         )
         .get(photoId) as Record<string, unknown> | null;

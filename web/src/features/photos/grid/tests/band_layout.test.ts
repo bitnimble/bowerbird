@@ -34,6 +34,7 @@ function photo(id: string, stackId: string | null = null, stackSize = 1): PhotoS
     stack_size: stackSize,
     composite_kind: null,
     frame_count: 0,
+    bracket_kind: null,
     is_edited: false,
     frames_edited: false,
     shown_rendition: 'embedded',

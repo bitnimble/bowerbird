@@ -127,6 +127,7 @@ export const REPLICATED_ENTITIES: readonly ReplicatedEntity[] = [
         'camera_make',
         'camera_model',
         'lens_model',
+        'capture_sequence',
       ],
       'photo.triage': ['rating', 'triage', 'notes'],
       // The recipe travels here rather than with the import facts, and for a file photograph it

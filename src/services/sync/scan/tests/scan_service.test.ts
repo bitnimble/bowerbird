@@ -69,6 +69,7 @@ const meta = (absPath: string): Promise<FileMetadata> =>
     cameraMake: null,
     cameraModel: null,
     lensModel: null,
+    sequence: null,
     mtime: '2026-01-01T00:00:00.000Z',
     fileSize: statSync(absPath).size,
   });

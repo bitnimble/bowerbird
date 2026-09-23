@@ -1,6 +1,8 @@
 import type { Database } from '../../db/driver';
 import type { Ordering } from '../../schemas/common';
-import type { Stack, StackOrigin } from '../../schemas/stacks';
+import { captureSequenceOf } from '../../schemas/capture_sequence';
+import type { Stack, StackOrigin, StackState } from '../../schemas/stacks';
+import type { SequencedFrame } from './brackets';
 import { hiddenIs, orderByClause } from '../photos/listing/photo_query';
 import { stamp } from '../replication/stamps';
 import { tombstone } from '../replication/tombstones';
@@ -17,6 +19,13 @@ export interface StackCandidate {
   timestamp: number;
   /** The shoot the photo sits in, or null for one at the library root. */
   shootId: string | null;
+}
+
+export interface Stacking {
+  id: string;
+  stack_id: string | null;
+  origin: StackOrigin | null;
+  stack_state: StackState;
 }
 
 // Ids per `WHERE id IN (...)`, well under SQLite's variable limit.
@@ -109,6 +118,40 @@ export class StacksRepository {
     // every gap from it enormous, which reads as "never adjacent" and is the
     // right answer anyway; 0 says the same thing without arithmetic on null.
     return rows.map((row) => ({ id: row.id, timestamp: row.timestamp ?? 0, shootId: row.shoot_id }));
+  }
+
+  /** Every live photograph whose body recorded a multi-shot capture, for `bracketsOf`. */
+  sequencedFrames(libraryId: string): SequencedFrame[] {
+    const rows = this.db
+      .query(
+        `SELECT id, shoot_id, capture_sequence,
+                CAST(strftime('%s', COALESCE(date_taken, date_added)) AS INTEGER) AS timestamp
+         FROM photos
+         WHERE library_id = ? AND capture_sequence IS NOT NULL AND is_deleted = 0`,
+      )
+      .all(libraryId) as { id: string; shoot_id: string | null; capture_sequence: string; timestamp: number | null }[];
+    return rows.flatMap((row) => {
+      const sequence = captureSequenceOf(row.capture_sequence);
+      return sequence == null ? [] : [{ id: row.id, shootId: row.shoot_id, timestamp: row.timestamp ?? 0, sequence }];
+    });
+  }
+
+  /** Where each of these photographs stands with stacking: its stack's origin, and its own state. */
+  stackingOf(photoIds: readonly string[]): Stacking[] {
+    const found: Stacking[] = [];
+    for (const batch of chunk(photoIds)) {
+      const placeholders = batch.map(() => '?').join(', ');
+      found.push(
+        ...(this.db
+          .query(
+            `SELECT photos.id, photos.stack_id, stacks.origin, photos.stack_state
+             FROM photos LEFT JOIN stacks ON stacks.id = photos.stack_id
+             WHERE photos.id IN (${placeholders})`,
+          )
+          .all(...batch) as Stacking[]),
+      );
+    }
+    return found;
   }
 
   /**

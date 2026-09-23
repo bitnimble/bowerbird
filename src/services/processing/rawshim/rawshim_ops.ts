@@ -13,12 +13,13 @@
 
 import { statSync } from 'node:fs';
 import { ptr } from 'bun:ffi';
+import type { CaptureSequence, CaptureSequenceKind } from '../../../schemas/capture_sequence';
 import type { RawHeaderFields } from '../../../schemas/jobs';
 import { shim } from './rawshim';
 
 // #[repr(C)] BbHeader: u32 width/height, i32 orientation, f32 iso/shutter/aperture
 // /focal, 4 bytes padding, i64 timestamp, f64 latitude/longitude, then NUL-padded
-// char arrays: u8 make[64], model[64], lens[128].
+// char arrays: u8 make[64], model[64], lens[128], then u32 sequence kind/group/index/count.
 const HEADER = {
   width: 0,
   height: 4,
@@ -33,8 +34,27 @@ const HEADER = {
   make: 56,
   model: 120,
   lens: 184,
-  size: 312,
+  sequenceKind: 312,
+  sequenceGroup: 316,
+  sequenceIndex: 320,
+  sequenceCount: 324,
+  size: 328,
 } as const;
+
+/** `header::SEQUENCE_*`. */
+const SEQUENCE_KINDS: Record<number, CaptureSequenceKind> = { 1: 'pixelShift', 2: 'exposureBracket' };
+
+function sequenceOf(view: DataView): CaptureSequence | null {
+  const kind = SEQUENCE_KINDS[view.getUint32(HEADER.sequenceKind, true)];
+  if (kind == null) return null;
+  const known = (value: number): number | null => (value === 0 ? null : value);
+  return {
+    kind,
+    group: known(view.getUint32(HEADER.sequenceGroup, true)),
+    index: view.getUint32(HEADER.sequenceIndex, true),
+    count: known(view.getUint32(HEADER.sequenceCount, true)),
+  };
+}
 
 function name(raw: Uint8Array, at: number, size: number): string | null {
   const bytes = raw.subarray(at, at + size);
@@ -83,6 +103,7 @@ export function readHeaderFields(filePath: string): RawHeaderFields {
     cameraMake: name(raw, HEADER.make, 64),
     cameraModel: name(raw, HEADER.model, 64),
     lensModel: name(raw, HEADER.lens, 128),
+    sequence: sequenceOf(view),
   };
 }
 

@@ -373,6 +373,34 @@ pub struct HeaderFields {
     pub camera_make: Option<String>,
     pub camera_model: Option<String>,
     pub lens_model: Option<String>,
+    pub sequence: Option<CaptureSequence>,
+}
+
+/// `BbHeader`'s sequence fields, as `rawshim_ops.ts` reads them off the struct.
+#[derive(Serialize, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureSequence {
+    pub kind: &'static str,
+    pub group: Option<u32>,
+    pub index: u32,
+    pub count: Option<u32>,
+}
+
+impl CaptureSequence {
+    fn of(header: &crate::header::BbHeader) -> Option<CaptureSequence> {
+        let kind = match header.sequence_kind {
+            crate::header::SEQUENCE_PIXEL_SHIFT => "pixelShift",
+            crate::header::SEQUENCE_EXPOSURE_BRACKET => "exposureBracket",
+            _ => return None,
+        };
+        let known = |value: u32| (value != 0).then_some(value);
+        Some(CaptureSequence {
+            kind,
+            group: known(header.sequence_group),
+            index: header.sequence_index,
+            count: known(header.sequence_count),
+        })
+    }
 }
 
 impl From<crate::header::BbHeader> for HeaderFields {
@@ -385,6 +413,7 @@ impl From<crate::header::BbHeader> for HeaderFields {
             (!text.is_empty() && !text.bytes().all(|b| b == b'-')).then(|| text.to_string())
         };
         HeaderFields {
+            sequence: CaptureSequence::of(&header),
             width: header.width,
             height: header.height,
             orientation: header.orientation,

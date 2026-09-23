@@ -66,6 +66,7 @@ self.onmessage = async (event) => {
         cameraMake: header.cameraMake,
         cameraModel: header.cameraModel,
         lensModel: header.lensModel,
+        sequence: header.sequence,
         mtime: stats.mtime.toISOString(),
         fileSize: stats.size,
       },

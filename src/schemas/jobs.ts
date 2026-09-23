@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AssemblyRecipeSchema } from './assembly';
+import { CaptureSequenceSchema } from './capture_sequence';
 import { RenditionSchema, RenditionSourceSchema } from './common';
 import type { DustSettings } from './dust_settings';
 import { ColourProfileSchema, DenoiserSchema, RepairSchema } from './photo_edits';
@@ -289,6 +290,7 @@ export const RawHeaderFieldsSchema = z.object({
   cameraMake: z.string().nullable(),
   cameraModel: z.string().nullable(),
   lensModel: z.string().nullable(),
+  sequence: CaptureSequenceSchema.nullable(),
 });
 export type RawHeaderFields = z.infer<typeof RawHeaderFieldsSchema>;
 

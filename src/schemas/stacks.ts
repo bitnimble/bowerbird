@@ -3,8 +3,9 @@ import { OrderingSchema, PhotoIdListSchema, IdSchema } from './common';
 
 // Whether detection still manages a stack. A human touching one - creating it,
 // removing a photo, unstacking - makes it 'manual', and detection leaves it
-// alone from then on (§19.4.4).
-export const StackOriginSchema = z.enum(['auto', 'manual']);
+// alone from then on (§19.4.4). 'bracket' is a capture the camera ran as one,
+// grouped off the frames' own metadata rather than their likeness.
+export const StackOriginSchema = z.enum(['auto', 'manual', 'bracket']);
 export type StackOrigin = z.infer<typeof StackOriginSchema>;
 
 // Whether a photo is in a stack, and whether detection may put it in one.

@@ -20,7 +20,7 @@ describe('opening a catalogue', () => {
   it('preserves disabled camera matching across the render-stage migration', () => {
     const db = new Database(':memory:');
     runMigrations(db);
-    db.exec('DELETE FROM __drizzle_migrations WHERE created_at > 1789700000000');
+    db.exec("DELETE FROM __drizzle_migrations WHERE hash = '0007_camera_match_stages'");
     db.query('INSERT INTO libraries (id, root_path, name, render_skip_full, render_skip_max) VALUES (?, ?, ?, ?, ?)')
       .run('stages', '/stages', 'Stages', 'dust,match,sharpen', 'denoise,match');
     db.query('INSERT INTO libraries (id, root_path, name, render_skip_full) VALUES (?, ?, ?, ?)')

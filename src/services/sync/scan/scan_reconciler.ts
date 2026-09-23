@@ -3,6 +3,7 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { withNewId } from '../../../db/constraints';
 import { Logger } from '../../../logger';
+import { sequenceColumn } from '../../../schemas/capture_sequence';
 import type { Library } from '../../../schemas/libraries';
 import { importsFormat, scanLibraryTree, type ScannedDir, type ScannedFile } from '../../../utils/scan';
 import { isDirInScope, isFileInScope, type LibraryScope } from '../../../utils/scope';
@@ -133,6 +134,7 @@ export class ScanReconciler {
         camera_make: entry.metadata.cameraMake,
         camera_model: entry.metadata.cameraModel,
         lens_model: entry.metadata.lensModel,
+        capture_sequence: sequenceColumn(entry.metadata.sequence),
       }),
     );
   }

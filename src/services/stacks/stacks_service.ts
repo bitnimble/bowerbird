@@ -9,6 +9,7 @@ import type { PhotoListingRepository } from '../photos/listing/photo_listing_rep
 import { withShownRendition } from '../photos/listing/photo_read_service';
 import type { SettingsRepository } from '../settings/settings_repository';
 import { descriptorSize, stackGroups } from '../processing/rawshim/rawshim_ops';
+import { bracketsOf } from './brackets';
 import type { StackCandidate, StacksRepository } from './stacks_repository';
 
 const log = new Logger('stacks');
@@ -201,6 +202,9 @@ export class StacksService {
   detect(libraryId: string): number {
     const library = this.libraries.getById(libraryId);
     if (library == null) throw new AppError('NOT_FOUND', `library ${libraryId} not found`);
+    // First, so the likeness pass below never sees a capture's frames: its candidates are
+    // photographs in no stack or an automatic one.
+    this.stackBrackets(libraryId);
     if (!library.auto_stack) return 0;
 
     const candidates = this.stacks.candidates(libraryId);
@@ -259,6 +263,38 @@ export class StacksService {
 
     log.info('detected stacks', { library: libraryId, stacks: members.length, candidates: candidates.length });
     return members.length;
+  }
+
+  /**
+   * Stacks each capture the camera ran as one - a pixel-shift burst, an exposure bracket - as
+   * exactly its own frames, whatever the library's automatic stacking is set to.
+   *
+   * A frame somebody has already placed, in a stack of theirs or out of one, is theirs: its
+   * capture is left alone rather than stacked short of it.
+   */
+  private stackBrackets(libraryId: string): void {
+    const brackets = bracketsOf(this.stacks.sequencedFrames(libraryId));
+    if (brackets.length === 0) return;
+    let made = 0;
+    this.stacks.transaction(() => {
+      const now = new Date().toISOString();
+      for (const { photoIds } of brackets) {
+        const stacking = this.stacks.stackingOf(photoIds);
+        if (stacking.some((photo) => photo.stack_state === 'unstacked' || photo.origin === 'manual')) continue;
+        const held = stacking[0]?.stack_id;
+        const alreadyStacked =
+          held != null &&
+          stacking.every((photo) => photo.stack_id === held && photo.origin === 'bracket') &&
+          this.stacks.countMembers(held) === photoIds.length;
+        if (alreadyStacked) continue;
+        const emptied = this.stacks.stackIdsOf(photoIds);
+        const stackId = withNewId((candidate) => this.stacks.create(candidate, libraryId, 'bracket', now));
+        this.stacks.addPhotos(stackId, photoIds);
+        this.pruneStacks(emptied);
+        made++;
+      }
+    });
+    if (made > 0) log.info('stacked captures', { library: libraryId, stacks: made });
   }
 
   /**

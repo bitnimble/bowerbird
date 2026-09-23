@@ -78,8 +78,10 @@ function applyMigrations(db: Database): void {
     hash TEXT NOT NULL,
     created_at NUMERIC
   )`);
-  const applied = appliedMigrationMillis(db);
-  const owed = journal().filter((entry) => entry.when > applied);
+  const applied = new Set(
+    (db.query('SELECT hash FROM __drizzle_migrations').all() as { hash: string }[]).map((row) => row.hash),
+  );
+  const owed = journal().filter((entry) => !applied.has(entry.tag));
   if (owed.length === 0) return;
 
   // Restored rather than turned on afterwards: whether keys are enforced is the connection's

@@ -19,7 +19,7 @@ export class PhotoMetadataRepository {
         .query(
           `UPDATE photos SET width = ?, height = ?, orientation = ?, date_taken = ?, date_taken_offset = ?, latitude = ?,
             longitude = ?, iso = ?, shutter_speed = ?, aperture = ?, focal_length = ?,
-            camera_make = ?, camera_model = ?, lens_model = ?, stamp_imported = ? WHERE id = ?`,
+            camera_make = ?, camera_model = ?, lens_model = ?, capture_sequence = ?, stamp_imported = ? WHERE id = ?`,
         )
         .run(
           fields.width,
@@ -36,6 +36,7 @@ export class PhotoMetadataRepository {
           fields.camera_make,
           fields.camera_model,
           fields.lens_model,
+          fields.capture_sequence,
           stamp(this.db),
           photoId,
         );

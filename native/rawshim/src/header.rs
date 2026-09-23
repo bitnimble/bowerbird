@@ -42,7 +42,18 @@ pub struct BbHeader {
     pub camera_make: [u8; 64],
     pub camera_model: [u8; 64],
     pub lens_model: [u8; 128],
+    /// The multi-shot capture this frame is one of: [`SEQUENCE_NONE`], [`SEQUENCE_PIXEL_SHIFT`] or
+    /// [`SEQUENCE_EXPOSURE_BRACKET`], then the fields of `rawler`'s `CaptureSequence` with 0 for
+    /// what the body did not record.
+    pub sequence_kind: u32,
+    pub sequence_group: u32,
+    pub sequence_index: u32,
+    pub sequence_count: u32,
 }
+
+pub const SEQUENCE_NONE: u32 = 0;
+pub const SEQUENCE_PIXEL_SHIFT: u32 = 1;
+pub const SEQUENCE_EXPOSURE_BRACKET: u32 = 2;
 
 impl BbHeader {
     fn blank() -> BbHeader {
@@ -60,6 +71,10 @@ impl BbHeader {
             camera_make: [0; 64],
             camera_model: [0; 64],
             lens_model: [0; 128],
+            sequence_kind: SEQUENCE_NONE,
+            sequence_group: 0,
+            sequence_index: 0,
+            sequence_count: 0,
         }
     }
 }
@@ -327,6 +342,17 @@ pub fn read_with(
         .unwrap_or_default();
     write_name(&mut out.lens_model, &lens);
 
+    if let Some(sequence) = decoder.capture_sequence() {
+        use rawler::decoders::sequence::SequenceKind;
+        out.sequence_kind = match sequence.kind {
+            SequenceKind::PixelShift => SEQUENCE_PIXEL_SHIFT,
+            SequenceKind::ExposureBracket => SEQUENCE_EXPOSURE_BRACKET,
+        };
+        out.sequence_group = sequence.group.unwrap_or(0);
+        out.sequence_index = sequence.index;
+        out.sequence_count = sequence.count.unwrap_or(0);
+    }
+
     Some(out)
 }
 
@@ -389,7 +415,7 @@ mod tests {
     fn the_layout_the_typescript_reader_assumes_still_holds() {
         // rawshim_ops.ts reads this at fixed offsets and checks the size at the
         // first call. This is the same check, at build time.
-        assert_eq!(std::mem::size_of::<BbHeader>(), 312);
+        assert_eq!(std::mem::size_of::<BbHeader>(), 328);
         assert_eq!(std::mem::align_of::<BbHeader>(), 8);
     }
 

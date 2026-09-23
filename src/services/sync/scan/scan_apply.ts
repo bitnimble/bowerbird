@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors';
+import { sequenceColumn } from '../../../schemas/capture_sequence';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
@@ -93,6 +94,7 @@ export interface AppliedCounts {
           camera_make: md.metadata.cameraMake,
           camera_model: md.metadata.cameraModel,
           lens_model: md.metadata.lensModel,
+          capture_sequence: sequenceColumn(md.metadata.sequence),
         });
         batch.touched?.push(md.photoId);
         // Its pixels changed, so the tile the scan just built off them is the one this photo

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { AppError } from '../../../errors';
+import { sequenceColumn } from '../../../schemas/capture_sequence';
 import type { Library } from '../../../schemas/libraries';
 import type { Job } from '../../../schemas/jobs';
 import { deleteGeneratedFile } from '../../../utils/deletions';
@@ -78,6 +79,7 @@ export class PhotoRenditionService {
             camera_make: metadata.cameraMake,
             camera_model: metadata.cameraModel,
             lens_model: metadata.lensModel,
+            capture_sequence: sequenceColumn(metadata.sequence),
           });
           updated++;
         } catch (err) {
