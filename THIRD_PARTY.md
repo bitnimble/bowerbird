@@ -5,8 +5,8 @@ binaries under something else, which is the only place a licence other than MIT 
 
 ## `lensdb` is LGPL-3, and statically linked
 
-**`native/lensdb` is the one thing here that reaches a reader still carrying a copyleft
-obligation of its own**, and so the only one this file has to state a position on. It is the
+**`native/lensdb` reaches a reader still carrying a copyleft obligation of its own**, as do the
+two components in the next section. It is the
 lens geometry database (DESIGN §10.8), built on the `lensfun` crate - a pure-Rust port of
 lensfun carrying lensfun's own database - which is LGPL-3.0-or-later code over CC BY-SA 3.0
 data. A Rust dependency is compiled in, so the `librawshim` a reader installs is a **Combined
@@ -21,8 +21,14 @@ available routes are conveying `rawshim`'s object files or its rlib alongside th
 Shipping the source of `lensfun` and of `lensdb` unchanged satisfies §4(c) and (e) and is the
 easy half; §4(d) is the half with a choice in it.
 
-Nothing else in the tree is copyleft without such an exception, and that is a constraint rather
-than an observation. It
+## LGPL components in this repository
+
+- **rawler** (`native/vendor/dnglab`) - LGPL-2.1. The RAW decoder, compiled into `rawshim`.
+- **samsung-frame-art** (`packages/samsung-frame-art`) - LGPL-3.0-only. A TypeScript port of
+  samsungtvws's Frame TV art API, installed as its own package rather than imported by path.
+
+Beyond these and `lensdb`, nothing in the tree is copyleft without such an exception, and that is
+a constraint rather than an observation. It
 decided how the finished formats are read (DESIGN §7): both pure-Rust HEIC decoders on
 crates.io - `heic` and `heic_decoder` - are AGPL-3 or a paid commercial licence, as is
 `rav1d-safe`. So HEIC is `rust_h265` (MIT/Apache-2.0) behind an ISOBMFF reader of our own, and

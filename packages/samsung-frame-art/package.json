@@ -1,0 +1,23 @@
+{
+  "name": "samsung-frame-art",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Upload and manage art on a Samsung The Frame over its local art channel. A TypeScript port of samsungtvws's art API, for Bun.",
+  "keywords": ["samsung", "frame", "art mode", "tizen"],
+  "license": "LGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/frame_art.ts",
+    "./errors": "./src/errors.ts",
+    "./json": "./src/json.ts"
+  },
+  "files": ["src", "README.md", "COPYING", "COPYING.LESSER"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.2"
+  }
+}

@@ -81,6 +81,14 @@
     },
     {
       "files": [
+        "packages/samsung-frame-art/**"
+      ],
+      "rules": {
+        "ids/no-uuid": "off"
+      }
+    },
+    {
+      "files": [
         "src/logger.ts"
       ],
       "rules": {

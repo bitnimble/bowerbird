@@ -10,6 +10,7 @@
         "hono": "^4.6.14",
         "libsql": "^0.5.29",
         "nanoid": "^6.0.1",
+        "samsung-frame-art": "file:./packages/samsung-frame-art",
         "zod": "^4.0.5",
       },
       "devDependencies": {
@@ -238,6 +239,8 @@
     "promise-limit": ["promise-limit@2.7.0", "", {}, "sha512-7nJ6v5lnJsXwGprnGXga4wx6d1POjvi5Qmf1ivTRxTjH4Z/9Czja/UCMLVmB9N93GeWOU93XaFaEt6jbuoagNw=="],
 
     "resolve-pkg-maps": ["resolve-pkg-maps@1.0.0", "", {}, "sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw=="],
+
+    "samsung-frame-art": ["samsung-frame-art@file:packages/samsung-frame-art", { "devDependencies": { "@types/bun": "^1.2.0", "typescript": "^5.7.2" } }],
 
     "source-map": ["source-map@0.6.1", "", {}, "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g=="],
 

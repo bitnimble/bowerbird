@@ -194,6 +194,7 @@ ENV PATH="/opt/slangc:${PATH}"
 # Dependencies as a cacheable layer.
 FROM base AS deps
 COPY package.json bun.lock ./
+COPY packages/samsung-frame-art ./packages/samsung-frame-art
 RUN bun install --frozen-lockfile --production
 
 # The pixel library (native/rawshim, DESIGN 10.4), built once per instruction set.
@@ -290,6 +291,7 @@ RUN rustup target add wasm32-unknown-unknown \
 # runtime stage, only the assets it produces.
 FROM base AS web
 COPY package.json bun.lock ./
+COPY packages/samsung-frame-art ./packages/samsung-frame-art
 RUN bun install --frozen-lockfile
 COPY web/package.json web/bun.lock ./web/
 RUN cd web && bun install --frozen-lockfile

@@ -10,7 +10,7 @@
     "restore": "bun run scripts/restore-backup.ts",
     "dev:docker": "bun run build:native && bun run build:wasm && docker rm -f bowerbird-dev bowerbird-web-dev; docker compose -f docker-compose.dev.yml up --build",
     "lint": "oxlint",
-    "test": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test ./src/ ./scripts/ --path-ignore-patterns=landing/scripts/screenshots.spec.ts",
+    "test": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test ./src/ ./scripts/ ./packages/samsung-frame-art/ --path-ignore-patterns=landing/scripts/screenshots.spec.ts",
     "test:integration": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test test/integration",
     "test:native": "bun run scripts/test-native.ts",
     "converge": "bun run scripts/converge.ts",
@@ -26,7 +26,7 @@
     "get:swiftshader": "bun run scripts/get-swiftshader.ts",
     "get:pmrid": "bun run scripts/get-pmrid.ts",
     "build:web-shaders": "bun run scripts/build-web-shaders.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p e2e-tauri/tsconfig.json && tsc --noEmit -p landing/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p e2e-tauri/tsconfig.json && tsc --noEmit -p landing/tsconfig.json && tsc --noEmit -p packages/samsung-frame-art/tsconfig.json",
     "build:native": "bun run scripts/cargo.ts build --profile quick --manifest-path native/rawshim/Cargo.toml",
     "build:native:release": "bun run scripts/cargo.ts build --release --manifest-path native/rawshim/Cargo.toml",
     "build:wasm": "bun x wasm-pack@0.13.1 build native/rawshim --target web --out-dir pkg --no-opt -- --no-default-features && bun run scripts/hash-pkg.ts",
@@ -46,6 +46,7 @@
     "hono": "^4.6.14",
     "libsql": "^0.5.29",
     "nanoid": "^6.0.1",
+    "samsung-frame-art": "file:./packages/samsung-frame-art",
     "zod": "^4.0.5"
   },
   "devDependencies": {
