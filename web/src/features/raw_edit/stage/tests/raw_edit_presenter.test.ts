@@ -17,8 +17,9 @@ import { StageStore } from '../stage_store';
 import type { LocalPrepare } from '../../local_decode/local_open';
 import type { PreparedHeader } from '../../../../../../src/schemas/prepared';
 import { neutralEdits } from '../../../../../../src/schemas/photo_edits';
-import { type EditState } from '../../../../../../src/schemas/photo_edits';
+import { type EditCheckpoint, type EditState } from '../../../../../../src/schemas/photo_edits';
 import { photoEditsApi } from '../../../../api/photo_edits';
+import { ApiError } from '../../../../api/request';
 import { pictureLevel } from '../../../../../../src/services/processing/workers/prepare_pool';
 import {
   drawnBy,
@@ -951,24 +952,45 @@ describe('the level a zoom is served at', () => {
 
 describe('leaving the editor', () => {
   let finished: string[] = [];
+  let finishedFrom: (Pick<EditCheckpoint, 'doc' | 'stamp'> | undefined)[] = [];
+  let restored: { rev: number; checkpoint: EditCheckpoint }[] = [];
   const saveEdits = photoEditsApi.save;
+  const restoreEdits = photoEditsApi.restore;
   const finishEdits = photoEditsApi.finish;
+  const history = [{ from: { contrast: 0 }, to: { contrast: 20 } }];
 
   beforeEach(() => {
     finished = [];
+    finishedFrom = [];
+    restored = [];
     photoEditsApi.save = (_photoId, doc): Promise<EditState> =>
       Promise.resolve({ doc, rev: ++edit.rev, canUndo: true, canRedo: false });
-    photoEditsApi.finish = (photoId): Promise<void> => {
+    photoEditsApi.restore = (_photoId, rev, checkpoint): Promise<EditState> => {
+      restored.push({ rev, checkpoint });
+      return Promise.resolve({ doc: checkpoint.doc, rev: rev + 1, canUndo: true, canRedo: false });
+    };
+    photoEditsApi.finish = (photoId, opened): Promise<void> => {
       finished.push(photoId);
+      finishedFrom.push(opened);
       return Promise.resolve();
     };
     edit.rev = 1;
     Object.assign(presenter, { photoId: 'a-photo-id' });
-    Object.assign(presenter.edit, { photoId: 'a-photo-id', openedDoc: edit.doc });
+    presenter.edit.opened({
+      doc: edit.doc ?? neutralEdits(),
+      rev: 1,
+      canUndo: true,
+      canRedo: false,
+      cursor: 1,
+      history,
+      stamp: 'opened-stamp',
+    });
+    Object.assign(presenter.edit, { photoId: 'a-photo-id' });
   });
 
   afterEach(() => {
     photoEditsApi.save = saveEdits;
+    photoEditsApi.restore = restoreEdits;
     photoEditsApi.finish = finishEdits;
   });
 
@@ -977,22 +999,123 @@ describe('leaving the editor', () => {
     await Bun.sleep(0);
 
     presenter.close();
+    await Bun.sleep(0);
     expect(finished).toEqual(['a-photo-id']);
   });
 
-  /**
-   * A step taken and a step taken back moves the revision twice and the picture nowhere, so the
-   * copies on disk are already what the reader is looking at - and rebuilding them is seconds of
-   * GPU spent producing the same bytes.
-   */
-  test('asks for nothing when the document came home', async () => {
-    presenter.settleExposure(1.25);
+  test('asks for nothing when nothing was written', async () => {
+    presenter.previewExposure(1.25);
+
+    presenter.close();
     await Bun.sleep(0);
-    presenter.settleExposure(0);
+    expect(finished).toEqual([]);
+  });
+
+  // The server compares, and vouches for the copies on disk where the document came home.
+  test('hands the close what the editor opened on', async () => {
+    const openedDoc = edit.doc;
+    presenter.settleExposure(1.25);
     await Bun.sleep(0);
 
     presenter.close();
-    expect(edit.rev).toBeGreaterThan(1);
+    await Bun.sleep(0);
+    expect(finishedFrom).toEqual([expect.objectContaining({ doc: openedDoc, stamp: 'opened-stamp' })]);
+  });
+
+  test('a close waits for the save released on the way out', async () => {
+    let land!: () => void;
+    photoEditsApi.save = (_photoId, doc): Promise<EditState> =>
+      new Promise((resolve) => {
+        land = () => resolve({ doc, rev: 2, canUndo: true, canRedo: false });
+      });
+    presenter.settleExposure(1.25);
+
+    presenter.close();
+    await Bun.sleep(0);
     expect(finished).toEqual([]);
+
+    land();
+    await Bun.sleep(0);
+    expect(finished).toEqual(['a-photo-id']);
+  });
+
+  test('a close right after a cancel asks only once the cancel has landed', async () => {
+    let land!: () => void;
+    photoEditsApi.restore = (_photoId, rev, checkpoint): Promise<EditState> =>
+      new Promise((resolve) => {
+        land = () => resolve({ doc: checkpoint.doc, rev: rev + 1, canUndo: true, canRedo: false });
+      });
+    presenter.settleExposure(1.25);
+    await Bun.sleep(0);
+
+    const cancelled = presenter.cancel();
+    await Bun.sleep(0);
+    presenter.close();
+    await Bun.sleep(0);
+    expect(finished).toEqual([]);
+
+    land();
+    await cancelled;
+    await Bun.sleep(0);
+    expect(finished).toEqual(['a-photo-id']);
+  });
+
+  test('a cancel puts back the document and history it opened on', async () => {
+    const openedDoc = edit.doc;
+    presenter.settleExposure(1.25);
+    await Bun.sleep(0);
+
+    expect(await presenter.cancel()).toBe(true);
+    expect(restored).toEqual([{ rev: 2, checkpoint: expect.objectContaining({ doc: openedDoc, cursor: 1, history }) }]);
+    expect(edit.doc?.exposure).toBe(openedDoc?.exposure);
+
+    presenter.close();
+    await Bun.sleep(0);
+    expect(finishedFrom).toEqual([expect.objectContaining({ doc: openedDoc, stamp: 'opened-stamp' })]);
+  });
+
+  test('a cancel waits for the save in flight, and drops the one queued behind it', async () => {
+    let land!: () => void;
+    const saved: number[] = [];
+    photoEditsApi.save = (_photoId, doc): Promise<EditState> => {
+      saved.push(doc.exposure);
+      return new Promise((resolve) => {
+        land = () => resolve({ doc, rev: ++edit.rev, canUndo: true, canRedo: false });
+      });
+    };
+    presenter.settleExposure(1.25);
+    presenter.settleExposure(2);
+
+    const cancelled = presenter.cancel();
+    land();
+    expect(await cancelled).toBe(true);
+    expect(saved).toEqual([1.25]);
+    expect(restored.map(({ rev }) => rev)).toEqual([2]);
+  });
+
+  test('a cancel with nothing written writes nothing', async () => {
+    presenter.previewExposure(1.25);
+
+    expect(await presenter.cancel()).toBe(true);
+    expect(restored).toEqual([]);
+  });
+
+  test('a cancel the server refuses keeps the editor open', async () => {
+    photoEditsApi.restore = (): Promise<EditState> => Promise.reject(new Error('offline'));
+    presenter.settleExposure(1.25);
+    await Bun.sleep(0);
+
+    expect(await presenter.cancel()).toBe(false);
+    expect(edit.saveStatus).toBe('failed');
+  });
+
+  test('a cancel refused because the edits moved elsewhere reports a conflict', async () => {
+    photoEditsApi.restore = (): Promise<EditState> =>
+      Promise.reject(new ApiError('CONFLICT', 'these edits have moved on', 409));
+    presenter.settleExposure(1.25);
+    await Bun.sleep(0);
+
+    expect(await presenter.cancel()).toBe(false);
+    expect(edit.saveStatus).toBe('conflict');
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, jest } from 'bun:test';
 import { Database } from '../../../db/driver';
 import { runMigrations } from '../../../db/migrate';
 import { AppError } from '../../../errors';
-import { neutralEdits } from '../../../schemas/photo_edits';
+import { neutralEdits, type EditDoc } from '../../../schemas/photo_edits';
 import { PhotoCompositesRepository } from '../../photos/composites/photo_composites_repository';
 import { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
@@ -16,6 +16,7 @@ const PHOTO = 'photo';
 
 let db: Database;
 let queueRebuild: ReturnType<typeof jest.fn>;
+let listing: PhotoListingRepository;
 let service: PhotoEditsService;
 
 /**
@@ -64,14 +65,14 @@ function photoComposites(): PhotoCompositesRepository {
   return new PhotoCompositesRepository(db, stacks, new PhotoPathsRepository(db, stacks));
 }
 
-function mergeComposite(photos: PhotoCompositesRepository): string {
+function mergeComposite(photos: PhotoCompositesRepository, frames: string[] = [PHOTO, PHOTO]): string {
   return photos.insertComposite({
     libraryId: 'lib',
     kind: 'panorama',
     reference: PHOTO,
     recipe: {
       version: 1,
-      sources: [PHOTO, PHOTO].map((photoId) => ({
+      sources: frames.map((photoId) => ({
         photoId,
         size: [100, 100] as [number, number],
         rotation: [1, 0, 0, 0] as [number, number, number, number],
@@ -102,10 +103,125 @@ beforeEach(() => {
   ).run(PHOTO);
 
   queueRebuild = jest.fn();
-  const photos = {
+  listing = {
     getById: jest.fn((id: string) => (id === PHOTO ? { id } : null)),
   } as unknown as PhotoListingRepository;
-  service = new PhotoEditsService(db, new PhotoEditsRepository(db), photos, queueRebuild);
+  service = new PhotoEditsService(db, new PhotoEditsRepository(db), listing, queueRebuild);
+});
+
+describe('PhotoEditsService.finish, on what the editor opened on', () => {
+  let photos: PhotoProcessingRepository;
+  let edits: PhotoEditsRepository;
+
+  beforeEach(() => {
+    photos = photoProcessing();
+    edits = new PhotoEditsRepository(db);
+    service = new PhotoEditsService(
+      db,
+      edits,
+      listing,
+      (ids) => void photos.queueEditedSince(ids),
+      () => {},
+      (photoId, stamp) => photos.vouchCameHome(photoId, stamp),
+    );
+    settled(PHOTO);
+    edits.save(PHOTO, { ...neutralEdits(), exposure: 1 }, 0);
+  });
+
+  function opened(): { doc: EditDoc; stamp: string | null } {
+    const { doc, stamp } = edits.checkpoint(PHOTO);
+    return { doc, stamp };
+  }
+
+  function saveExposure(exposure: number): void {
+    const { doc, rev } = edits.get(PHOTO);
+    edits.save(PHOTO, { ...doc, exposure }, rev, 'session');
+  }
+
+  it('rebuilds nothing when the document came home', () => {
+    built(PHOTO, 'grid', 'full');
+    const from = opened();
+    saveExposure(2);
+    saveExposure(1);
+
+    service.finish(PHOTO, from);
+
+    expect(owingRenditions()).toEqual([]);
+    expect(photos.queueEditedSince()).toBe(0);
+  });
+
+  it('rebuilds a document that moved', () => {
+    built(PHOTO, 'grid', 'full');
+    const from = opened();
+    saveExposure(2);
+
+    service.finish(PHOTO, from);
+
+    expect(owingRenditions()).toEqual([PHOTO]);
+  });
+
+  it('rebuilds a copy rendered from the session rather than from what it opened on', () => {
+    built(PHOTO, 'grid', 'full');
+    const from = opened();
+    saveExposure(2);
+    built(PHOTO, 'full');
+    saveExposure(1);
+
+    service.finish(PHOTO, from);
+
+    expect(owingRenditions()).toEqual([PHOTO]);
+    const tile = db.query(`SELECT needs_build FROM renditions WHERE photo_id = ? AND variant = 'grid'`).get(PHOTO);
+    expect(tile).toEqual({ needs_build: 0 });
+  });
+
+  it('rebuilds nothing of a panorama made from a frame whose document came home', () => {
+    const panorama = mergeComposite(photoComposites());
+    settled(panorama);
+    built(PHOTO, 'grid', 'full');
+    db.query('UPDATE renditions SET built_at = ?, built_from = ? WHERE photo_id = ?')
+      .run('2026-02-01T00:00:00.000Z', photos.builtFromOf(panorama), panorama);
+    const from = opened();
+    saveExposure(2);
+    saveExposure(1);
+
+    service.finish(PHOTO, from);
+
+    expect(photos.queueEditedSince()).toBe(0);
+  });
+
+  it('rebuilds a copy that was already behind when the editor opened', () => {
+    built(PHOTO, 'grid', 'full');
+    saveExposure(3);
+    const from = opened();
+    saveExposure(2);
+    saveExposure(3);
+
+    service.finish(PHOTO, from);
+
+    expect(owingRenditions()).toEqual([PHOTO]);
+  });
+
+  it('rebuilds a panorama whose other frame moved while this one came home', () => {
+    const other = 'other';
+    db.query(
+      `INSERT INTO photos (id, library_id, recipe, width, height, date_added)
+         VALUES (?, 'lib', '{"kind":"file","path":"b.arw"}', 100, 100, '2026-01-01T00:00:00.000Z')`,
+    ).run(other);
+    settled(other);
+    const panorama = mergeComposite(photoComposites(), [PHOTO, other]);
+    settled(panorama);
+    built(PHOTO, 'grid', 'full');
+    db.query('UPDATE renditions SET built_at = ?, built_from = ? WHERE photo_id = ?')
+      .run('2026-02-01T00:00:00.000Z', photos.builtFromOf(panorama), panorama);
+    const from = opened();
+    saveExposure(2);
+    edits.save(other, { ...neutralEdits(), exposure: 1 }, 0);
+    saveExposure(1);
+
+    service.finish(PHOTO, from);
+
+    expect(owingRenditions()).toEqual([panorama]);
+  });
 });
 
 describe('PhotoEditsService', () => {
@@ -303,6 +419,8 @@ describe('PhotoEditsService', () => {
     // Otherwise the foreign key reports it, on the way in, as a 500 for what is a 404.
     expect(() => service.save('nope', neutralEdits(), 0)).toThrow(AppError);
     expect(() => service.finish('nope')).toThrow(AppError);
+    expect(() => service.checkpoint('nope')).toThrow(AppError);
+    expect(() => service.restore('nope', 0, { doc: neutralEdits(), cursor: 0, history: [] }, 'session')).toThrow(AppError);
     expect(queueRebuild).not.toHaveBeenCalled();
   });
 });

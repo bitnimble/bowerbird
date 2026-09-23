@@ -1,9 +1,9 @@
 import { action } from 'mobx';
-import { type EditDoc, type EditState } from '../../../../../src/schemas/photo_edits';
+import { type EditCheckpoint, type EditDoc, type EditState } from '../../../../../src/schemas/photo_edits';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { ApiError } from '../../../api/request';
 import { newId } from '../../../../../src/schemas/id';
-import { diffEdits, type ColourProfile, type Denoiser } from '../../../../../src/schemas/photo_edits';
+import { type ColourProfile, type Denoiser } from '../../../../../src/schemas/photo_edits';
 import type { AsShot } from '../../../../../src/schemas/prepared';
 import type { RepairPresenter } from '../repair/repair_presenter';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
@@ -25,7 +25,7 @@ export class EditPresenter {
   /** Which photo's edits are being written, kept because `open` is the only caller told. */
   private photoId: string | null = null;
   private session = newId();
-  private saving = false;
+  private writing: Promise<void> | null = null;
   /** A settle that arrived while a save was in flight. Only the latest is ever kept. */
   private pendingSave = false;
   /**
@@ -36,8 +36,10 @@ export class EditPresenter {
    * currently looking at, and the picture would jump backwards mid-gesture.
    */
   private locallyEdited = false;
-  /** The document this open started from, which is what `close` asks whether anything moved from. */
-  private openedDoc: EditDoc | null = null;
+  /** What this open started from, which `cancel` puts back. */
+  private openedAt: EditCheckpoint | null = null;
+  /** Whether the server has stored anything since the open, which `close` asks after it has gone. */
+  private written = false;
 
   constructor(
     private readonly store: EditStore,
@@ -60,10 +62,12 @@ export class EditPresenter {
     this.store.canRedo = false;
     this.store.saveStatus = 'clean';
     this.store.asShot = null;
+    this.openedAt = null;
+    this.written = false;
   }
 
-  opened(): void {
-    this.openedDoc = this.store.doc;
+  opened(checkpoint: EditCheckpoint | null): void {
+    this.openedAt = checkpoint;
   }
 
   @action.bound
@@ -187,7 +191,7 @@ export class EditPresenter {
    * same reason - only the latest is ever outstanding.
    */
   async commit(): Promise<void> {
-    if (this.saving) {
+    if (this.writing != null) {
       this.pendingSave = true;
       return;
     }
@@ -195,27 +199,46 @@ export class EditPresenter {
     const doc = this.store.doc;
     if (photoId == null || doc == null) return;
 
-    this.saving = true;
     this.locallyEdited = false;
     this.saveStatus('saving');
-    try {
-      const state = await photoEditsApi.save(photoId, doc, this.store.rev, this.session);
-      // The bookkeeping always, the document only if nothing moved while this was
-      // in flight. Taking it unconditionally would overwrite a slider the reader
-      // moved during the round trip with the value that round trip was about.
-      this.applyState(state, this.locallyEdited);
-    } catch (error) {
-      // A refused revision is not a failure to retry as-is: something else moved
-      // these edits, so the client has to take what is there now. Reported rather
-      // than resolved - silently reloading would discard what the reader just did.
-      this.saveStatus(conflicted(error) ? 'conflict' : 'failed');
-    } finally {
-      this.saving = false;
-      if (this.pendingSave && !this.stage.isClosed()) {
-        this.pendingSave = false;
-        void this.commit();
+    await this.exclusively(async () => {
+      try {
+        const state = await photoEditsApi.save(photoId, doc, this.store.rev, this.session);
+        // The bookkeeping always, the document only if nothing moved while this was
+        // in flight. Taking it unconditionally would overwrite a slider the reader
+        // moved during the round trip with the value that round trip was about.
+        this.stored(state, this.locallyEdited);
+      } catch (error) {
+        // A refused revision is not a failure to retry as-is: something else moved
+        // these edits, so the client has to take what is there now. Reported rather
+        // than resolved - silently reloading would discard what the reader just did.
+        this.saveStatus(conflicted(error) ? 'conflict' : 'failed');
       }
-    }
+    });
+  }
+
+  /**
+   * Puts the edits and their undo history back to where this open found them.
+   *
+   * False where that could not be done, and the edits made since are still stored.
+   */
+  async cancel(): Promise<boolean> {
+    this.pendingSave = false;
+    while (this.writing != null) await this.writing;
+    const photoId = this.photoId;
+    const openedAt = this.openedAt;
+    if (photoId == null || openedAt == null || this.store.rev === openedAt.rev) return true;
+
+    let restored = false;
+    await this.exclusively(async () => {
+      try {
+        this.stored(await photoEditsApi.restore(photoId, this.store.rev, openedAt, this.session));
+        restored = true;
+      } catch (error) {
+        this.saveStatus(conflicted(error) ? 'conflict' : 'failed');
+      }
+    });
+    return restored;
   }
 
   @action.bound
@@ -235,25 +258,31 @@ export class EditPresenter {
     const photoId = this.photoId;
     // Waiting rather than racing: a step taken while a save is in flight would be
     // built on a revision the save is about to move.
-    if (!allowed || photoId == null || this.saving) return;
-    this.saving = true;
-    try {
-      // A step replaces the document by definition, so it takes the whole answer.
-      this.applyState(await call(photoId, this.store.rev));
-      this.locallyEdited = false;
-      this.stage.draw();
-    } catch (error) {
-      this.saveStatus(conflicted(error) ? 'conflict' : 'failed');
-    } finally {
-      this.saving = false;
-      // A settle that arrived mid-step took `commit`'s "already saving" arm and left this set.
-      // Only `commit` drains it, so without this the document waits for some later save to
-      // notice - and that save then sends a second one nobody asked for.
-      if (this.pendingSave) {
+    if (!allowed || photoId == null || this.writing != null) return;
+    await this.exclusively(async () => {
+      try {
+        // A step replaces the document by definition, so it takes the whole answer.
+        this.stored(await call(photoId, this.store.rev));
+        this.locallyEdited = false;
+        this.stage.draw();
+      } catch (error) {
+        this.saveStatus(conflicted(error) ? 'conflict' : 'failed');
+      }
+    });
+  }
+
+  private async exclusively(write: () => Promise<void>): Promise<void> {
+    const writing = write().finally(() => {
+      this.writing = null;
+      // A settle that arrived mid-write took `commit`'s "already writing" arm and left this set,
+      // and only `commit` drains it.
+      if (this.pendingSave && !this.stage.isClosed()) {
         this.pendingSave = false;
         void this.commit();
       }
-    }
+    });
+    this.writing = writing;
+    await writing;
   }
 
   /**
@@ -291,27 +320,34 @@ export class EditPresenter {
   }
 
   close(): void {
-    // Before the flag, and only where something was actually stored: this is what asks
-    // the server to build the picture the reader ended up with. No write above rebuilds
-    // anything, because a slider release says nothing about whether they are finished -
-    // so leaving without this is leaving the rendition at the last render.
+    // Only where something was actually stored: this is what asks the server to build the
+    // picture the reader ended up with. No write above rebuilds anything, because a slider
+    // release says nothing about whether they are finished - so leaving without this is
+    // leaving the rendition at the last render.
     //
-    // Against the document this open started from rather than against the revision, which
-    // moves for a step taken and a step taken back alike: a reader who dragged a slider
-    // and dragged it home, or who undid their way to where they came in, is looking at the
-    // picture that is already on disk, and seconds of GPU would rebuild it byte for byte.
+    // After the write in flight, or a save released on the way out is never rebuilt, and a
+    // cancel followed at once by Done has the server compare against the cancelled edits.
+    //
+    // Sent even where the document came home - a slider dragged back, a cancel - because
+    // every write moved the stamp a rendition is judged stale by. Handed what this open
+    // started from, so the server can vouch for the copies already on disk instead of
+    // rebuilding them byte for byte.
     //
     // Fire-and-forget, and the server does not depend on it arriving: the rebuild is
     // queued off the edits being newer than the render, so a tab closed before this
     // lands is caught by the sweep at startup instead.
     const photoId = this.photoId;
-    const doc = this.store.doc;
-    if (photoId != null && this.store.rev > 0 && doc != null && this.movedSinceOpen(doc)) {
-      void photoEditsApi.finish(photoId).catch(() => {});
-    }
+    const openedAt = this.openedAt;
+    if (photoId == null) return;
+    void (async () => {
+      while (this.writing != null) await this.writing;
+      if (this.written) await photoEditsApi.finish(photoId, openedAt ?? undefined);
+    })().catch(() => {});
   }
 
-  private movedSinceOpen(doc: EditDoc): boolean {
-    return this.openedDoc == null || diffEdits(this.openedDoc, doc) != null;
+  /** A write's answer, recorded even once the editor has closed. */
+  private stored(state: EditState, keepDoc = false): void {
+    if (state.rev !== (this.openedAt?.rev ?? 0)) this.written = true;
+    this.applyState(state, keepDoc);
   }
 }

@@ -336,7 +336,7 @@ export class RawEditPresenter {
     // Awaited before the decode rather than alongside it: the open denoises the mosaic at this
     // document's Detail, so the document is an input to the decode rather than something applied
     // to a frame that is already prepared. One small row ahead of seconds of LibRaw.
-    const edits = photoEditsApi.get(photoId).catch(() => null);
+    const edits = photoEditsApi.checkpoint(photoId).catch(() => null);
     // The recipe, for the one decision that cannot be made without it. Alongside the document
     // rather than after it: both are small rows and both are wanted before the decode.
     const described = photosApi.get(photoId).catch(() => null);
@@ -365,7 +365,7 @@ export class RawEditPresenter {
       // shut rather than absent, which every control already is until the status is live. A read
       // that failed leaves `doc` null, which is the editor usable at neutral.
       if (saved != null) this.applyState(saved);
-      this.edit.opened();
+      this.edit.opened(saved);
       // A read that failed leaves this at the local arm, which is right for every ordinary
       // photograph.
       const photo = await described;
@@ -822,6 +822,10 @@ export class RawEditPresenter {
 
   async redo(): Promise<void> {
     await this.edit.redo();
+  }
+
+  cancel(): Promise<boolean> {
+    return this.edit.cancel();
   }
 
   private applyState(state: EditState, keepDoc = false): void {

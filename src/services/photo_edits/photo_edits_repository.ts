@@ -8,6 +8,7 @@ import {
   applyEdits,
   diffEdits,
   neutralEdits,
+  type EditCheckpoint,
   type EditDelta,
   type EditDoc,
   type EditState,
@@ -45,8 +46,15 @@ export class PhotoEditsRepository {
 
   /** The photo's edits, or the neutral document at rev 0 where it has none. */
   get(photoId: string): EditState {
+    const { doc, rev, canUndo, canRedo } = this.checkpoint(photoId);
+    return { doc, rev, canUndo, canRedo };
+  }
+
+  checkpoint(photoId: string): EditCheckpoint {
     const row = this.row(photoId);
-    if (row == null) return { doc: neutralEdits(), rev: 0, canUndo: false, canRedo: false };
+    if (row == null) {
+      return { doc: neutralEdits(), rev: 0, canUndo: false, canRedo: false, cursor: 0, history: [], stamp: null };
+    }
     const history = this.history(photoId);
     // Bounded by the history that is actually there, not just by the cursor. A
     // history that would not parse degrades to empty (see `history`), and a cursor
@@ -57,6 +65,9 @@ export class PhotoEditsRepository {
       rev: row.rev,
       canUndo: cursor > 0,
       canRedo: cursor < history.length,
+      cursor,
+      history,
+      stamp: row.stamp,
     };
   }
 
@@ -96,6 +107,10 @@ export class PhotoEditsRepository {
       if (step == null) return null;
       return { doc: applyEdits(current, step.to), history, cursor: cursor + 1 };
     });
+  }
+
+  restore(photoId: string, rev: number, checkpoint: Pick<EditCheckpoint, 'doc' | 'cursor' | 'history'>, session: string): EditState {
+    return this.write(photoId, rev, () => ({ doc: checkpoint.doc, history: checkpoint.history, cursor: checkpoint.cursor }), session);
   }
 
   /**
