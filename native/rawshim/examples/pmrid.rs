@@ -6,7 +6,12 @@
 //!
 //! What the two denoisers do to the same frame, as PNGs lifted by `lift` stops of gain so a night
 //! frame is watchable: undenoised, GALOSH, PMRID. `whole` filters the frame instead and reports
-//! what that costs, which is the only honest answer to what a rendition would pay.
+//! what that costs, which is the only honest answer to what a rendition would pay - the fastest of
+//! `RUNS`, since the first run compiles whatever pipelines the driver's cache lacks, and whatever
+//! else the card is doing only ever adds to a run. It also writes
+//! the filtered mosaic to `<out-dir>/whole.f32`, and where `<out-dir>/reference.f32` exists -
+//! a copy of an earlier run's - says how far this one moved from it, which is how a change to the
+//! network's arithmetic is held against the picture it used to make.
 //!
 //! The network itself is `crate::pmrid`, which is what a rendition and the editor both dispatch;
 //! nothing here describes it a second time.
@@ -51,7 +56,7 @@ fn main() {
     eprintln!("fit alpha {:.3e} sigma_sq {:.3e}", model.alpha, model.sigma_sq);
 
     let network = rawshim::pmrid::device(gpu).expect("the network built");
-    let filter = |window: &rawshim::condition::Mosaic| {
+    let filter = |window: &mut rawshim::condition::Mosaic| {
         let started = std::time::Instant::now();
         rawshim::pmrid::denoise(gpu, network, window, &cfa, gains, Detail::at(luma, colour), fit);
         gpu.block_until_done();
@@ -59,12 +64,40 @@ fn main() {
     };
 
     if over_the_frame {
-        let spent = filter(mosaic);
+        const RUNS: usize = 7;
+        let spent = (0..RUNS)
+            .map(|_| filter(&mut mosaic.duplicate(gpu)))
+            .min()
+            .expect("at least one run");
+        let mut frame = mosaic.duplicate(gpu);
+        filter(&mut frame);
         let megapixels = (stride * mosaic.height) as f64 / 1e6;
         eprintln!(
             "{stride}x{}: {spent:?}, {:.0}ms per megapixel of sensor",
             mosaic.height,
             spent.as_secs_f64() * 1e3 / megapixels,
+        );
+        let filtered = pollster::block_on(frame.read(gpu)).expect("reads back");
+        let bytes: Vec<u8> = filtered.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        std::fs::write(format!("{out}/whole.f32"), bytes).expect("wrote the frame");
+        let Ok(reference) = std::fs::read(format!("{out}/reference.f32")) else { return };
+        assert_eq!(
+            reference.len(),
+            filtered.len() * 4,
+            "reference.f32 is another frame's, so there is nothing to hold this one against",
+        );
+        let reference = reference
+            .chunks_exact(4)
+            .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]));
+        let (mut total, mut worst) = (0.0f64, 0.0f64);
+        for (now, was) in filtered.iter().zip(reference) {
+            let apart = f64::from((now - was).abs()) * 255.0;
+            total += apart;
+            worst = worst.max(apart);
+        }
+        eprintln!(
+            "from the reference: {:.3} codes of 255 on average, {worst:.2} at the worst photosite",
+            total / filtered.len() as f64,
         );
         return;
     }
@@ -91,8 +124,8 @@ fn main() {
     };
     let (noisy, galosh) = (cut(&samples), cut(&galosh));
 
-    let window = rawshim::condition::Mosaic::upload(gpu, &noisy, w, h);
-    eprintln!("the window denoised in {:?}", filter(&window));
+    let mut window = rawshim::condition::Mosaic::upload(gpu, &noisy, w, h);
+    eprintln!("the window denoised in {:?}", filter(&mut window));
     let pmrid = pollster::block_on(window.read(gpu)).expect("reads back");
 
     let rcd = rawshim::demosaic::device(gpu).expect("the demosaic built");

@@ -100,7 +100,7 @@ fn shaders(out: &Path) {
         );
     }
     std::fs::create_dir_all(staged.join("galosh")).expect("create the staged shader directory");
-    std::fs::create_dir_all(out.join("spirv")).expect("create the staged shader directory");
+    std::fs::create_dir_all(out.join("passthrough")).expect("create the staged shader directory");
 
     for (from, to) in gather(Path::new("../../slang")) {
         // A file declaring itself a module is one another file imports, not a stage of its own.
@@ -111,14 +111,36 @@ fn shaders(out: &Path) {
         if source.lines().any(|line| line.starts_with("module ")) {
             continue;
         }
-        // `slang/spirv` is what WGSL cannot say - today the cooperative matrices a tensor core is
-        // reached through, which no browser exposes - so it compiles for Vulkan alone and a host
-        // that wants it holds a device of its own.
-        match to.strip_prefix("spirv/") {
+        // `slang/passthrough` is what WGSL cannot say - today the cooperative matrices a matrix
+        // unit is reached through, which no browser exposes - so it is handed to the driver in the
+        // driver's own language, and both are emitted because which one a machine takes is the
+        // adapter's answer rather than the build's (`pmrid::coop_kernels`).
+        //
+        // **The fragment differs, and the shader takes it as a define.** A Vulkan cooperative
+        // matrix is 16x16 on the parts this was measured on; Metal's `simdgroup_matrix` is 8x8 and
+        // nothing else, and slangc refuses any other size by name rather than emitting something
+        // slower.
+        match to.strip_prefix("passthrough/") {
             Some(name) => {
-                compile(&slangc, &from, &out.join("spirv").join(name.replace(".slang", ".spv")))
+                let at = |extension: &str| {
+                    out.join("passthrough").join(name.replace(".slang", extension))
+                };
+                compile(&slangc, &from, &at(".spv"), &[], &[]);
+                compile(&slangc, &from, &at(".metal"), &dispatched(&source), &["-DFRAGMENT=8"]);
             }
-            None => compile(&slangc, &from, &staged.join(to.replace(".slang", ".wgsl"))),
+            None => {
+                let to = staged.join(to.replace(".slang", ".wgsl"));
+                compile(&slangc, &from, &to, &[], &[]);
+                // A shader that leaves its arena's type to the build is compiled holding it in
+                // `half` as well, for the host whose matrix units read that arena in place.
+                if source.lines().any(|line| line == "#ifndef STORED") {
+                    let half = to.with_file_name(format!(
+                        "{}_half.wgsl",
+                        to.file_stem().expect("a shader's name").to_string_lossy(),
+                    ));
+                    compile(&slangc, &from, &half, &[], &["-DSTORED=half"]);
+                }
+            }
         }
     }
 }
@@ -159,19 +181,45 @@ fn gather(root: &Path) -> Vec<(PathBuf, String)> {
     found
 }
 
-/// One Slang module to the WGSL both hosts read.
+/// The entry points a rendition dispatches: the `separable_<rows>`, `pointwise_<rows>` and
+/// `upsample_<rows>` each `DISPATCHED(<rows>)` line of the shader declares.
+///
+/// Only these reach the Metal artefact. Metal compiles a library from the source it is handed when
+/// the device opens, so the sweep's fifty other shapes would be fifty kernels compiled on the way
+/// to the six that run.
+fn dispatched(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| line.strip_prefix("DISPATCHED(")?.strip_suffix(')'))
+        .flat_map(|rows| {
+            ["separable", "pointwise", "upsample"].map(|kernel| format!("{kernel}_{rows}"))
+        })
+        .collect()
+}
+
+/// One Slang module to the WGSL both hosts read, or to what a driver is handed as it stands.
 ///
 /// Refused rather than skipped when the compiler is missing: a build that quietly left a stage out
 /// would fail at the first tick with a missing entry point, which names neither the shader nor the
 /// reason.
-fn compile(slangc: &Path, from: &Path, to: &Path) {
-    let spirv = to.extension().is_some_and(|it| it == "spv");
+fn compile(slangc: &Path, from: &Path, to: &Path, entry_points: &[String], defines: &[&str]) {
     let mut command = Command::new(slangc);
-    command.arg(from).arg("-target").arg(if spirv { "spirv" } else { "wgsl" });
-    if spirv {
-        command.arg("-capability").arg("spvCooperativeMatrixKHR");
+    match to.extension().and_then(|it| it.to_str()) {
+        Some("spv") => {
+            command.arg("-target").arg("spirv").arg("-capability").arg("spvCooperativeMatrixKHR");
+        }
+        Some("metal") => {
+            command.arg("-target").arg("metal");
+        }
+        _ => {
+            command.arg("-target").arg("wgsl");
+        }
     }
-    let run = command.arg("-o").arg(to).output();
+    command.args(defines);
+    for entry in entry_points {
+        command.arg("-entry").arg(entry).arg("-stage").arg("compute");
+    }
+    let run = command.arg(from).arg("-o").arg(to).output();
     let run = run.unwrap_or_else(|e| {
         panic!(
             "{}: {e}\nThe Slang compiler is the shaders' toolchain. `bun run get:slangc` fetches \

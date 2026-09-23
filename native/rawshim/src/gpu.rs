@@ -217,6 +217,10 @@ pub struct Gpu {
     /// back to software. Naming it at boot is what tells a misconfigured deployment from a
     /// machine that genuinely has no GPU.
     pub adapter: String,
+    /// Which API answered, because one kernel is handed to the driver as it stands and a driver
+    /// takes only its own ([`crate::pmrid`]'s cooperative matrices, SPIR-V on Vulkan and MSL on
+    /// Metal).
+    pub backend: wgpu::Backend,
     /// How many workgroups a whole-frame reduction splits into to fill this device.
     ///
     /// **One workgroup per CFA channel fills a two-core integrated part and leaves 64 of a
@@ -387,11 +391,12 @@ pub const MOST_STORAGE_BUFFERS: u32 = 10;
 /// that does not is unaffected either way, so requesting it can only add. A device that refuses is
 /// a device with no adapter, which is a different failure entirely.
 ///
-/// The other three are one thing: PMRID's 1x1 convolutions on the tensor cores ([`crate::pmrid`]).
-/// WGSL cannot spell a cooperative matrix, so that kernel is SPIR-V handed to the driver as it
-/// stands and dispatched with its shape in immediate data - and the whole arrangement is on *this*
-/// device rather than a second one, so the frame it filters never leaves the card. A browser offers
-/// none of the three, which is what makes the editor's arm the WGSL one.
+/// The other three are one thing: PMRID's 1x1 convolutions on the matrix units ([`crate::pmrid`]).
+/// WGSL cannot spell a cooperative matrix, so that kernel is handed to the driver in the driver's
+/// own language - SPIR-V on Vulkan, MSL on Metal - and dispatched with its shape in immediate data,
+/// and the whole arrangement is on *this* device rather than a second one, so the frame it filters
+/// never leaves the card. A browser offers none of the three, which is what makes the editor's arm
+/// the WGSL one.
 fn asked_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features()
         & (wgpu::Features::SHADER_F16
@@ -452,16 +457,10 @@ pub async fn page_device() -> Option<&'static Gpu> {
         });
     }));
 
-    let info = adapter.get_info();
     // Leaked because wgpu's WebGPU handles are `Rc`s, so a `Gpu` cannot sit in a `static` the way
     // the native one does, and a tab's device is alive until the tab is not.
-    let open: &'static Gpu = Box::leak(Box::new(Gpu::build(
-        format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type),
-        info.device_type,
-        instance,
-        device,
-        queue,
-    )));
+    let open: &'static Gpu =
+        Box::leak(Box::new(Gpu::build(&adapter.get_info(), instance, device, queue)));
     PAGE.with(|held| held.set(Some(open)));
     Some(open)
 }
@@ -986,8 +985,8 @@ impl Gpu {
                 required_features: asked_features(&adapter),
                 // The cooperative matrices are behind this and refused without it: wgpu calls a
                 // feature experimental while it is the backends rather than the driver it does not
-                // trust yet. Ours is one kernel on one backend, pinned against the WGSL arm that
-                // computes the same network.
+                // trust yet. Ours is one kernel, pinned against the WGSL arm that computes the same
+                // network.
                 #[expect(unsafe_code)]
                 // SAFETY: the token is a statement that the caller knows the feature is
                 // work in progress, which this comment is.
@@ -1001,14 +1000,7 @@ impl Gpu {
         // frame would come back wrong rather than not at all.
         device.on_uncaptured_error(std::sync::Arc::new(|error| panic!("rawshim gpu: {error}")));
 
-        let info = adapter.get_info();
-        Some(Gpu::build(
-            format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type),
-            info.device_type,
-            instance,
-            device,
-            queue,
-        ))
+        Some(Gpu::build(&adapter.get_info(), instance, device, queue))
     }
 
     /// Everything a `Gpu` is once a device exists, which is all of it bar asking for one.
@@ -1016,15 +1008,15 @@ impl Gpu {
     /// Split out so that the browser's request - async, and on a backend that enumerates nothing -
     /// builds the *same* shaders, layouts and PQ table as the server's rather than a second set.
     fn build(
-        adapter: String,
-        device_type: wgpu::DeviceType,
+        info: &wgpu::AdapterInfo,
         instance: wgpu::Instance,
         device: wgpu::Device,
         queue: wgpu::Queue,
     ) -> Gpu {
+        let adapter = format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type);
         // Thirty-two apiece is 128 workgroups for a four-channel reduction, a couple per core on
         // the discrete parts this is for and still far more than a narrow one is short of.
-        let reduction_slices = match device_type {
+        let reduction_slices = match info.device_type {
             wgpu::DeviceType::DiscreteGpu => 32,
             _ => 1,
         };
@@ -1217,6 +1209,7 @@ impl Gpu {
 
         Gpu {
             adapter,
+            backend: info.backend,
             reduction_slices,
             device,
             queue,

@@ -3,7 +3,13 @@
 //!
 //! ```text
 //! coopmat [tiles]
+//! coopmat registers [<file.spv>] <entry point>...
 //! ```
+//!
+//! `registers` prints what the driver compiled each named entry point into instead - registers,
+//! shared memory and whatever else it reports - which is what decides how many workgroups of a
+//! kernel a multiprocessor can hold. Of `pmrid_coop.slang` by default, or of a SPIR-V file, which
+//! is how a WGSL stage is asked: `slangc slang/pmrid.slang -target spirv -o <file.spv>`.
 //!
 //! A measurement, not a stage. Two thirds of what the prototype spends is its pointwise
 //! convolutions, and each of those is already a matrix multiply over the arena: the weights are
@@ -11,7 +17,8 @@
 //! same shape. What that costs on a GPU's matrix units rather than its lanes is the question a
 //! tensor core exists to answer, and WGSL cannot ask it - `OpCooperativeMatrixMulAddKHR` has no
 //! spelling there - so this opens a Vulkan device of its own, with `VK_KHR_cooperative_matrix`
-//! enabled, and dispatches `slang/spirv/pmrid_coop.slang` over the layers the network actually has.
+//! enabled, and dispatches `slang/passthrough/pmrid_coop.slang` over the layers the network
+//! actually has. Vulkan's alone, so no Apple part is swept by it.
 //!
 //! **What it does not do.** It does not denoise a photograph: the matrices hold whatever was
 //! uploaded, and the question is the rate. The correctness it does check is that the multiply is a
@@ -23,7 +30,8 @@
 
 use ash::vk;
 
-/// The fragment an Ampere subgroup multiplies, and what `pmrid_coop.slang` is written for.
+/// The fragment an Ampere subgroup multiplies, and what `pmrid_coop.slang`'s Vulkan artefact is
+/// compiled for (`pmrid::SPIRV_FRAGMENT`).
 const FRAG: u32 = 16;
 /// Every shape the shader was compiled in, as `(entry point, rows a subgroup, columns a subgroup,
 /// subgroups a workgroup, depth steps read before any is multiplied)` in fragments - the shader's
@@ -214,9 +222,9 @@ impl Multiply {
 
 /// What the shader's push constants are, in the order it declares them.
 ///
-/// The tail is what `stage` and `finish` need and a multiply does not, and it is pushed anyway: the
-/// range a pipeline layout declares has to cover the block, whichever entry point is about to read
-/// it.
+/// The fields after `out_at` are the rendition's kernels', which nothing here dispatches. The block
+/// runs on past `after`, and the range this declares stops there, which is enough: a range has to
+/// cover what an entry point reads, and none of the sweep's reads past `out_at`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct Pushed {
@@ -232,6 +240,9 @@ struct Pushed {
     bias_at: u32,
     after: u32,
 }
+
+/// The whole of that block, `Shape` in `pmrid.rs`: [`Pushed`] and the six the rendition adds.
+const RENDITION_PUSHED: u32 = (std::mem::size_of::<Pushed>() + 6 * 4) as u32;
 
 /// Every 1x1 convolution of the network, in the order it runs, for one sensor tile.
 ///
@@ -268,6 +279,8 @@ struct Gpu {
     /// Whether the device multiplies `f16` into an `f32` accumulator, which the `wide` arms are and
     /// a device is allowed not to offer.
     accumulates_wide: bool,
+    /// Whether the driver reports what a pipeline compiled into (`registers`).
+    describes: bool,
     device: ash::Device,
     queue: vk::Queue,
     family: u32,
@@ -362,7 +375,19 @@ fn device() -> Gpu {
     let priorities = [1.0f32];
     let queues =
         [vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
-    let extensions = [ash::khr::cooperative_matrix::NAME.as_ptr()];
+    // What the driver says a compiled pipeline holds, for `registers`, where the driver has it.
+    let describes = unsafe { instance.enumerate_device_extension_properties(physical) }
+        .expect("the device extensions")
+        .iter()
+        .any(|it| {
+            it.extension_name_as_c_str() == Ok(ash::khr::pipeline_executable_properties::NAME)
+        });
+    let mut extensions = vec![ash::khr::cooperative_matrix::NAME.as_ptr()];
+    if describes {
+        extensions.push(ash::khr::pipeline_executable_properties::NAME.as_ptr());
+    }
+    let mut executables = vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR::default()
+        .pipeline_executable_info(describes);
     let mut coop = vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default().cooperative_matrix(true);
     let mut eleven = vk::PhysicalDeviceVulkan11Features::default().storage_buffer16_bit_access(true);
     let mut twelve = vk::PhysicalDeviceVulkan12Features::default()
@@ -373,6 +398,9 @@ fn device() -> Gpu {
         .push_next(&mut coop)
         .push_next(&mut eleven)
         .push_next(&mut twelve);
+    if describes {
+        features = features.push_next(&mut executables);
+    }
     let device = unsafe {
         instance.create_device(
             physical,
@@ -394,11 +422,117 @@ fn device() -> Gpu {
         _entry: entry,
         instance,
         accumulates_wide,
+        describes,
         device,
         queue,
         family,
         memory,
         tick: described.limits.timestamp_period,
+    }
+}
+
+/// What the driver compiled each of a rendition's kernels into: registers, shared memory, and
+/// whatever else it reports, which is what decides how many workgroups a multiprocessor holds.
+fn registers(gpu: &Gpu, entry_points: &[String]) {
+    assert!(gpu.describes, "this driver has no VK_KHR_pipeline_executable_properties");
+    let device = &gpu.device;
+    let executables = ash::khr::pipeline_executable_properties::Device::new(&gpu.instance, device);
+    // Every binding either shader declares: this one's six, and `pmrid.slang`'s two uniforms.
+    let bindings: Vec<_> = (0..6)
+        .map(|at| (at, vk::DescriptorType::STORAGE_BUFFER))
+        .chain([20, 21].map(|at| (at, vk::DescriptorType::UNIFORM_BUFFER)))
+        .map(|(at, kind)| {
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(at)
+                .descriptor_type(kind)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE)
+        })
+        .collect();
+    let layout = unsafe {
+        device.create_descriptor_set_layout(
+            &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+            None,
+        )
+    }
+    .expect("a descriptor layout");
+    // The whole block, where the sweep pushes only its head: a rendition's kernels read all of it.
+    let pushes = [vk::PushConstantRange::default()
+        .stage_flags(vk::ShaderStageFlags::COMPUTE)
+        .size(RENDITION_PUSHED)];
+    let layouts = [layout];
+    let pipeline_layout = unsafe {
+        device.create_pipeline_layout(
+            &vk::PipelineLayoutCreateInfo::default()
+                .set_layouts(&layouts)
+                .push_constant_ranges(&pushes),
+            None,
+        )
+    }
+    .expect("a pipeline layout");
+    // Another module's SPIR-V where the first argument names a file, so a WGSL stage compiled by
+    // `slangc -target spirv` can be asked the same question.
+    let (spirv, entry_points) = match entry_points.first().filter(|it| it.ends_with(".spv")) {
+        Some(path) => (std::fs::read(path).expect("the SPIR-V file"), &entry_points[1..]),
+        None => (
+            include_bytes!(concat!(env!("OUT_DIR"), "/passthrough/pmrid_coop.spv")).to_vec(),
+            entry_points,
+        ),
+    };
+    let words = ash::util::read_spv(&mut std::io::Cursor::new(&spirv[..])).expect("the SPIR-V");
+    let module = unsafe {
+        device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)
+    }
+    .expect("the shader module");
+
+    for name in entry_points {
+        let named = std::ffi::CString::new(name.as_str()).expect("a name");
+        let stage = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::COMPUTE)
+            .module(module)
+            .name(&named);
+        let asked = [vk::ComputePipelineCreateInfo::default()
+            .flags(vk::PipelineCreateFlags::CAPTURE_STATISTICS_KHR)
+            .layout(pipeline_layout)
+            .stage(stage)];
+        let pipeline =
+            unsafe { device.create_compute_pipelines(vk::PipelineCache::null(), &asked, None) }
+                .expect("the pipeline")[0];
+        let built = vk::PipelineInfoKHR::default().pipeline(pipeline);
+        let held = unsafe { executables.get_pipeline_executable_properties(&built) }
+            .expect("the executables");
+        for index in 0..held.len() as u32 {
+            let statistics = unsafe {
+                executables.get_pipeline_executable_statistics(
+                    &vk::PipelineExecutableInfoKHR::default()
+                        .pipeline(pipeline)
+                        .executable_index(index),
+                )
+            }
+            .expect("the statistics");
+            let said: Vec<String> = statistics
+                .iter()
+                .map(|it| {
+                    use vk::PipelineExecutableStatisticFormatKHR as Format;
+                    let value = unsafe {
+                        match it.format {
+                            Format::BOOL32 => it.value.b32.to_string(),
+                            Format::INT64 => it.value.i64.to_string(),
+                            Format::UINT64 => it.value.u64.to_string(),
+                            _ => format!("{:.2}", it.value.f64),
+                        }
+                    };
+                    format!("{} {value}", it.name_as_c_str().unwrap_or_default().to_string_lossy())
+                })
+                .collect();
+            eprintln!("{name}: {}", said.join(", "));
+        }
+        unsafe { device.destroy_pipeline(pipeline, None) };
+    }
+    unsafe {
+        device.destroy_shader_module(module, None);
+        device.destroy_pipeline_layout(pipeline_layout, None);
+        device.destroy_descriptor_set_layout(layout, None);
     }
 }
 
@@ -556,6 +690,11 @@ impl Gpu {
 }
 
 fn main() {
+    let asked: Vec<String> = std::env::args().skip(1).collect();
+    if asked.first().is_some_and(|it| it == "registers") {
+        registers(&device(), &asked[1..]);
+        return;
+    }
     let tiles: usize = std::env::args()
         .nth(1)
         .map_or(TILES_IN_A_FRAME, |it| it.parse().expect("a tile count"));
@@ -607,9 +746,10 @@ fn main() {
     gpu.fill(&ping, &(0..widest).map(|at| noise(at + 5)).collect::<Vec<_>>());
     gpu.fill(&pong, &(0..widest).map(|at| noise(at + 11)).collect::<Vec<_>>());
 
-    // `wide` twice: the last binding is the biases the network's own dispatch reads, which nothing
-    // measured here touches, and a descriptor set still has to cover it.
-    let run = Run::new(&gpu, &[&weights, &ping, &pong, &wide, &wide]);
+    // `wide` three times, and only the last is read: the `float` shapes answer into binding 5. The
+    // arena at 1 and the biases at 2 are the network's own dispatch, which nothing measured here
+    // touches, and a descriptor set still has to cover them.
+    let run = Run::new(&gpu, &[&weights, &wide, &wide, &ping, &pong, &wide]);
 
     correct(&gpu, &run, &weights, &ping, &pong);
 
@@ -777,7 +917,7 @@ impl Run {
         }
         .expect("a pipeline layout");
 
-        let spirv = include_bytes!(concat!(env!("OUT_DIR"), "/spirv/pmrid_coop.spv"));
+        let spirv = include_bytes!(concat!(env!("OUT_DIR"), "/passthrough/pmrid_coop.spv"));
         let words = ash::util::read_spv(&mut std::io::Cursor::new(&spirv[..])).expect("the SPIR-V");
         let module = unsafe {
             device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)

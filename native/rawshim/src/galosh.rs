@@ -1037,24 +1037,19 @@ pub async fn denoise_with(
 /// The tile a progressive denoise is cut into, and what a caller with no reason to choose should
 /// pass as `denoise_in_tiles`' `tile`.
 ///
-/// **A latency size that measurement put back where the throughput size already was.** Over the
-/// 61MP fixture at halo 64, best of three, with the median gap between two updates beside it:
+/// **The fastest size, which is also the one that reports.** Over the 61MP fixture at halo 96 on an
+/// RTX 3080, by `examples/galosh_progress.rs`, with the median gap between two updates beside it:
 ///
-/// | tile | tiles | total  | update | vs 1x |
-/// |------|-------|--------|--------|-------|
-/// | -    | 1     | 3920ms | -      | 1.00x |
-/// | 4096 | 6     | 4308ms | 717ms  | 1.10x |
-/// | 2048 | 20    | 4781ms | 236ms  | 1.22x |
-/// | 1024 | 70    | 6777ms | 97ms   | 1.73x |
-/// | 512  | 247   | 6833ms | 97ms   | 1.74x |
+/// | tile | tiles | total | update | vs 1x |
+/// |------|-------|-------|--------|-------|
+/// | -    | 1     | 94ms  | -      | 1.00x |
+/// | 4096 | 6     | 102ms | 12ms   | 1.08x |
+/// | 2048 | 20    | 85ms  | 2ms    | 0.90x |
+/// | 1024 | 70    | 135ms | 1ms    | 1.43x |
+/// | 512  | 247   | 254ms | 0ms    | 2.69x |
 ///
-/// 4096 is six updates over four seconds, which reads as a frozen window rather than as progress.
-/// 1024 is where the halo's redundancy overtakes what it buys - 73% of the wall clock for an
-/// interval already below what a reader resolves - and 512 spends more again for nothing, its
-/// regions being small enough that the per-call floor shows. 2048 is the one useful row.
-///
-/// The premise the plan wrote this item from - that a frame is one long silence - stopped holding
-/// when the decode was tiled for memory at this same size. What was missing was the report.
+/// 1024 is where the halo's redundancy overtakes what it buys, and 512 spends more again, its
+/// regions being small enough that the per-call floor shows.
 pub const PROGRESS_TILE: usize = 2048;
 
 /// The frame denoised tile by tile, reporting the fraction finished as each one lands.
