@@ -85,10 +85,10 @@ public float print_focal(float2 canvas, float2 outer)
     return PRINT_FOCAL * print.view.x * print_camera_distance() / (CAMERA_DISTANCE.d * reach);
 }
 
-float3 paper_ray(float2 pixel, float2 canvas, float2 outer)
+float3 paper_ray(float2 pixel, float2 canvas, float focal)
 {
     let at = (pixel - canvas * 0.5) / min(canvas.x, canvas.y) - print.view.yz;
-    return paper_inverse(normalize(float3(at.x, -at.y, -print_focal(canvas, outer))));
+    return paper_inverse(normalize(float3(at.x, -at.y, -focal)));
 }
 
 public struct PrintHit {
@@ -233,10 +233,10 @@ void paper_surface(float depth, float sign, float3 origin, float3 ray, float3 ha
     if (abs(q) > 1e-10) { paper_candidate(c / q, normal, origin, ray, half, bend, axis, nearest, answer); }
 }
 
-void paper_intersection(float2 pixel, float2 canvas, float3 half, float3 origin,
+void paper_intersection(float2 pixel, float2 canvas, float focal, float3 half, float3 origin,
     float bend, float4 frame, out PrintHit answer)
 {
-    let ray = paper_ray(pixel, canvas, half.xy);
+    let ray = paper_ray(pixel, canvas, focal);
     let axis = half.x >= half.y ? 0u : 1u;
     answer.hit = false;
     answer.coverage = 0.0;
@@ -274,13 +274,13 @@ public PrintHit paper_hit(float2 pixel, float2 canvas, float2 shape)
         framed ? frame.z : HALF_THICKNESS.d / print.surface.z);
     let origin = paper_inverse(float3(0.0, 0.0, print_camera_distance()));
     PrintHit answer;
-    paper_intersection(pixel, canvas, half, origin, framed ? 0.0 : PAPER_BEND.d, frame, answer);
+    paper_intersection(pixel, canvas, print_focal(canvas, half.xy), half, origin, framed ? 0.0 : PAPER_BEND.d, frame, answer);
     return answer;
 }
 
-bool paper_near_pixel(float2 pixel, float2 canvas, float3 half, float3 origin, float bend, float padding)
+bool paper_near_pixel(float2 pixel, float2 canvas, float focal, float3 half, float3 origin, float bend, float padding)
 {
-    let ray = paper_ray(pixel, canvas, half.xy);
+    let ray = paper_ray(pixel, canvas, focal);
     let inverse = float3(
         abs(ray.x) < 1e-10 ? 1e10 : 1.0 / ray.x,
         abs(ray.y) < 1e-10 ? 1e10 : 1.0 / ray.y,
@@ -302,16 +302,16 @@ public PrintHit paper_covered(float2 pixel, float2 canvas, float2 shape)
     let camera = print_camera_distance();
     let origin = paper_inverse(float3(0.0, 0.0, camera));
     let bend = framed ? 0.0 : PAPER_BEND.d;
-    PrintHit answer;
-    paper_intersection(pixel, canvas, half, origin, bend, frame, answer);
     let focal = print_focal(canvas, half.xy);
+    PrintHit answer;
+    paper_intersection(pixel, canvas, focal, half, origin, bend, frame, answer);
     let padding = (camera + length(half + float3(0.0, 0.0, bend))) / (focal * min(canvas.x, canvas.y));
-    if (!paper_near_pixel(pixel, canvas, half, origin, bend, padding)) { return answer; }
+    if (!paper_near_pixel(pixel, canvas, focal, half, origin, bend, padding)) { return answer; }
     var full = answer.hit;
     PrintHit sample;
     for (uint corner = 0; corner < 4; corner += 1) {
         let offset = float2(float(corner & 1u), float(corner >> 1)) - 0.5;
-        paper_intersection(pixel + offset, canvas, half, origin, bend, frame, sample);
+        paper_intersection(pixel + offset, canvas, focal, half, origin, bend, frame, sample);
         full = full && sample.hit;
     }
     if (full) { return answer; }
@@ -330,7 +330,7 @@ public PrintHit paper_covered(float2 pixel, float2 canvas, float2 shape)
     for (uint y = 0; y < rows; y += 1) {
         for (uint x = 0; x < columns; x += 1) {
             let offset = (float2(float(x), float(y)) + 0.5) / float2(float(columns), float(rows)) - 0.5;
-            paper_intersection(pixel + offset, canvas, half, origin, bend, frame, sample);
+            paper_intersection(pixel + offset, canvas, focal, half, origin, bend, frame, sample);
             covered += float(sample.hit);
             if (!answer.hit && sample.hit) { answer = sample; }
         }
@@ -342,7 +342,7 @@ public PrintHit paper_covered(float2 pixel, float2 canvas, float2 shape)
 public float2 paper_uv(float2 pixel, float2 canvas, float2 shape, PrintHit hit)
 {
     let origin = paper_inverse(float3(0.0, 0.0, print_camera_distance()));
-    let ray = paper_ray(pixel, canvas, frame_outer_half(shape / max(shape.x, shape.y)));
+    let ray = paper_ray(pixel, canvas, print_focal(canvas, frame_outer_half(shape / max(shape.x, shape.y))));
     let cosine = dot(ray, hit.normal);
     let safe = abs(cosine) < 1e-7 ? (cosine < 0.0 ? -1e-7 : 1e-7) : cosine;
     let distance = dot(hit.position - origin, hit.normal) / safe;
