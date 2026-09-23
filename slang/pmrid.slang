@@ -131,9 +131,12 @@ groupshared Cell spatial_patch[SPATIAL_AT_ONCE * SPATIAL_PATCH];
 void spatial<let OUT : uint, let IN : uint>(uint3 id, uint3 group, uint3 local, uint slot)
 {
     const uint TAPS = IN * SPATIAL_K * SPATIAL_K;
-    for (uint i = slot; i < OUT * TAPS; i += THREADS) {
-        let o = i / TAPS;
-        spatial_weights[(i % TAPS) * (OUT / 4) + o / 4][o % 4] = weights[pc.weights_at + i];
+    // A whole vector a thread: threads writing a component each of one shared vector race where a
+    // compiler stores the whole vector back, and one of them is lost.
+    for (uint i = slot; i < TAPS * (OUT / 4); i += THREADS) {
+        let at = pc.weights_at + (i % (OUT / 4)) * 4 * TAPS + i / (OUT / 4);
+        spatial_weights[i] = float4(
+            weights[at], weights[at + TAPS], weights[at + 2 * TAPS], weights[at + 3 * TAPS]);
     }
     var sums: Cell[OUT];
     [ForceUnroll]
