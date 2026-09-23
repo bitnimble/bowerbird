@@ -11,6 +11,7 @@ mod api;
 mod events;
 /// Renders the page asks for and this app writes to a folder, rather than answers.
 mod export;
+mod open_with;
 /// The Bowerbird server this app carries, so the library is local and works offline.
 mod server;
 
@@ -40,6 +41,12 @@ pub fn run() {
                 }
             }
             events::follow(app.handle());
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                app.manage(open_with::Offered::default());
+                app.on_menu_event(open_with::chosen);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -60,6 +67,7 @@ pub fn run() {
             export::pick_export_folder,
             export::export_to_folder,
             export::reveal_export,
+            open_with::open_original_with,
             server::app_data_dir,
             server::open_app_data_dir
         ])

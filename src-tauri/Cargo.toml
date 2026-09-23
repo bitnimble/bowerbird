@@ -40,6 +40,19 @@ launcher = { path = "../native/launcher" }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 
+# The application chooser "Open in…" shows (`open_with.rs`), one table per platform.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Com", "Win32_UI_Shell"] }
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSURL", "NSArray"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "macos", target_os = "windows")))'.dependencies]
+ashpd = { version = "0.11", default-features = false, features = ["tokio", "raw_handle", "wayland"] }
+raw-window-handle = "0.6"
+
 # **`tauri` is one entry above, and that is what the Linux desktop's pause is made of** (§23.7).
 # Two
 # would be CEF here and Wry elsewhere, which cannot be stated: the Tauri CLI rewrites this file
