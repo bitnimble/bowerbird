@@ -124,11 +124,13 @@ if (triple.includes('apple')) {
   }
 }
 
-const tarball = join(out, `bowerbird-payload-${platform}.tar.gz`);
+const name = `bowerbird-payload-${platform}.tar.gz`;
+const tarball = join(out, name);
 rmSync(tarball, { force: true });
 // `-C … .` so the archive holds the payload's contents at its root, which is what the
-// supervisor unpacks into a version directory and then runs out of.
-const packed = spawnSync('tar', ['-czf', tarball, '-C', staging, '.'], { stdio: 'inherit' });
+// supervisor unpacks into a version directory and then runs out of. Named from its own
+// directory, because GNU tar reads `D:\…` as a remote `host:path` and dies trying to reach `D`.
+const packed = spawnSync('tar', ['-czf', name, '-C', staging, '.'], { cwd: out, stdio: 'inherit' });
 if (packed.status !== 0) process.exit(packed.status ?? 1);
 rmSync(staging, { recursive: true, force: true });
 
