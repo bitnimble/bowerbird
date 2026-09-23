@@ -821,6 +821,10 @@ export class PhotosPresenter {
     this.sharePresenter.download(photoId, form);
   }
 
+  async openWith(photoId: string): Promise<void> {
+    await this.sharePresenter.openWith(photoId);
+  }
+
   /**
    * The photograph on screen, into whatever the platform's share sheet offers.
    *

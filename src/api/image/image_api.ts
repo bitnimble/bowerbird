@@ -251,6 +251,14 @@ export class ImageApi {
     // camera's JPEG, and either rendered rendition. One route because the menu
     // offering them is one list and only the bytes differ.
     app.get(route(PathSegment.param('photoId'), PathSegment.download(), PathSegment.param('form')), (c) => this.serveDownload(c));
+    // Where the RAW is on this server's disk, for the desktop app to hand to another application.
+    app.get(route(PathSegment.param('photoId'), PathSegment.original()), async (c) => {
+      const photoId = c.req.param('photoId');
+      const { photo, library } = this.photoRenditions.locate(photoId);
+      const path = await this.originals.open(library, photo);
+      if (path == null) throw new AppError('NOT_FOUND', `this photo has no RAW on this device: ${photoId}`);
+      return c.json({ path });
+    });
     // The same picture the viewer is showing, as the one format a share sheet can hand to
     // anything (§10.5). Which rendition is in the URL where a download names a form: this is
     // what is on screen, and the client is the only side that knows which that is.

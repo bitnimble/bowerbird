@@ -223,6 +223,7 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 |---|---|---|
 | `GET` | `/image/:photoId/renditions/:rendition` | Stream one rendition: `grid`, `full`, `max` or `embedded` (§10.1). The recipe decides how the row answers - bytes lifted out of its own file, or a copy it built |
 | `GET` | `/image/:photoId/download/:form` | As an attachment: `original` (the RAW), `embedded`, `full` or `max` |
+| `GET` | `/image/:photoId/original` | Where the RAW is on the server's disk, as `{ path }`, fetched back from a backup first if it has to be. The desktop app's "Open in…" opens that file where it exists on its own machine, and downloads the RAW to a temporary folder where it does not |
 | `GET` | `/image/:photoId/share/:rendition` | One rendition as a JPEG for the platform's share sheet: `embedded`, `full` or `max` (§10.5) |
 
 **Dynamic range is not in the URL.** The library decides it, so a client naming `full-hdr` would be guessing at a file that may never have been built; the route resolves it from `rendition_hdr` instead, and `PhotoDetail.renditions` tells the client what it is looking at.

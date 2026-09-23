@@ -1,6 +1,7 @@
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { REQUEST_ACTIVITY_HEADER } from '../../../../../src/schemas/request_activity';
 import { photosApi } from '../../../api/photos';
+import { openOriginalWith } from '../../../api/transport';
 import type { ToastsPresenter } from '../../toasts/toasts_presenter';
 import type { ViewerStore } from './viewer_store';
 import { PhotosPresenterStrings } from '../photos_presenter.strings';
@@ -16,6 +17,14 @@ export class SharePresenter {
 
   download(photoId: string, form: 'original'): void {
     window.location.href = photosApi.downloadUrl(photoId, form);
+  }
+
+  async openWith(photoId: string): Promise<void> {
+    try {
+      await openOriginalWith(photoId);
+    } catch {
+      this.toasts.show(PhotosPresenterStrings.openWithFailed());
+    }
   }
 
   async share(photoId: string): Promise<void> {

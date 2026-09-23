@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import {
+  AppWindow,
   ArrowLeft,
   Bug,
   ChevronLeft,
@@ -28,6 +29,7 @@ import {
 import { observer } from 'mobx-react-lite';
 import { Link, useNavigate } from 'react-router-dom';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
+import { canOpenOriginalWith } from '../../../api/transport';
 import { useIsMobile, useIsTouch } from '../../../app/device';
 import { useListingStore, usePresenters, useViewerStore } from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
@@ -68,13 +70,17 @@ const RENDITIONS: Option<ViewerRendition>[] = [
 ];
 
 // Three ways a photograph leaves: the picture on screen into whatever else is on the device,
-// the file the camera wrote, and everything else through the export dialog. The renditions are
-// not offered as downloads - they are the viewer's own working copies at the viewer's own
-// settings, where an export is a question with eight answers. The share is the exception, and
-// only because sharing is a gesture about the picture in front of the reader.
-const DOWNLOADS: Option<'share' | 'original' | 'export'>[] = [
+// the file the camera wrote, taken away or opened in another app, and everything else through
+// the export dialog. The renditions are not offered as downloads - they are the viewer's own
+// working copies at the viewer's own settings, where an export is a question with eight answers.
+// The share is the exception, and only because sharing is a gesture about the picture in front
+// of the reader.
+type Send = 'share' | 'original' | 'openWith' | 'export';
+
+const DOWNLOADS: Option<Send>[] = [
   { value: 'share', label: PhotoDetailStrings.share(), icon: <Share2 size={ICON} /> },
   { value: 'original', label: PhotoDetailStrings.downloadOriginal(), icon: <FileType size={ICON} /> },
+  { value: 'openWith', label: PhotoDetailStrings.openWith(), icon: <AppWindow size={ICON} /> },
   { value: 'export', label: BulkBarStrings.exportPhotos(), icon: <HardDriveDownload size={ICON} /> },
 ];
 
@@ -82,6 +88,14 @@ const DOWNLOADS: Option<'share' | 'original' | 'export'>[] = [
 // than one that is not offered - the same answer `document.fullscreenEnabled` gets below. Read
 // once: what a browser can do does not change under the reader.
 const SHAREABLE = typeof navigator !== 'undefined' && typeof navigator.canShare === 'function';
+const OPENS_WITH = typeof navigator !== 'undefined' && canOpenOriginalWith();
+
+function sendable(option: Option<Send>, composite: boolean): boolean {
+  if (option.value === 'share') return SHAREABLE;
+  // A composite has no RAW of its own to open.
+  if (option.value === 'openWith') return OPENS_WITH && !composite;
+  return true;
+}
 
 /**
  * The renditions this photograph actually has, out of the three above.
@@ -329,10 +343,14 @@ export const DetailNav = observer(function DetailNav({
         ]),
     menuSection({
       label: PhotoDetailStrings.sectionSend(),
-      options: SHAREABLE ? DOWNLOADS : DOWNLOADS.filter((option) => option.value !== 'share'),
+      options: DOWNLOADS.filter((option) => sendable(option, isComposite(store.photoFor(photoId)))),
       onSelect: (form) => {
         if (form === 'share') {
           void photos.share(photoId);
+          return;
+        }
+        if (form === 'openWith') {
+          void photos.openWith(photoId);
           return;
         }
         if (form === 'original') {

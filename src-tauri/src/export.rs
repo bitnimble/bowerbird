@@ -144,9 +144,14 @@ fn reveal(file: &Path) -> std::io::Result<()> {
 /// climb out of. Asked of `Path` rather than by splitting on separators, because the parser
 /// that decides what escapes is the same one `join` uses - on Windows `C:x.jpg` has no
 /// separator in it at all and still replaces the folder it is joined to.
-fn filename_from(disposition: &str) -> Option<String> {
+pub(crate) fn filename_from(disposition: &str) -> Option<String> {
     let (_, rest) = disposition.split_once("filename=\"")?;
     let (name, _) = rest.split_once('"')?;
+    plain(name)
+}
+
+/// `name`, where it is one ordinary path component and nothing that could climb out of a folder.
+pub(crate) fn plain(name: &str) -> Option<String> {
     let mut parts = Path::new(name).components();
     match (parts.next(), parts.next()) {
         (Some(std::path::Component::Normal(one)), None) => Some(one.to_string_lossy().into_owned()),

@@ -170,6 +170,18 @@ export async function openAppDataDir(): Promise<void> {
   await invoke('open_app_data_dir', {});
 }
 
+/** Synchronous, so a menu can decide whether to offer it. Android's shell has no chooser to show. */
+export function canOpenOriginalWith(): boolean {
+  return shellInvoke() != null && !/Android/i.test(navigator.userAgent);
+}
+
+/** Resolves once the reader has picked an app from the platform's chooser, or dismissed it. */
+export async function openOriginalWith(photoId: string): Promise<void> {
+  const invoke = shellInvoke();
+  if (invoke == null) throw new Error('opening a RAW in another app is the desktop app’s to do');
+  await invoke('open_original_with', { photoId });
+}
+
 /** A subscription to the library's events, however this build happens to receive them. */
 export interface EventStream {
   close(): void;

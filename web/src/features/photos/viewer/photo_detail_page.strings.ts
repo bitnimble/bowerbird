@@ -25,6 +25,7 @@ export const PhotoDetailStrings = {
 
   /** The same file, as an action rather than a heading. */
   downloadOriginal: () => 'Download original',
+  openWith: () => 'Open in…',
   /** The picture on screen, into whatever else is on the device. */
   share: () => 'Share photo…',
   triageStack: () => 'Triage stack',
