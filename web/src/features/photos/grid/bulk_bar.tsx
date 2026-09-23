@@ -39,6 +39,7 @@ import { Submenu } from '../../../ui/submenu';
 import { Text } from '../../../ui/text';
 import { color } from '../../../ui/tokens.stylex';
 import { AddAlbumDialog } from '../../albums/add_album_dialog';
+import { SendToFrameTv } from '../../frame_tv/send_to_frame_tv';
 import { AddShootDialog } from '../../shoots/add_shoot_dialog';
 import { BulkBarStrings } from './bulk_bar.strings';
 import { Rating, Verdict } from '../marks';
@@ -215,7 +216,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   const albums = useAlbumsStore();
   const libraries = useLibrariesStore();
   const replicationStore = useReplicationStore();
-  const { photos, replication, export: exportPhotos } = usePresenters();
+  const { photos, replication, export: exportPhotos, frameTv } = usePresenters();
   const [creating, setCreating] = useState<'shoot' | 'album' | null>(null);
 
   // The selection itself, not the ids: it may name more photographs than this client
@@ -462,6 +463,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                 },
               }),
               menuSection({
+                content: <SendToFrameTv onSend={(tvId) => void frameTv.sendSelection(tvId)} />,
                 options: photoOptions(binLabel),
                 onSelect: (action) => {
                   if (action === 'export') openExport();

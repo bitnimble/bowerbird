@@ -8,6 +8,8 @@ import { ExportPresenter } from '../features/export/export_presenter';
 import { ExportStore } from '../features/export/export_store';
 import { ExportHistoryPresenter } from '../features/exports/export_history_presenter';
 import { ExportHistoryStore } from '../features/exports/export_history_store';
+import { FrameTvPresenter } from '../features/frame_tv/frame_tv_presenter';
+import { FrameTvStore } from '../features/frame_tv/frame_tv_store';
 import { LibrariesPresenter } from '../features/libraries/libraries_presenter';
 import { LibrariesStore } from '../features/libraries/libraries_store';
 import { PhotosPresenter } from '../features/photos/photos_presenter';
@@ -57,6 +59,7 @@ const FeedbackStoreContext = createContext<FeedbackStore | null>(null);
 const ExportHistoryStoreContext = createContext<ExportHistoryStore | null>(null);
 const UpdatesStoreContext = createContext<UpdatesStore | null>(null);
 const SidebarStoreContext = createContext<SidebarStore | null>(null);
+const FrameTvStoreContext = createContext<FrameTvStore | null>(null);
 
 interface Presenters {
   libraries: LibrariesPresenter;
@@ -76,6 +79,7 @@ interface Presenters {
   feedback: FeedbackPresenter;
   updates: UpdatesPresenter;
   sidebar: SidebarPresenter;
+  frameTv: FrameTvPresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
@@ -118,6 +122,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     // Which sections are open is about this browser, and the shoots it lists arrive from
     // whoever read them last. The settings say whether the viewer hides it.
     sidebar: new SidebarStore(appSettingsStore),
+    frameTv: new FrameTvStore(),
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -177,6 +182,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     feedback: new FeedbackPresenter(stores.feedback, toasts),
     updates: new UpdatesPresenter(stores.updates),
     sidebar,
+    frameTv: new FrameTvPresenter(stores.frameTv, stores.appSettings, stores.viewer, photos, toasts),
   };
   return { stores, presenters };
 }
@@ -201,6 +207,7 @@ interface Stores {
   feedback: FeedbackStore;
   updates: UpdatesStore;
   sidebar: SidebarStore;
+  frameTv: FrameTvStore;
 }
 
 export function StoresProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -226,7 +233,7 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                       <SidebarStoreContext.Provider value={stores.sidebar}>
                                         <BackupStoreContext.Provider value={stores.backup}>
                                           <FeedbackStoreContext.Provider value={stores.feedback}>
-                                            {children}
+                                            <FrameTvStoreContext.Provider value={stores.frameTv}>{children}</FrameTvStoreContext.Provider>
                                           </FeedbackStoreContext.Provider>
                                         </BackupStoreContext.Provider>
                                       </SidebarStoreContext.Provider>
@@ -276,4 +283,5 @@ export const useExportHistoryStore = (): ExportHistoryStore => required(useConte
 export const useUpdatesStore = (): UpdatesStore => required(useContext(UpdatesStoreContext), 'UpdatesStore');
 export const useFeedbackStore = (): FeedbackStore => required(useContext(FeedbackStoreContext), 'FeedbackStore');
 export const useSidebarStore = (): SidebarStore => required(useContext(SidebarStoreContext), 'SidebarStore');
+export const useFrameTvStore = (): FrameTvStore => required(useContext(FrameTvStoreContext), 'FrameTvStore');
 export const usePresenters = (): Presenters => required(useContext(PresentersContext), 'Presenters');

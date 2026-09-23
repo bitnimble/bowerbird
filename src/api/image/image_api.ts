@@ -17,8 +17,8 @@ import {
 } from '../../services/processing/analysis/photo_analysis_store';
 import { transcodeJpeg } from '../../services/processing/rawshim/rawshim_job';
 import type { RenditionFetchService } from '../../services/blobs/rendition_fetch_service';
-import { RENDITION_CONTENT_TYPE, isRendition, storedAsHdr } from '../../services/processing/renditions/renditions';
-import type { ExportService } from '../../services/processing/exports/export_service';
+import { RENDITION_CONTENT_TYPE, isRendition } from '../../services/processing/renditions/renditions';
+import type { ShareService } from '../../services/processing/exports/share_service';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
 import type { BasicPhoto } from '../../services/photos/paths/photo_paths_repository';
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
@@ -186,8 +186,7 @@ export class ImageApi {
     private readonly fetchThrough: RenditionFetchService | null,
     /** The way to a photograph's bytes, wherever they are (§14.4). */
     private readonly originals: Originals,
-    /** What re-encodes a rendition for a share sheet, which is an export by another name. */
-    private readonly exports: ExportService,
+    private readonly shares: ShareService,
     /**
      * What prepares one picture of a photograph for a client that will grade it itself.
      *
@@ -414,11 +413,6 @@ export class ImageApi {
   /**
    * One rendition, re-encoded for the platform's share sheet.
    *
-   * The camera's own JPEG is already that file and goes over unchanged. Everything else is an
-   * AVIF, which a share sheet will happily hand to an application that cannot open it, so it is
-   * transcoded - with a gain map where the library's renditions are HDR, there being no other
-   * way for a JPEG to carry the picture the reader is actually looking at.
-   *
    * Never cached: the bytes exist for this share and are made again for the next one.
    */
   private async serveShare(c: Context): Promise<Response> {
@@ -428,15 +422,7 @@ export class ImageApi {
     }
     const photoId = c.req.param('photoId');
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
-    const { photo, library } = this.photoRenditions.locate(photoId);
-    if (rendition === 'embedded' && !isComposite(photo.recipe)) return this.serveEmbedded(photo, library, c);
-
-    // The rendition has to be on disk already, as a download's does: the client is sharing what
-    // it has on screen, so a miss here is a file that has gone rather than one still to build.
-    const renditionPath = getRenditionPath(library, photo.id, rendition, library.rendition_hdr);
-    if (!(await Bun.file(renditionPath).exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);
-
-    const bytes = await this.exports.shareable(photo.id, renditionPath, storedAsHdr(rendition, library.rendition_hdr));
+    const bytes = await this.shares.jpeg(photoId, rendition);
     return new Response(bytes, {
       headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', ...TIMING_ALLOW_ORIGIN },
     });

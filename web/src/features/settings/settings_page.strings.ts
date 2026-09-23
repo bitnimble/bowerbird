@@ -82,6 +82,8 @@ export const SettingsStrings = {
   renditionModeBestAvailable: () => 'Best available',
   defaultRendition: () => 'Default viewer rendition',
   hideSidebarInViewer: () => 'Hide sidebar automatically in photo viewer',
+  frameTvEnabled: () => 'Enable Samsung Frame TV integration',
+  frameTvEnabledHint: () => 'Enables sending photos to a Samsung Frame TV on your local network.',
 
   couldNotSaveSetting: () => "We couldn't save that setting. Try again.",
   couldNotUseServerAddress: () => "We couldn't use that server address. Check it and try again.",

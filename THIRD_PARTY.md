@@ -25,7 +25,8 @@ easy half; §4(d) is the half with a choice in it.
 
 - **rawler** (`native/vendor/dnglab`) - LGPL-2.1. The RAW decoder, compiled into `rawshim`.
 - **samsung-frame-art** (`packages/samsung-frame-art`) - LGPL-3.0-only. A TypeScript port of
-  samsungtvws's Frame TV art API, installed as its own package rather than imported by path.
+  samsungtvws's Frame TV art API, installed as its own package rather than imported by path, and
+  shipped beside the desktop app's server bundle rather than inside it.
 
 Beyond these and `lensdb`, nothing in the tree is copyleft without such an exception, and that is
 a constraint rather than an observation. It

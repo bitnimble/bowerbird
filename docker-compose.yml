@@ -11,6 +11,10 @@ services:
     # user: "1000:1000"
     ports:
       - "${HOST_PORT:-3000}:3000"
+    # Uncomment for Samsung Frame TV access, if desired: finding a TV is an SSDP multicast
+    # search, which Docker's bridge network does not carry to the LAN. With host networking
+    # `ports:` above is ignored and the app listens on the host's port 3000 directly (PORT below).
+    # network_mode: host
     # The GPU. The grade is a shader and the shaders are its only implementation, so
     # every rendition runs through Vulkan - the image carries the drivers, and these two
     # lines are what put the host's card behind them.

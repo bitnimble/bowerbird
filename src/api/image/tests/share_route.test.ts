@@ -2,10 +2,12 @@ import { afterAll, expect, it } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Hono } from 'hono';
+import type { StoredRecipe } from '../../../schemas/recipes';
 import { PathSegment, route } from '../../../schemas/route';
 import { dataPathForLibraryId } from '../../../utils/paths';
 import { applyErrorHandler } from '../../error_handler';
 import { localOriginals } from '../../../services/blobs/originals_for_testing';
+import { ShareService } from '../../../services/processing/exports/share_service';
 import { ImageApi } from '../image_api';
 
 /**
@@ -22,12 +24,12 @@ interface Asked {
   hdr: boolean;
 }
 
-function serving(renditionHdr: boolean): { app: Hono; asked: Asked[] } {
+function serving(renditionHdr: boolean, recipe: StoredRecipe = { kind: 'file', path: 'a.arw' }): { app: Hono; asked: Asked[] } {
   const asked: Asked[] = [];
   const photos = {
     locate: () => ({
-      library: { id: LIB, rendition_hdr: renditionHdr },
-      photo: { id: 'p1', file_path: null, recipe: { kind: 'file', path: 'a.arw' } },
+      library: { id: LIB, rendition_hdr: renditionHdr, root_path: '/nonexistent/lib-share-route' },
+      photo: { id: 'p1', file_path: null, recipe },
     }),
     rebuildIfStale: () => undefined,
   };
@@ -45,7 +47,7 @@ function serving(renditionHdr: boolean): { app: Hono; asked: Asked[] } {
       photos as unknown as ConstructorParameters<typeof ImageApi>[1],
       null,
       localOriginals(),
-      exports as unknown as ConstructorParameters<typeof ImageApi>[4],
+      new ShareService(photos as unknown as ConstructorParameters<typeof ShareService>[0], localOriginals(), { editOrientation: () => 0 }, exports),
     ).routes,
   );
   applyErrorHandler(app);
@@ -91,6 +93,28 @@ it('refuses a rendition that has not been built', async () => {
   const { app, asked } = serving(false);
 
   const answer = await app.request(route(PathSegment.image(), 'p1', PathSegment.share(), 'max'));
+
+  expect(answer.status).toBe(404);
+  expect(asked).toEqual([]);
+});
+
+// A composite has no file to lift a JPEG out of, so its camera view is the stored copy, transcoded.
+it("shares a composite's stored camera view", async () => {
+  const at = stored('embedded');
+  const panorama = { kind: 'panorama', version: 1, sources: [{ photoId: 'f1' }, { photoId: 'f2' }] } as unknown as StoredRecipe;
+  const { app, asked } = serving(true, panorama);
+
+  const answer = await app.request(route(PathSegment.image(), 'p1', PathSegment.share(), 'embedded'));
+
+  expect(answer.status).toBe(200);
+  expect(asked).toEqual([{ photoId: 'p1', renditionPath: at, hdr: false }]);
+});
+
+// A row that names a file lifts the camera's JPEG out of it, and nothing is transcoded.
+it("refuses the camera's JPEG of a file that is not here", async () => {
+  const { app, asked } = serving(false, { kind: 'file', path: 'nowhere/a.arw' });
+
+  const answer = await app.request(route(PathSegment.image(), 'p1', PathSegment.share(), 'embedded'));
 
   expect(answer.status).toBe(404);
   expect(asked).toEqual([]);

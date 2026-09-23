@@ -39,4 +39,8 @@ export class AppSettingsStore {
   get hideSidebarInViewer(): boolean {
     return this.settings?.hide_sidebar_in_viewer ?? true;
   }
+
+  get frameTvEnabled(): boolean {
+    return this.settings?.frame_tv_enabled ?? false;
+  }
 }

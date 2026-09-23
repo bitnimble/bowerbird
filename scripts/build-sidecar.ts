@@ -244,6 +244,8 @@ run('bun', [
   '[name].[ext]',
   '--external',
   '@parcel/watcher',
+  '--external',
+  'samsung-frame-art',
   ...ENTRIES,
 ]);
 
@@ -254,6 +256,11 @@ run('bun', [
 // catalogue at all.
 cpSync(join(ROOT, 'src', 'db', 'migrations'), join(SERVER, 'migrations'), { recursive: true });
 shipTheAddon(triple);
+// LGPL: shipped as its own module rather than bundled, so a recipient can replace it (THIRD_PARTY.md).
+cpSync(join(ROOT, 'node_modules', 'samsung-frame-art'), join(SERVER, 'node_modules', 'samsung-frame-art'), {
+  recursive: true,
+  dereference: true,
+});
 
 // The runtime, named as Tauri expects a sidecar to be. Copied rather than
 // referenced so the app depends on nothing the machine happens to have.

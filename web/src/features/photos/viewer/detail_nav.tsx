@@ -41,6 +41,7 @@ import { OverflowMenu } from '../../../ui/overflow_menu';
 import { PageLead } from '../../../ui/page';
 import { Row, Spacer } from '../../../ui/row';
 import { Text } from '../../../ui/text';
+import { SendToFrameTv } from '../../frame_tv/send_to_frame_tv';
 import { EditToolbar } from '../../raw_edit/edit_tools';
 import { EditToolsStrings } from '../../raw_edit/edit_tools.strings';
 import type { EditStore } from '../../raw_edit/edit/edit_store';
@@ -214,7 +215,7 @@ export const DetailNav = observer(function DetailNav({
 }): JSX.Element {
   const listing = useListingStore();
   const store = useViewerStore();
-  const { photos, export: exportPhotos, feedback } = usePresenters();
+  const { photos, export: exportPhotos, feedback, frameTv } = usePresenters();
   const step = useStep();
   const navigate = useNavigate();
   const mobile = useIsMobile();
@@ -343,6 +344,7 @@ export const DetailNav = observer(function DetailNav({
         ]),
     menuSection({
       label: PhotoDetailStrings.sectionSend(),
+      content: <SendToFrameTv onSend={(tvId) => void frameTv.sendPhoto(photoId, tvId)} />,
       options: DOWNLOADS.filter((option) => sendable(option, isComposite(store.photoFor(photoId)))),
       onSelect: (form) => {
         if (form === 'share') {

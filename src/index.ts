@@ -62,6 +62,12 @@ import { PhotoEditsApi } from './api/photo_edits/photo_edits_api';
 import { EventsApi } from './api/events/events_api';
 import { ExportApi } from './api/export/export_api';
 import { ExportService } from './services/processing/exports/export_service';
+import { ShareService } from './services/processing/exports/share_service';
+import { FrameArt } from 'samsung-frame-art';
+import { FrameTvApi } from './api/frame_tv/frame_tv_api';
+import { discoverFrameTvs } from './services/frame_tv/frame_tv_discovery';
+import { FrameTvService } from './services/frame_tv/frame_tv_service';
+import { FrameTvTokens } from './services/frame_tv/frame_tv_tokens';
 import { ExportHistoryService } from './services/exports/export_history_service';
 import { ImageApi } from './api/image/image_api';
 import { OpenGraph } from './api/opengraph/opengraph';
@@ -331,6 +337,17 @@ compositesService.onProgress((progress) => eventsApi.announce('composite', progr
 const compositesApi = new CompositesApi(compositesService, photoReadService);
 const assembliesApi = new AssembliesApi(compositesService);
 const exportService = new ExportService(photoRenditionService, processingService, originals, compositesService);
+const shareService = new ShareService(photoRenditionService, originals, photoReadService, exportService);
+const frameTvService = new FrameTvService(
+  settingsRepo,
+  shareService,
+  new FrameTvTokens(path.join(config.dataDir, 'frame_tv_tokens.json')),
+  discoverFrameTvs,
+  (options) => new FrameArt(options),
+);
+settingsRepo.onChange((settings) => {
+  if (!settings.frame_tv_enabled) frameTvService.close();
+});
 // The service itself rather than an arrow forwarding its arguments. TypeScript accepts a
 // function that declares *fewer* parameters than the type it satisfies, so an arrow here silently
 // drops whatever the route learns to send next - which is how the loupe's `levels` and
@@ -340,7 +357,7 @@ const imageApi = new ImageApi(
   photoRenditionService,
   renditionFetch,
   originals,
-  exportService,
+  shareService,
   processingService,
 );
 const exportApi = new ExportApi(
@@ -423,6 +440,7 @@ app.route(
     .routes,
 );
 app.route(route(PathSegment.api(), PathSegment.blobs()), blobsApi.routes);
+app.route(route(PathSegment.api(), PathSegment.frameTvs()), new FrameTvApi(frameTvService).routes);
 app.route(route(PathSegment.api()), exportApi.routes);
 app.route(route(PathSegment.image()), exportApi.imageRoutes);
 app.route(route(PathSegment.image()), assembliesApi.imageRoutes);

@@ -92,6 +92,11 @@ const ViewingSettings = observer(function ViewingSettings(): JSX.Element {
       </SettingRow>
 
       <ToggleSetting field="hide_sidebar_in_viewer" label={SettingsStrings.hideSidebarInViewer()} />
+      <ToggleSetting
+        field="frame_tv_enabled"
+        label={SettingsStrings.frameTvEnabled()}
+        hint={SettingsStrings.frameTvEnabledHint()}
+      />
     </Panel>
   );
 });
