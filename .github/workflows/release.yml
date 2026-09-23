@@ -6,6 +6,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      only:
+        description: "Build only these, comma-separated: docker, android, macos, windows. Empty builds everything."
+        type: string
+        default: ""
 
 # Read, for every job but the one that cuts the release. `publish` widens it for itself:
 # a build job that can write to the repository is a build job that can rewrite a tag.
@@ -21,10 +26,69 @@ env:
   VITE_SENTRY_DSN: https://80ef14dcd05cf6dc84d567cbbcdef1d2@o4512127315869696.ingest.de.sentry.io/4512127325044816
 
 jobs:
+  # What this run builds: everything, unless a manual run named some. A tag push has no inputs,
+  # so a release always builds every platform. Its own job because a matrix cannot be narrowed
+  # in place - an `include` row that matches no base combination is added back as a new one,
+  # and a job's `if` cannot see `matrix`.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      desktop: ${{ steps.pick.outputs.desktop }}
+      docker: ${{ steps.pick.outputs.docker }}
+      android: ${{ steps.pick.outputs.android }}
+    steps:
+      - id: pick
+        env:
+          ONLY: ${{ inputs.only }}
+          # `name` is what `only` matches, short because it is typed and each OS ships one
+          # architecture; `platform` is what the release names its files and manifest keys by,
+          # which an installed app looks itself up with, so it keeps the architecture.
+          #
+          # **Linux is paused, and this row is what turns it back on:**
+          #   {"name": "linux", "platform": "linux-x86_64", "runs-on": "ubuntu-24.04",
+          #    "target": "x86_64-unknown-linux-gnu", "bundles": "deb,appimage"}
+          # The shell draws with CEF there and the CLI unions a dependency's features across
+          # target tables, so `cef` is hoisted off the Linux `tauri` and written onto the other
+          # one, which keeps `wry`. Both runtimes on is the silent mismatch `src-tauri/Cargo.toml`
+          # describes, and it reaches macOS and Windows rather than Linux. Nobody runs Bowerbird
+          # on Linux yet - the desktop arm was built for completeness - so it waits until the
+          # shell draws with one runtime everywhere or the manifest can state two without the
+          # CLI merging them.
+          #
+          # macOS asks for `app` as well as `dmg`: the payload ships the `.app` itself, and asked
+          # for a `dmg` alone the bundler deletes the `.app` it made one from.
+          DESKTOP: |
+            [
+              {"name": "macos", "platform": "macos-aarch64", "runs-on": "macos-14", "target": "aarch64-apple-darwin", "bundles": "app,dmg"},
+              {"name": "windows", "platform": "windows-x86_64", "runs-on": "windows-latest", "target": "x86_64-pc-windows-msvc", "bundles": "nsis"}
+            ]
+        run: |
+          set -eu
+          only=$(tr -d ' ' <<<"$ONLY")
+          # A misspelt name would otherwise build nothing and pass.
+          known="docker android $(jq -r 'map(.name) | join(" ")' <<<"$DESKTOP")"
+          for name in ${only//,/ }; do
+            case " $known " in
+              *" $name "*) ;;
+              *) echo "::error::$name is not something this workflow builds: $known"; exit 1 ;;
+            esac
+          done
+          wanted() { [ -z "$only" ] || [[ ",$only," == *",$1,"* ]]; }
+          echo "docker=$(wanted docker && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "android=$(wanted android && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          desktop=$(jq -c --arg only "$only" \
+            '($only | split(",") | map(select(. != ""))) as $names
+             | map(select(($names | length) == 0 or (.name as $n | $names | index($n) != null)))' \
+            <<<"$DESKTOP")
+          echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
+          echo "building: docker=$(wanted docker && echo yes || echo no) android=$(wanted android && echo yes || echo no) desktop=$desktop"
+
   # The container, and the payload an installed one replaces itself with. Both come out
   # of the same image, which is the point: what a running container updates to is exactly
   # what a fresh `docker pull` would have given it.
   docker:
+    needs: plan
+    if: needs.plan.outputs.docker == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -114,32 +178,14 @@ jobs:
           name: dist-docker-x86_64
           path: dist/
 
+  # One row per platform, from `plan`, which is where the rows are written.
   desktop:
+    needs: plan
+    if: needs.plan.outputs.desktop != '[]'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # **Linux is paused, and this row is what turns it back on.** The shell draws with CEF
-          # there and the CLI unions a dependency's features across target tables, so `cef` is
-          # hoisted off the Linux `tauri` and written onto the other one, which keeps `wry`. Both
-          # runtimes on is the silent mismatch `src-tauri/Cargo.toml` describes, and it reaches
-          # macOS and Windows rather than Linux. Nobody runs Bowerbird on Linux yet - the desktop
-          # arm was built for completeness - so it waits until the shell draws with one runtime
-          # everywhere or the manifest can state two without the CLI merging them.
-          # - platform: linux-x86_64
-          #   runs-on: ubuntu-24.04
-          #   target: x86_64-unknown-linux-gnu
-          #   bundles: deb,appimage
-          # `app` as well as `dmg`: the payload ships the `.app` itself, and asked for a `dmg`
-          # alone the bundler deletes the `.app` it made one from.
-          - platform: macos-aarch64
-            runs-on: macos-14
-            target: aarch64-apple-darwin
-            bundles: app,dmg
-          - platform: windows-x86_64
-            runs-on: windows-latest
-            target: x86_64-pc-windows-msvc
-            bundles: nsis
+        include: ${{ fromJSON(needs.plan.outputs.desktop) }}
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v5
@@ -310,6 +356,8 @@ jobs:
   # names - a build otherwise stops at a sidecar for a triple nothing builds one for. The app
   # points at a hosted library instead, which `lib.rs` already treats as the ordinary case.
   android:
+    needs: plan
+    if: needs.plan.outputs.android == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
