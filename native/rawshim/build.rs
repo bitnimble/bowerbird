@@ -303,8 +303,8 @@ fn libavif() -> Option<PathBuf> {
     // fixtures were recorded against.
     println!("cargo:rustc-link-search=native={}/lib", home.display());
     println!("cargo:rustc-link-lib=static=avif");
-    for lib in ["aom", "dav1d", "sharpyuv"] {
-        println!("cargo:rustc-link-lib={lib}");
+    for (module, otherwise) in [("aom", "aom"), ("dav1d", "dav1d"), ("libsharpyuv", "sharpyuv")] {
+        link_shared(module, otherwise);
     }
     println!("cargo:rerun-if-changed={}/include/avif/avif.h", home.display());
     Some(home)
@@ -331,8 +331,14 @@ fn libjxl() -> PathBuf {
     for part in ["jxl", "jxl_threads", "jxl_cms"] {
         println!("cargo:rustc-link-lib=static={part}");
     }
-    for lib in ["hwy", "brotlienc", "brotlidec", "brotlicommon", "lcms2"] {
-        println!("cargo:rustc-link-lib={lib}");
+    for (module, otherwise) in [
+        ("libhwy", "hwy"),
+        ("libbrotlienc", "brotlienc"),
+        ("libbrotlidec", "brotlidec"),
+        ("libbrotlicommon", "brotlicommon"),
+        ("lcms2", "lcms2"),
+    ] {
+        link_shared(module, otherwise);
     }
     // libjxl is C++, so whichever standard library the toolchain that built it carries comes with
     // it, and the three targets here do not agree. Apple's clang is libc++ and ships no linkable
@@ -348,6 +354,32 @@ fn libjxl() -> PathBuf {
     // header is a link nothing would otherwise redo.
     println!("cargo:rerun-if-changed={}", archive(&home, "jxl").display());
     home
+}
+
+/// One package on the link line, under the name that package's own `.pc` gives it.
+///
+/// **A library's file is named by the platform and its package by the project, and on MSVC the
+/// two part ways.** libwebp prefixes every archive with `lib` there to match what its old nmake
+/// build produced, so the sharpyuv libavif wants is `libsharpyuv.lib` against `libsharpyuv.so`
+/// everywhere else - and `-l sharpyuv` names a file that exists on one of them. The `.pc`
+/// carries the same prefix, so asking is the whole of the fix and it costs nothing to ask for
+/// the five that were already right.
+///
+/// `otherwise` is for a machine with no `pkg-config`, which is a Linux developer's: there the
+/// names are the plain ones and nothing has ever needed the file to be found.
+fn link_shared(module: &str, otherwise: &str) {
+    let asked = Command::new("pkg-config").args(["--libs-only-l", module]).output();
+    let named: Vec<String> = match &asked {
+        Ok(it) if it.status.success() => String::from_utf8_lossy(&it.stdout)
+            .split_whitespace()
+            .filter_map(|it| it.strip_prefix("-l").map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    };
+    match named.is_empty() {
+        true => println!("cargo:rustc-link-lib={otherwise}"),
+        false => named.iter().for_each(|it| println!("cargo:rustc-link-lib={it}")),
+    }
 }
 
 /// Where the six libraries under libavif and libjxl are, on a target whose linker does not
