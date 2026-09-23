@@ -130,10 +130,12 @@ jobs:
           #   runs-on: ubuntu-24.04
           #   target: x86_64-unknown-linux-gnu
           #   bundles: deb,appimage
+          # `app` as well as `dmg`: the payload ships the `.app` itself, and asked for a `dmg`
+          # alone the bundler deletes the `.app` it made one from.
           - platform: macos-aarch64
             runs-on: macos-14
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - platform: windows-x86_64
             runs-on: windows-latest
             target: x86_64-pc-windows-msvc

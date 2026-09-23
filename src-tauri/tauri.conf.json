@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage", "dmg", "nsis"],
+    "targets": ["deb", "appimage", "app", "dmg", "nsis"],
     "icon": ["icons/icon.png"],
     "externalBin": ["binaries/bowerbird-server"],
     "resources": { "resources": "resources" }
