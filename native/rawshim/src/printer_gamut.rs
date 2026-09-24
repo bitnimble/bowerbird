@@ -8,6 +8,9 @@ pub const TARGET_HUES: usize = 64;
 pub const TARGET_LUMAS: usize = 32;
 /// Where the edge table starts in [`target`]'s words.
 const TARGET_TABLE: usize = 22;
+/// How far the eye settles on the paper's own white: 0 sees its measured cast whole, 1 none of it.
+pub const PAPER_ADAPTATION: f64 = 0.7;
+const BRADFORD: [[f64; 3]; 3] = [[0.8951, 0.2664, -0.1614], [-0.7502, 1.7135, 0.0367], [0.0389, -0.0685, 1.0296]];
 
 /// A printer profile's gamut and paper, in linear Rec.2020 as a share of the paper's white.
 pub struct PrinterGamut {
@@ -21,6 +24,11 @@ pub struct PrinterGamut {
 
 impl PrinterGamut {
     pub fn new(icc: &[u8]) -> Result<PrinterGamut, String> {
+        PrinterGamut::adapted(icc, PAPER_ADAPTATION)
+    }
+
+    /// As [`PrinterGamut::new`], with the eye `adaptation` of the way onto the paper's white.
+    pub fn adapted(icc: &[u8], adaptation: f64) -> Result<PrinterGamut, String> {
         let printer = ColorProfile::new_from_slice(icc).map_err(|error| format!("unreadable ICC profile: {error:?}"))?;
         if printer.profile_class != ProfileClass::OutputDevice {
             return Err("not a printer profile: its class is not output".to_owned());
@@ -59,12 +67,16 @@ impl PrinterGamut {
         let from_xyz = to_xyz.inverse();
         let d50 = [0.9642, 1.0, 0.8249];
         let media = printer.media_white_point.map_or(d50, |white| [white.x, white.y, white.z]);
-        let scaled = |by: [f64; 3]| from_xyz.mat_mul(diagonal(by)).mat_mul(to_xyz).v;
+        let bradford = Matrix3d { v: BRADFORD };
+        let cone = |xyz: [f64; 3]| bradford.mul_vector(moxcms::Vector3d { v: xyz }).v;
+        let (paper, neutral, reference) = (cone(media), cone(d50.map(|c| c * media[1])), cone(d50));
+        let seen = [0, 1, 2].map(|c| paper[c] + adaptation * (neutral[c] - paper[c]));
+        let scaled = |by: [f64; 3]| from_xyz.mat_mul(bradford.inverse()).mat_mul(diagonal(by)).mat_mul(bradford).mat_mul(to_xyz).v;
         Ok(PrinterGamut {
             edge,
             black,
-            tint: scaled([0, 1, 2].map(|c| media[c] / d50[c])),
-            untint: scaled([0, 1, 2].map(|c| d50[c] / media[c])),
+            tint: scaled([0, 1, 2].map(|c| seen[c] / reference[c])),
+            untint: scaled([0, 1, 2].map(|c| reference[c] / seen[c])),
         })
     }
 }
@@ -193,14 +205,19 @@ mod tests {
     }
 
     #[test]
-    fn a_warm_paper_warms_what_is_laid_on_it() {
-        let gamut = PrinterGamut::new(&ideal_printer_on(moxcms::Xyzd { x: 0.9642 * 0.9, y: 0.9, z: 0.8249 * 0.8 }))
-            .expect("a printer");
-        let white = apply(gamut.tint, [1.0; 3]);
-        assert!(white[0] > white[1] && white[1] > white[2], "paper white: {white:?}");
-        assert!((split(white).0 - 0.9).abs() < 0.01, "paper luma: {white:?}");
-        let back = apply(gamut.untint, white);
-        assert!(back.iter().all(|value| (value - 1.0).abs() < 1e-3), "untinted: {back:?}");
+    fn a_warm_paper_warms_what_is_laid_on_it_as_far_as_the_eye_keeps_it() {
+        let warm = ideal_printer_on(moxcms::Xyzd { x: 0.9642 * 0.9, y: 0.9, z: 0.8249 * 0.8 });
+        let cast = |adaptation: f64| {
+            let gamut = PrinterGamut::adapted(&warm, adaptation).expect("a printer");
+            let white = apply(gamut.tint, [1.0; 3]);
+            assert!((split(white).0 - 0.9).abs() < 0.01, "paper luma: {white:?}");
+            let back = apply(gamut.untint, white);
+            assert!(back.iter().all(|value| (value - 1.0).abs() < 1e-3), "untinted: {back:?}");
+            white[0] / white[2]
+        };
+        let (seen_whole, seen_default, seen_none) = (cast(0.0), cast(PAPER_ADAPTATION), cast(1.0));
+        assert!(seen_whole > seen_default && seen_default > 1.0, "{seen_whole} {seen_default}");
+        assert!((seen_none - 1.0).abs() < 1e-3, "adapted away: {seen_none}");
     }
 
     #[test]

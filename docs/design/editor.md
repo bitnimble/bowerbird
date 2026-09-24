@@ -192,7 +192,12 @@ sRGB and generic paper are the cube in closed form, and a printer profile is a t
 chroma over 64 hues and 32 lumas. A profile is read into that table with moxcms each time one is
 picked - its device grid through the profile's relative transform into linear Rec.2020, binned by
 hue and luma - which costs 6ms for a CMYK printer, so nothing is cached. The same pass reads the
-profile's paper white and black, which then take over the paper panel's two reflectances.
+profile's paper white and black, which then take over the paper panel's two reflectances. The
+paper's colour is laid on only 30% of the way from neutral (`PAPER_ADAPTATION`, a Bradford
+adaptation at its own luminance). A profile's white is measured under UV, so a paper with optical
+brighteners reads bluer than a room with little UV in its light shows it - Red River's UltraPro
+Luster reads b* −13 - and a reader's eye settles most of the way onto a sheet's white besides.
+Laid on whole, that white turns a whole print lavender.
 A file written in sRGB has no paper, so an export and a proof offer perceptual and relative and not
 absolute. What a vendor's own perceptual table does is not reproduced: it is built for SDR input,
 and one operator for both ranges is the point.

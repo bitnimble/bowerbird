@@ -41,13 +41,13 @@ fn main() -> Result<(), String> {
     let (pan_x, pan_y) = (number("pan-x", 0.0)?, number("pan-y", 0.0)?);
     let args: Vec<String> = std::env::args()
         .filter(|arg| arg != "--framed" && arg != "--surface" && arg != "--sdr" && arg != "--flat"
-            && !arg.starts_with("--profile=") && !arg.starts_with("--intent=")
+            && !arg.starts_with("--profile=") && !arg.starts_with("--intent=") && !arg.starts_with("--adaptation=")
             && !arg.starts_with("--zoom=") && !arg.starts_with("--pitches=")
             && !arg.starts_with("--key-lux=") && !arg.starts_with("--fill-lux=") && !arg.starts_with("--lamp-degrees=")
             && !arg.starts_with("--view=") && !arg.starts_with("--pan-x=") && !arg.starts_with("--pan-y="))
         .collect();
     if !(3..=4).contains(&args.len()) {
-        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--flat] [--sdr] [--profile=printer.icc] [--intent=perceptual|relative|absolute] [--zoom=1] [--pitches=8,0,-8] [--key-lux=1000] [--fill-lux=500] [--lamp-degrees=1] [--view=yaw,pitch,azimuth,elevation,distance] [--pan-x=0] [--pan-y=0]".to_owned());
+        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--flat] [--sdr] [--profile=printer.icc] [--adaptation=0.7] [--intent=perceptual|relative|absolute] [--zoom=1] [--pitches=8,0,-8] [--key-lux=1000] [--fill-lux=500] [--lamp-degrees=1] [--view=yaw,pitch,azimuth,elevation,distance] [--pan-x=0] [--pan-y=0]".to_owned());
     }
     let output = std::path::Path::new(&args[2]);
     std::fs::create_dir_all(output).map_err(|error| error.to_string())?;
@@ -102,7 +102,8 @@ fn main() -> Result<(), String> {
     if let Some(path) = profile {
         let icc = std::fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
         let started = std::time::Instant::now();
-        let printer = rawshim::printer_gamut::PrinterGamut::new(&icc)?;
+        let adaptation = number("adaptation", rawshim::printer_gamut::PAPER_ADAPTATION)?;
+        let printer = rawshim::printer_gamut::PrinterGamut::adapted(&icc, adaptation)?;
         println!("{path}: gamut read in {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
         uploaded.set_printer(Some(std::sync::Arc::new(printer)));
     }
