@@ -61,10 +61,8 @@ void build_lighting(uint3 id : SV_DispatchThreadID)
     if (print.framing.x > 0.5) {
         hit.position = float3((uv - 0.5) * float2(2.0, -2.0) * frame_aperture(hit.half), 0.0);
     }
-    let lower = max(0.03, print.material.x * exp(-0.35 * print.surface.w));
-    let upper = min(1.0, print.material.x * exp(0.35 * print.surface.w));
     let fraction = layers == 1 ? 0.0 : float(id.z) / float(layers - 1);
-    let roughness = exp(lerp(log(lower), log(upper), fraction));
+    let roughness = exp(lerp(log(texture_lowest_roughness()), log(print.material.x), fraction));
     let coefficients = print_direct_coefficients(hit, roughness, light_samples(roughness), WANT_ALL)
         * print_light_calibration[0];
     lighting_out.Store(int3(id), coefficients);
@@ -95,34 +93,54 @@ float4 surface_coefficients(float2 uv, float2 size, float z)
     return max(sum, float4(0.0));
 }
 
+float texture_lowest_roughness()
+{
+    return max(0.03, print.material.x * sqrt(sqrt(1.0 - print.surface.w)));
+}
+
+float2 surface_field_uv(float2 uv, float2 half)
+{
+    if (print.framing.x < 0.5) { return uv; }
+    let at = 0.5 + (uv - 0.5) * half / frame_aperture(half);
+    let edge = frame_field_edge(half);
+    return float2(frame_field_sample(at.x, edge.x), frame_field_sample(at.y, edge.y));
+}
+
 float3 surface_nits(float2 pos)
 {
     let shape = surface_view.canvas_shape.zw;
     let scale = surface_view.region.zw / surface_view.canvas_shape.xy;
     let border = print.framing.y * min(shape.x, shape.y);
     let uv = (surface_view.region.xy + pos * scale - border) / shape;
-    let hit = paper_surface_hit(uv, shape);
+    var hit = paper_surface_hit(uv, shape);
     let footprint = 2.0 * scale / max(shape.x, shape.y);
     let on_photo = print.framing.x < 0.5 || all(abs(hit.position.xy) < hit.half + footprint);
-    let roughness = on_photo ? paper_roughness(hit.position, footprint) : print.material.x;
+    let texture = paper_texture(hit.position, footprint);
+    let roughness = on_photo ? texture.roughness : print.material.x;
     uint width;
     uint height;
     uint layers;
     lighting.GetDimensions(width, height, layers);
-    let lower = max(0.03, print.material.x * exp(-0.35 * print.surface.w));
-    let upper = min(1.0, print.material.x * exp(0.35 * print.surface.w));
-    let fraction = saturate(log(roughness / lower) / max(log(upper / lower), 1e-7));
+    let lower = texture_lowest_roughness();
+    let fraction = saturate(log(roughness / lower) / max(log(print.material.x / lower), 1e-7));
     let z = (0.5 + fraction * float(layers - 1)) / float(layers);
-    var field_uv = print.framing.x > 0.5
-        ? 0.5 + (uv - 0.5) * hit.half / frame_aperture(hit.half) : uv;
-    if (print.framing.x > 0.5) {
-        let edge = frame_field_edge(hit.half);
-        field_uv = float2(frame_field_sample(field_uv.x, edge.x), frame_field_sample(field_uv.y, edge.y));
+    let size = float2(width, height);
+    var direct = print.illumination.x == 0.0 ? float4(0.0)
+        : surface_coefficients(surface_field_uv(uv, hit.half), size, z) / print_light_calibration[0];
+    if (on_photo && print.illumination.x > 0.0) {
+        // The field is lit through a flat sheet: a bump tipped by t mirrors the lamp as the flat
+        // sheet does 2tR along, R the lamp's distance.
+        let flat = hit.normal;
+        hit.normal = paper_tilted(flat, texture.slope);
+        let towards = paper_inverse(print.light.xyz * print.surface.x) - hit.position;
+        let lamp = normalize(towards);
+        direct.x *= max(dot(hit.normal, lamp), 0.0) / max(dot(flat, lamp), 1e-4);
+        let along = 2.0 * length(towards) * (hit.normal.xy - flat.xy);
+        let mirrored_uv = uv + along / (2.0 * hit.half) * float2(1.0, -1.0);
+        direct.y = surface_coefficients(surface_field_uv(mirrored_uv, hit.half), size, z).y
+            / print_light_calibration[0];
     }
-    let direct = print.illumination.x == 0.0 ? float4(0.0)
-        : surface_coefficients(field_uv, float2(width, height), z) / print_light_calibration[0];
-    let colour = pigment.Load(int3(int2(pos), 0)).rgb;
-    let reflectance = mul(SRGB_TO_R2020, lerp(float3(print.material.z), float3(print.material.y), colour));
+    let reflectance = print_reflectance(pigment.Load(int3(int2(pos), 0)).rgb);
     if (print.framing.x > 0.5) {
         return framed_from_coefficients(reflectance, hit, roughness, direct, footprint) * print_exposure().g;
     }

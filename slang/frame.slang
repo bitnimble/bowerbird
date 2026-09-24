@@ -18,7 +18,7 @@ import lanes;
 import edit;
 import colour;
 import adjust;
-import print_tone;
+import gamut_map;
 import geometry;
 import catmull_rom;
 import light;
@@ -258,11 +258,19 @@ Colour<P3Linear> on_the_canvas(Colour<DisplayNits> nits)
 ///
 /// Clamped rather than sign-carried, as the file is - what `transfer` keeps a sign for is the
 /// unproofed draw, where an out-of-P3 component is better seen than folded back over zero.
-Colour<P3Linear> proofed(Colour<DisplayNits> nits)
+Colour<P3Linear> proofed(float3 share)
 {
-    let signal = measured<Signal>(nits.v / edit.peak);
+    let signal = measured<Signal>(mapped(share, SrgbCube(), edit.intent));
     let linear = measured<SrgbLinear>(mul(R2020_TO_SRGB, signal.v));
     return measured<P3Linear>(mul(R2020_TO_P3, mul(SRGB_TO_R2020, saturate(linear.v))));
+}
+
+/// What an sRGB file holds of this pixel before its gamut is reached, as a share of its white: the
+/// rendition's own roll-off for perceptual, and the grade unrolled for the colorimetric intents.
+float3 srgb_share(Colour<SceneNits> scene, float2 at)
+{
+    if (edit.intent == INTENT_PERCEPTUAL) { return display_nits(scene, at).v / edit.peak; }
+    return print_signal(scene, at);
 }
 
 /// The display transform is the one stage with no CPU counterpart: a rendition is tagged
@@ -274,12 +282,7 @@ float4 fs(float4 pos : SV_Position) : SV_Target
     let scene = covered(pos.xy);
     let at = frame_at(pos.xy);
     if (edit.output != OUTPUT_SRGB) { return float4(srgb_oetf_signed(on_the_canvas(display_nits(scene, at)).v), 1.0); }
-    // Neutral is the rendition's own roll-off, so the default proof is the file an sRGB rendition
-    // writes; the other operators are the print's, fitted under the same diffuse white.
-    Colour<DisplayNits> nits;
-    if (edit.print_tone == PRINT_TONE_NEUTRAL) { nits = display_nits(scene, at); }
-    else { nits = measured<DisplayNits>(print_signal(scene, at) * edit.peak); }
-    return float4(srgb_oetf_signed(proofed(nits).v), 1.0);
+    return float4(srgb_oetf_signed(proofed(srgb_share(scene, at)).v), 1.0);
 }
 
 float3 print_sample(float2 at, float lod)
@@ -325,64 +328,36 @@ float3 print_filtered(float2 source, float2 dx, float2 dy)
     return sum / float(count);
 }
 
-static const Stops LOCAL_KNEE = { -1.0 };
-static const Stops LOCAL_TOP = { 0.0 };
-
-/// How far a region of the photograph is brought down, on the scene's stops under diffuse white:
-/// nothing under `LOCAL_KNEE`, the frame's own top to `LOCAL_TOP`, and no corner between.
-Stops local_lowering(Stops around, Stops top)
-{
-    let span = top.s - LOCAL_KNEE.s;
-    let room = LOCAL_TOP.s - LOCAL_KNEE.s;
-    let over = around.s - LOCAL_KNEE.s;
-    if (over <= 0.0 || span <= room) { return stops(0.0); }
-    let reach = room * span / (span - room);
-    return stops(over / (1.0 + over / reach) - over);
-}
-
-/// The graded colour as a share of paper white, compressed by whichever operator is chosen.
+/// The graded colour as a share of the target's white, its highlights brought under it as the
+/// intent asks. Its gamut is the target's to reach: `mapped` for a file, the print's reflectance for paper.
 float3 print_signal(Colour<SceneNits> nits, float2 at)
 {
     let matched = edit.matched != 0;
     let exposure = gain_of(stops(edit.exposure));
-    let unmatched_peak = measured<DisplayNits>(neutral_peak().v * exposure.g);
-    let scene_peak = matched ? measured<DisplayNits>(peak_out[0]) : unmatched_peak;
-    // Dodging, as a darkroom does it: each region of the scene brought down by how bright the
-    // region is, so the detail inside a sky keeps the contrast a global curve would take from it.
-    let local = edit.print_tone == PRINT_TONE_LOCAL;
-    var lit = nits;
-    if (local) {
-        let top = stops(log2(max(unmatched_peak.v / edit.reference, 1e-6)));
-        let around = stops(stops_around(base_luma(nits), at).s + edit.exposure);
-        lit = times(nits, gain_of(local_lowering(around, top)));
-    }
-    // The neutral arm unrolled, as the matched arm arrives: the operators below are the roll-off.
-    let graded = within(matched ? matched_nits(lit, at) : in_gamut(neutral_unrolled(lit, at)), scene_peak);
-    return fitted(graded, scene_peak, measured<DisplayNits>(edit.peak), edit.print_tone);
+    let scene_peak = matched ? measured<DisplayNits>(peak_out[0]) : measured<DisplayNits>(neutral_peak().v * exposure.g);
+    // The neutral arm unrolled, as the matched arm arrives: `toned` is the roll-off.
+    let graded = within(matched ? matched_nits(nits, at) : in_gamut(neutral_unrolled(nits, at)), scene_peak);
+    return toned(graded, scene_peak, measured<DisplayNits>(edit.peak), edit.intent);
 }
 
-Colour<SrgbLinear> print_gamut(Colour<SrgbLinear> colour)
+/// `step` lengthened to `reach` where it is shorter, keeping its direction.
+float2 at_least(float2 step, float reach)
 {
-    let luma = saturate(dot(LUMA709, colour.v));
-    if (luma <= 0.0 || luma >= 1.0) { return measured<SrgbLinear>(float3(luma)); }
-    let chroma = colour.v - luma;
-    let high = max(chroma.r, max(chroma.g, chroma.b));
-    let low = min(chroma.r, min(chroma.g, chroma.b));
-    let reach = max(high / (1.0 - luma), -low / luma);
-    let knee = 0.9;
-    if (reach <= knee) { return colour; }
-    let compressed = knee + (1.0 - knee) * (reach - knee) / (reach + 1.0 - 2.0 * knee);
-    return measured<SrgbLinear>(luma + chroma * (compressed / reach));
+    let length_now = length(step);
+    return length_now >= reach || length_now == 0.0 ? step : step * (reach / length_now);
 }
 
-float3 print_pigment(float2 pixel, float2 dx, float2 dy)
+/// The colour the print is sent at `pixel`, as a share of paper white in Rec.2020, averaged over
+/// what the printer's own resolution and its ink's spread merge into one mark.
+float3 print_ink(float2 pixel, float2 dx, float2 dy)
 {
     let bounded = clamp(pixel, float2(0.0), float2(float(edit.output_width), float(edit.output_height)));
+    let merged_dx = at_least(dx, edit.print_blur);
+    let merged_dy = at_least(dy, edit.print_blur);
     let source = geometry_at(bounded);
-    let source_dx = geometry_at(bounded + dx) - source;
-    let source_dy = geometry_at(bounded + dy) - source;
-    let signal = print_signal(measured<SceneNits>(print_filtered(source, source_dx, source_dy)), source);
-    return print_gamut(measured<SrgbLinear>(mul(R2020_TO_SRGB, signal))).v;
+    let source_dx = geometry_at(bounded + merged_dx) - source;
+    let source_dy = geometry_at(bounded + merged_dy) - source;
+    return print_signal(measured<SceneNits>(print_filtered(source, source_dx, source_dy)), source);
 }
 
 [shader("fragment")]
@@ -390,7 +365,7 @@ float4 fs_print_pigment(float4 pos : SV_Position) : SV_Target
 {
     let scale = edit.region_size / edit.canvas_size;
     let pixel = edit.region_origin + pos.xy * scale;
-    return float4(print_pigment(pixel, float2(scale.x, 0.0), float2(0.0, scale.y)), 1.0);
+    return float4(print_ink(pixel, float2(scale.x, 0.0), float2(0.0, scale.y)), 1.0);
 }
 
 /// The print as a soft proof rather than an object: the pigment laid on the paper and read under a
@@ -403,17 +378,15 @@ float4 fs_print_flat(float4 pos : SV_Position) : SV_Target
     let pixel = edit.region_origin + pos.xy * scale;
     let shape = float2(float(edit.output_width), float(edit.output_height));
     if (any(pixel < float2(0.0)) || any(pixel > shape)) { return float4(0.0, 0.0, 0.0, 1.0); }
-    let pigment = print_pigment(pixel, float2(scale.x, 0.0), float2(0.0, scale.y));
-    let reflectance = mul(SRGB_TO_R2020, lerp(float3(print.material.z), float3(print.material.y), pigment));
+    let reflectance = print_reflectance(print_ink(pixel, float2(scale.x, 0.0), float2(0.0, scale.y)));
     return float4(srgb_oetf_signed(on_the_canvas(measured<DisplayNits>(reflectance * edit.peak)).v), 1.0);
 }
 
 float3 print_hit_reflected(PrintHit hit, float2 pixel, float2 dx, float2 dy, float2 footprint)
 {
-    var reflectance = float3(print.material.y);
+    var reflectance = print_reflectance(float3(1.0));
     if (hit.normal.z > 0.5 && (print.framing.x < 0.5 || print.illumination.w > 0.5 || hit.material == PHOTO)) {
-        let pigment = print_pigment(pixel, dx, dy);
-        reflectance = mul(SRGB_TO_R2020, lerp(float3(print.material.z), float3(print.material.y), pigment));
+        reflectance = print_reflectance(print_ink(pixel, dx, dy));
     }
     return reflected_print(reflectance, hit, footprint).v;
 }
@@ -445,6 +418,14 @@ float3 print_scene_sample(float2 pos, float2 shape, float2 dx, float2 dy, float2
 }
 
 Colour<DisplayNits> print_nits(float2 pos)
+{
+    let scene = print_scene_nits(pos);
+    if (print.illumination.w > 0.5) { return scene; }
+    let shape = float2(float(edit.output_width), float(edit.output_height));
+    return measured<DisplayNits>(scene.v + print_flare(pos, edit.canvas_size, shape) * print_exposure().g);
+}
+
+Colour<DisplayNits> print_scene_nits(float2 pos)
 {
     let shape = float2(float(edit.output_width), float(edit.output_height));
     PrintHit hit;
@@ -534,6 +515,14 @@ float3 coded_at(uint pixel)
     if (!outside(at, last)) {
         scene = nits_cubic(at, last);
     }
+    // An sRGB file's gamut is reached before the quantisation, since a colorimetric intent's
+    // unrolled highlights sit above what the `u16` holds.
+    if (edit.output == OUTPUT_SRGB) {
+        let signal = mapped(srgb_share(measured<SceneNits>(scene), at), SrgbCube(), edit.intent);
+        let linear = measured<SrgbLinear>(mul(R2020_TO_SRGB, round(saturate(signal) * 65535.0) / 65535.0));
+        let clamped = clamp(linear.v, 0.0, 1.0);
+        return round(float3(srgb_oetf(clamped.r), srgb_oetf(clamped.g), srgb_oetf(clamped.b)) * 255.0);
+    }
     let nits = display_nits(measured<SceneNits>(scene), at);
     // Through the `u16` the CPU writes between the grade and the transfer. Not incidental:
     // both of its output stages read that integer - the PQ one as a 65536-entry table keyed
@@ -548,14 +537,6 @@ float3 coded_at(uint pixel)
 
     if (edit.output == OUTPUT_ROLLED) {
         return quantised.v * 65535.0;
-    }
-    if (edit.output == OUTPUT_SRGB) {
-        // The primaries first, in the normalised graded domain, then the transfer at 8 bits.
-        // Clamped rather than sign-carried - the draw keeps the sign, where an out-of-P3 component
-        // is better seen than folded, but a file has nowhere to put a negative.
-        let linear = measured<SrgbLinear>(mul(R2020_TO_SRGB, quantised.v));
-        let clamped = clamp(linear.v, 0.0, 1.0);
-        return round(float3(srgb_oetf(clamped.r), srgb_oetf(clamped.g), srgb_oetf(clamped.b)) * 255.0);
     }
     return round(float3(
         pq(measured<DisplayNits>(quantised.v.r * edit.peak)).v,

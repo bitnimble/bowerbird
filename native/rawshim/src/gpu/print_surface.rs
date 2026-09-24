@@ -27,6 +27,7 @@ impl Pipelines {
                 Binding::Uniform.seen_by(0, wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT),
                 Binding::Storage { read_only: true }.seen_by(1, wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT),
                 Binding::Storage { read_only: true }.seen_by(2, wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT),
+                Binding::Storage { read_only: true }.seen_by(3, wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT),
             ],
         });
         let field_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -92,9 +93,10 @@ impl Uploaded<'_> {
         let display_peak = grade.peak_nits;
         let grade = Grade {
             peak_nits: Light::at_diffuse_white(grade.reference_nits),
-            // The pigment pass carries no print group, so the operator travels with the grade -
+            // The pigment pass carries no print group, so the intent travels with the grade -
             // which is also what keys the pigment cache, so choosing another one redraws it.
-            print_tone: scene.tonemap,
+            intent: scene.rendering_intent,
+            print_blur: scene.ink_blur(grade.output().long()),
             ..*grade
         };
         let shown = grade.canvas.expect("print surface canvas");
@@ -115,9 +117,7 @@ impl Uploaded<'_> {
         let calibration = self.print_light_for(scene.light_parameters(), scene.light_temperature_kelvin as f32);
         recording.holding(&albedo);
         recording.holding(&calibration);
-        let parameters = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("print surface parameters"), contents: &scene.uniform(display_peak), usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let (parameters, proof) = self.print_scene_binding(recording, scene, display_peak);
         let pipelines = &self.gpu.print_surface;
         let scene_group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("print surface scene"), layout: &pipelines.scene_layout,
@@ -125,6 +125,7 @@ impl Uploaded<'_> {
                 wgpu::BindGroupEntry { binding: 0, resource: parameters.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: albedo.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: calibration.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: proof.as_entire_binding() },
             ],
         });
         let lighting = self.print_lighting(recording, scene, shape, &view, &scene_group);

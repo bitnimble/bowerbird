@@ -80,6 +80,9 @@ pub struct Target {
     pub preset: i32,
     pub still_full_chroma: bool,
     pub sdr_full_chroma: bool,
+    /// How an sRGB output reaches its gamut. A PQ output reads nothing of it.
+    #[serde(default)]
+    pub intent: crate::gpu::Intent,
 }
 
 #[derive(Deserialize)]
@@ -1520,9 +1523,10 @@ async fn render(
             Output::Pq => crate::gpu::Output::Pq,
             Output::Srgb => crate::gpu::Output::Srgb,
         };
-        let mut grade = scene
-            .gpu_grade(cut.width, cut.height, peak_nits(job, target), output)
-            .showing(job.pixel_geometry());
+        let mut grade = crate::gpu::Grade {
+            intent: target.intent,
+            ..scene.gpu_grade(cut.width, cut.height, peak_nits(job, target), output)
+        }.showing(job.pixel_geometry());
         if let Some(window) = window {
             // Which takes the blur's scale with it. A *whole* frame keeps its own even when it has
             // been downscaled - at 1600 off a 3840 base the photograph is 1600 by then, and the

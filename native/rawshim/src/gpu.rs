@@ -837,7 +837,7 @@ impl Gpu {
         });
         recording.holding(&buffer);
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("print softbox"), contents: &crate::print::light_uniform(parameters, temperature),
+            label: Some("print lamp"), contents: &crate::print::light_uniform(parameters, temperature),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let group = self.bind_group(&wgpu::BindGroupDescriptor {
@@ -1200,7 +1200,7 @@ impl Gpu {
             label: Some("print"),
             entries: &[
                 Binding::Uniform.drawn(0), Binding::Storage { read_only: true }.drawn(1),
-                Binding::Storage { read_only: true }.drawn(2),
+                Binding::Storage { read_only: true }.drawn(2), Binding::Storage { read_only: true }.drawn(3),
             ],
         });
         let print_albedo_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1213,7 +1213,7 @@ impl Gpu {
         let print_albedo_tabulate = compute("print albedo", &print_albedo_module, &print_albedo_layout, "tabulate");
         let print_albedo_average = compute("print average albedo", &print_albedo_module, &print_albedo_layout, "average");
         let print_light_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("print softbox"),
+            label: Some("print lamp"),
             source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl")).into()),
         });
         let print_light_calibrate = compute("print light calibration", &print_light_module, &print_albedo_layout, "calibrate");
@@ -1840,28 +1840,26 @@ pub struct Grade<'a> {
     /// None everywhere a rendition runs - `encode` reads none of these fields - and the words go
     /// out as zeroes there.
     pub canvas: Option<Canvas>,
-    /// Which operator fits the scene's highlights into paper, read only by the print's pigment
-    /// (`print_signal`). Every other draw rolls off to its display and never looks at this.
-    pub print_tone: Tonemap,
+    /// How an sRGB output or a print is brought inside its gamut. A PQ draw rolls off to its
+    /// display and never looks at this.
+    pub intent: Intent,
+    /// How far one printed mark reaches (`print::Scene::ink_blur`); zero everywhere but a print.
+    pub print_blur: crate::px::Extent<crate::px::Output>,
 }
 
-/// How a print compresses what the paper cannot reflect. `frame.slang` reads these by number.
+/// How a picture is brought inside what its target can show, as ICC's rendering intents promise.
+/// `gamut_map.slang` reads these by number.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Tonemap {
-    /// BT.2390 on whichever channel reaches paper white first, scaling the colour by what it gave
-    /// up. Hue and saturation survive exactly, which is what the display's own roll-off promises.
+pub enum Intent {
+    /// The whole range compressed, highlights rolled and the gamut's edge approached through a
+    /// knee, so gradients survive.
     #[default]
-    Neutral,
-    /// A film stock's curve over the whole range, with chroma given up through its shoulder, so a
-    /// highlight several stops past the paper arrives white the way a dye that has run out does.
-    Filmic,
-    /// Each channel clipped at paper white, which is what a printer driver reaching its ceiling
-    /// one ink at a time does.
-    Channel,
-    /// Each region brought down by how bright its neighbourhood is, then a shoulder into paper
-    /// white: the detail inside a bright region keeps its contrast.
-    Local,
+    Perceptual,
+    /// Every colour the target can show left exactly, and the rest clipped to its edge.
+    RelativeColorimetric,
+    /// As relative, with the paper's own white left showing rather than taken as white.
+    AbsoluteColorimetric,
 }
 
 /// The reader's view: which rectangle of the output is on screen, and how large the screen is.
@@ -1898,6 +1896,38 @@ pub struct Window {
 }
 
 impl<'a> Grade<'a> {
+    /// A whole `width` by `height` frame graded as it stands: no colour match, no edits, upright,
+    /// written as PQ, and drawn nowhere.
+    pub fn new(
+        width: usize,
+        height: usize,
+        levels: crate::tone::Levels,
+        reference_nits: crate::light::Light<crate::light::SceneNits>,
+        peak_nits: crate::light::Light<crate::light::DisplayNits>,
+    ) -> Grade<'a> {
+        Grade {
+            width,
+            height,
+            photograph_long: crate::px::Span::measured(width.max(height)),
+            colour: None,
+            white: levels.white,
+            source_level: levels.peak,
+            floor: levels.floor,
+            reference_nits,
+            peak_nits,
+            exposure: crate::light::Stops::ZERO,
+            adjust: Adjust::none(),
+            as_shot: None,
+            output: Output::Pq,
+            geometry: crate::image::Geometry::none(),
+            window: None,
+            surround_window: None,
+            canvas: None,
+            intent: Intent::Perceptual,
+            print_blur: crate::px::Extent::measured(0.0),
+        }
+    }
+
     /// The same grade showing the reader's crop, straighten and turn.
     pub fn showing(self, geometry: crate::image::Geometry) -> Grade<'a> {
         Grade { geometry, ..self }
@@ -2088,6 +2118,7 @@ pub struct Uploaded<'a> {
     gpu: &'a Gpu,
     print_albedo: std::cell::RefCell<Option<(f32, Buffer)>>,
     print_light: std::cell::RefCell<Option<([f32; 4], f32, Buffer)>>,
+    printer: std::cell::RefCell<Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>>,
     print_surface: std::cell::RefCell<print_surface::Cached>,
     peak_revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
     peak_cached: std::cell::RefCell<Option<(u64, Vec<u32>)>>,
@@ -2399,6 +2430,7 @@ impl Gpu {
             gpu: self,
             print_albedo: std::cell::RefCell::new(None),
             print_light: std::cell::RefCell::new(None),
+            printer: std::cell::RefCell::new(None),
             print_surface: std::cell::RefCell::new(print_surface::Cached::default()),
             peak_revision: peak.revision.clone(),
             peak_cached: std::cell::RefCell::new(None),
@@ -3100,6 +3132,11 @@ impl Uploaded<'_> {
         *self.peak_cached.borrow_mut() = Some((self.peak_revision.load(std::sync::atomic::Ordering::Relaxed), words));
     }
 
+    /// The printer a print is laid down by, or none for the scene's own paper white and black.
+    pub fn set_printer(&self, printer: Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>) {
+        *self.printer.borrow_mut() = printer;
+    }
+
     pub fn invalidate_print_cache(&self) {
         self.print_surface.borrow_mut().pigment = None;
         *self.peak_cached.borrow_mut() = None;
@@ -3150,7 +3187,7 @@ impl Uploaded<'_> {
     /// size, the reference and the frame, and no slider. So the first grade to want it builds
     /// the one every later grade off this upload reads.
     fn detail_for(&self, grade: &Grade<'_>) -> &wgpu::TextureView {
-        if !grade.adjust.reads_the_neighbourhood() && grade.print_tone != Tonemap::Local {
+        if !grade.adjust.reads_the_neighbourhood() {
             return &self.detail_absent;
         }
         self.detail.get_or_init(|| {
@@ -3619,7 +3656,8 @@ impl Uploaded<'_> {
         let grade = if print.is_some() || pigment {
             print_grade = Grade {
                 peak_nits: crate::light::Light::at_diffuse_white(grade.reference_nits),
-                print_tone: print.map_or(grade.print_tone, |scene| scene.tonemap),
+                intent: print.map_or(grade.intent, |scene| scene.rendering_intent),
+                print_blur: print.map_or(grade.print_blur, |scene| scene.ink_blur(grade.output().long())),
                 ..*grade
             };
             &print_grade
@@ -3713,11 +3751,7 @@ impl Uploaded<'_> {
             recording.holding(&albedo);
             let calibration = self.print_light_for(scene.light_parameters(), scene.light_temperature_kelvin as f32);
             recording.holding(&calibration);
-            let buffer = recording.init(&wgpu::util::BufferInitDescriptor {
-                label: Some("print"),
-                contents: &scene.uniform(display_peak),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+            let (buffer, proof) = self.print_scene_binding(recording, scene, display_peak);
             self.gpu.bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("print"),
                 layout: &self.gpu.print_layout,
@@ -3725,6 +3759,7 @@ impl Uploaded<'_> {
                     wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 1, resource: albedo.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 2, resource: calibration.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: proof.as_entire_binding() },
                 ],
             })
         });
@@ -3771,6 +3806,22 @@ impl Uploaded<'_> {
         let buffer = self.gpu.print_albedo_table(eta);
         *self.print_albedo.borrow_mut() = Some((eta, buffer.clone()));
         buffer
+    }
+
+    /// The print's uniform and the target it is laid down within.
+    pub(super) fn print_scene_binding(
+        &self, recording: &mut Recording<'_>, scene: &crate::print::Scene, display_peak: crate::light::Light<crate::light::DisplayNits>,
+    ) -> (Buffer, Buffer) {
+        let target = crate::printer_gamut::target(scene, self.printer.borrow().as_deref());
+        let target = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("print target"),
+            contents: &target.iter().flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>(),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let parameters = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("print"), contents: &scene.uniform(display_peak), usage: wgpu::BufferUsages::UNIFORM,
+        });
+        (parameters, target)
     }
 
     fn print_light_for(&self, parameters: [f32; 4], temperature: f32) -> Buffer {
@@ -3820,7 +3871,7 @@ const EDIT_FIELDS: &[&str] = &[
     "region_size",
     "canvas_size",
     "max_lod",
-    "print_tone",
+    "intent",
     "contrast",
     "highlights",
     "shadows",
@@ -3873,6 +3924,7 @@ const EDIT_FIELDS: &[&str] = &[
     "chroma_shrink",
     "tone_anchor",
     "black_floor",
+    "print_blur",
 ];
 
 /// `struct Edit`, field for field, in the order the shader declares them.
@@ -3961,7 +4013,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
         f(&mut w, value); // region_origin, region_size, canvas_size
     }
     w.push(shown.max_lod);
-    w.push(grade.print_tone as u32);
+    w.push(grade.intent as u32);
     // The reader's sliders, in `struct Edit`'s order. Appended after the scalars there, so
     // nothing above this line moved when they were added.
     f(&mut w, grade.adjust.contrast);
@@ -4051,6 +4103,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
         // answer, on the darkest frame there is.
         _ => 0.0,
     });
+    f(&mut w, grade.print_blur.raw());
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. Here it was implicit in the field count until a field was
@@ -4427,26 +4480,13 @@ mod tests {
             + 1;
         let expected = words.div_ceil(4) * 4 * 4;
         let colour = crate::hdr_fit::HdrColour::identity();
-        let grade = super::Grade {
-            width: 1,
-            height: 1,
-            photograph_long: crate::px::Span::measured(1),
-            colour: None,
-            white: Light::measured(1.0),
-            source_level: Light::measured(1.0),
-            floor: None,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
-            exposure: Stops::ZERO,
-            adjust: super::Adjust::none(),
-            as_shot: None,
-            output: super::Output::Pq,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
-            canvas: None,
-            print_tone: super::Tonemap::Neutral,
-        };
+        let grade = super::Grade::new(
+            1,
+            1,
+            crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+            Light::exactly(203.0),
+            Light::exactly(1000.0),
+        );
         assert_eq!(super::uniform(&grade, &colour).len(), expected);
     }
 
@@ -4514,24 +4554,17 @@ mod tests {
             max_lod: 0,
         };
         let grade = super::Grade {
-            width,
-            height,
-            photograph_long: crate::px::Span::measured(width),
             colour: Some(&colour),
-            white: Light::measured(1.0),
-            source_level: Light::measured(1.0),
-            floor: None,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
             exposure: Stops::measured(0.5),
-            adjust: super::Adjust::none(),
-            as_shot: None,
             output: super::Output::Rolled,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
             canvas: Some(shown),
-            print_tone: super::Tonemap::Neutral,
+            ..super::Grade::new(
+                width,
+                height,
+                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                Light::exactly(203.0),
+                Light::exactly(1000.0),
+            )
         };
 
         let peak = gpu.scene_peak();
@@ -4635,24 +4668,17 @@ mod tests {
 
         let colour = crate::hdr_fit::HdrColour::identity();
         let grade = |canvas: super::Canvas| super::Grade {
-            width,
-            height,
-            photograph_long: crate::px::Span::measured(width),
             colour: Some(&colour),
-            white: Light::measured(1.0),
-            source_level: Light::measured(1.0),
-            floor: None,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
             exposure: Stops::measured(0.5),
-            adjust: super::Adjust::none(),
-            as_shot: None,
             output: super::Output::Rolled,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
             canvas: Some(canvas),
-            print_tone: super::Tonemap::Neutral,
+            ..super::Grade::new(
+                width,
+                height,
+                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                Light::exactly(203.0),
+                Light::exactly(1000.0),
+            )
         };
 
         let pyramid = crate::base::pyramid(gpu, base, &frame, (width, height)).expect("a pyramid");
@@ -4780,24 +4806,15 @@ mod tests {
         }
 
         let at = |exposure: Stops| super::Grade {
-            width,
-            height,
-            photograph_long: crate::px::Span::measured(width),
             colour: Some(&colour),
-            white: Light::measured(1.0),
-            source_level: Light::measured(1.0),
-            floor: None,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
             exposure,
-            adjust: super::Adjust::none(),
-            as_shot: None,
-            output: super::Output::Pq,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
-            canvas: None,
-            print_tone: super::Tonemap::Neutral,
+            ..super::Grade::new(
+                width,
+                height,
+                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                Light::exactly(203.0),
+                Light::exactly(1000.0),
+            )
         };
 
         let peak = gpu.scene_peak();
@@ -4909,24 +4926,16 @@ mod tests {
             }
         }));
         let grade = |exposure| super::Grade {
-            width,
-            height,
-            photograph_long: crate::px::Span::measured(width),
             colour: Some(&colour),
-            white: Light::measured(1.0),
-            source_level: Light::measured(1.0),
-            floor: None,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
             exposure,
-            adjust: super::Adjust::none(),
-            as_shot: None,
             output: super::Output::Rolled,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
-            canvas: None,
-            print_tone: super::Tonemap::Neutral,
+            ..super::Grade::new(
+                width,
+                height,
+                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                Light::exactly(203.0),
+                Light::exactly(1000.0),
+            )
         };
 
         let cast = |exposure: f64| {
@@ -4971,26 +4980,20 @@ mod tests {
             max_lod: 0,
         };
         let grade = |adjust| super::Grade {
-            width,
-            height,
-            photograph_long: crate::px::Span::measured(width),
             colour: Some(&colour),
-            white: Light::measured(1.0),
-            source_level: Light::measured(1.0),
-            floor: None,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
-            exposure: Stops::ZERO,
             adjust,
             // Without one there is no illuminant to move away from and the shader is right to
             // leave the frame alone, which would make this test pass on a broken balance.
             as_shot: Some(crate::white_balance::AsShot { temperature: 5500.0, tint: 0.0 }),
             output: super::Output::Rolled,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
             canvas: Some(shown),
-            print_tone: super::Tonemap::Neutral,
+            ..super::Grade::new(
+                width,
+                height,
+                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                Light::exactly(203.0),
+                Light::exactly(1000.0),
+            )
         };
 
         let peak = gpu.scene_peak();
@@ -5052,24 +5055,11 @@ mod tests {
             max_lod: 0,
         };
         let grade = |adjust, canvas| super::Grade {
-            width,
-            height,
-            photograph_long: crate::px::Span::measured(width),
             colour: Some(&colour),
-            white: levels.white,
-            source_level: levels.peak,
-            floor: levels.floor,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
-            exposure: Stops::ZERO,
             adjust,
-            as_shot: None,
             output: super::Output::Rolled,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
             canvas,
-            print_tone: super::Tonemap::Neutral,
+            ..super::Grade::new(width, height, levels, Light::exactly(203.0), Light::exactly(1000.0))
         };
         let rest = super::Adjust::none();
 
@@ -5189,26 +5179,13 @@ mod tests {
 
         let colour = crate::hdr_fit::HdrColour::identity();
         let grade = |adjust| super::Grade {
-            width,
-            height,
-            photograph_long: crate::px::Span::measured(width),
             colour: Some(&colour),
-            white: levels.white,
-            source_level: levels.peak,
-            floor: levels.floor,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
-            exposure: Stops::ZERO,
             adjust,
             // Without one the balance has no illuminant to move away from and every temperature
             // below is the identity, which would make this pass on a host that ignores the pair.
             as_shot: Some(crate::white_balance::AsShot { temperature: 5500.0, tint: 12.0 }),
             output: super::Output::Rolled,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
-            canvas: None,
-            print_tone: super::Tonemap::Neutral,
+            ..super::Grade::new(width, height, levels, Light::exactly(203.0), Light::exactly(1000.0))
         };
 
         let rest = super::Adjust::none();
@@ -5269,28 +5246,21 @@ mod tests {
             }
         }
         let grade = |adjust: super::Adjust| super::Grade {
-            width,
-            height,
-            photograph_long: crate::px::Span::measured(width),
             colour: adjust.colour(Some(&colour)),
-            white: Light::measured(1.0),
-            source_level: Light::measured(1.0),
-            floor: None,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
-            exposure: Stops::ZERO,
             adjust,
-            as_shot: None,
             output: super::Output::Rolled,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
             canvas: Some(super::Canvas {
                 region: (0.0, 0.0, width as f64, height as f64),
                 size: crate::px::Size::measured(width, height),
                 max_lod: 0,
             }),
-            print_tone: super::Tonemap::Neutral,
+            ..super::Grade::new(
+                width,
+                height,
+                crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                Light::exactly(203.0),
+                Light::exactly(1000.0),
+            )
         };
         let matched = super::Adjust::none();
         let neutral =
@@ -5380,28 +5350,19 @@ mod tests {
             for tint in [-150.0, -50.0, 0.0, 25.0, 150.0] {
                 let asked = crate::white_balance::AsShot { temperature, tint };
                 let grade = super::Grade {
-                    width: 1,
-                    height: 1,
-                    photograph_long: crate::px::Span::measured(1),
-                    colour: None,
-                    white: Light::measured(1.0),
-                    source_level: Light::measured(1.0),
-                    floor: None,
-                    reference_nits: Light::exactly(203.0),
-                    peak_nits: Light::exactly(1000.0),
-                    exposure: Stops::ZERO,
                     adjust: super::Adjust {
                         temperature: Some(temperature),
                         tint: Some(tint),
                         ..super::Adjust::none()
                     },
                     as_shot: Some(asked),
-                    output: super::Output::Pq,
-                    geometry: crate::image::Geometry::none(),
-                    window: None,
-                    surround_window: None,
-                    canvas: None,
-                    print_tone: super::Tonemap::Neutral,
+                    ..super::Grade::new(
+                        1,
+                        1,
+                        crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                        Light::exactly(203.0),
+                        Light::exactly(1000.0),
+                    )
                 };
                 let edits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("probe_xy"),
@@ -5587,22 +5548,7 @@ mod tests {
 
             let windowed = origin != (0, 0);
             let grade = super::Grade {
-                // The buffer, which for the windowed run is smaller than the photograph. Nothing in
-                // the mapping reads it; what it does is stop the identity short-circuit taking a
-                // run that has an origin to subtract.
-                width: full.0 - origin.0,
-                height: full.1 - origin.1,
                 photograph_long: crate::px::Span::measured(full.0.max(full.1)),
-                colour: None,
-                white: Light::measured(1.0),
-                source_level: Light::measured(1.0),
-                floor: None,
-                reference_nits: Light::exactly(203.0),
-                peak_nits: Light::exactly(1000.0),
-                exposure: Stops::ZERO,
-                adjust: super::Adjust::none(),
-                as_shot: None,
-                output: super::Output::Pq,
                 geometry,
                 window: match windowed {
                     true => Some(super::Window {
@@ -5611,9 +5557,16 @@ mod tests {
                     }),
                     false => None,
                 },
-                surround_window: None,
-                canvas: None,
-                print_tone: super::Tonemap::Neutral,
+                // The buffer, which for the windowed run is smaller than the photograph. Nothing in
+                // the mapping reads it; what it does is stop the identity short-circuit taking a
+                // run that has an origin to subtract.
+                ..super::Grade::new(
+                    full.0 - origin.0,
+                    full.1 - origin.1,
+                    crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+                    Light::exactly(203.0),
+                    Light::exactly(1000.0),
+                )
             };
             assert_eq!(grade.output_size(), out, "the probe's grid is not what the grade writes");
             let words = super::uniform_words(&grade, &colour);

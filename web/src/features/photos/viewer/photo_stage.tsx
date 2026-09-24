@@ -15,7 +15,7 @@ import { StageFrame, type FrameState } from './stage_frame';
 import { Spinner } from '../../../ui/spinner';
 import { styles } from './photo_stage_view.stylex';
 import { StageDetail } from './stage_detail';
-import type { Tonemap } from '../../raw_edit/print/print_scene';
+import type { FileRenderingIntent } from '../../../../../src/schemas/rendering_intent';
 
 // Fit, zoom and pan live in `zoom_pan.ts`, because the editor's canvas needs the same
 // gesture and cannot be transformed the way an `<img>` can.
@@ -193,7 +193,7 @@ interface Props {
   frameColor?: string;
   style?: stylex.StyleXStyles;
   /** The operator HDR frames are proofed to sRGB with, or null to draw them as they are. */
-  proof?: Tonemap | null;
+  proof?: FileRenderingIntent | null;
 }
 
 function noop(): void {

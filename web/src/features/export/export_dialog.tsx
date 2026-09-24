@@ -1,6 +1,8 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { EXPORT_FORMATS, type ExportFormat } from '../../../../src/schemas/export';
+import { EXPORT_FORMATS, writesSdr, type ExportFormat } from '../../../../src/schemas/export';
+import { FileRenderingIntentSchema, type FileRenderingIntent } from '../../../../src/schemas/rendering_intent';
+import { IntentChoiceStrings } from '../raw_edit/proof/intent_choice.strings';
 import type { ReactNode } from 'react';
 import { useExportStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
@@ -100,6 +102,9 @@ const LONG_EDGES: Option<string>[] = [
   { value: '0', label: ExportStrings.resolutionFull() },
   ...[4096, 3840, 2560, 1920, 1280].map((px) => ({ value: String(px), label: ExportStrings.resolutionLongEdge(px) })),
 ];
+
+const INTENTS: Option<FileRenderingIntent>[] = FileRenderingIntentSchema.options
+  .map((intent) => ({ value: intent, label: IntentChoiceStrings[intent]() }));
 
 function hdrHint(unavailable: boolean, gainMappable: boolean, format: ExportFormat): string {
   if (!unavailable) return ExportStrings.exportHdrHint();
@@ -225,6 +230,17 @@ export const ExportDialog = observer(function ExportDialog(): JSX.Element | null
             checked={effective.gainMap}
             onChange={(value) => presenter.set('gainMap', value)}
           />
+        ) : null}
+
+        {writesSdr(options) ? (
+          <Row label={IntentChoiceStrings.renderingIntent()}>
+            <Select
+              options={INTENTS}
+              value={options.renderingIntent}
+              onChange={(value) => presenter.set('renderingIntent', value)}
+              label={IntentChoiceStrings.renderingIntent()}
+            />
+          </Row>
         ) : null}
 
         <div {...stylex.props(styles.foot)}>

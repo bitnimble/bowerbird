@@ -75,6 +75,7 @@ export const PathSegment = {
   prepare: segment('prepare'),
   prepared: segment('prepared'),
   preview: segment('preview'),
+  printerProfiles: segment('printer-profiles'),
   pull: segment('pull'),
   push: segment('push'),
   qualityCheck: segment('quality-check'),

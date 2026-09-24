@@ -93,24 +93,14 @@ fn a_rendition_prepared_at_its_stated_white_grades_neutral_to_itself() {
         let gpu = rawshim::gpu::device().expect("an adapter");
         let header = &prepared.header;
         let grade = rawshim::gpu::Grade {
-            width: header.width,
-            height: header.height,
-            photograph_long: rawshim::px::Span::measured(header.width.max(header.height)),
-            colour: None,
-            white: header.white,
-            source_level: header.peak,
-            floor: header.floor,
-            reference_nits: header.grade.reference_white_nits,
-            peak_nits: rawshim::light::Light::at_diffuse_white(header.grade.reference_white_nits),
-            exposure: rawshim::light::Stops::ZERO,
-            adjust: rawshim::gpu::Adjust::none(),
-            as_shot: None,
             output: rawshim::gpu::Output::Srgb,
-            geometry: rawshim::image::Geometry::none(),
-            window: None,
-            surround_window: None,
-            canvas: None,
-            print_tone: rawshim::gpu::Tonemap::Neutral,
+            ..rawshim::gpu::Grade::new(
+                header.width,
+                header.height,
+                rawshim::tone::Levels { white: header.white, peak: header.peak, floor: header.floor },
+                header.grade.reference_white_nits,
+                rawshim::light::Light::at_diffuse_white(header.grade.reference_white_nits),
+            )
         };
         gpu.upload(&prepared.samples, &grade, &gpu.scene_peak()).encode_bytes(&grade)
     };

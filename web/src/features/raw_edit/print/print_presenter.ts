@@ -1,7 +1,14 @@
 import { action } from 'mobx';
-import { DEFAULT_PRINT_SCENE, PAPER_MATERIALS, PRINT_ZOOM_RANGE, PrintSceneSchema, restingValue, type Paper, type Presentation, type PrintControl, type Tonemap } from './print_scene';
+import { printerProfilesApi } from '../../../api/printer_profiles';
+import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
+import { DEFAULT_PRINT_SCENE, paperAndInk, PRINT_ZOOM_RANGE, PrintSceneSchema, restingValue, type Ink, type Paper, type Presentation, type PrintControl } from './print_scene';
 import { browserPrintMotion, PrintMotion, type PrintMotionEnvironment, type PrintTilt } from './print_motion';
-import type { PrintStore } from './print_store';
+import type { PrinterProfile, PrintStore } from './print_store';
+
+export type PrinterProfileSource = {
+  list(): Promise<string[]>;
+  bytes(name: string): Promise<Uint8Array<ArrayBuffer>>;
+};
 
 type Drag = {
   pointerId: number;
@@ -32,11 +39,14 @@ export class PrintPresenter {
   private permissionEpoch = 0;
   private awaitingPermission = false;
   private waitingTimer: ReturnType<typeof setTimeout> | null = null;
+  private listedProfiles = false;
+  private wantedProfile: string | null = null;
 
   constructor(
     private readonly store: PrintStore,
     private readonly redraw: () => void,
     private readonly motion: PrintMotionEnvironment | null = browserPrintMotion(),
+    private readonly profiles: PrinterProfileSource = printerProfilesApi,
   ) {}
 
   /**
@@ -50,6 +60,54 @@ export class PrintPresenter {
     this.present(view === 'flat' ? 'flat' : this.touch ? 'surface' : 'scene');
     this.syncTilt();
     if (this.store.open && this.store.surface && this.permission === 'unknown') void this.enableTilt();
+    if (this.store.open && !this.listedProfiles) void this.listPrinterProfiles();
+    this.redraw();
+  };
+
+  private async listPrinterProfiles(): Promise<void> {
+    this.listedProfiles = true;
+    try {
+      this.listedPrinterProfiles(await this.profiles.list());
+    } catch {
+      // Listed again the next time a print opens; until then the paper's own white and black proof it.
+      this.listedProfiles = false;
+    }
+  }
+
+  @action.bound
+  private listedPrinterProfiles = (names: string[]): void => {
+    this.store.printerProfiles = names;
+  };
+
+  /** Proofs through the named ICC profile, or through the paper's own white and black with null. */
+  @action.bound
+  setPrinterProfile = async (name: string | null): Promise<void> => {
+    this.wantedProfile = name;
+    this.gotPrinterProfile(name == null ? null : { name, bytes: await this.profiles.bytes(name) });
+  };
+
+  @action.bound
+  private gotPrinterProfile = (profile: PrinterProfile | null): void => {
+    if ((profile?.name ?? null) !== this.wantedProfile) return;
+    this.store.printerProfile = profile;
+    this.redraw();
+  };
+
+  @action.bound
+  setRenderingIntent = (renderingIntent: RenderingIntent): void => {
+    this.store.scene = { ...this.store.scene, renderingIntent };
+    this.redraw();
+  };
+
+  @action.bound
+  setBlackPointCompensation = (blackPointCompensation: boolean): void => {
+    this.store.scene = { ...this.store.scene, blackPointCompensation };
+    this.redraw();
+  };
+
+  @action.bound
+  setInk = (ink: Ink): void => {
+    this.store.scene = { ...this.store.scene, ...paperAndInk(this.store.scene.paper, ink) };
     this.redraw();
   };
 
@@ -240,13 +298,7 @@ export class PrintPresenter {
 
   @action.bound
   setPaper = (paper: Paper): void => {
-    this.store.scene = { ...this.store.scene, paper, ...PAPER_MATERIALS[paper] };
-    this.redraw();
-  };
-
-  @action.bound
-  setTonemap = (tonemap: Tonemap): void => {
-    this.store.scene = { ...this.store.scene, tonemap };
+    this.store.scene = { ...this.store.scene, ...paperAndInk(paper, this.store.scene.ink) };
     this.redraw();
   };
 
@@ -267,7 +319,7 @@ export class PrintPresenter {
 
   @action.bound
   resetControl = (key: PrintControl): void => {
-    this.setControl(key, restingValue(this.store.scene.paper, key));
+    this.setControl(key, restingValue(this.store.scene, key));
   };
 
   @action.bound

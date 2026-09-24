@@ -356,7 +356,8 @@ export const RawEditStage = observer(function RawEditStage({
     onPointerEnter: measure,
     onPointerDown: (event: React.PointerEvent<HTMLDivElement>): void => {
       measure(event);
-      if (!event.isPrimary || !stageStore.editable) return;
+      // `live`, not `editable`: the mockup holds no document, and turning a print writes none.
+      if (!event.isPrimary || !stageStore.live) return;
       if (event.button === MIDDLE_BUTTON) {
         event.currentTarget.setPointerCapture(event.pointerId);
         panning.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
@@ -398,7 +399,7 @@ export const RawEditStage = observer(function RawEditStage({
     },
     onDoubleClick: (): void => presenter.print.resetView(),
     onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>): void => {
-      if (!stageStore.editable || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (!stageStore.live || event.altKey || event.ctrlKey || event.metaKey) return;
       const step = event.shiftKey ? 15 : 5;
       switch (event.key) {
         case 'ArrowLeft': presenter.print.rotateBy(-step, 0); break;

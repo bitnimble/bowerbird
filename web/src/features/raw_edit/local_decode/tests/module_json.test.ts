@@ -23,7 +23,11 @@ describe('what a tick carries', () => {
     expect(z.object({ print: PrintSceneSchema }).parse(wire).print).toEqual({
       ...DEFAULT_PRINT_SCENE,
       framed: true,
-      tonemap: 'filmic',
+      renderingIntent: 'absoluteColorimetric',
+      blackPointCompensation: false,
+      ink: 'pigment',
+      printResolutionPpi: 300,
+      inkSpreadMicrons: 45,
       lightAcross: -0.6,
       zoom: 2.5,
       panX: -0.125,

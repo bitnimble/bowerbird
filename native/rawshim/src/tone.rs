@@ -355,29 +355,12 @@ impl<'a> SceneGrade<'a> {
         output: crate::gpu::Output,
     ) -> crate::gpu::Grade<'a> {
         crate::gpu::Grade {
-            width,
-            height,
-            // Its own, which every whole frame's is. A tile overrides it with the photograph's.
-            photograph_long: crate::px::Span::measured(width.max(height)),
             colour: self.matched,
-            white: self.levels.white,
-            source_level: self.levels.peak,
-            floor: self.levels.floor,
-            reference_nits: self.reference,
-            peak_nits,
             exposure: self.exposure,
             adjust: self.adjust,
             as_shot: self.as_shot,
             output,
-            // Upright, which is what a caller with no reader's crop to apply asks for. A rendition
-            // sets its own with [`crate::gpu::Grade::showing`].
-            geometry: crate::image::Geometry::none(),
-            // The whole picture, which is what a frame is until a crop lets a render decode less of
-            // one ([`crate::gpu::Grade::windowed`]).
-            window: None,
-            surround_window: None,
-            canvas: None,
-            print_tone: crate::gpu::Tonemap::Neutral,
+            ..crate::gpu::Grade::new(width, height, self.levels, self.reference, peak_nits)
         }
     }
 }

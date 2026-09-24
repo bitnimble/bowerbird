@@ -5,6 +5,7 @@ import {
   ExportRequestSchema,
   exportFilename,
   honoured,
+  writesSdr,
   type ExportFormat,
 } from '../export';
 
@@ -92,6 +93,20 @@ describe('ExportOptionsSchema', () => {
       halfSize: false,
       exportHdr: true,
       gainMap: false,
+      renderingIntent: 'perceptual',
     });
+  });
+});
+
+describe('writesSdr', () => {
+  it('is true where the file holds an SDR picture, a gain map base included', () => {
+    expect(writesSdr(options({ format: 'jpeg', exportHdr: false }))).toBe(true);
+    expect(writesSdr(options({ format: 'jpeg', exportHdr: true, gainMap: true }))).toBe(true);
+    expect(writesSdr(options({ format: 'tiff', exportHdr: true }))).toBe(true);
+    expect(writesSdr(options({ format: 'avif', exportHdr: true, gainMap: true }))).toBe(true);
+  });
+
+  it('is false for an HDR file with no SDR base', () => {
+    expect(writesSdr(options({ format: 'avif', exportHdr: true, gainMap: false }))).toBe(false);
   });
 });

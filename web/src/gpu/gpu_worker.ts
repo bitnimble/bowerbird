@@ -213,7 +213,8 @@ class Open {
         if (ask.stage != null) editor.resizeStage(ask.stage.width, ask.stage.height);
         if (ask.adjust != null) editor.setAdjust(ask.adjust);
         if (ask.geometry != null) editor.setGeometry(ask.geometry);
-        if (ask.proof != null) editor.setProof(ask.proof.output, ask.proof.tone, ask.proof.displayHdr);
+        if (ask.proof != null) editor.setProof(ask.proof.output, ask.proof.intent, ask.proof.displayHdr);
+        if (ask.printerProfile !== undefined) editor.setPrinterProfile(ask.printerProfile ?? undefined);
         editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
         if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);

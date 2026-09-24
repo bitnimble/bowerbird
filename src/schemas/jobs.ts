@@ -4,6 +4,7 @@ import { RenditionSchema, RenditionSourceSchema } from './common';
 import type { DustSettings } from './dust_settings';
 import { ColourProfileSchema, DenoiserSchema, RepairSchema } from './photo_edits';
 import { CameraMatchSchema } from './render_stages';
+import { FileRenderingIntentSchema } from './rendering_intent';
 
 /** How a scene-linear decode is graded to display-referred (§10.7). */
 export const JobGradeSchema = z.object({
@@ -37,6 +38,8 @@ export const JobTargetSchema = z.object({
   preset: z.number(),
   stillFullChroma: z.boolean(),
   sdrFullChroma: z.boolean(),
+  /** How an `srgb` output reaches its gamut; perceptual where absent. */
+  intent: FileRenderingIntentSchema.optional(),
 });
 export type JobTarget = z.infer<typeof JobTargetSchema>;
 

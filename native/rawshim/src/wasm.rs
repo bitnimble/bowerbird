@@ -122,18 +122,18 @@ pub struct HeldRaw {
     adjust: std::cell::Cell<crate::gpu::Adjust>,
     /// Which output the reader is proofing against, which the draw grades and clips for.
     proof: std::cell::Cell<crate::gpu::Output>,
-    /// How an sRGB proof fits its highlights under diffuse white.
-    proof_tone: std::cell::Cell<crate::gpu::Tonemap>,
+    /// How an sRGB proof is brought inside its file's gamut.
+    proof_intent: std::cell::Cell<crate::gpu::Intent>,
     /// Whether the display shows light past SDR white, which caps every draw's peak when it does not.
     display_hdr: std::cell::Cell<bool>,
     print: std::cell::Cell<Option<crate::print::Scene>>,
-    /// What an open answered with, for a picture that arrived already prepared.
+    printer: std::cell::RefCell<Option<std::sync::Arc<crate::printer_gamut::PrinterGamut>>>,
+    /// What the open last answered with, whichever way the picture arrived.
     ///
-    /// `prepare` returns this as its result and keeps nothing; a picture handed over coded was
-    /// described before it got here, so the description is kept and asked for
-    /// ([`HeldRaw::header`]) rather than recomputed. Empty for a local open, which has no second
-    /// answer to give.
-    header: String,
+    /// Kept for the tiles a finer window is assembled from, which take their camera match and
+    /// balance from it: a rendition opened from its own planes is prepared here and then served
+    /// tiles like any picture prepared elsewhere.
+    header: std::cell::RefCell<String>,
 }
 
 /// One rendition tile, on the device, with the grade's resources over it.
@@ -229,27 +229,14 @@ impl Drawing {
     ) -> crate::gpu::Grade<'_> {
         let (picture_w, picture_h) = self.picture();
         crate::gpu::Grade {
-            width,
-            height,
             // The picture's, as every other grade over this frame reads it: a presence slider's
             // reach is a fraction of the photograph, and a window told its own size would filter at
             // the wrong scale.
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
             colour: self.matched.as_ref().and_then(|m| m.colour.as_ref()),
-            white: self.levels.white,
-            source_level: self.levels.peak,
-            floor: self.levels.floor,
-            reference_nits: self.reference_nits,
-            peak_nits: self.peak_nits,
-            exposure: crate::light::Stops::ZERO,
-            adjust: crate::gpu::Adjust::none(),
             as_shot: self.as_shot,
-            output: crate::gpu::Output::Pq,
-            geometry: crate::image::Geometry::none(),
             window,
-            surround_window: None,
-            canvas: None,
-            print_tone: crate::gpu::Tonemap::Neutral,
+            ..crate::gpu::Grade::new(width, height, self.levels, self.reference_nits, self.peak_nits)
         }
     }
 }
@@ -372,10 +359,11 @@ impl HeldRaw {
             geometry: std::cell::Cell::new(crate::image::Geometry::none()),
             adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
             proof: std::cell::Cell::new(crate::gpu::Output::Pq),
-            proof_tone: std::cell::Cell::new(crate::gpu::Tonemap::Neutral),
+            proof_intent: std::cell::Cell::new(crate::gpu::Intent::Perceptual),
             display_hdr: std::cell::Cell::new(true),
             print: std::cell::Cell::new(None),
-            header: String::new(),
+            printer: std::cell::RefCell::new(None),
+            header: std::cell::RefCell::new(String::new()),
         }
     }
 }
@@ -815,7 +803,7 @@ impl HeldRaw {
     #[wasm_bindgen(js_name = takePicture)]
     pub fn take_another(&mut self, framed: &[u8]) -> Result<String, JsValue> {
         self.take_picture(framed)?;
-        Ok(self.header.clone())
+        Ok(self.header.borrow().clone())
     }
 
     /// The frame this photograph makes at these mosaic settings, kept on the device and answered
@@ -888,6 +876,7 @@ impl HeldRaw {
         let header = serde_json::to_string(&opened.header)
             .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
         self.hold_drawing(opened)?;
+        self.header.replace(header.clone());
         Ok(header)
     }
 
@@ -923,28 +912,21 @@ impl HeldRaw {
         })?;
         let peak = gpu.scene_peak();
         let grade = crate::gpu::Grade {
-            width,
-            height,
             // The picture's, not the buffer's: a presence slider's reach is a fraction of the
             // photograph, and a window told its own size would filter at the wrong scale.
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
             // Unfiltered by the profile: a tick grades either way over this upload, and the
             // matched arm reads what it builds from the match.
             colour: opened.matched.as_ref().and_then(|m| m.colour.as_ref()),
-            white: opened.levels.white,
-            source_level: opened.levels.peak,
-            floor: opened.levels.floor,
-            reference_nits: self.request.grade.reference_white_nits,
-            peak_nits: self.request.grade.peak_nits,
-            exposure: crate::light::Stops::ZERO,
-            adjust: crate::gpu::Adjust::none(),
             as_shot: opened.as_shot,
-            output: crate::gpu::Output::Pq,
-            geometry: crate::image::Geometry::none(),
             window: placed,
-            surround_window: None,
-            canvas: None,
-            print_tone: crate::gpu::Tonemap::Neutral,
+            ..crate::gpu::Grade::new(
+                width,
+                height,
+                opened.levels,
+                self.request.grade.reference_white_nits,
+                self.request.grade.peak_nits,
+            )
         };
         let uploaded = opened.frame.upload(&grade, &peak);
         // **The brightest of the sampled million, kept so a tick can re-measure without a sweep.**
@@ -999,12 +981,10 @@ impl HeldRaw {
         self.attach(&self.loupe, canvas, width, height)
     }
 
-    /// What this open answered with, for a picture that arrived already prepared.
-    ///
-    /// Empty for a local open, whose answer is `prepare`'s return value.
+    /// What this open last answered with.
     #[wasm_bindgen(js_name = header)]
     pub fn header(&self) -> String {
-        self.header.clone()
+        self.header.borrow().clone()
     }
 
     /// Lets the loupe's canvas go, the glass having been put down.
@@ -1226,28 +1206,21 @@ impl HeldRaw {
         let base = crate::base::device(gpu).ok_or_else(refused)?;
         let (picture_w, picture_h) = drawing.picture();
         let grade = crate::gpu::Grade {
-            width: drawing.width,
-            height: drawing.height,
             // The picture's, as every other grade over this frame reads it. A band sweep only
             // reaches a picture with a mosaic behind it, which is never a window - but a grade
             // here that measured the buffer instead is the one asymmetry a reader of these three
             // would have to check the reachability of to trust.
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
             colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),
-            white: drawing.levels.white,
-            source_level: drawing.levels.peak,
-            floor: drawing.levels.floor,
-            reference_nits: drawing.reference_nits,
-            peak_nits: drawing.peak_nits,
-            exposure: crate::light::Stops::ZERO,
-            adjust: crate::gpu::Adjust::none(),
             as_shot: drawing.as_shot,
-            output: crate::gpu::Output::Pq,
-            geometry: crate::image::Geometry::none(),
             window: drawing.placed,
-            surround_window: None,
-            canvas: None,
-            print_tone: crate::gpu::Tonemap::Neutral,
+            ..crate::gpu::Grade::new(
+                drawing.width,
+                drawing.height,
+                drawing.levels,
+                drawing.reference_nits,
+                drawing.peak_nits,
+            )
         };
         drawing.uploaded = drawing.frame.upload(&grade, &drawing._peak);
         // Re-collected against the pixels that are there now: the threshold the open left still
@@ -1368,7 +1341,7 @@ impl HeldRaw {
         // this picture through it.
         self.analysis.replace(header.photo_analysis.clone());
         self.defocus.set(Some(header.defocus));
-        self.header = described;
+        self.header.replace(described);
         // The tile too: a magnifier over a window that has been replaced is pointing at the
         // picture the reader was looking at a moment ago.
         self.tile.replace(None);
@@ -1496,7 +1469,7 @@ impl HeldRaw {
             .as_deref()
             .and_then(crate::photo_analysis::decode)
             .unwrap_or_default();
-        let header: crate::edit::PreparedHeader = serde_json::from_str(&self.header)
+        let header: crate::edit::PreparedHeader = serde_json::from_str(&self.header.borrow())
             .map_err(|e| JsValue::from_str(&format!("rawshim: this open has no header: {e}")))?;
         self.hold_drawing(crate::edit::Opened {
             frame,
@@ -1817,14 +1790,14 @@ impl HeldRaw {
     /// highlights roll into and which gamut the result is clipped to, which is precisely the pair
     /// that differs between this library's two renditions (`job::peak_nits`, `frame.slang`'s `fs`).
     ///
-    /// `tone` is the operator an sRGB proof fits its highlights with, named as a print scene names
-    /// its own; the neutral one is the rendition's. `display_hdr` false rolls every draw onto SDR
-    /// white, as the viewer's does.
+    /// `intent` is how an sRGB proof reaches its file's gamut, named as a print scene names its own;
+    /// perceptual is the rendition's. `display_hdr` false rolls every draw onto SDR white, as the
+    /// viewer's does.
     #[wasm_bindgen(js_name = setProof)]
-    pub fn set_proof(&self, proof: &str, tone: &str, display_hdr: bool) -> Result<(), JsValue> {
+    pub fn set_proof(&self, proof: &str, intent: &str, display_hdr: bool) -> Result<(), JsValue> {
         self.display_hdr.set(display_hdr);
-        self.proof_tone.set(serde_json::from_value(serde_json::Value::from(tone))
-            .map_err(|e| JsValue::from_str(&format!("rawshim: no highlights are fitted by {tone}: {e}")))?);
+        self.proof_intent.set(serde_json::from_value(serde_json::Value::from(intent))
+            .map_err(|e| JsValue::from_str(&format!("rawshim: no rendering intent is named {intent}: {e}")))?);
         self.proof.set(match proof {
             "hdr" => crate::gpu::Output::Pq,
             "srgb" => crate::gpu::Output::Srgb,
@@ -1834,6 +1807,15 @@ impl HeldRaw {
                 )));
             }
         });
+        Ok(())
+    }
+
+    /// The ICC output profile a print is laid down through, or none for the paper's own white and black.
+    #[wasm_bindgen(js_name = setPrinterProfile)]
+    pub fn set_printer_profile(&self, icc: Option<Vec<u8>>) -> Result<(), JsValue> {
+        let printer = icc.as_deref().map(crate::printer_gamut::PrinterGamut::new).transpose()
+            .map_err(|error| JsValue::from_str(&format!("rawshim: this printer profile cannot be used: {error}")))?;
+        *self.printer.borrow_mut() = printer.map(std::sync::Arc::new);
         Ok(())
     }
 
@@ -1915,18 +1897,13 @@ impl HeldRaw {
             _ if !self.display_hdr.get() => crate::light::Light::at_diffuse_white(drawing.reference_nits),
             _ => peak_nits,
         };
-        // Neutral anywhere else, where nothing reads it and the regional operator would build a
-        // neighbourhood for nobody.
-        let proofed_tone = match proof {
-            crate::gpu::Output::Srgb => self.proof_tone.get(),
-            _ => crate::gpu::Tonemap::Neutral,
-        };
+        let proofed_intent = self.proof_intent.get();
 
         let (uploaded, width, height, window) = match reading {
             Reading::Tile(tiled) => {
                 let scene = tiled.window.scene(ev, self.adjust.get());
                 let grade = crate::gpu::Grade {
-                    print_tone: proofed_tone,
+                    intent: proofed_intent,
                     ..tiled.window.grade(&scene, proofed(tiled.peak_nits), proof).onto(shown)
                 };
                 crate::gpu::present(&tiled.uploaded, stage, &grade, &drawing.pyramid, None);
@@ -1949,26 +1926,19 @@ impl HeldRaw {
         let adjust = self.adjust.get();
         let print = if std::ptr::eq(onto, &self.stage) { self.print.get() } else { None };
         let grade = crate::gpu::Grade {
-            width,
-            height,
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
             colour: adjust.colour(drawing.matched.as_ref().and_then(|m| m.colour.as_ref())),
-            white: drawing.levels.white,
-            source_level: drawing.levels.peak,
-            floor: drawing.levels.floor,
-            reference_nits: drawing.reference_nits,
-            peak_nits: proofed(drawing.peak_nits),
             exposure: ev,
             adjust,
             as_shot: drawing.as_shot,
             output: proof,
             geometry: self.geometry.get(),
             window,
-            surround_window: None,
             canvas: Some(shown),
-            // An sRGB proof's. A print scene's own operator reaches the draw through
-            // `draw_with_print`, which overrides this for the pigment it grades.
-            print_tone: proofed_tone,
+            // An sRGB proof's. A print scene's own reaches the draw through `draw_with_print`,
+            // which overrides this for the pigment it grades.
+            intent: proofed_intent,
+            ..crate::gpu::Grade::new(width, height, drawing.levels, drawing.reference_nits, proofed(drawing.peak_nits))
         };
         // **Before the draw, and every tick.** The peak is measured *after* the exposure
         // (`peak.slang`), so it is not a property of the photograph the way the levels are: read
@@ -1980,6 +1950,7 @@ impl HeldRaw {
         if grade.colour.is_some() && matches!(reading, Reading::Frame) {
             drawing.uploaded.peak_from_candidates(&grade);
         }
+        uploaded.set_printer(self.printer.borrow().clone());
         crate::gpu::present(uploaded, stage, &grade, &drawing.pyramid, print.as_ref());
         refused()
     }

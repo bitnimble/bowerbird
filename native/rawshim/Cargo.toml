@@ -160,6 +160,7 @@ rust_h265 = "0.1.0"
 # looking at: it holds sixteen bits happily and has no way to signal HDR that anything reads,
 # so `schemas/export.ts` marks it SDR whatever the reader asks for.
 tiff = "0.11.3"
+moxcms = "0.9.1"
 
 # The resize is single-threaded (no `rayon` feature) - it is already milliseconds, and the
 # callers sit inside their own parallelism. libavif and libjxl are linked on top, through

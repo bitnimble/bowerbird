@@ -53,6 +53,7 @@ export class RenderTargets {
         preset: settings.hdr_preset,
         stillFullChroma: true,
         sdrFullChroma: true,
+        intent: options.renderingIntent,
       },
       // Named `max` like the export it rides with, and second: `runOneOff` stamps by the
       // first target of a name, so the photograph's own rendition stamps read the export's
@@ -71,6 +72,7 @@ export class RenderTargets {
             preset: settings.hdr_preset,
             stillFullChroma: false,
             sdrFullChroma: false,
+            intent: options.renderingIntent,
           },
         ]),
     ];

@@ -5,8 +5,8 @@ import prelude;
 import print_glass;
 import print_environment;
 
-struct Softbox { float4 shape; float4 temperature; };
-[vk::binding(0, 0)] ConstantBuffer<Softbox> light;
+struct Lamp { float4 shape; float4 temperature; };
+[vk::binding(0, 0)] ConstantBuffer<Lamp> light;
 [vk::binding(1, 0)] RWStructuredBuffer<float> calibration;
 groupshared float2 partial[64];
 groupshared float room_partial[64 * 9];
@@ -19,13 +19,13 @@ static const uint ROOM_UP = 128;
 void calibrate(uint lane : SV_GroupIndex)
 {
     room_harmonics(lane);
-    let half_shape = float2(light.shape.x, light.shape.x / SOFTBOX_ASPECT);
+    let radius = light.shape.x;
     var sum = float2(0.0);
     for (uint i = lane; i < 16384; i += 64) {
         let at = (float2(i % 128, i / 128) + 0.5) / 64.0 - 1.0;
-        let offset = at * half_shape;
+        let offset = at * radius;
         let distance_squared = 1.0 + dot(offset, offset);
-        let weight = softbox_profile(at) / (distance_squared * distance_squared);
+        let weight = lamp_profile(at) / (distance_squared * distance_squared);
         let incident = max(dot(light.shape.yzw, float3(offset, 1.0)), 0.0);
         sum += weight * float2(1.0, incident);
     }
@@ -36,7 +36,7 @@ void calibrate(uint lane : SV_GroupIndex)
         GroupMemoryBarrierWithGroupSync();
     }
     if (lane == 0) {
-        calibration[0] = 16384.0 / (4.0 * half_shape.x * half_shape.y * partial[0].x);
+        calibration[0] = 16384.0 / (4.0 * radius * radius * partial[0].x);
         calibration[1] = partial[0].y / partial[0].x;
         let xyz = xyz_of(xy_of(light.temperature.x, 0.0));
         let colour = mul(CONE_TO_R2020, mul(XYZ_TO_CONE, xyz));

@@ -17,10 +17,10 @@ void emitter(uint3 group : SV_GroupID)
     let at = probes[group.x].material.xy;
     let distance = exactly<PrintUnit>(print.surface.x);
     let half_width = exactly<PrintUnit>(print.surface.y);
-    let direction = normalize(float3(at.x * half_width.d, at.y * half_width.d / SOFTBOX_ASPECT, distance.d));
-    let hit = softbox_hit(float3(0.0), direction, float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), distance, half_width);
+    let direction = normalize(float3(at * half_width.d, distance.d));
+    let hit = lamp_hit(float3(0.0), direction, float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), distance, half_width);
     let radiance = print.illumination.x * print_light_calibration[0];
-    results[group.x * 2] = float4(radiance * softbox_profile(at), softbox_profile(hit.yz), hit.x, radiance);
+    results[group.x * 2] = float4(radiance * lamp_profile(at), lamp_profile(hit.yz), hit.x, radiance);
     results[group.x * 2 + 1] = float4(0.0);
 }
 
@@ -81,10 +81,10 @@ void lighting(uint3 group : SV_GroupID)
     let value = reflected_print_samples(float3(probe.material.z), hit, probe.material.x, uint(probe.material.w));
     let distance = exactly<PrintUnit>(print.surface.x);
     let half_width = exactly<PrintUnit>(print.surface.y);
-    let emitter = softbox_hit(hit.position, float3(0.0, 0.0, 1.0),
+    let emitter = lamp_hit(hit.position, float3(0.0, 0.0, 1.0),
         float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), distance, half_width);
     results[group.x * 2] = float4(value.v, emitter.x);
-    results[group.x * 2 + 1] = float4(paper_roughness(hit.position, float2(0.0)),
-        paper_roughness(hit.position, float2(1.0)),
+    results[group.x * 2 + 1] = float4(paper_texture(hit.position, float2(0.0)).slope.x,
+        paper_texture(hit.position, float2(1.0)).roughness,
         paper_hit(float2(64.0, 48.0), float2(128.0, 96.0), float2(300.0, 200.0)).position.z * print.surface.z, 0.0);
 }

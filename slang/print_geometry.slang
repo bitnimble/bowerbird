@@ -91,6 +91,14 @@ float3 paper_ray(float2 pixel, float2 canvas, float focal)
     return paper_inverse(normalize(float3(at.x, -at.y, -focal)));
 }
 
+/// The canvas pixel [`paper_ray`] sends along `direction`, which has to lie ahead of the camera.
+public float2 paper_pixel(float3 direction, float2 canvas, float focal)
+{
+    let world = paper_rotation(direction);
+    let at = float2(world.x, -world.y) * (focal / -world.z);
+    return (at + print.view.yz) * min(canvas.x, canvas.y) + canvas * 0.5;
+}
+
 public struct PrintHit {
     public bool hit;
     public float coverage;

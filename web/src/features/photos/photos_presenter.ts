@@ -39,7 +39,7 @@ import type { ListingStore } from './grid/listing_store';
 import type { MarksStore } from './grid/marks_store';
 import type { StacksStore } from './grid/stacks_store';
 import type { ViewerStore } from './viewer/viewer_store';
-import type { Tonemap } from '../raw_edit/print/print_scene';
+import type { FileRenderingIntent } from '../../../../src/schemas/rendering_intent';
 
 // Blocks of rows kept in memory at once. A scroll through a hundred thousand
 // photos would otherwise accumulate every row it passed; two and a half thousand
@@ -469,8 +469,8 @@ export class PhotosPresenter {
     this.viewerPresenter.chooseProof(proof);
   };
 
-  chooseProofTone = (tone: Tonemap): void => {
-    this.viewerPresenter.chooseProofTone(tone);
+  chooseProofIntent = (intent: FileRenderingIntent): void => {
+    this.viewerPresenter.chooseProofIntent(intent);
   };
 
   /** Put a photo at the start of the viewport, named by its position in the collection. */

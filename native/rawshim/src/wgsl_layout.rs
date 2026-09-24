@@ -63,7 +63,7 @@ mod tests {
         let cases: Vec<(&str, &str, String, usize)> = vec![
             (
                 "print_light_calibrate.wgsl",
-                "Softbox",
+                "Lamp",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl")).to_string(),
                 crate::print::light_uniform(crate::print::Scene::default().light_parameters(), 6500.0).len(),
             ),

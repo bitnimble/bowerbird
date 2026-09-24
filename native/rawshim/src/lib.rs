@@ -157,6 +157,7 @@ pub mod galosh;
 pub mod pmrid;
 pub mod gpu;
 pub mod print;
+pub mod printer_gamut;
 pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;

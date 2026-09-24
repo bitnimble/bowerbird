@@ -117,7 +117,7 @@ describe('print viewing', () => {
     editor.presenter.print.resetControl('roughness');
     editor.presenter.print.resetControl('keyLux');
     editor.presenter.print.resetControl('lightForward');
-    expect(editor.print.scene).toMatchObject({ paper: 'gloss', roughness: 0.08, keyLux: 1000, lightForward: 1.7 });
+    expect(editor.print.scene).toMatchObject({ paper: 'gloss', roughness: 0.16, keyLux: 1000, lightForward: 1.7 });
   });
 
   test('choosing a paper replaces every material control a reader moved, and leaves the rest', () => {
@@ -127,7 +127,7 @@ describe('print viewing', () => {
     editor.presenter.print.setControl('keyLux', 2500);
     editor.presenter.print.setPaper('matte');
     expect(editor.print.scene).toMatchObject({
-      paper: 'matte', refractiveIndex: 1.5, surfaceTexture: 0.85, roughness: 0.65, keyLux: 2500,
+      paper: 'matte', refractiveIndex: 1.5, surfaceTexture: 0, roughness: 0.84, keyLux: 2500,
     });
   });
 
@@ -235,8 +235,8 @@ describe('print viewing', () => {
     editor.presenter.print.setControl('lightTemperatureKelvin', 2700);
     await drawnBy(editor);
     expect(editor.decoder.print).toMatchObject({
-      paper: 'matte', roughness: 0.65, keyLux: 2340, refractiveIndex: 1.46,
-      lightForward: 2.5, paperLongEdgeMm: 420, surfaceTexture: 0.85, lightTemperatureKelvin: 2700,
+      paper: 'matte', roughness: 0.84, keyLux: 2340, refractiveIndex: 1.46,
+      lightForward: 2.5, paperLongEdgeMm: 420, surfaceTexture: 0, lightTemperatureKelvin: 2700,
     });
     expect(JSON.stringify(editor.edit.doc)).toBe(doc);
   });
@@ -304,7 +304,7 @@ describe('print viewing', () => {
     editor.presenter.setSoftProof('print');
     await drawnBy(editor);
     expect(editor.decoder.print?.presentation).toBe('flat');
-    expect(editor.decoder.proof).toEqual({ output: 'hdr', tone: 'neutral', displayHdr: false });
+    expect(editor.decoder.proof).toEqual({ output: 'hdr', intent: 'perceptual', displayHdr: false });
     expect(editor.decoder.stage).toEqual(photo);
     editor.presenter.print.beginDrag(1, 100, 100, 200);
     expect(editor.print.dragging).toBe(false);
@@ -324,11 +324,11 @@ describe('print viewing', () => {
     expect(editor.stage.softProof).toBe('srgb');
   });
 
-  test('an sRGB proof carries the operator its highlights are fitted with, and no print', async () => {
+  test('an sRGB proof carries its rendering intent, and no print', async () => {
     editor.presenter.setSoftProof('srgb');
-    editor.presenter.print.setTonemap('filmic');
+    editor.presenter.print.setRenderingIntent('relativeColorimetric');
     await drawnBy(editor);
-    expect(editor.decoder.proof).toEqual({ output: 'srgb', tone: 'filmic', displayHdr: false });
+    expect(editor.decoder.proof).toEqual({ output: 'srgb', intent: 'relativeColorimetric', displayHdr: false });
     expect(editor.decoder.print).toBeNull();
   });
 
@@ -350,7 +350,7 @@ describe('print viewing', () => {
     editor.presenter.print.panBy(0.1, 0.05);
     editor.presenter.print.resetView();
     expect(editor.print.scene).toMatchObject({
-      paper: 'gloss', roughness: 0.08, fillLux: 40, yawDegrees: -12, pitchDegrees: 8,
+      paper: 'gloss', roughness: 0.16, fillLux: 40, yawDegrees: -12, pitchDegrees: 8,
       zoom: 1, panX: 0, panY: 0,
     });
   });
@@ -376,5 +376,48 @@ describe('print viewing', () => {
     editor.presenter.print.zoomAt(4, { x: 0.3, y: -0.2 });
     editor.presenter.print.panBy(0.5, 0.5);
     expect(editor.print.scene).toMatchObject({ zoom: 1, panX: 0, panY: 0 });
+  });
+});
+
+describe('the printer', () => {
+  test('opening a print lists the printer profiles, and a chosen one reaches the module once', async () => {
+    editor.presenter.setSoftProof('print');
+    await Promise.resolve();
+    expect(editor.print.printerProfiles).toEqual(['Satin PRO-200.icc']);
+
+    await editor.presenter.print.setPrinterProfile('Satin PRO-200.icc');
+    await drawnBy(editor);
+    expect(new TextDecoder().decode(editor.decoder.printerProfile ?? new Uint8Array())).toBe('Satin PRO-200.icc');
+    editor.presenter.print.setRenderingIntent('perceptual');
+    editor.presenter.print.setBlackPointCompensation(false);
+    await drawnBy(editor);
+    expect(editor.decoder.printerProfileSends).toBe(1);
+    expect(editor.decoder.print).toMatchObject({ renderingIntent: 'perceptual', blackPointCompensation: false });
+
+    await editor.presenter.print.setPrinterProfile(null);
+    await drawnBy(editor);
+    expect(editor.decoder.printerProfile).toBeNull();
+    expect(editor.decoder.printerProfileSends).toBe(2);
+  });
+
+  test('a profile chosen and then replaced before it arrived is not the one kept', async () => {
+    const first = editor.presenter.print.setPrinterProfile('Satin PRO-200.icc');
+    await editor.presenter.print.setPrinterProfile(null);
+    await first;
+    expect(editor.print.printerProfile).toBeNull();
+  });
+
+  test('an ink spreads by the paper it lands on, and the printer resolution is its own', () => {
+    editor.presenter.setSoftProof('print');
+    editor.presenter.print.setControl('printResolutionPpi', 300);
+    editor.presenter.print.setInk('pigment');
+    expect(editor.print.scene).toMatchObject({ ink: 'pigment', inkSpreadMicrons: 50, printResolutionPpi: 300 });
+    editor.presenter.print.setPaper('matte');
+    expect(editor.print.scene.inkSpreadMicrons).toBe(35);
+    editor.presenter.print.setControl('inkSpreadMicrons', 60);
+    editor.presenter.print.resetControl('inkSpreadMicrons');
+    expect(editor.print.scene.inkSpreadMicrons).toBe(35);
+    editor.presenter.print.setControl('inkSpreadMicrons', 500);
+    expect(editor.print.scene.inkSpreadMicrons).toBe(35);
   });
 });

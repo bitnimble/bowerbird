@@ -8,6 +8,7 @@ import { KeystoneStore } from '../../keystone/keystone_store';
 import type { LocalPrepare, LocalTileRequest, TileKeep } from '../../local_decode/local_open';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
+import type { PrinterProfileSource } from '../../print/print_presenter';
 import { PrintStore } from '../../print/print_store';
 import type { PrintScene } from '../../print/print_scene';
 import { StageStore } from '../stage_store';
@@ -48,6 +49,9 @@ export class FakeDecoder {
    */
   stage = { width: 300, height: 150 };
   print: PrintScene | null = null;
+  /** The printer profile held, and how many times one was handed over. */
+  printerProfile: Uint8Array<ArrayBuffer> | null = null;
+  printerProfileSends = 0;
 
   /**
    * Every frame asked for: the window it read, the picture that window is on, and the canvas
@@ -83,12 +87,17 @@ export class FakeDecoder {
     geometry: EditGeometry | null;
     proof: Proof | null;
     print: PrintScene | null;
+    printerProfile?: Uint8Array<ArrayBuffer> | null;
     stage: { width: number; height: number } | null;
   }): Promise<void> {
     if (tick.adjust != null) this.adjust = tick.adjust;
     if (tick.geometry != null) this.geometry = tick.geometry;
     if (tick.proof != null) this.proof = tick.proof;
     this.print = tick.print;
+    if (tick.printerProfile !== undefined) {
+      this.printerProfile = tick.printerProfile;
+      this.printerProfileSends += 1;
+    }
     if (tick.stage != null) this.stage = tick.stage;
     if (tick.drawStage && tick.region != null && this.geometry != null) {
       this.exposure = tick.ev;
@@ -332,6 +341,12 @@ export type Editor = {
   decoder: FakeDecoder;
 };
 
+/** A folder holding one printer profile, whose bytes are its name's. */
+export const PRINTER_PROFILES: PrinterProfileSource = {
+  list: () => Promise.resolve(['Satin PRO-200.icc']),
+  bytes: (name) => Promise.resolve(new Uint8Array(new TextEncoder().encode(name))),
+};
+
 /** The frames asked for and not yet run. Drained by `runFrames`, which is the display's job. */
 let frames: FrameRequestCallback[] = [];
 
@@ -371,7 +386,7 @@ export function openEditor(): Editor {
     repair,
     loupe,
     print,
-    presenter: new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print),
+    presenter: new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print, PRINTER_PROFILES),
     decoder: new FakeDecoder(keystone),
   };
   // The presenter builds all of this when a photo opens, which needs a worker holding the RAW

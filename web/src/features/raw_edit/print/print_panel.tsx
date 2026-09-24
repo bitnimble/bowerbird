@@ -8,10 +8,13 @@ import { Select } from '../../../ui/select';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
 import type { Option } from '../../../ui/option';
+import { FileRenderingIntentSchema, fileIntentOf, RenderingIntentSchema } from '../../../../../src/schemas/rendering_intent';
 import { EditControl } from '../edit_control';
+import { IntentChoice } from '../proof/intent_choice';
+import { SoftProofMenuStrings } from '../proof/soft_proof_menu.strings';
 import { styles as rows } from '../raw_edit_panel.stylex';
 import { PrintPanelStrings as strings } from './print_panel.strings';
-import { LAMP_REACH, restingValue, type Paper, type PrintControl, type Tonemap } from './print_scene';
+import { LAMP_REACH, restingValue, type Ink, type Paper, type PrintControl } from './print_scene';
 import type { PrintStore } from './print_store';
 import type { PrintPresenter } from './print_presenter';
 
@@ -25,12 +28,13 @@ const PAPERS: Option<Paper>[] = [
   { value: 'matte', label: strings.matte() },
 ];
 
-const TONEMAPS: Option<Tonemap>[] = [
-  { value: 'neutral', label: strings.neutral() },
-  { value: 'filmic', label: strings.filmic() },
-  { value: 'channel', label: strings.channel() },
-  { value: 'local', label: strings.local() },
+const INK_OPTIONS: Option<Ink>[] = [
+  { value: 'dye', label: strings.dye() },
+  { value: 'pigment', label: strings.pigment() },
 ];
+
+/** Not a name the profile listing can hold: every profile it lists ends in `.icc` or `.icm`. */
+const GENERIC_PAPER = 'generic';
 
 type Control = {
   key: PrintControl;
@@ -38,7 +42,7 @@ type Control = {
   max: number;
   step: number;
   format: (value: number) => string;
-  /** Slide in decades instead of degrees, so a lamp and a softbox both get a usable stretch of track. */
+  /** Slide in decades instead of degrees, so a pinpoint lamp and a broad one both get a usable stretch of track. */
   log?: true;
 };
 
@@ -53,6 +57,10 @@ const PAPER: Control[] = [
   { key: 'refractiveIndex', min: 1, max: 2, step: 0.01, format: strings.roughnessValue },
   { key: 'whiteReflectance', min: 0.5, max: 0.99, step: 0.01, format: strings.percent },
   { key: 'blackReflectance', min: 0.001, max: 0.2, step: 0.001, format: strings.percent },
+];
+const PRINTER: Control[] = [
+  { key: 'printResolutionPpi', min: 72, max: 1200, step: 1, format: strings.ppi },
+  { key: 'inkSpreadMicrons', min: 0, max: 200, step: 1, format: strings.micrometres },
 ];
 const LIGHT: Control[] = [
   { key: 'keyLux', min: 0, max: 10000, step: 10, format: strings.lux },
@@ -70,31 +78,7 @@ const ROTATION: Control[] = [
 /** What a flat print is still made of, with no light to catch a surface. */
 const FLAT_PAPER = new Set<PrintControl>(['whiteReflectance', 'blackReflectance']);
 
-export type PrintSection = 'paper' | 'lighting' | 'orientation' | 'tone';
-
-/**
- * Which operator fits the highlights under white. `regional` is false where there is no
- * neighbourhood to dodge by - a rendition decoded in the page rather than graded from the RAW.
- */
-export function TonemapChoice({ value, onChange, regional = true }: {
-  value: Tonemap;
-  onChange: (tonemap: Tonemap) => void;
-  regional?: boolean;
-}): JSX.Element {
-  return (
-    <div {...stylex.props(rows.control)}>
-      <div {...stylex.props(rows.head, rows.headAboveSelect)}>
-        <Text as="span" style={rows.name}>{strings.tonemap()}</Text>
-      </div>
-      <Select
-        label={strings.tonemap()}
-        options={regional ? TONEMAPS : TONEMAPS.filter((option) => option.value !== 'local')}
-        value={value}
-        onChange={onChange}
-      />
-    </div>
-  );
-}
+export type PrintSection = 'paper' | 'printer' | 'lighting' | 'orientation' | 'srgb';
 
 export const PrintPanel = observer(function PrintPanel({ store, presenter, disabled, section }: {
   store: PrintStore;
@@ -102,15 +86,17 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
   disabled: boolean;
   section: PrintSection;
 }): JSX.Element {
+  const profiled = store.printerProfile != null;
   const controls = (specs: Control[]): JSX.Element[] => specs.map((spec) => {
     const value = store.scene[spec.key];
-    const resting = restingValue(store.scene.paper, spec.key);
+    const resting = restingValue(store.scene, spec.key);
+    const locked = disabled || (profiled && FLAT_PAPER.has(spec.key));
     return (
       <EditControl
         key={spec.key}
         label={strings[spec.key]()}
         value={spec.format(value)}
-        reset={disabled || value === resting ? null : () => presenter.resetControl(spec.key)}
+        reset={locked || value === resting ? null : () => presenter.resetControl(spec.key)}
       >
         <Slider
           label={strings[spec.key]()}
@@ -121,22 +107,58 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
           step={spec.step}
           snap={[decades(spec, resting)]}
           onChange={(next) => presenter.setControl(spec.key, degrees(spec, next))}
-          disabled={disabled}
+          disabled={locked}
           style={rows.slider}
         />
       </EditControl>
     );
   });
 
-  const tonemap = <TonemapChoice value={store.scene.tonemap} onChange={presenter.setTonemap} />;
-
-  if (section === 'tone') return <Panel title={strings.highlights()} style={styles.group}>{tonemap}</Panel>;
+  if (section === 'srgb') {
+    return <Panel title={SoftProofMenuStrings.srgb()} style={styles.group}>
+      <IntentChoice
+        value={fileIntentOf(store.scene.renderingIntent)}
+        onChange={presenter.setRenderingIntent}
+        intents={FileRenderingIntentSchema.options}
+      />
+    </Panel>;
+  }
   if (section === 'lighting') return <Panel title={strings.lighting()} style={styles.group}>{controls(LIGHT)}</Panel>;
+  if (section === 'printer') {
+    const profiles: Option<string>[] = [
+      { value: GENERIC_PAPER, label: strings.genericPaper() },
+      ...store.printerProfiles.map((name) => ({ value: name, label: name })),
+    ];
+    return <Panel title={strings.printer()} style={styles.group}>
+      <Select
+        label={strings.printerProfile()}
+        options={profiles}
+        value={store.printerProfile?.name ?? GENERIC_PAPER}
+        onChange={(name) => void presenter.setPrinterProfile(name === GENERIC_PAPER ? null : name)}
+      />
+      <IntentChoice
+        value={store.scene.renderingIntent}
+        onChange={presenter.setRenderingIntent}
+        intents={RenderingIntentSchema.options}
+      />
+      {store.scene.renderingIntent === 'relativeColorimetric' && <CheckLabel>
+        <input
+          type="checkbox"
+          {...stylex.props(focusRing.ring)}
+          checked={store.scene.blackPointCompensation}
+          disabled={disabled}
+          onChange={(event) => presenter.setBlackPointCompensation(event.currentTarget.checked)}
+        />
+        <Text as="span">{strings.blackPointCompensation()}</Text>
+      </CheckLabel>}
+      <Select label={strings.ink()} options={INK_OPTIONS} value={store.scene.ink} onChange={presenter.setInk} />
+      {controls(PRINTER)}
+    </Panel>;
+  }
   if (section === 'paper') {
     return <Panel title={strings.paper()} style={styles.group}>
       <Select label={strings.paper()} options={PAPERS} value={store.scene.paper} onChange={presenter.setPaper} />
-      {tonemap}
-      <Text as="p" variant="muted">{strings.simulation()}</Text>
+      <Text as="p" variant="muted">{profiled ? strings.profileSetsPaper() : strings.simulation()}</Text>
       {!store.flat && <CheckLabel>
         <input
           type="checkbox"

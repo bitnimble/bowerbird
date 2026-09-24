@@ -149,14 +149,14 @@ What the stage is proofed as is one choice, the `Soft proof` menu in the header 
 between the zoom and the overflow menu, in the viewer between the triage buttons and the
 filmstrip. Rec.2020 PQ HDR is the default and is withheld from a rendition with no HDR in it; sRGB
 is always offered and is what an SDR rendition already shows; the two printed media proofs are
-always offered. Choosing one adds its panels under the edit panels: sRGB the highlights operator,
-`Printed media` the paper, `Printed media (3D)` the paper, lighting and orientation. The editor
-sends sRGB to the worker as an output and an operator, and the module fits the frame's highlights
-into sRGB white with the same operators a print uses (`print_tone.slang`). The viewer has no
-module, so an HDR rendition proofed as sRGB is fitted in `stage.slang` on the client, against the
-rendition's own headroom; a print proof from the viewer opens the photograph's `/mockup`, which
+always offered. Choosing one adds its panels under the edit panels: sRGB the rendering intent,
+`Printed media` the paper and printer, `Printed media (3D)` those and lighting and orientation.
+The editor sends sRGB to the worker as an output and an intent, and the module fits the frame into
+sRGB with the same operator a print, an SDR rendition and an SDR export use (`gamut_map.slang`).
+The viewer has no module, so an HDR rendition proofed as sRGB is fitted in `stage.slang` on the
+client, through that operator, against the rendition's own headroom; a print proof from the viewer opens the photograph's `/mockup`, which
 builds the editor's session for it and saves nothing, and choosing an HDR or sRGB proof there or
-pressing Escape returns to the photograph. The mockup draws the full rendition rather than the RAW:
+pressing Escape returns to the photograph. The mockup draws the max rendition rather than the RAW:
 every edit is already in it, so the page asks for it to be built or fetched where it is missing or
 behind the edits, downloads the file, and decodes it with WebCodecs' `ImageDecoder` in the worker.
 The module has no AV1 decoder (`decode_rendered::av1`), so what it takes is the planes `copyTo`
@@ -178,27 +178,24 @@ reflectance under diffuse white, straight onto the ordinary stage (`fs_print_fla
 room or light to integrate, so it costs what the ordinary grade does and every editing tool works
 over it. `Printed media (3D)` draws a suspended sheet with the same worker and HDR canvas through
 the shared Slang renderer, and closes the tools that draw over the photograph. The photo
-is graded to a bounded print reflectance before illumination, with smooth chroma compression
-into the generic sRGB paper gamut that preserves luminance and neutral whites. Highlights past
-what paper can hold are fitted into it by one of three operators the paper panel selects. Neutral
-rolls the max channel off from a knee under white, so ratios and hue survive. Filmic is a film
-stock over the whole range - grey held, the scene's peak landed on paper white, a contrast of 1.4
-between a toe and a shoulder - and bleaches towards luminance through the shoulder. Per channel
-clips each channel at paper white with no shoulder, the way a printer driver meets its ink limit.
-By region dodges: the edge-aware neighbourhood the presence sliders read says how bright each
-region is, regions over a stop under white are brought down along a curve that lands the frame's
-own top on white, and a shoulder then takes what their detail carries past it. The three curves
-are one mapping over the frame, and one that holds grey has about half a stop of paper for the
-three stops a daylight frame keeps over its white - diffuse white is the 90th percentile by
-default, so that is a tenth of the picture. Dodging spends the compression between regions
-rather than inside them, which is what keeps a sky's texture. Every operator is handed the light
-before any roll-off, the neutral arm included, whose own roll into the display is the neutral
-operator's job here.
-**Each has to differ on a photograph whose highlights are simply blown**, because that is the
-photograph a reader picks to compare them, and a blown highlight is neutral - every channel clipped
-alike. Operators that differ only in what they do to a highlight's *colour* above the knee were
-pixel-identical there: the same curve on three equal numbers is the same curve. Measured under a
-blown patch, the same tone reads 118 nits neutral, 106 filmic and 131 per channel.
+is graded to a bounded print reflectance before illumination.
+
+**One operator takes HDR or SDR into any smaller gamut, and the rendering intent is its only
+setting.** `gamut_map.slang` is handed the graded light before any roll into a display and does
+three things. Luminance: perceptual rolls the scene's peak into white along BT.2390's curve, the
+colorimetric intents leave it where it is, so a highlight past white clips. Gamut: at constant
+Rec.2020 luma, chroma past what the target holds at that luma and hue is compressed from 0.9 of the
+limit (perceptual) or cut at it (colorimetric). Black: perceptual lifts the frame onto the target's
+black, relative does so with black point compensation and otherwise floors at it. Absolute maps in
+the medium's own white and lays the paper's tint over the result. The target is an interface, so
+sRGB and generic paper are the cube in closed form, and a printer profile is a table of its maximum
+chroma over 64 hues and 32 lumas. A profile is read into that table with moxcms each time one is
+picked - its device grid through the profile's relative transform into linear Rec.2020, binned by
+hue and luma - which costs 6ms for a CMYK printer, so nothing is cached. The same pass reads the
+profile's paper white and black, which then take over the paper panel's two reflectances.
+A file written in sRGB has no paper, so an export and a proof offer perceptual and relative and not
+absolute. What a vendor's own perceptual table does is not reproduced: it is built for SDR input,
+and one operator for both ranges is the point.
 Surface reflections can exceed diffuse white. Dragging or arrow keys rotate the sheet, the wheel
 lengthens the camera's focal length about whatever sits under the pointer and the middle button
 drags the view across, and Home or a double-click puts all three back. Zoom is the focal length
@@ -211,8 +208,9 @@ every slider carries the editor's reset arrow and double-click back to its rest 
 control, the chosen paper's own value, which is also what choosing a paper puts every material
 control back to. The mockup is the viewer's own screen, so a sidebar the viewer hides stays hidden
 under it.
-The camera rays intersect a slightly bowed sheet, lit by a finite softbox whose illuminance is specified at
-the print centre facing the light. Its diffuser has a smooth spatial radiance profile, shared by
+The camera rays intersect a slightly bowed sheet, lit by a round ceiling downlight whose illuminance is
+specified at the print centre facing the light. Its opal diffuser is flat through the middle and
+falls to nothing at the rim (`1 - r^4`), a radiance profile shared by
 light samples and reflected rays. Surface reflection uses dielectric Fresnel and GGX; its
 GPU-tabulated directional albedo couples it to the diffuse body through the reciprocal
 [OpenPBR glossy-diffuse model](https://academysoftwarefoundation.github.io/OpenPBR/).
@@ -276,7 +274,7 @@ its angle: across, up and forward from the sheet's centre in print lengths, by d
 1.7 forward, which is over the reader's head rather than over the sheet. Angles alone left the
 one question a reader asks of a room light - is it behind me or in front of the picture - with no
 control of its own. The source spans a tenth of a degree to ninety, slid
-in decades so a lamp and a softbox each get a usable stretch of track. Below about a degree the
+in decades so a pinpoint lamp and a broad one each get a usable stretch of track. Below about a degree the
 highlight stops following the source: the paper's own roughness is wider than the lamp, and the
 roughness control is what narrows it from there. The light temperature
 uses the same Robertson chromaticity model as white balance. Gloss reflects the room through its
@@ -311,16 +309,16 @@ four corner tests rather than a ray-box test per emitter sample, since the hole 
 the emitter.
 **What the print costs is the emitter's integral, and it is paid per canvas pixel on the desktop
 path and per field texel on the touch one.** Four things keep it in proportion. The emitter is
-sampled against how much of the sky it covers, from 64 for a lamp to 128 for a softbox, since a
+sampled against how much of the sky it covers, from 64 for a small lamp to 128 for a broad one, since a
 source a degree across hardly varies over its own solid angle. Sampling the lobe as well is dropped
 where the emitter is the smaller of the two: balance-weighted MIS is unbiased either way, and the
 lobe's strategy finds a one-degree lamp once in a hundred tries for a hundred times the value, which
 is variance and not signal - held against a thousand-sample render, the pair costs a third of the
 frame and lands closer than the old estimator did.
-The third is that those counts are the *specular's*. Under a hundredth of a steradian - a lamp, not
-a softbox - every geometric factor is constant across the emitter's face, so the diffuse half of
-the same pixel is the diffuser's mean radiance times one cosine, in closed form, at one evaluation
-rather than sixty-four. A near softbox varies its own inverse square over its face by a quarter and
+The third is that those counts are the *specular's*. Under a hundredth of a steradian - a small
+lamp, not a broad one - every geometric factor is constant across the emitter's face, so the diffuse
+half of the same pixel is the diffuser's mean radiance times one cosine, in closed form, at one
+evaluation rather than sixty-four. A near, broad lamp varies its own inverse square over its face by a quarter and
 pays the full count; so does a penumbra, where the face is what the softness is made of, and the
 four corner tests already say which pixels those are. The fourth is that a gloss sheet's specular is
 zero wherever the lobe reflected towards the reader misses the lamp by more than its own reach,
@@ -336,9 +334,9 @@ no ray-tracing API, and the editor and a rendition are one implementation of the
 And the scene path's canvas is one pixel per
 device pixel rather than supersampled, the photograph arriving there through the pyramid's
 anisotropic taps and every edge carrying its own subpixel coverage, so the 2.25x bought nothing.
-The mockup also opens the full rendition where the editor takes the whole sensor: a 61MP frame is
-366MB of samples and 650MB of pyramid to draw a sheet two thousand pixels across, and the mockup has
-no loupe to spend it on. The sheet's fragment shaders are also the longest thing here
+The mockup opens the max rendition, the sensor's own size with every edit in it, because its zoom
+reaches eight times the sheet and a 3840px rendition runs out of pixels well before that. The
+sheet's fragment shaders are also the longest thing here
 to compile, and a pipeline is built synchronously on the browser's GPU thread, where it blocks
 every page the browser is drawing - so `pipeline_warmth.ts` hands wgpu a stand-in for each one and
 builds it at the pass that sets it, leaving an editor open that never shows a print compiling none

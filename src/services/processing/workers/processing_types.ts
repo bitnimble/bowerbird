@@ -3,6 +3,7 @@ import type { DustSettings } from '../../../schemas/dust_settings';
 import type { CompositeWant, JobAdjust, JobGeometry } from '../../../schemas/jobs';
 import type { Denoiser, Repair } from '../../../schemas/photo_edits';
 import type { CameraMatch } from '../../../schemas/render_stages';
+import type { FileRenderingIntent } from '../../../schemas/rendering_intent';
 import type { Rendition } from '../renditions/renditions';
 
 export type { RenditionSource };
@@ -52,6 +53,8 @@ export interface RenditionTarget {
   stillFullChroma: boolean;
   /** The same for the SDR renditions (§10.1). Separate setting, separate scale. */
   sdrFullChroma: boolean;
+  /** How an SDR target reaches sRGB's gamut; perceptual where absent. */
+  intent?: FileRenderingIntent;
 }
 
 /**

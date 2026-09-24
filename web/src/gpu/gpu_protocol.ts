@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { CanvasSchema, OpenAskSchema, OpenStageSchema, PairSchema } from '../features/raw_edit/local_decode/local_open';
-import { TonemapSchema } from '../features/raw_edit/print/print_scene';
+import { FileRenderingIntentSchema } from '../../../src/schemas/rendering_intent';
 
 // `typeof` first: bun's test runtime has neither.
 const FrameSchema = z.custom<VideoFrame>((value) => typeof VideoFrame === 'function' && value instanceof VideoFrame);
@@ -29,7 +29,7 @@ export const StageAskSchema = z.discriminatedUnion('kind', [
     picture: z.union([FrameSchema, BitmapSchema]),
     region: RegionSchema.nullable(),
     rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
-    proof: TonemapSchema.nullable(),
+    proof: FileRenderingIntentSchema.nullable(),
     headroom: z.number(),
     sourcePeak: z.number(),
   }),

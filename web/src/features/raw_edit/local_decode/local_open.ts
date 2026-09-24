@@ -218,6 +218,8 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
     geometry: JsonSchema.nullable(),
     proof: ProofSchema.nullable(),
     print: PrintSceneSchema.nullable(),
+    /** The ICC profile a print is proofed through, sent only when it changes: absent keeps the last. */
+    printerProfile: BytesSchema.nullable().optional(),
     /**
      * The backing store the stage wants, applied before the draw that reads it.
      *

@@ -1,17 +1,18 @@
 import { z } from 'zod';
+import { RenderingIntentSchema } from '../../../../../src/schemas/rendering_intent';
 
 export const LAMP_REACH = 10;
 const LAMP_NEAREST = 1;
 
 const lampAxis = z.number().min(-LAMP_REACH).max(LAMP_REACH);
 
-/** How highlights are fitted under a white that cannot go higher: paper's, or an sRGB proof's. */
-export const TonemapSchema = z.enum(['neutral', 'filmic', 'channel', 'local']);
-export type Tonemap = z.infer<typeof TonemapSchema>;
-
 export const PrintSceneSchema = z.object({
   paper: z.enum(['gloss', 'satin', 'matte']),
-  tonemap: TonemapSchema,
+  renderingIntent: RenderingIntentSchema.default('perceptual'),
+  blackPointCompensation: z.boolean().default(true),
+  ink: z.enum(['dye', 'pigment']).default('dye'),
+  printResolutionPpi: z.number().min(72).max(1200),
+  inkSpreadMicrons: z.number().min(0).max(200),
   presentation: z.enum(['scene', 'surface', 'flat']),
   framed: z.boolean().default(false),
   yawDegrees: z.number().min(-180).max(180),
@@ -40,9 +41,10 @@ export const PrintSceneSchema = z.object({
 export type PrintScene = z.infer<typeof PrintSceneSchema>;
 export type Paper = PrintScene['paper'];
 export type Presentation = PrintScene['presentation'];
+export type Ink = PrintScene['ink'];
 export type PrintControl = Exclude<
   keyof PrintScene,
-  'paper' | 'tonemap' | 'presentation' | 'framed' | 'zoom' | 'panX' | 'panY'
+  'paper' | 'renderingIntent' | 'blackPointCompensation' | 'ink' | 'presentation' | 'framed' | 'zoom' | 'panX' | 'panY'
 >;
 
 export const PRINT_ZOOM_RANGE = { min: 1, max: 8 };
@@ -56,14 +58,27 @@ export function printDisplaySize(photo: { width: number; height: number }, frame
 }
 
 export const PAPER_MATERIALS = {
-  gloss: { roughness: 0.08, whiteReflectance: 0.92, blackReflectance: 0.004, surfaceTexture: 0.15, refractiveIndex: 1.5 },
-  satin: { roughness: 0.18, whiteReflectance: 0.9, blackReflectance: 0.008, surfaceTexture: 0.5, refractiveIndex: 1.5 },
-  matte: { roughness: 0.65, whiteReflectance: 0.88, blackReflectance: 0.025, surfaceTexture: 0.85, refractiveIndex: 1.5 },
+  gloss: { roughness: 0.16, whiteReflectance: 0.95, blackReflectance: 0.003, surfaceTexture: 0, refractiveIndex: 1.25 },
+  satin: { roughness: 0.28, whiteReflectance: 0.95, blackReflectance: 0.002, surfaceTexture: 0.08, refractiveIndex: 1.25 },
+  matte: { roughness: 0.84, whiteReflectance: 0.92, blackReflectance: 0.0035, surfaceTexture: 0, refractiveIndex: 1.5 },
 } satisfies Record<Paper, Pick<PrintScene, 'roughness' | 'whiteReflectance' | 'blackReflectance' | 'surfaceTexture' | 'refractiveIndex'>>;
+
+/**
+ * A landed drop's radius and the paper's own light scatter together: a 3 pl dye drop lands 37 µm
+ * across on RC gloss, pigment tighter, and the coat's scatter reaches 52 µm on gloss and 25 µm on
+ * matte (Koopipat et al., PICS 2000).
+ */
+export const INK_SPREAD_MICRONS = {
+  dye: { gloss: 55, satin: 55, matte: 40 },
+  pigment: { gloss: 50, satin: 50, matte: 35 },
+} satisfies Record<Ink, Record<Paper, number>>;
 
 export const DEFAULT_PRINT_SCENE: PrintScene = {
   paper: 'satin',
-  tonemap: 'neutral',
+  renderingIntent: 'perceptual',
+  blackPointCompensation: true,
+  ink: 'dye',
+  printResolutionPpi: 600,
   presentation: 'scene',
   framed: false,
   yawDegrees: -12,
@@ -80,9 +95,15 @@ export const DEFAULT_PRINT_SCENE: PrintScene = {
   panX: 0,
   panY: 0,
   ...PAPER_MATERIALS.satin,
+  inkSpreadMicrons: INK_SPREAD_MICRONS.dye.satin,
 };
 
-/** Where a control goes back to: the chosen paper's own value for a paper's controls, the default scene's for the rest. */
-export function restingValue(paper: Paper, control: PrintControl): number {
-  return { ...DEFAULT_PRINT_SCENE, ...PAPER_MATERIALS[paper] }[control];
+/** What the paper and the ink bring with them, which choosing either sets. */
+export function paperAndInk(paper: Paper, ink: Ink): Pick<PrintScene, 'paper' | 'ink' | keyof typeof PAPER_MATERIALS.satin | 'inkSpreadMicrons'> {
+  return { paper, ink, ...PAPER_MATERIALS[paper], inkSpreadMicrons: INK_SPREAD_MICRONS[ink][paper] };
+}
+
+/** Where a control goes back to: the chosen paper's or ink's own value for theirs, the default scene's for the rest. */
+export function restingValue(scene: Pick<PrintScene, 'paper' | 'ink'>, control: PrintControl): number {
+  return { ...DEFAULT_PRINT_SCENE, ...paperAndInk(scene.paper, scene.ink) }[control];
 }

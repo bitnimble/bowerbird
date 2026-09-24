@@ -74,6 +74,8 @@ import { OpenGraph } from './api/opengraph/opengraph';
 import { QualityCheckApi } from './api/quality/quality_check_api';
 import { SettingsApi } from './api/settings/settings_api';
 import { UpdatesApi } from './api/updates/updates_api';
+import { PrinterProfilesApi } from './api/printer_profiles/printer_profiles_api';
+import { printerProfilesDir } from './utils/paths';
 import { UpdateService } from './services/updates/update_service';
 import { VERSION } from './version';
 import { BrowseApi } from './api/browse/browse_api';
@@ -430,6 +432,10 @@ app.route(
 );
 app.route(route(PathSegment.api(), PathSegment.updates()), new UpdatesApi(new UpdateService()).routes);
 app.route(route(PathSegment.api(), PathSegment.browse()), new BrowseApi().routes);
+app.route(
+  route(PathSegment.api(), PathSegment.printerProfiles()),
+  new PrinterProfilesApi(printerProfilesDir(config.dbPath)).routes,
+);
 app.route(route(PathSegment.api(), PathSegment.libraries()), librariesApi.routes);
 app.route(route(PathSegment.api()), photosApi.routes);
 app.route(route(PathSegment.api()), new PhotoEditsApi(photoEditsService).routes);

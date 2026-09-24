@@ -15,7 +15,7 @@ import { BLOCK } from '../grid/grid_layout';
 import { BinPageStrings } from '../grid/bin_page.strings';
 import type { ListingStore } from '../grid/listing_store';
 import type { StacksStore } from '../grid/stacks_store';
-import type { Tonemap } from '../../raw_edit/print/print_scene';
+import type { FileRenderingIntent } from '../../../../../src/schemas/rendering_intent';
 
 // Which photo the detail view is on, and what came back for it. A union rather
 // than a detail plus two flags: "missing" carries the reason that made it
@@ -51,7 +51,7 @@ export class ViewerStore {
   // Which rendition an HDR frame is proofed against, kept across photos as a way of looking is.
   // Null follows the frame, which is also the only answer a frame with no HDR in it has.
   @observable accessor proof: 'hdr' | 'srgb' | null = null;
-  @observable accessor proofTone: Tonemap = 'neutral';
+  @observable accessor proofIntent: FileRenderingIntent = 'perceptual';
 
   /** Whether the frame on screen for this photograph carries HDR, which is what an HDR proof needs. */
   showsHdr(photoId: string): boolean {

@@ -1670,6 +1670,7 @@ mod loupe_tile {
             preset: 6,
             still_full_chroma: false,
             sdr_full_chroma: false,
+            intent: crate::gpu::Intent::Perceptual,
         };
         let mut job = tile_job(path, None, None);
         job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
@@ -3472,8 +3473,8 @@ mod pictures {
     /// on it, the room falling off the sheet - which is where the failures a reader reports live.
     #[test]
     fn a_print_is_the_sheet_the_reader_is_shown() {
-        use crate::gpu::{Canvas, Grade, Tonemap};
-        use crate::light::{Gain, Light, Stops};
+        use crate::gpu::{Canvas, Grade};
+        use crate::light::Light;
         use crate::print::{Paper, Presentation, Scene};
 
         const CANVAS: (u32, u32) = (320, 240);
@@ -3514,26 +3515,16 @@ mod pictures {
         let peak = gpu.scene_peak();
         for (name, surface, scene) in [
             ("print/gloss-glare", false, Scene {
-                paper: Paper::Gloss,
-                roughness: 0.08,
-                white_reflectance: Gain::of_ratio(0.92),
-                black_reflectance: Gain::of_ratio(0.004),
-                surface_texture: 0.15,
                 yaw_degrees: -15.0,
                 pitch_degrees: -12.0,
                 ..Scene::default()
-            }.lit_from(-32.0, 25.0, 4.0)),
-            // A softbox rather than the default one-degree lamp, so the pane's own image of it is
+            }.on(Paper::Gloss).lit_from(-32.0, 25.0, 4.0)),
+            // A broad lamp rather than the default one-degree one, so the pane's own image of it is
             // in the picture: its shape carries the glass's waviness and its rim carries the
             // coverage, and both are claims only a picture can hold.
             ("print/framed-satin", true, Scene {
-                paper: Paper::Satin,
                 framed: true,
                 presentation: Presentation::Surface,
-                roughness: 0.28,
-                white_reflectance: Gain::of_ratio(0.9),
-                black_reflectance: Gain::of_ratio(0.008),
-                surface_texture: 0.5,
                 yaw_degrees: -8.0,
                 pitch_degrees: -14.0,
                 light_angular_degrees: 10.0,
@@ -3556,28 +3547,19 @@ mod pictures {
                 (CANVAS.0 as usize, CANVAS.1 as usize)
             };
             let grade = Grade {
-                width: header.width,
-                height: header.height,
-                photograph_long: Span::measured(header.width.max(header.height)),
-                colour: None,
-                white: header.white,
-                source_level: header.peak,
-                floor: header.floor,
-                reference_nits: header.grade.reference_white_nits,
-                peak_nits: header.grade.peak_nits,
-                exposure: Stops::ZERO,
-                adjust: crate::gpu::Adjust::none(),
                 as_shot: header.as_shot,
-                output: crate::gpu::Output::Pq,
-                geometry: crate::image::Geometry::none(),
-                window: None,
-                surround_window: None,
                 canvas: Some(Canvas {
                     region: (0.0, 0.0, display.0, display.1),
                     size: Size::measured(canvas.0, canvas.1),
                     max_lod: pyramid.levels,
                 }),
-                print_tone: Tonemap::Neutral,
+                ..Grade::new(
+                    header.width,
+                    header.height,
+                    crate::tone::Levels { white: header.white, peak: header.peak, floor: header.floor },
+                    header.grade.reference_white_nits,
+                    header.grade.peak_nits,
+                )
             };
             let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
             uploaded.collect_candidates(&grade);
@@ -3935,26 +3917,19 @@ mod tone_domain {
         let mut coded = samples.to_vec();
         crate::hdr::code_base(&mut coded, levels.anchored(), REFERENCE_NITS);
         gpu.encode(&coded, &crate::gpu::Grade {
-            width: frame.width,
-            height: frame.height,
-            photograph_long: crate::px::Span::measured(frame.width.max(frame.height)),
             colour,
-            white: levels.white,
-            source_level: levels.peak,
-            floor: levels.floor,
-            reference_nits: REFERENCE_NITS,
-            peak_nits: crate::light::Light::exactly(1000.0),
-            exposure: crate::light::Stops::ZERO,
             adjust,
             // The frame's own, or the balance has no illuminant to move away from and the
             // temperature slider is the identity whatever it is set to.
             as_shot: frame.as_shot,
             output: crate::gpu::Output::Rolled,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
-            canvas: None,
-            print_tone: crate::gpu::Tonemap::Neutral,
+            ..crate::gpu::Grade::new(
+                frame.width,
+                frame.height,
+                levels,
+                REFERENCE_NITS,
+                crate::light::Light::exactly(1000.0),
+            )
         })
     }
 

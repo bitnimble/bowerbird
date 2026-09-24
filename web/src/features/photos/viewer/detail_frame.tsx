@@ -47,7 +47,7 @@ export const DetailFrame = observer(function DetailFrame({
   // `<video>` (§10.7). The camera's JPEG never needs it, being 8-bit SDR with no
   // headroom to carry, so its still is already right.
   // A proof is drawn by the stage's shader, which a `<video>` never passes through.
-  const proof = store.showsHdr(photoId) && store.proofOf(photoId) === 'srgb' ? store.proofTone : null;
+  const proof = store.showsHdr(photoId) && store.proofOf(photoId) === 'srgb' ? store.proofIntent : null;
   const hdrVideo = useHdrVideo(photoId, stillSrc, shownFile?.hdr === true && showing !== 'embedded' && proof == null);
 
   // Every rendition this photo has already decoded stays mounted, with the one

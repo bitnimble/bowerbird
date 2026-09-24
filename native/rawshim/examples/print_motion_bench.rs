@@ -1,7 +1,7 @@
-use rawshim::gpu::{Adjust, Canvas, Grade, Output};
-use rawshim::light::{Light, Stops};
+use rawshim::gpu::{Canvas, Grade};
+use rawshim::light::Light;
 use rawshim::print::{Paper, Presentation, Scene};
-use rawshim::px::{Size, Span};
+use rawshim::px::Size;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), String> {
@@ -61,31 +61,23 @@ fn main() -> Result<(), String> {
     );
     let (width, height) = size.raw();
     let grade = Grade {
-        width: header.width,
-        height: header.height,
-        photograph_long: Span::measured(header.width.max(header.height)),
         colour: analysis
             .as_ref()
             .and_then(|analysis| analysis.from_raw.matched.as_ref())
             .and_then(|matched| matched.colour.as_ref()),
-        white: header.white,
-        source_level: header.peak,
-        floor: header.floor,
-        reference_nits: header.grade.reference_white_nits,
-        peak_nits: Light::exactly(1000.0),
-        exposure: Stops::ZERO,
-        adjust: Adjust::none(),
         as_shot: header.as_shot,
-        output: Output::Pq,
-        geometry: rawshim::image::Geometry::none(),
-        window: None,
-        surround_window: None,
         canvas: Some(Canvas {
             region: (0.0, 0.0, display.0, display.1),
             size,
             max_lod: pyramid.levels,
         }),
-        print_tone: rawshim::gpu::Tonemap::Neutral,
+        ..Grade::new(
+            header.width,
+            header.height,
+            rawshim::tone::Levels { white: header.white, peak: header.peak, floor: header.floor },
+            header.grade.reference_white_nits,
+            Light::exactly(1000.0),
+        )
     };
     let peak = gpu.scene_peak();
     let uploaded = gpu.upload(&prepared.samples, &grade, &peak);

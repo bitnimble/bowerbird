@@ -20,7 +20,7 @@ import {
 // editor's live helper cannot see it: a drawn mode is what says a device rendered this.
 const DRAWN = { timeout: 170_000 };
 
-// The full rendition built on the server first, where nothing has asked for it yet.
+// The max rendition built on the server first, where nothing has asked for it yet.
 test.describe.configure({ timeout: 180_000, mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
@@ -77,9 +77,9 @@ test('the mockup opens on its own address', async ({ page }) => {
   await expect(page.getByRole('group', { name: 'Paper', exact: true })).toBeVisible();
 });
 
-// A sheet two thousand pixels across does not need the sensor, and the full rendition already
-// holds every edit: the RAW never crosses, and this browser decodes the rendition itself.
-test('the mockup is drawn from the full rendition rather than the RAW', async ({ page }) => {
+// The max rendition holds every edit at the sensor's own size: the RAW never crosses, and this
+// browser decodes the rendition itself.
+test('the mockup is drawn from the max rendition rather than the RAW', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, PRINT_PHOTOS_DIR);
   await openPhoto(page);
@@ -88,12 +88,73 @@ test('the mockup is drawn from the full rendition rather than the RAW', async ({
 
   await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
-  const full = route(PathSegment.renditions(), 'full');
-  expect(requested.some((url) => url.pathname.endsWith(full))).toBe(true);
+  const max = route(PathSegment.renditions(), 'max');
+  expect(requested.some((url) => url.pathname.endsWith(max))).toBe(true);
   expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.prepare())))).toEqual([]);
   expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.download(), 'original')))).toEqual([]);
   // Still more than the sheet can show at any angle.
   expect(Math.max(...(await editDiagnosticSize(page, 'data-size')))).toBeGreaterThan(2500);
+});
+
+test('the mockup turns under a real pointer and the keyboard', async ({ page }) => {
+  await page.goto(route(PathSegment.settings()));
+  await openLibrary(page, PRINT_PHOTOS_DIR);
+  await openPhoto(page);
+  await softProof(page, 'Printed media (3D)');
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
+  const print = page.getByRole('region', { name: 'Rotate print' });
+  const yaw = page.getByRole('slider', { name: 'Horizontal rotation', exact: true });
+  await expect(yaw).toHaveAttribute('aria-valuenow', '-12');
+
+  const box = await print.boundingBox();
+  if (box == null) throw new Error('The print stage has no layout box');
+  const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 100, y + 30, { steps: 8 });
+  await page.mouse.up();
+  await expect(yaw).not.toHaveAttribute('aria-valuenow', '-12');
+  await print.press('Home');
+  await expect(yaw).toHaveAttribute('aria-valuenow', '-12');
+  await print.press('ArrowRight');
+  await expect(yaw).toHaveAttribute('aria-valuenow', '-7');
+});
+
+// A stage that outgrows the rendition is served tiles of it from the server, and the frame drawn
+// from them takes its camera match and balance from the open's own answer.
+test('a rendition opened in the browser draws from the tiles it is served', async ({ page }) => {
+  await page.goto(route(PathSegment.settings()));
+  await openLibrary(page, PRINT_PHOTOS_DIR);
+  await openPhoto(page);
+  const shown = await page.evaluate(async (photoId) => {
+    const { LocalDecoder } = await import('/src/features/raw_edit/local_decode/local_decoder.ts');
+    const { preparedPicture } = await import('/src/features/raw_edit/local_decode/open_photo.ts');
+    const { renditionsApi } = await import('/src/api/renditions.ts');
+    await renditionsApi.build(photoId, 'max');
+    const avif = new Uint8Array(await (await fetch(renditionsApi.url(photoId, 'max'))).arrayBuffer());
+    const decoder = new LocalDecoder();
+    try {
+      const opened = await decoder.holdRendition(avif, {
+        longEdge: 0,
+        grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
+        defringe: 0,
+        statedWhite: true,
+      });
+      if (opened == null) return 'this browser cannot hand over planar PQ';
+      const { width, height } = JSON.parse(opened) as { width: number; height: number };
+      const level: [number, number] = [width, height];
+      const whole: [number, number, number, number] = [0, 0, width, height];
+      const { missing } = await decoder.showTiles(level, whole);
+      if (missing == null) return 'nothing was missing';
+      await decoder.takeTiles(await preparedPicture(photoId, { level: 0, at: whole, parts: missing }, 'rendition'), missing);
+      return JSON.stringify(await decoder.showTiles(level, whole));
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    } finally {
+      decoder.close();
+    }
+  }, openPhotoId(page));
+  expect(shown).toBe('{"missing":null}');
 });
 
 test('escape leaves the print mockup', async ({ page }) => {

@@ -16,6 +16,49 @@ pub enum Paper {
     Matte,
 }
 
+pub struct Material {
+    pub roughness: f64,
+    pub white_reflectance: Gain,
+    pub black_reflectance: Gain,
+    pub surface_texture: f64,
+    pub refractive_index: f64,
+}
+
+impl Paper {
+    /// A generic sheet of each class, as `PAPER_MATERIALS` in `print_scene.ts` offers it.
+    ///
+    /// Glossy and satin are microporous inkjet coats, whose voids hold their surface index near
+    /// 1.25 rather than a solid's 1.5 (Monie et al., NIP19 2003; Akao et al., JIST 2010), and whose
+    /// lobes are Akao's measured widths held against their makers' 60° gloss. White and black are
+    /// 45/0 readings, so neither holds the surface reflection the lobe adds: matte's black is its
+    /// polarised reading, the unpolarised one being that lobe counted twice. Satin's texture is
+    /// the RMS slope Arney et al. measured on textured gelatin papers (JIST 2002), 0.5 to 1.2°,
+    /// taken at 0.85°: two of its variance over its alpha's square. Nobody has measured a glossy or
+    /// a matte sheet's, so both are flat.
+    pub fn material(self) -> Material {
+        let (roughness, white, black, surface_texture, refractive_index) = match self {
+            Paper::Gloss => (0.16, 0.95, 0.003, 0.0, 1.25),
+            Paper::Satin => (0.28, 0.95, 0.002, 0.08, 1.25),
+            Paper::Matte => (0.84, 0.92, 0.0035, 0.0, 1.5),
+        };
+        Material {
+            roughness,
+            white_reflectance: Gain::of_ratio(white),
+            black_reflectance: Gain::of_ratio(black),
+            surface_texture,
+            refractive_index,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Ink {
+    #[default]
+    Dye,
+    Pigment,
+}
+
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Presentation {
@@ -31,7 +74,15 @@ pub enum Presentation {
 pub struct Scene {
     pub paper: Paper,
     #[serde(default)]
-    pub tonemap: crate::gpu::Tonemap,
+    pub rendering_intent: crate::gpu::Intent,
+    #[serde(default = "yes")]
+    pub black_point_compensation: bool,
+    #[serde(default)]
+    pub ink: Ink,
+    pub print_resolution_ppi: f64,
+    /// How far a drop of ink spreads into the paper, and light through it, past the mark it was laid as.
+    #[serde(rename = "inkSpreadMicrons", deserialize_with = "micrometres")]
+    pub ink_spread: Extent<Millimetre>,
     pub presentation: Presentation,
     #[serde(default)]
     pub framed: bool,
@@ -69,11 +120,20 @@ fn one() -> f64 {
     1.0
 }
 
+fn yes() -> bool {
+    true
+}
+
 impl Default for Scene {
     fn default() -> Self {
+        let satin = Paper::Satin.material();
         Self {
             paper: Paper::Satin,
-            tonemap: crate::gpu::Tonemap::Neutral,
+            rendering_intent: crate::gpu::Intent::Perceptual,
+            black_point_compensation: true,
+            ink: Ink::Dye,
+            print_resolution_ppi: 600.0,
+            ink_spread: Extent::exactly(0.055),
             presentation: Presentation::Scene,
             framed: false,
             yaw_degrees: -12.0,
@@ -85,12 +145,12 @@ impl Default for Scene {
             light_angular_degrees: 1.0,
             fill_lux: Light::exactly(500.0),
             light_temperature_kelvin: 6500.0,
-            roughness: 0.18,
-            white_reflectance: Gain::of_ratio(0.9),
-            black_reflectance: Gain::of_ratio(0.008),
-            refractive_index: 1.5,
+            roughness: satin.roughness,
+            white_reflectance: satin.white_reflectance,
+            black_reflectance: satin.black_reflectance,
+            refractive_index: satin.refractive_index,
             paper_long_edge_mm: Extent::exactly(300.0),
-            surface_texture: 0.5,
+            surface_texture: satin.surface_texture,
             zoom: 1.0,
             pan_x: 0.0,
             pan_y: 0.0,
@@ -99,6 +159,19 @@ impl Default for Scene {
 }
 
 impl Scene {
+    pub fn on(self, paper: Paper) -> Self {
+        let material = paper.material();
+        Self {
+            paper,
+            roughness: material.roughness,
+            white_reflectance: material.white_reflectance,
+            black_reflectance: material.black_reflectance,
+            surface_texture: material.surface_texture,
+            refractive_index: material.refractive_index,
+            ..self
+        }
+    }
+
     pub fn parse(json: &str) -> Result<Self, String> {
         let scene: Self = serde_json::from_str(json).map_err(|error| error.to_string())?;
         scene.validate()?;
@@ -122,6 +195,8 @@ impl Scene {
             ("refractiveIndex", self.refractive_index, 1.0, 2.0),
             ("paperLongEdgeMm", self.paper_long_edge_mm.raw(), 50.0, 1000.0),
             ("surfaceTexture", self.surface_texture, 0.0, 1.0),
+            ("printResolutionPpi", self.print_resolution_ppi, 72.0, 1200.0),
+            ("inkSpreadMicrons", self.ink_spread.raw() * 1000.0, 0.0, 200.0),
             ("zoom", self.zoom, 1.0, 8.0),
             ("panX", self.pan_x, -1.0, 1.0),
             ("panY", self.pan_y, -1.0, 1.0),
@@ -193,9 +268,17 @@ impl Scene {
             self.key_lux.raw(), self.light_temperature_kelvin, self.fill_lux.raw(),
             if matches!(self.presentation, Presentation::Surface) { 1.0 } else { 0.0 },
             distance.raw(), half_width.raw(), half_paper.raw(), self.surface_texture,
-            if self.framed { 1.0 } else { 0.0 }, if self.framed { FRAME_BORDER.raw() } else { 0.0 }, 0.0, 0.0,
+            if self.framed { 1.0 } else { 0.0 }, if self.framed { FRAME_BORDER.raw() } else { 0.0 },
+            f64::from(self.rendering_intent as u32), if self.black_point_compensation { 1.0 } else { 0.0 },
             self.zoom, self.pan_x, self.pan_y, display_peak.raw(),
         ].into_iter().flat_map(|word| (word as f32).to_le_bytes()).collect()
+    }
+
+    /// How far one printed mark reaches across a picture of the print whose long edge is `long`:
+    /// the printer's pitch and the ink's spread together.
+    pub fn ink_blur(&self, long: Span<crate::px::Output>) -> Extent<crate::px::Output> {
+        let pitch = 25.4 / self.print_resolution_ppi;
+        Share::measured(pitch.hypot(self.ink_spread.raw()), self.paper_long_edge_mm.raw()).across(long)
     }
 
     pub fn display_size(&self, shape: (usize, usize)) -> (f64, f64) {
@@ -226,6 +309,10 @@ fn print_lengths<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Share, D::
 
 fn millimetres<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Extent<Millimetre>, D::Error> {
     <f64 as serde::Deserialize>::deserialize(from).map(Extent::measured)
+}
+
+fn micrometres<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Extent<Millimetre>, D::Error> {
+    <f64 as serde::Deserialize>::deserialize(from).map(|microns| Extent::measured(microns / 1000.0))
 }
 
 #[cfg(test)]
@@ -442,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn print_softbox_obeys_solid_angle_falloff_and_sampling_converges() {
+    fn print_lamp_obeys_solid_angle_falloff_and_sampling_converges() {
         let scene = Scene {
             yaw_degrees: 0.0, pitch_degrees: 0.0,
             light_angular_degrees: 2.0 * 0.5_f64.atan().to_degrees(),
@@ -457,16 +544,16 @@ mod tests {
         let room = room_of(&scene, &inputs);
         let direct = |at: usize| luminance(results[at]) - luminance(room[at]);
         assert!((direct(0) - 1000.0 / std::f64::consts::PI).abs() < 0.05, "centre lux: {results:?}");
-        assert!((direct(1) - 219.74997).abs() < 0.05, "off-axis flux: {results:?}");
-        assert!((direct(2) - 85.36209).abs() < 0.05, "finite distance: {results:?}");
-        assert!((results[0][3] - 1.5).abs() < 1e-5, "rectangle solid-angle PDF: {results:?}");
+        assert!((direct(1) - 226.25534).abs() < 0.05, "off-axis flux: {results:?}");
+        assert!((direct(2) - 90.12329).abs() < 0.05, "finite distance: {results:?}");
+        assert!((results[0][3] - 4.0 / std::f32::consts::PI).abs() < 1e-5, "disc solid-angle PDF: {results:?}");
         for angular_degrees in [0.1, 1.0, 25.0, 60.0, 90.0] {
             let scene = Scene { light_angular_degrees: angular_degrees, ..scene };
             let inputs = [[0.28, 0.0, 1.0, 32768.0, 0.0, 0.0, 0.0, 0.0]];
             let results = probe(&scene, "lighting", &inputs);
             let lamp = luminance(results[0]) - luminance(room_of(&scene, &inputs)[0]);
             assert!((lamp - 1000.0 / std::f64::consts::PI).abs() < 0.05,
-                "calibrated {angular_degrees}° softbox: {lamp} from {results:?}");
+                "calibrated {angular_degrees}° lamp: {lamp} from {results:?}");
         }
         for roughness in [0.08, 0.28, 0.65] {
             let scene = Scene { refractive_index: 1.5, ..scene };
@@ -484,12 +571,12 @@ mod tests {
     }
 
     #[test]
-    fn print_softbox_has_a_smooth_hdr_radiance_profile() {
+    fn print_lamp_has_a_smooth_hdr_radiance_profile() {
         let scene = Scene::default().lit_from(0.0, 0.0, 4.0);
         let inputs = [0.0, 0.5, 0.9, 1.0, 1.1].map(|x| [x, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
         let results = probe(&scene, "emitter", &inputs);
         assert!(results[0][0] > 1000.0, "HDR emitter: {results:?}");
-        for (result, expected) in results.iter().zip([1.0, 0.5625, 0.0361, 0.0, 0.0]) {
+        for (result, expected) in results.iter().zip([1.0, 0.9375, 0.3439, 0.0, 0.0]) {
             assert!((result[0] / results[0][0] - expected).abs() < 1e-6, "radiance profile: {results:?}");
         }
         for result in &results[..3] {
@@ -560,8 +647,7 @@ mod tests {
 
     #[test]
     fn print_is_reflected_hdr_light_with_an_unprinted_back() {
-        use crate::gpu::{Adjust, Canvas, Grade, Output};
-        use crate::light::Stops;
+        use crate::gpu::{Canvas, Grade};
         use crate::px::{Size, Span};
 
         let gpu = crate::gpu::device().expect("print requires Vulkan");
@@ -571,28 +657,18 @@ mod tests {
             * 65535.0).round() as u16;
         let frame = vec![code; width * height * 3];
         let grade = Grade {
-            width,
-            height,
-            photograph_long: Span::measured(width),
-            colour: None,
-            white: Light::measured(10000.0),
-            source_level: Light::measured(60000.0),
-            floor: None,
-            reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(1000.0),
-            exposure: Stops::ZERO,
-            adjust: Adjust::none(),
-            as_shot: None,
-            output: Output::Pq,
-            geometry: crate::image::Geometry::none(),
-            window: None,
-            surround_window: None,
             canvas: Some(Canvas {
                 region: (0.0, 0.0, width as f64, height as f64),
                 size: Size::measured(128, 96),
                 max_lod: 6,
             }),
-            print_tone: crate::gpu::Tonemap::Neutral,
+            ..Grade::new(
+                width,
+                height,
+                crate::tone::Levels { white: Light::measured(10000.0), peak: Light::measured(60000.0), floor: None },
+                Light::exactly(203.0),
+                Light::exactly(1000.0),
+            )
         };
         let peak = gpu.scene_peak();
         let uploaded = gpu.upload(&frame, &grade, &peak);
@@ -603,6 +679,8 @@ mod tests {
             pitch_degrees: 0.0,
             fill_lux: Light::ZERO,
             roughness: 0.08,
+            refractive_index: 1.5,
+            surface_texture: 0.0,
             ..Scene::default()
         }.lit_from(0.0, 0.0, 4.0);
         let first = uploaded.draw_print(&grade, &pyramid, &scene);

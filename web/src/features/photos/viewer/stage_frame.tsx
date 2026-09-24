@@ -2,7 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { decodeFrame, decodedFrame, fittedCanvasSize, type Decoded } from './stage_bitmaps';
 import { CanvasLost, stageCanvases, useStageCanvas } from './stage_canvas';
-import type { Tonemap } from '../../raw_edit/print/print_scene';
+import type { FileRenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import { stageStyles } from './photo_stage.stylex';
 
 const styles = stylex.create({
@@ -56,7 +56,7 @@ export function StageFrame({
   shown: boolean;
   requested: boolean;
   /** The operator an HDR frame is proofed to sRGB with, or null to draw it as it is. */
-  proof: Tonemap | null;
+  proof: FileRenderingIntent | null;
   onDecoded: (source: string, width: number, height: number) => void;
   onMissing: (source: string) => void;
 }): JSX.Element {

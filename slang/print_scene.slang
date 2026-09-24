@@ -9,10 +9,64 @@ import print_glass;
 import print_environment;
 import print_noise;
 import prelude;
+import primaries;
+import gamut_map;
 [vk::binding(1, 1)] StructuredBuffer<float> print_albedo;
 [vk::binding(2, 1)] public StructuredBuffer<float> print_light_calibration;
+/// `printer_gamut::target`: whether the edge is a table, the paper's black as a share of its white,
+/// the paper's tint and its inverse, row-major, then the table.
+[vk::binding(3, 1)] StructuredBuffer<float> print_target;
 
 public static const uint LIGHT_SAMPLES = 128;
+static const uint TARGET_HUES = 64;
+static const uint TARGET_LUMAS = 32;
+static const uint TARGET_TABLE = 22;
+
+/// A printer profile's gamut: the most chroma its ink reaches, by hue and luma
+/// (`printer_gamut::PrinterGamut`).
+struct PrinterGamut : IGamut
+{
+    float limit(float luma, float3 chroma)
+    {
+        let size = length(chroma);
+        if (size <= 0.0) { return 1e30; }
+        let hue = (atan2(0.5 * (chroma.r + chroma.g) - chroma.b, chroma.r - chroma.g) / (2.0 * PRINT_PI) + 0.5) * float(TARGET_HUES);
+        let level = saturate(luma) * float(TARGET_LUMAS - 1);
+        let h = uint(floor(hue));
+        let l = min(uint(level), TARGET_LUMAS - 2);
+        let across = hue - floor(hue);
+        let up = level - float(l);
+        let edge = lerp(
+            lerp(target_edge(h, l), target_edge(h + 1, l), across),
+            lerp(target_edge(h, l + 1), target_edge(h + 1, l + 1), across), up);
+        return edge / size;
+    }
+};
+
+float target_edge(uint hue, uint level)
+{
+    return print_target[TARGET_TABLE + (hue % TARGET_HUES) * TARGET_LUMAS + level];
+}
+
+float3x3 target_matrix(uint start)
+{
+    return float3x3(
+        print_target[start], print_target[start + 1], print_target[start + 2],
+        print_target[start + 3], print_target[start + 4], print_target[start + 5],
+        print_target[start + 6], print_target[start + 7], print_target[start + 8]);
+}
+
+/// The reflectance the print lays down for `signal`, a share of white in Rec.2020, brought inside
+/// what the paper and ink can reach as the intent asks.
+public float3 print_reflectance(float3 signal)
+{
+    let intent = uint(print.framing.z);
+    var colour = intent == INTENT_ABSOLUTE ? mul(target_matrix(13), signal) : signal;
+    colour = print_target[0] > 0.5 ? mapped(colour, PrinterGamut(), intent) : mapped(colour, SrgbCube(), intent);
+    let black = float3(print_target[1], print_target[2], print_target[3]);
+    let compensated = intent == INTENT_PERCEPTUAL || (intent == INTENT_RELATIVE && print.framing.w > 0.5);
+    return mul(target_matrix(4), onto_black(colour, black, compensated));
+}
 
 static const float3 MAT_ALBEDO = float3(0.86, 0.845, 0.81);
 
@@ -161,30 +215,72 @@ public float3 paper_brdf(float3 reflectance, float3 view, float3 incident, float
     return reflectance * diffuse + specular_brdf(view, incident, roughness * roughness, print.material.w);
 }
 
-public float paper_roughness(float3 position, float2 footprint)
+public struct PaperTexture {
+    /// The sheet's height gradient here, as far as a pixel resolves it.
+    public float2 slope;
+    public float roughness;
+};
+
+static const Extent<Millimetre> TEXTURE_BUMP = { 0.2 };
+
+/// The sheet's surface at `position`, seen through a pixel `footprint` wide.
+///
+/// **The paper's roughness is measured over a gloss meter's spot, bumps and all**, so the
+/// texture's share of it (`print.surface.w`) is not added to it but taken out of it: the bumps a
+/// pixel resolves tilt the normal, and the rest of their slope widens the lobe back to what was
+/// measured. `TEXTURE_BUMP` puts value noise's wavelength inside the 0.17 to 0.5 mm Arney et al.
+/// measured on textured gelatin papers (JIST 2002).
+public PaperTexture paper_texture(float3 position, float2 footprint)
 {
-    let millimetres = position.xy * print.surface.z;
-    let width = footprint * print.surface.z;
-    let fine = exactly<Millimetre>(0.35);
-    let coarse = exactly<Millimetre>(1.1);
-    let filtered1 = exp(-0.5 * dot(width, width) / (fine.d * fine.d));
-    let filtered2 = exp(-0.5 * dot(width, width) / (coarse.d * coarse.d));
-    let variation = 0.65 * filtered1 * value_noise(millimetres / fine.d)
-        + 0.35 * filtered2 * value_noise(millimetres / coarse.d + float2(19.3, 7.1));
-    return clamp(print.material.x * exp(0.35 * print.surface.w * variation), 0.03, 1.0);
+    let alpha = print.material.x * print.material.x;
+    let share = print.surface.w;
+    let width = max(footprint.x, footprint.y) * print.surface.z / TEXTURE_BUMP.d;
+    let resolved = exp(-2.0 * width * width);
+    PaperTexture texture;
+    // Beckmann's alpha is root two of its per-axis RMS slope, which is how the split is taken.
+    let bump_slope = alpha * sqrt(0.5 * share);
+    texture.slope = resolved * bump_slope / VALUE_NOISE_SLOPE
+        * value_noise_gradient(position.xy * print.surface.z / TEXTURE_BUMP.d);
+    texture.roughness = max(0.03, print.material.x * sqrt(sqrt(1.0 - share * resolved * resolved)));
+    return texture;
 }
 
-public float3 softbox_hit(float3 position, float3 direction, float3 tangent, float3 bitangent,
-    Extent<PrintUnit> distance, Extent<PrintUnit> half_width)
+/// `normal` tipped by a height gradient taken along the sheet's own x and y.
+public float3 paper_tilted(float3 normal, float2 slope)
+{
+    return normalize(normal - float3(slope, 0.0));
+}
+
+float3 lamp_tangent()
+{
+    let light = print.light.xyz;
+    return normalize(abs(light.z) < 0.99 ? cross(float3(0.0, 0.0, 1.0), light)
+        : cross(float3(0.0, 1.0, 0.0), light));
+}
+
+/// The world point at `at` on the lamp's unit disc.
+float3 lamp_face(float2 at, float3 tangent, float3 bitangent)
+{
+    return print.light.xyz * print.surface.x + print.surface.y * (at.x * tangent + at.y * bitangent);
+}
+
+/// The solid-angle density of a point on the lamp's face `delta` away, facing back at `cosine`.
+float lamp_pdf(float3 delta, float cosine)
+{
+    return dot(delta, delta) / (lamp_area(print.surface.y) * cosine);
+}
+
+public float3 lamp_hit(float3 position, float3 direction, float3 tangent, float3 bitangent,
+    Extent<PrintUnit> distance, Extent<PrintUnit> radius)
 {
     let cosine = dot(print.light.xyz, direction);
     if (cosine <= 0.0) { return float3(0.0); }
     let along = (distance.d - dot(print.light.xyz, position)) / cosine;
     if (along <= 0.0) { return float3(0.0); }
     let offset = position + along * direction - print.light.xyz * distance.d;
-    let at = float2(dot(offset, tangent), dot(offset, bitangent) * SOFTBOX_ASPECT) / half_width.d;
-    if (any(abs(at) > 1.0)) { return float3(0.0); }
-    return float3(along * along * SOFTBOX_ASPECT / (4.0 * half_width.d * half_width.d * cosine), at);
+    let at = float2(dot(offset, tangent), dot(offset, bitangent)) / radius.d;
+    if (dot(at, at) > 1.0) { return float3(0.0); }
+    return float3(along * along / (lamp_area(radius.d) * cosine), at);
 }
 
 /// Which of [`print_direct_coefficients`]'s four a caller is going to read.
@@ -201,13 +297,13 @@ public static const uint WANT_ALL = 7u;
 ///
 /// **The two halves of one integral want sample counts two orders apart.** What a lamp a degree
 /// across does to a diffuse surface is its own mean radiance times one cosine, because every
-/// geometric factor is constant across a face that small - `MEAN_SOFTBOX` is that mean in closed
+/// geometric factor is constant across a face that small - `MEAN_LAMP` is that mean in closed
 /// form, so one evaluation at the centre is not an estimate of the integral but the integral. What
 /// it does to a gloss surface is a lobe narrower than the lamp, and that is what [`light_samples`]
 /// is sized for; integrating both at the specular's count is most of a framed gloss frame spent
 /// resolving a curve that was already flat.
 ///
-/// A near softbox is the case this cannot have: half a radian across and a print length away, its
+/// A near, wide lamp is the case this cannot have: half a radian across and a print length away, its
 /// own inverse square and cosine vary over its face by a quarter. Past a hundredth of a steradian
 /// the diffuse pays the full count.
 static const float DIFFUSE_SOLID_ANGLE = 0.01;
@@ -217,8 +313,9 @@ static const float LOBE_REACH = 32.0;
 static const float REACH_FLOOR = 3.0;
 
 /// **Four tests instead of one per sample.** The moulding shadows a surface through a rectangular
-/// hole, so the directions it lets through form a convex cone, and the emitter is convex too - which
-/// makes its four corners clearing the hole enough to say every direction between them does. A print
+/// hole, so the directions it lets through form a convex cone, and the square around the lamp's disc
+/// is convex too - which makes its four corners clearing the hole enough to say every direction
+/// between them does. A print
 /// well inside its own aperture is that case for almost every pixel, and without this the frame
 /// costs the sheet a ray-box test against each of its samples.
 bool emitter_clear(float3 local_point, float3 world_point, float3 light_tangent, float3 light_bitangent,
@@ -228,7 +325,7 @@ bool emitter_clear(float3 local_point, float3 world_point, float3 light_tangent,
     for (uint corner = 0; corner < 4; corner += 1) {
         let edge = float2(float(corner & 1u), float(corner >> 1)) * 2.0 - 1.0;
         let point = print.light.xyz * distance.d + half_width.d
-            * (edge.x * light_tangent + edge.y / SOFTBOX_ASPECT * light_bitangent);
+            * (edge.x * light_tangent + edge.y * light_bitangent);
         let towards = paper_inverse(normalize(point - world_point));
         if (frame_occluded(local_point, towards, aperture, front)) { return false; }
     }
@@ -277,8 +374,7 @@ public float4 print_direct_coefficients(PrintHit hit, float roughness, uint coun
     let local_view = float3(dot(world_view, tangent), dot(world_view, bitangent), max(dot(world_view, world_normal), 1e-5));
     let albedo = paper_albedo(local_view.z, roughness);
     let light = print.light.xyz;
-    let light_tangent = normalize(abs(light.z) < 0.99 ? cross(float3(0.0, 0.0, 1.0), light)
-        : cross(float3(0.0, 1.0, 0.0), light));
+    let light_tangent = lamp_tangent();
     let light_bitangent = cross(light, light_tangent);
     let distance = exactly<PrintUnit>(print.surface.x);
     let half_width = exactly<PrintUnit>(print.surface.y);
@@ -297,21 +393,20 @@ public float4 print_direct_coefficients(PrintHit hit, float roughness, uint coun
     // A penumbra is the one place the emitter's own face matters to a diffuse surface, and it is
     // where a short count bands rather than converging slowly.
     let shadowed = print.framing.x > 0.5 && !(clear && mat_clear);
-    let solid = 4.0 * half_width.d * half_width.d / (SOFTBOX_ASPECT * distance.d * distance.d);
+    let solid = lamp_area(half_width.d) / (distance.d * distance.d);
     let averaged = !shadowed && solid <= DIFFUSE_SOLID_ANGLE;
     let diffuse_count = averaged ? 1u : count;
     var diffuse = float3(0.0);
     for (uint i = 0; i < diffuse_count; i += 1) {
-        let emitter_at = averaged ? float2(0.0) : 2.0 * quadrature(i, diffuse_count) - 1.0;
-        let radiance = averaged ? MEAN_SOFTBOX : softbox_profile(emitter_at);
-        let point = light * distance.d + half_width.d
-            * (emitter_at.x * light_tangent + emitter_at.y / SOFTBOX_ASPECT * light_bitangent);
+        let emitter_at = averaged ? float2(0.0) : lamp_point(quadrature(i, diffuse_count));
+        let radiance = averaged ? MEAN_LAMP : lamp_profile(emitter_at);
+        let point = lamp_face(emitter_at, light_tangent, light_bitangent);
         let delta = point - position;
         let direction = normalize(delta);
         let incident = float3(dot(direction, tangent), dot(direction, bitangent), dot(direction, world_normal));
         let emitter_cosine = dot(light, direction);
         if (incident.z > 0.0 && emitter_cosine > 0.0 && (wanted & (WANT_PAPER | WANT_RIM)) != 0u) {
-            let pdf = dot(delta, delta) * SOFTBOX_ASPECT / (4.0 * half_width.d * half_width.d * emitter_cosine);
+            let pdf = lamp_pdf(delta, emitter_cosine);
             let carried = radiance * incident.z / pdf;
             if ((wanted & WANT_PAPER) != 0u) {
                 var transmission = 1.0;
@@ -333,7 +428,7 @@ public float4 print_direct_coefficients(PrintHit hit, float roughness, uint coun
             let emitter_cosine = dot(light, mat_direction);
             let local_direction = paper_inverse(mat_direction);
             if (cosine > 0.0 && emitter_cosine > 0.0 && !frame_occluded(mat_position, local_direction, aperture, front)) {
-                let pdf = dot(mat_delta, mat_delta) * SOFTBOX_ASPECT / (4.0 * half_width.d * half_width.d * emitter_cosine);
+                let pdf = lamp_pdf(mat_delta, emitter_cosine);
                 diffuse.y += radiance * cosine * glass_transmittance(local_direction.z) / (PRINT_PI * pdf);
             }
         }
@@ -348,15 +443,14 @@ public float4 print_direct_coefficients(PrintHit hit, float roughness, uint coun
     var specular = 0.0;
     for (uint i = 0; i < specular_count; i += 1) {
         let sample = quadrature(i, specular_count);
-        let emitter_at = 2.0 * sample - 1.0;
-        let point = light * distance.d + half_width.d
-            * (emitter_at.x * light_tangent + emitter_at.y / SOFTBOX_ASPECT * light_bitangent);
+        let emitter_at = lamp_point(sample);
+        let point = lamp_face(emitter_at, light_tangent, light_bitangent);
         let delta = point - position;
         let direction = normalize(delta);
         let incident = float3(dot(direction, tangent), dot(direction, bitangent), dot(direction, world_normal));
         let emitter_cosine = dot(light, direction);
         if (incident.z > 0.0 && emitter_cosine > 0.0) {
-            let pdf = dot(delta, delta) * SOFTBOX_ASPECT / (4.0 * half_width.d * half_width.d * emitter_cosine);
+            let pdf = lamp_pdf(delta, emitter_cosine);
             var transmission = 1.0;
             if (print.framing.x > 0.5) {
                 let local_direction = paper_inverse(direction);
@@ -364,7 +458,7 @@ public float4 print_direct_coefficients(PrintHit hit, float roughness, uint coun
                     ? 0.0 : glass_transmittance(local_direction.z);
             }
             let lobe_pdf = mixed ? normal_pdf(local_view, incident, alpha) : 0.0;
-            specular += softbox_profile(emitter_at) * incident.z * transmission
+            specular += lamp_profile(emitter_at) * incident.z * transmission
                 * specular_brdf(local_view, incident, alpha, print.material.w) / (pdf + lobe_pdf);
         }
         if (!mixed) { continue; }
@@ -372,7 +466,7 @@ public float4 print_direct_coefficients(PrintHit hit, float roughness, uint coun
         let reflected = reflect(-local_view, half);
         if (reflected.z > 0.0) {
             let world_direction = tangent * reflected.x + bitangent * reflected.y + world_normal * reflected.z;
-            let emitter = softbox_hit(position, world_direction, light_tangent, light_bitangent, distance, half_width);
+            let emitter = lamp_hit(position, world_direction, light_tangent, light_bitangent, distance, half_width);
             if (emitter.x > 0.0) {
                 var transmission = 1.0;
                 if (print.framing.x > 0.5) {
@@ -380,7 +474,7 @@ public float4 print_direct_coefficients(PrintHit hit, float roughness, uint coun
                     transmission = !clear && frame_occluded(hit.position, local_direction, aperture, front)
                         ? 0.0 : glass_transmittance(local_direction.z);
                 }
-                specular += transmission * softbox_profile(emitter.yz) * reflected.z
+                specular += transmission * lamp_profile(emitter.yz) * reflected.z
                     * specular_brdf(local_view, reflected, alpha, print.material.w)
                     / (emitter.x + normal_pdf(local_view, reflected, alpha));
             }
@@ -416,8 +510,7 @@ float3 glass_reflected_light(PrintHit hit)
     if (direction.z <= 0.0) { return float3(0.0); }
     if (frame_occluded(at, direction, frame_aperture(hit.half), frame_front_depth())) { return float3(0.0); }
     let light = print.light.xyz;
-    let tangent = normalize(abs(light.z) < 0.99 ? cross(float3(0.0, 0.0, 1.0), light)
-        : cross(float3(0.0, 1.0, 0.0), light));
+    let tangent = lamp_tangent();
     let bitangent = cross(light, tangent);
     let world = paper_rotation(direction);
     let distance = exactly<PrintUnit>(print.surface.x);
@@ -431,19 +524,104 @@ float3 glass_reflected_light(PrintHit hit)
     let sideways = length(hit.view.xy) > 1e-6 ? normalize(hit.view.xy) : float2(0.0);
     let ghost_at = float3(at.xy - sideways * lateral, at.z);
     var direct = 0.0;
-    let emitter = softbox_hit(paper_rotation(at), world, tangent, bitangent, distance, half_width);
-    if (emitter.x > 0.0) { direct += front * softbox_profile(emitter.yz) * source; }
-    let ghost = softbox_hit(paper_rotation(ghost_at), world, tangent, bitangent, distance, half_width);
-    if (ghost.x > 0.0) { direct += (total - front) * softbox_profile(ghost.yz) * source; }
+    let emitter = lamp_hit(paper_rotation(at), world, tangent, bitangent, distance, half_width);
+    if (emitter.x > 0.0) { direct += front * lamp_profile(emitter.yz) * source; }
+    let ghost = lamp_hit(paper_rotation(ghost_at), world, tangent, bitangent, distance, half_width);
+    if (ghost.x > 0.0) { direct += (total - front) * lamp_profile(ghost.yz) * source; }
     // The skirt the pane scatters around that image, which is the part of it a reader can see the
-    // shape of: `MEAN_SOFTBOX` is the emitter's profile averaged over its own face, so this is the
+    // shape of: `MEAN_LAMP` is the emitter's profile averaged over its own face, so this is the
     // source's whole irradiance handed to the haze lobe.
-    let solid = 4.0 * half_width.d * half_width.d
-        / (SOFTBOX_ASPECT * distance.d * distance.d);
-    let haze = total * source * solid * MEAN_SOFTBOX * glass_haze(dot(world, print.light.xyz));
+    let solid = lamp_area(half_width.d) / (distance.d * distance.d);
+    let irradiance = source * solid * MEAN_LAMP;
+    // From this point on the pane, not from the sheet's centre: the lamp hangs a few print lengths
+    // away, so its direction moves across the pane by several times its own width.
+    let toward = light * distance.d - paper_rotation(at);
+    let lamp = normalize(toward);
+    let offset = float2(dot(world - lamp, tangent), dot(world - lamp, bitangent));
+    let lamp_radius = half_width.d / length(toward);
+    let haze = total * irradiance * glass_haze(max(0.0, length(offset) - lamp_radius));
     let radiance = measured<DisplayNits>(
         total * room_radiance(world, paper_rotation(hit.view), 0.0).v + glass_mirrored() * direct + haze);
     return radiance.v * print_illuminant();
+}
+
+static const float FLARE_SHARE = 0.03;
+static const float FLARE_REACH = 0.006;
+static const float FLARE_TURN = 0.26;
+static const int FLARE_SAMPLES = 6;
+
+/// The star a camera's aperture blades draw around each mirror image of the lamp - the pane's, and
+/// a gloss sheet's own - at `pixel` of the canvas: square to the canvas however the print turns, and
+/// reaching past the lip onto the rail and the wall.
+///
+/// **Every visible point of a lamp's image spikes, so the star is that image smeared along six
+/// directions**, not a shape pinned to its centre: beside a lamp much larger than a spike is thin,
+/// the spikes leave from its edges, and the half of a lamp the lip hides sends none.
+public float3 print_flare(float2 pixel, float2 canvas, float2 shape)
+{
+    if (print.illumination.x == 0.0) { return float3(0.0); }
+    var flare = mirrored_flare(pixel, canvas, shape, 0.0, true);
+    if (print.framing.x > 0.5) { flare += mirrored_flare(pixel, canvas, shape, frame_glass_depth(), false); }
+    return FLARE_SHARE * print.illumination.x * print_light_calibration[0] * flare * print_illuminant();
+}
+
+/// The spikes of the lamp's image in the plane at `depth`, per unit of the lamp's radiance.
+float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, bool sheet)
+{
+    let framed = print.framing.x > 0.5;
+    let eye = paper_inverse(float3(0.0, 0.0, print_camera_distance()));
+    let centre = print.light.xyz * print.surface.x;
+    let lamp = paper_inverse(centre);
+    if (lamp.z <= depth || eye.z <= depth) { return 0.0; }
+    let photo_half = shape / max(shape.x, shape.y);
+    let aperture = frame_aperture(photo_half);
+    let bound = !sheet ? aperture : framed ? photo_half : frame_outer_half(photo_half);
+    let front = frame_front_depth();
+    let focal = print_focal(canvas, frame_outer_half(photo_half));
+    let radians = min(canvas.x, canvas.y) * focal;
+    let mirror = float3(lamp.xy, 2.0 * depth - lamp.z) - eye;
+    let lamp_angle = print.surface.y / length(mirror);
+    let middle = paper_pixel(normalize(mirror), canvas, focal);
+    if (length(pixel - middle) / radians > 1.5 * lamp_angle + 12.0 * FLARE_REACH) { return 0.0; }
+    // A rough sheet spreads the lamp over a lobe wider than the lamp, and its image dims by as much.
+    let alpha = print.material.x * print.material.x;
+    let solid = lamp_area(print.surface.y) / (print.surface.x * print.surface.x);
+    let sharpness = sheet ? min(1.0, solid / (4.0 * PRINT_PI * alpha * alpha)) : 1.0;
+    let spacing = 2.0 * lamp_angle / float(FLARE_SAMPLES);
+    let width = max(spacing, 0.75 / radians);
+    let tangent = lamp_tangent();
+    let bitangent = cross(print.light.xyz, tangent);
+    var flare = 0.0;
+    for (int j = 0; j < FLARE_SAMPLES; j += 1) {
+        for (int i = 0; i < FLARE_SAMPLES; i += 1) {
+            let at = (float2(float(i), float(j)) + 0.5) * (2.0 / float(FLARE_SAMPLES)) - 1.0;
+            if (dot(at, at) > 1.0) { continue; }
+            let face = paper_inverse(lamp_face(at, tangent, bitangent));
+            if (face.z <= depth) { continue; }
+            let image = normalize(float3(face.xy, 2.0 * depth - face.z) - eye);
+            let crossing = eye + image * ((depth - eye.z) / image.z);
+            if (any(abs(crossing.xy) > bound)) { continue; }
+            if (framed && (frame_occluded(crossing, -image, aperture, front)
+                || frame_occluded(crossing, normalize(face - crossing), aperture, front))) { continue; }
+            let cosine = abs(image.z);
+            let through = framed ? glass_transmittance(cosine) : 1.0;
+            let reflectance = sheet ? dielectric_fresnel(cosine, print.material.w) * through * through
+                : glass_reflectance(cosine);
+            let apart = (pixel - paper_pixel(image, canvas, focal)) / radians;
+            var spikes = 0.0;
+            for (uint k = 0; k < 3; k += 1) {
+                let angle = FLARE_TURN + float(k) * PRINT_PI / 3.0;
+                let axis = float2(cos(angle), sin(angle));
+                let across = dot(apart, float2(-axis.y, axis.x)) / width;
+                spikes += exp(-across * across - abs(dot(apart, axis)) / FLARE_REACH);
+            }
+            flare += lamp_profile(at) * reflectance * spikes;
+        }
+    }
+    // Each sample stands for its patch of the lamp's face, over the spike's own area, so a lamp
+    // larger than a spike is long gives a spike as bright as the lamp times the share and no more.
+    let patch = spacing * spacing / (2.0 * FLARE_REACH * sqrt(PRINT_PI) * width);
+    return sharpness * patch * flare;
 }
 
 public float3 framed_from_coefficients(float3 reflectance, PrintHit hit, float roughness,
@@ -498,7 +676,12 @@ uint framed_wants(PrintHit hit, float2 footprint)
 
 public Colour<DisplayNits> reflected_print(float3 reflectance, PrintHit hit, float2 footprint)
 {
-    let roughness = paper_roughness(hit.position, footprint);
+    var roughness = print.material.x;
+    if (hit.material == PHOTO && hit.normal.z > 0.5) {
+        let texture = paper_texture(hit.position, footprint);
+        roughness = texture.roughness;
+        hit.normal = paper_tilted(hit.normal, texture.slope);
+    }
     if (print.framing.x > 0.5) {
         let direct = print.illumination.x == 0.0 ? float4(0.0)
             : print_direct_coefficients(hit, roughness, light_samples(roughness),

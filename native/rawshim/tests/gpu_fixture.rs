@@ -195,27 +195,23 @@ fn the_editor_puts_each_slider_where_this_host_does() {
     let at = |exposure: Stops, adjust: rawshim::gpu::Adjust| {
         rawshim::gpu::uniform_words(
             &rawshim::gpu::Grade {
-                width: WIDTH,
-                height: HEIGHT,
-                photograph_long: rawshim::px::Span::measured(WIDTH.max(HEIGHT)),
-                colour: None,
-                white: Light::measured(1234.0),
-                source_level: Light::measured(5678.0),
-                floor: Some(Light::measured(111.0)),
-                reference_nits: Light::exactly(203.0),
-                peak_nits: Light::exactly(1000.0),
                 exposure,
                 adjust,
                 as_shot: Some(rawshim::white_balance::AsShot {
                     temperature: 5500.0,
                     tint: 12.0,
                 }),
-                output: rawshim::gpu::Output::Pq,
-                geometry: rawshim::image::Geometry::none(),
-                window: None,
-                surround_window: None,
-                canvas: None,
-                print_tone: rawshim::gpu::Tonemap::Neutral,
+                ..rawshim::gpu::Grade::new(
+                    WIDTH,
+                    HEIGHT,
+                    tone::Levels {
+                        white: Light::measured(1234.0),
+                        peak: Light::measured(5678.0),
+                        floor: Some(Light::measured(111.0)),
+                    },
+                    Light::exactly(203.0),
+                    Light::exactly(1000.0),
+                )
             },
             &colour,
         )
@@ -626,29 +622,19 @@ fn the_encode_pass_reproduces_the_recorded_frame() {
             let got = gpu.encode(
                 &prepared.samples,
                 &rawshim::gpu::Grade {
-                    width: prepared.width,
-                    height: prepared.height,
-                    photograph_long: rawshim::px::Span::measured(
-                        prepared.width.max(prepared.height),
-                    ),
                     colour: colour.as_ref(),
-                    white: levels.white,
-                    source_level: levels.peak,
-                    floor: levels.floor,
-                    reference_nits: grade.reference_white_nits,
-                    peak_nits: grade.peak_nits,
                     exposure,
                     // The fixture is the HDR still, which is what `run` above encodes.
                     // The camera's rendering, unadjusted: these fixtures pin the grade, and
                     // a slider set here would be pinning one reader's taste instead.
                     adjust: rawshim::gpu::Adjust::none(),
-                    as_shot: None,
-                    output: rawshim::gpu::Output::Pq,
-                    geometry: rawshim::image::Geometry::none(),
-                    window: None,
-                    surround_window: None,
-                    canvas: None,
-                    print_tone: rawshim::gpu::Tonemap::Neutral,
+                    ..rawshim::gpu::Grade::new(
+                        prepared.width,
+                        prepared.height,
+                        levels,
+                        grade.reference_white_nits,
+                        grade.peak_nits,
+                    )
                 },
             );
 
@@ -694,26 +680,16 @@ fn the_rolled_arm_reproduces_the_recorded_grade() {
             let got = gpu.encode(
                 &prepared.samples,
                 &rawshim::gpu::Grade {
-                    width: prepared.width,
-                    height: prepared.height,
-                    photograph_long: rawshim::px::Span::measured(
-                        prepared.width.max(prepared.height),
-                    ),
                     colour: colour.as_ref(),
-                    white: levels.white,
-                    source_level: levels.peak,
-                    floor: levels.floor,
-                    reference_nits: grade.reference_white_nits,
-                    peak_nits: grade.peak_nits,
                     exposure,
-                    adjust: rawshim::gpu::Adjust::none(),
-                    as_shot: None,
                     output: rawshim::gpu::Output::Rolled,
-                    geometry: rawshim::image::Geometry::none(),
-                    window: None,
-                    surround_window: None,
-                    canvas: None,
-                    print_tone: rawshim::gpu::Tonemap::Neutral,
+                    ..rawshim::gpu::Grade::new(
+                        prepared.width,
+                        prepared.height,
+                        levels,
+                        grade.reference_white_nits,
+                        grade.peak_nits,
+                    )
                 },
             );
 
@@ -918,16 +894,6 @@ fn graded_frame(
     gpu.encode(
         &samples,
         &rawshim::gpu::Grade {
-            width,
-            height,
-            photograph_long: rawshim::px::Span::measured(width.max(height)),
-            colour: None,
-            white: levels.white,
-            source_level: levels.peak,
-            floor: levels.floor,
-            reference_nits: grade.reference_white_nits,
-            peak_nits: grade.peak_nits,
-            exposure: Stops::ZERO,
             adjust,
             // A daylight baseline, so the balance test has something to move away from. The
             // presence test leaves the pair unset, where this is not read at all.
@@ -940,11 +906,7 @@ fn graded_frame(
                 tint: 12.0,
             }),
             output: rawshim::gpu::Output::Rolled,
-            geometry: rawshim::image::Geometry::none(),
-            window: None,
-            surround_window: None,
-            canvas: None,
-            print_tone: rawshim::gpu::Tonemap::Neutral,
+            ..rawshim::gpu::Grade::new(width, height, levels, grade.reference_white_nits, grade.peak_nits)
         },
     )
 }
@@ -1843,24 +1805,15 @@ fn the_encode_pass_reproduces_the_recorded_sdr_frame() {
         filter_once(&mut prepared, &grade, strengths);
 
         let described = rawshim::gpu::Grade {
-            width: prepared.width,
-            height: prepared.height,
-            photograph_long: rawshim::px::Span::measured(prepared.width.max(prepared.height)),
             colour: colour.as_ref(),
-            white: levels.white,
-            source_level: levels.peak,
-            floor: levels.floor,
-            reference_nits: grade.reference_white_nits,
-            peak_nits: grade.peak_nits,
-            exposure: Stops::ZERO,
-            adjust: rawshim::gpu::Adjust::none(),
-            as_shot: None,
             output: rawshim::gpu::Output::Srgb,
-            geometry: rawshim::image::Geometry::none(),
-            window: None,
-            surround_window: None,
-            canvas: None,
-            print_tone: rawshim::gpu::Tonemap::Neutral,
+            ..rawshim::gpu::Grade::new(
+                prepared.width,
+                prepared.height,
+                levels,
+                grade.reference_white_nits,
+                grade.peak_nits,
+            )
         };
         let peak = gpu.scene_peak();
         let up = gpu.upload(&prepared.samples, &described, &peak);
@@ -1924,24 +1877,9 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
     rawshim::hdr::code_base(&mut coded, levels.anchored(), settings.reference_white_nits);
 
     let grading = |geometry: rawshim::image::Geometry| rawshim::gpu::Grade {
-        width,
-        height,
-        photograph_long: rawshim::px::Span::measured(width.max(height)),
-        colour: None,
-        white: levels.white,
-        source_level: levels.peak,
-        floor: levels.floor,
-        reference_nits: settings.reference_white_nits,
-        peak_nits: settings.peak_nits,
-        exposure: Stops::ZERO,
-        adjust: rawshim::gpu::Adjust::none(),
-        as_shot: None,
         output: rawshim::gpu::Output::Rolled,
         geometry,
-        window: None,
-        surround_window: None,
-        canvas: None,
-        print_tone: rawshim::gpu::Tonemap::Neutral,
+        ..rawshim::gpu::Grade::new(width, height, levels, settings.reference_white_nits, settings.peak_nits)
     };
 
     let whole = gpu.encode(&coded, &grading(rawshim::image::Geometry::none()));

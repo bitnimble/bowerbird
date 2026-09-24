@@ -4131,26 +4131,11 @@ mod tests {
             |samples: &mut [u16]| crate::hdr::code_base(samples, levels.anchored(), REFERENCE);
         let grading = |width: usize, height: usize, geometry: crate::image::Geometry| {
             crate::gpu::Grade {
-                width,
-                height,
-                photograph_long: crate::px::Span::measured(width.max(height)),
-                colour: None,
-                white: levels.white,
-                source_level: levels.peak,
-                floor: levels.floor,
-                reference_nits: REFERENCE,
-                peak_nits: Light::exactly(1000.0),
-                exposure: crate::light::Stops::ZERO,
-                adjust: crate::gpu::Adjust::none(),
-                as_shot: None,
                 // Rolled rather than PQ, so a difference in counts is a difference in light: the
                 // transfer compresses the shadows and would flatter every number below.
                 output: crate::gpu::Output::Rolled,
                 geometry,
-                window: None,
-                surround_window: None,
-                canvas: None,
-                print_tone: crate::gpu::Tonemap::Neutral,
+                ..crate::gpu::Grade::new(width, height, levels, REFERENCE, Light::exactly(1000.0))
             }
         };
 

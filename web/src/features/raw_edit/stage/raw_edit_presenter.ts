@@ -36,9 +36,10 @@ import type { EditTool } from '../edit_tool';
 import type { GuideKind } from '../keystone/keystone_store';
 import type { RepairStore } from '../repair/repair_store';
 import type { OpenStep, StageStore } from './stage_store';
-import type { PrintStore } from '../print/print_store';
-import { PrintPresenter } from '../print/print_presenter';
+import type { PrinterProfile, PrintStore } from '../print/print_store';
+import { PrintPresenter, type PrinterProfileSource } from '../print/print_presenter';
 import { printDisplaySize } from '../print/print_scene';
+import { fileIntentOf } from '../../../../../src/schemas/rendering_intent';
 
 const SOFT_PROOF_KEY = 'bowerbird.edit.softProof';
 
@@ -121,7 +122,7 @@ export class RawEditPresenter {
   private remembersProof = false;
 
   private photoId: string | null = null;
-  /** Whether the open is of the full rendition, which every window after it has to be too. */
+  /** Whether the open is of the max rendition, which every window after it has to be too. */
   private fromRendition = false;
 
   readonly edit: EditPresenter;
@@ -141,8 +142,9 @@ export class RawEditPresenter {
     repairStore: RepairStore,
     loupeStore: LoupeStore,
     private readonly printStore: PrintStore,
+    printerProfiles?: PrinterProfileSource,
   ) {
-    this.print = new PrintPresenter(printStore, () => this.showGeometry());
+    this.print = new PrintPresenter(printStore, () => this.showGeometry(), undefined, printerProfiles);
     this.crop = new CropPresenter(stage, editStore, cropStore, {
       preview: (patch) => this.preview(patch),
       write: (patch) => this.write(patch),
@@ -341,7 +343,7 @@ export class RawEditPresenter {
 
   /**
    * Opens the picture behind `photoId` and grades it at `longEdge` pixels on its long edge, or
-   * opens its full rendition to show rather than edit: every edit is already in that, so it is
+   * opens its max rendition to show rather than edit: every edit is already in that, so it is
    * drawn at neutral and the saved edits are never read.
    *
    * **The recipe is read here rather than passed in**, and awaited: which device prepares the
@@ -555,6 +557,7 @@ export class RawEditPresenter {
 
   /** What this tab opens and magnifies from, until it has opened one. */
   private local: LocalSource | null = null;
+  private sentProfile: PrinterProfile | null = null;
 
   attachLoupe(canvas: HTMLCanvasElement | null): void {
     this.loupe.attachLoupe(canvas);
@@ -951,6 +954,9 @@ export class RawEditPresenter {
       this.pendingLoupe = null;
       const local = this.local;
       if (this.closed || local == null || !this.drawable) return;
+      const profile = this.printStore.printerProfile;
+      const profileChanged = profile !== this.sentProfile;
+      this.sentProfile = profile;
       this.drawing = true;
       const landed = (error?: unknown): void => {
         this.drawing = false;
@@ -984,10 +990,11 @@ export class RawEditPresenter {
           geometry: this.keystoneStore.geometry,
           proof: {
             output: this.stage.softProof === 'srgb' ? 'srgb' : 'hdr',
-            tone: this.printStore.scene.tonemap,
+            intent: fileIntentOf(this.printStore.scene.renderingIntent),
             displayHdr: displayIsHdr(),
           },
           print,
+          ...(profileChanged ? { printerProfile: profile?.bytes ?? null } : {}),
           stage: next == null ? null : this.stageSize(),
         })
         .then(() => landed(), landed);

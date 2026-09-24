@@ -1,9 +1,8 @@
-use rawshim::gpu::{Adjust, Canvas, Grade, Output, Tonemap};
+use rawshim::gpu::{Canvas, Grade, Intent, Output};
 use rawshim::hdr_fit::HdrColour;
-use rawshim::image::Geometry;
-use rawshim::light::{DisplayNits, Gain, Light, SceneNits, Stops};
+use rawshim::light::{DisplayNits, Gain, Light, SceneNits};
 use rawshim::print::{Presentation, Scene};
-use rawshim::px::{Size, Span};
+use rawshim::px::Size;
 
 #[test]
 fn warm_highlight_detail_survives_diffuse_light_and_glare() {
@@ -51,7 +50,7 @@ fn camera_meters_diffuse_paper_without_spending_highlight_headroom() {
                 // brightness has to *move* with the pose - the ceiling and the floor carry
                 // different amounts and a turn trades one for the other. Re-metering would pin the
                 // sheet and move everything that did not turn, the background included, instead.
-                None => assert!((white - 182.7).abs() < 5.0,
+                None => assert!((white - scene.white_reflectance.raw() * 203.0).abs() < 5.0,
                     "diffuse white is not metered at fill {fill}: {white} nits"),
                 Some(square) => assert!((white - square).abs() > 5.0 && white < 1000.0,
                     "the pose did not move the sheet's light: {white} nits against {square}"),
@@ -104,7 +103,9 @@ fn paper_gamut_preserves_neutrals_and_bounds_reflectance() {
         pitch_degrees: 0.0,
         ..Scene::default()
     };
-    for (input, expected) in [(0.0, 1.624), (0.18, 34.21768), (1.0, 182.7)] {
+    let (white, black) = (scene.white_reflectance.raw(), scene.black_reflectance.raw());
+    for input in [0.0, 0.18, 1.0] {
+        let expected = (black + (white - black) * input) * 203.0;
         let output = luminance(draw([input; 3], scene));
         assert!((output.raw() - expected).abs() < 0.5,
             "neutral {input} changed its reflected brightness: {} vs {expected} nits", output.raw());
@@ -265,111 +266,48 @@ fn a_lit_room_leaves_a_gloss_black_where_a_print_keeps_it() {
     assert!(white / black > 55.0, "the room washed the print out: {black} against {white} nits");
 }
 
-#[test]
-fn the_tone_operators_trade_saturation_for_highlight_detail() {
-    let colour = HdrColour::identity();
-    let paper = |tonemap| Scene {
-        key_lux: Light::ZERO,
-        fill_lux: Light::exactly(500.0),
-        refractive_index: 1.0,
-        tonemap,
+fn lit_evenly(rendering_intent: Intent) -> Scene {
+    Scene {
+        key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, yaw_degrees: 0.0, pitch_degrees: 0.0,
+        rendering_intent, black_point_compensation: false,
         ..Scene::default()
-    };
-    let operators = [Tonemap::Neutral, Tonemap::Filmic, Tonemap::Channel];
-    let purity = operators.map(|tonemap| {
-        let drawn = matched([6.0, 1.2, 0.4], paper(tonemap), &colour).map(|light| light.raw());
+    }
+}
+
+/// Perceptual rolls a saturated highlight under white and keeps its colour; relative clips it at
+/// the paper, where only white is left.
+#[test]
+fn perceptual_keeps_a_highlights_colour_that_relative_clips() {
+    let colour = HdrColour::identity();
+    let purity = [Intent::Perceptual, Intent::RelativeColorimetric].map(|intent| {
+        let drawn = matched([6.0, 1.2, 0.4], lit_evenly(intent), &colour).map(|light| light.raw());
         drawn.into_iter().fold(f64::MAX, f64::min) / drawn.into_iter().fold(0.0f64, f64::max)
     });
-    // Far enough apart to be a choice rather than a rounding: a squared bleach put filmic within
-    // a percent of neutral, which is a dropdown nobody can see the effect of.
-    assert!(purity[2] > purity[1] + 0.05 && purity[1] > purity[0] + 0.05,
-        "the operators failed to separate on a saturated highlight: {purity:?}");
+    assert!(purity[1] > purity[0] + 0.2, "the intents failed to separate on a saturated highlight: {purity:?}");
 }
 
-/// Neutral and channel leave alone whatever paper can already hold; a stock reshapes the whole
-/// range around grey, which is what makes it a choice on a photograph with no saturated highlight
-/// in it - and that is most photographs.
+/// A colour the paper can hold is laid down exactly by a colorimetric intent: its share of white is
+/// its share of the paper's white.
 #[test]
-fn a_film_stock_reshapes_the_range_the_other_operators_hold() {
+fn a_colorimetric_intent_leaves_what_the_paper_holds() {
     let colour = HdrColour::identity();
-    let level = |tonemap, share: f64| {
-        let scene = Scene {
-            key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, tonemap,
-            ..Scene::default()
-        };
-        luminance(matched([share; 3], scene, &colour)).raw()
-    };
-    for share in [0.05, 0.18, 0.5] {
-        let (neutral, channel) = (level(Tonemap::Neutral, share), level(Tonemap::Channel, share));
-        assert!((channel - neutral).abs() < 0.5, "channel moved a grey of {share}: {neutral} to {channel}");
-    }
-    let against = |share| level(Tonemap::Filmic, share) / level(Tonemap::Neutral, share);
-    let (shadow, grey, upper) = (against(0.05), against(0.18), against(0.5));
-    assert!((grey - 1.0).abs() < 0.03, "the stock moved its own pivot: {grey}");
-    assert!(shadow < 0.85, "the stock has no toe: {shadow}");
-    assert!(upper > 1.08, "the stock adds no contrast above grey: {upper}");
+    let scene = lit_evenly(Intent::RelativeColorimetric);
+    let white = luminance(matched([1.0; 3], scene, &colour)).raw();
+    let held = [0.5, 0.35, 0.3];
+    let drawn = luminance(matched(held, scene, &colour)).raw();
+    let expected = white * luminance(held.map(|value| Light::measured(value * 203.0))).raw() / 203.0;
+    assert!((drawn / expected - 1.0).abs() < 0.02, "relative moved a colour the paper holds: {drawn} against {expected} nits");
 }
 
-/// A blown highlight is neutral - every channel clipped alike - so an operator that only decides
-/// how a highlight's *colour* is compressed is the same picture as its neighbours on the very
-/// photograph a reader picks to compare them. What they have to disagree about is the tones just
-/// under the blown patch, which each one gives a different share of the paper.
+/// The tones just under a blown patch: perceptual spends some of the paper on the patch and brings
+/// them down with it, where relative leaves them and clips the patch.
 #[test]
-fn every_operator_differs_on_a_photograph_whose_highlights_are_blown() {
+fn the_intents_differ_under_a_blown_highlight() {
     let colour = HdrColour::identity();
-    let read = |tonemap| {
-        let scene = Scene {
-            key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, tonemap,
-            ..Scene::default()
-        };
-        let blown = |column: usize| if column < 6 { [4.0; 3] } else { [0.8; 3] };
-        luminance(sample_as(&blown, scene, [16, 16], Some(&colour))).raw()
-    };
-    let [neutral, filmic, channel] = [Tonemap::Neutral, Tonemap::Filmic, Tonemap::Channel].map(read);
-    for (name, a, b) in [("neutral/filmic", neutral, filmic), ("neutral/channel", neutral, channel),
-        ("filmic/channel", filmic, channel)] {
-        assert!((a / b - 1.0).abs() > 0.05, "{name} drew the same picture: {a} against {b} nits");
-    }
-}
-
-/// A sky two stops over white, textured by a third of a stop: a curve over the frame spends almost
-/// nothing on it, where lowering the region first leaves the texture room to show.
-#[test]
-fn the_regional_operator_keeps_the_texture_inside_a_bright_region() {
-    let size = 1024;
-    let sky = |column: usize| if (column / 4) % 2 == 0 { [3.0; 3] } else { [3.0 * 2f64.powf(-0.3); 3] };
-    let texture = |tonemap| {
-        let scene = Scene {
-            key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, tonemap,
-            ..Scene::default()
-        };
-        let drawn = drawn_as(&sky, Shown::Print(scene), size, 4.0, None);
-        let row = size / 2;
-        let lumas: Vec<f64> = (size / 2 - 32..size / 2 + 32).map(|column| {
-            let at = (row * size + column) * 4;
-            (0..3).map(|channel| linear(drawn[at + channel]) * P3_LUMA[channel]).sum()
-        }).collect();
-        let (low, high) = lumas.iter().fold((f64::MAX, 0.0f64), |(low, high), &luma| (low.min(luma), high.max(luma)));
-        (high / low).log2()
-    };
-    let (neutral, regional) = (texture(Tonemap::Neutral), texture(Tonemap::Local));
-    assert!(regional > 0.06 && regional > 4.0 * neutral,
-        "the texture was not kept: {regional} stops by region against {neutral} neutral");
-}
-
-/// Only what is bright is dodged: a grey reads as the neutral curve draws it.
-#[test]
-fn the_regional_operator_leaves_the_midtones_alone() {
-    let level = |tonemap| {
-        let scene = Scene {
-            key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, tonemap,
-            ..Scene::default()
-        };
-        let drawn = drawn_as(&|_| [0.18; 3], Shown::Print(scene), 32, 4.0, None);
-        linear(drawn[(16 * 32 + 16) * 4 + 1])
-    };
-    let (neutral, regional) = (level(Tonemap::Neutral), level(Tonemap::Local));
-    assert!((regional / neutral - 1.0).abs() < 0.02, "a grey moved: {neutral} to {regional}");
+    let blown = |column: usize| if column < 6 { [4.0; 3] } else { [0.8; 3] };
+    let [perceptual, relative] = [Intent::Perceptual, Intent::RelativeColorimetric]
+        .map(|intent| luminance(sample_as(&blown, lit_evenly(intent), [16, 16], Some(&colour))).raw());
+    assert!(relative / perceptual > 1.05, "the intents drew the same picture: {perceptual} against {relative} nits");
 }
 
 /// The paper and the ink under a light that puts a perfect white at diffuse white, and nothing of
@@ -382,20 +320,49 @@ fn a_flat_print_is_the_paper_under_diffuse_white() {
         linear(drawn[(16 * 32 + 16) * 4 + 1]) * 203.0
     };
     let (white, black) = (nits(1.0, 1000.0), nits(0.0, 1000.0));
-    assert!((white / (0.9 * 203.0) - 1.0).abs() < 0.01, "paper white read {white} nits");
-    assert!((black / (0.008 * 203.0) - 1.0).abs() < 0.05, "black ink read {black} nits");
+    let paper = Scene::default();
+    assert!((white / (paper.white_reflectance.raw() * 203.0) - 1.0).abs() < 0.01, "paper white read {white} nits");
+    assert!((black / (paper.black_reflectance.raw() * 203.0) - 1.0).abs() < 0.05, "black ink read {black} nits");
     assert_eq!(white, nits(1.0, 8000.0), "the lamp reached a flat print");
 }
 
-/// The operator the print offers is the sRGB proof's too, fitted under diffuse white: the tones
-/// under a blown patch differ between them, and the neutral one is the rendition's own.
+/// A printer profile decides the paper and the ink in place of the scene's white and black, and the
+/// intent decides whether a colour is sent as a share of that paper or as itself.
 #[test]
-fn an_srgb_proof_fits_its_highlights_with_the_operator_chosen() {
+fn a_printer_profile_lays_down_its_own_paper() {
+    let icc = ideal_printer(0.5);
+    let printer = std::sync::Arc::new(rawshim::printer_gamut::PrinterGamut::new(&icc).expect("a printer profile"));
+    let nits = |source: f64, intent| {
+        let scene = Scene { presentation: Presentation::Flat, rendering_intent: intent, ..Scene::default() };
+        let drawn = drawn_as(&|_| [source; 3], Shown::Printed(scene, printer.clone()), 32, 1.0, None);
+        linear(drawn[(16 * 32 + 16) * 4 + 1]) * 203.0
+    };
+    let white = nits(1.0, Intent::RelativeColorimetric);
+    assert!((white / (0.5 * 203.0) - 1.0).abs() < 0.02, "the profile's paper read {white} nits");
+    assert!(nits(0.0, Intent::RelativeColorimetric) < 0.5, "an ideal printer's black is black");
+    let (relative, absolute) = (nits(0.3, Intent::RelativeColorimetric), nits(0.3, Intent::AbsoluteColorimetric));
+    assert!((absolute / relative - 2.0).abs() < 0.05, "absolute sent the colour itself: {relative} and {absolute} nits");
+}
+
+/// A printer reproducing linear Rec.2020 exactly, on a neutral paper reflecting `white`.
+fn ideal_printer(white: f64) -> Vec<u8> {
+    let mut profile = moxcms::ColorProfile::new_bt2020();
+    let linear = moxcms::ToneReprCurve::Lut(Vec::new());
+    profile.red_trc = Some(linear.clone());
+    profile.green_trc = Some(linear.clone());
+    profile.blue_trc = Some(linear);
+    profile.profile_class = moxcms::ProfileClass::OutputDevice;
+    profile.media_white_point = Some(moxcms::Xyzd { x: 0.9642 * white, y: white, z: 0.8249 * white });
+    profile.encode().expect("an encodable profile")
+}
+
+/// The intents the print offers are the sRGB proof's too, against the file's white.
+#[test]
+fn an_srgb_proof_reaches_its_gamut_by_the_intent_chosen() {
     let blown = |column: usize| if column < 6 { [4.0; 3] } else { [0.8; 3] };
-    let read = |tone| linear(drawn_as(&blown, Shown::Srgb(tone), 32, 4.0, None)[(16 * 32 + 16) * 4 + 1]);
-    let [neutral, filmic, channel] = [Tonemap::Neutral, Tonemap::Filmic, Tonemap::Channel].map(read);
-    assert!((filmic / neutral - 1.0).abs() > 0.05, "filmic proofed as neutral: {filmic} against {neutral}");
-    assert!((channel / neutral - 1.0).abs() > 0.05, "per channel proofed as neutral: {channel} against {neutral}");
+    let read = |intent| linear(drawn_as(&blown, Shown::Srgb(intent), 32, 4.0, None)[(16 * 32 + 16) * 4 + 1]);
+    let [perceptual, relative] = [Intent::Perceptual, Intent::RelativeColorimetric].map(read);
+    assert!(relative / perceptual > 1.05, "relative proofed as perceptual: {relative} against {perceptual}");
 }
 
 const P3_LUMA: [f64; 3] = [0.22897456, 0.69173852, 0.07928691];
@@ -436,8 +403,10 @@ fn linear(coded: f32) -> f64 {
 
 enum Shown {
     Print(Scene),
-    /// An sRGB soft proof, its highlights fitted by the operator given.
-    Srgb(Tonemap),
+    /// A print laid down by a printer profile's printer.
+    Printed(Scene, std::sync::Arc<rawshim::printer_gamut::PrinterGamut>),
+    /// An sRGB soft proof, brought inside the file's gamut by the intent given.
+    Srgb(Intent),
 }
 
 /// A square photograph drawn onto a canvas of the same size. `source` is its colour at a column, in
@@ -451,19 +420,23 @@ fn drawn_as(
 ) -> Vec<f32> {
     let gpu = rawshim::gpu::device().expect("print requires Vulkan");
     let base = rawshim::base::device(gpu).expect("source pyramid");
-    let (output, peak_nits, print_tone) = match shown {
-        Shown::Print(_) => (Output::Pq, Light::exactly(1000.0), Tonemap::Neutral),
-        Shown::Srgb(tone) => (Output::Srgb, Light::exactly(203.0), tone),
+    let (output, peak_nits, intent) = match shown {
+        Shown::Print(_) | Shown::Printed(..) => (Output::Pq, Light::exactly(1000.0), Intent::Perceptual),
+        Shown::Srgb(intent) => (Output::Srgb, Light::exactly(203.0), intent),
     };
     let grade = Grade {
-        width: size, height: size, photograph_long: Span::measured(size), colour,
-        white: Light::measured(10000.0), source_level: Light::measured(10000.0 * over_white), floor: None,
-        reference_nits: Light::exactly(203.0), peak_nits,
-        exposure: Stops::ZERO, adjust: Adjust::none(), as_shot: None, output,
-        print_tone,
-        geometry: Geometry::none(), window: None, surround_window: None,
+        colour,
+        output,
+        intent,
         canvas: Some(Canvas { region: (0.0, 0.0, size as f64, size as f64),
             size: Size::measured(size, size), max_lod: 5 }),
+        ..Grade::new(
+            size,
+            size,
+            rawshim::tone::Levels { white: Light::measured(10000.0), peak: Light::measured(10000.0 * over_white), floor: None },
+            Light::exactly(203.0),
+            peak_nits,
+        )
     };
     let coded = |colour: [f64; 3]| rawshim::hdr_fit::srgb_to_rec2020().map(|row| {
         let value = row.into_iter().zip(colour).map(|(weight, value)| weight * value).sum::<f64>();
@@ -475,6 +448,10 @@ fn drawn_as(
     let uploaded = gpu.upload(&frame, &grade, &peak);
     match shown {
         Shown::Print(scene) => uploaded.draw_print(&grade, &pyramid, &scene),
+        Shown::Printed(scene, printer) => {
+            uploaded.set_printer(Some(printer));
+            uploaded.draw_print(&grade, &pyramid, &scene)
+        }
         Shown::Srgb(_) => uploaded.draw(&grade, &pyramid),
     }
 }

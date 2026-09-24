@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FileRenderingIntentSchema } from './rendering_intent';
 
 // What a reader takes a photograph away as (§10.5).
 //
@@ -57,6 +58,8 @@ export const ExportOptionsSchema = z.object({
    * trade the renditions make (they keep a PQ base so nothing that already works regresses).
    */
   gainMap: z.boolean().default(false),
+  /** How the SDR picture an export writes, alone or as a gain map's base, reaches sRGB. */
+  renderingIntent: FileRenderingIntentSchema.default('perceptual'),
 });
 export type ExportOptions = z.infer<typeof ExportOptionsSchema>;
 
@@ -91,6 +94,12 @@ export function honoured(options: ExportOptions): ExportOptions {
     exportHdr: options.exportHdr && (format.hdr || gainMap),
     gainMap,
   };
+}
+
+/** Whether an export writes an SDR picture, alone or as a gain map's base: what an intent reaches. */
+export function writesSdr(options: ExportOptions): boolean {
+  const effective = honoured(options);
+  return !effective.exportHdr || effective.gainMap;
 }
 
 /** What this export lands under, given the original's name. */

@@ -25,7 +25,7 @@
 import IMPORT_WGSL from '../generated/stage_import.wgsl?raw';
 import PLANAR_WGSL from '../generated/stage.wgsl?raw';
 import { planarLayout } from './planar_layout';
-import type { Tonemap } from '../../raw_edit/print/print_scene';
+import type { FileRenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import type { Painted, StageAsk } from '../../../gpu/gpu_protocol';
 
 /**
@@ -38,8 +38,8 @@ import type { Painted, StageAsk } from '../../../gpu/gpu_protocol';
  */
 export const SDR_WHITE_NITS = 203;
 
-/** `Colour.proof` in `stage.slang`: one more than the operator's number in `print_tone.slang`. */
-const PROOF_TONE: Record<Tonemap, number> = { neutral: 1, filmic: 2, channel: 3, local: 4 };
+/** `Colour.proof` in `stage.slang`: one more than the intent's number in `gamut_map.slang`. */
+const PROOF_INTENT: Record<FileRenderingIntent, number> = { perceptual: 1, relativeColorimetric: 2 };
 
 /**
  * The imported pipeline's fragment, which is the one thing `slang/` cannot say.
@@ -363,7 +363,7 @@ export class StagePainter {
           [0, 0],
           1,
           rotation,
-          proof == null ? 0 : PROOF_TONE[proof],
+          proof == null ? 0 : PROOF_INTENT[proof],
           ask.sourcePeak,
         );
         device.queue.writeBuffer(pipelinesFor(device).colour, 0, uniform.buffer as ArrayBuffer);

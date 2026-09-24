@@ -115,7 +115,7 @@ export class PrepareRenderer {
   }
 
   /**
-   * The photograph's full rendition as a picture to prepare, for a client that only shows it.
+   * The photograph's max rendition as a picture to prepare, for a client that only shows it.
    *
    * Every edit is already in the file, so it is prepared unedited and at the white it was encoded
    * with, and the client draws it with neutral edits. The caller makes sure the file is current.
@@ -125,8 +125,8 @@ export class PrepareRenderer {
     if (photo == null) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
     const library = this.libraryOf(photo.library_id);
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
-    const path = getRenditionPath(library, photoId, 'full', library.rendition_hdr);
-    // Sized off the file rather than the row: the rendition is cropped and capped in size.
+    const path = getRenditionPath(library, photoId, 'max', library.rendition_hdr);
+    // Sized off the file rather than the row: the rendition is cropped.
     const at = pictureLevel(fileRecipe(path), readRawHeader(path), shown, missing);
     if (at == null) throw new AppError('VALIDATION_ERROR', `${photoId}'s rendition has no dimensions`);
     const { level, size, window, parts } = at;

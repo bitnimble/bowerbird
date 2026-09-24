@@ -147,11 +147,11 @@ test('grades through the camera match, as the renditions do', async ({ page }) =
 });
 
 /**
- * The soft proof names its target and its operator as bare strings, and this is the only runner
- * that can see whether the module accepts them.
+ * The soft proof names its target and its rendering intent as bare strings, and this is the only
+ * runner that can see whether the module accepts them.
  *
- * `wasm::set_proof` matches `"hdr"` and `"srgb"`, and a print scene's presentation and tonemap
- * are serde's names, where the page's are TypeScript unions the module knows nothing about - so a
+ * `wasm::set_proof` matches `"hdr"` and `"srgb"` and parses the intent, and a print scene's
+ * presentation and rendering intent are serde's names, where the page's are TypeScript unions the module knows nothing about - so a
  * value renamed on either side compiles, passes `raw_edit_presenter.test.ts` against its recording
  * decoder, and refuses at the first tick. `wasm.rs` is `#[cfg(target_arch = "wasm32")]`, so no
  * cargo suite compiles that match either way.
@@ -162,11 +162,15 @@ test('grades through the camera match, as the renditions do', async ({ page }) =
 test('every soft proof crosses to the module and keeps drawing', async ({ page }) => {
   await open(page);
 
-  for (const [label, panel] of [['sRGB', 'Highlights'], ['Printed media', 'Paper'], ['Rec.2020 PQ HDR (default)', null]] as const) {
+  for (const [label, panel] of [['sRGB', 'sRGB'], ['Printed media', 'Paper'], ['Rec.2020 PQ HDR (default)', null]] as const) {
     await softProof(page, label);
     if (label === 'sRGB') {
-      await page.getByRole('combobox', { name: 'Highlight roll-off' }).click();
-      await page.getByRole('option', { name: 'By region', exact: true }).click();
+      await page.getByRole('combobox', { name: 'Rendering intent' }).click();
+      await page.getByRole('option', { name: 'Relative colorimetric', exact: true }).click();
+    }
+    if (label === 'Printed media') {
+      await page.getByRole('combobox', { name: 'Rendering intent' }).click();
+      await page.getByRole('option', { name: 'Absolute colorimetric', exact: true }).click();
     }
     await expect(page.getByRole('button', { name: /^Soft proof/ })).toHaveText(label === 'Rec.2020 PQ HDR (default)' ? 'Soft proof' : label);
     if (panel != null) await expect(page.getByRole('group', { name: panel, exact: true })).toBeVisible();

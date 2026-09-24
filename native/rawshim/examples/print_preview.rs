@@ -1,19 +1,21 @@
-use rawshim::gpu::{Adjust, Canvas, Grade, Output, Tonemap};
-use rawshim::light::{Gain, Light, Stops};
+use rawshim::gpu::{Canvas, Grade, Intent};
+use rawshim::light::Light;
 use rawshim::print::{Paper, Presentation, Scene};
-use rawshim::px::{Size, Span};
+use rawshim::px::Size;
 use rawshim::snapshot::Snapshot;
 
 fn main() -> Result<(), String> {
     let framed = std::env::args().any(|arg| arg == "--framed");
+    // What a browser that reports no HDR display is drawn: everything above diffuse white rolled into it.
+    let sdr = std::env::args().any(|arg| arg == "--sdr");
     let surface = std::env::args().any(|arg| arg == "--surface");
-    let named = std::env::args().find_map(|arg| arg.strip_prefix("--tone=").map(str::to_owned));
-    let tonemap = match named.as_deref().unwrap_or("neutral") {
-        "neutral" => Tonemap::Neutral,
-        "filmic" => Tonemap::Filmic,
-        "channel" => Tonemap::Channel,
-        "local" => Tonemap::Local,
-        other => return Err(format!("unknown tone operator {other}")),
+    let flat = std::env::args().any(|arg| arg == "--flat");
+    let profile = std::env::args().find_map(|arg| arg.strip_prefix("--profile=").map(str::to_owned));
+    let intent = match std::env::args().find_map(|arg| arg.strip_prefix("--intent=").map(str::to_owned)).as_deref() {
+        None | Some("perceptual") => Intent::Perceptual,
+        Some("relative") => Intent::RelativeColorimetric,
+        Some("absolute") => Intent::AbsoluteColorimetric,
+        Some(other) => return Err(format!("unknown intent {other}")),
     };
     let zoom = std::env::args()
         .find_map(|arg| arg.strip_prefix("--zoom=").map(str::to_owned))
@@ -29,13 +31,23 @@ fn main() -> Result<(), String> {
     let key_lux = Light::exactly(number("key-lux", Scene::default().key_lux.raw())?);
     let fill_lux = Light::exactly(number("fill-lux", Scene::default().fill_lux.raw())?);
     let lamp_degrees = number("lamp-degrees", Scene::default().light_angular_degrees)?;
+    let view: Option<Vec<f64>> = std::env::args()
+        .find_map(|arg| arg.strip_prefix("--view=").map(str::to_owned))
+        .map(|list| list.split(',').map(|value| value.parse::<f64>().map_err(|_| "invalid view")).collect())
+        .transpose()?;
+    if view.as_ref().is_some_and(|view| view.len() != 5) {
+        return Err("--view is yaw,pitch,lamp azimuth,lamp elevation,lamp distance".to_owned());
+    }
+    let (pan_x, pan_y) = (number("pan-x", 0.0)?, number("pan-y", 0.0)?);
     let args: Vec<String> = std::env::args()
-        .filter(|arg| arg != "--framed" && arg != "--surface"
-            && !arg.starts_with("--tone=") && !arg.starts_with("--zoom=") && !arg.starts_with("--pitches=")
-            && !arg.starts_with("--key-lux=") && !arg.starts_with("--fill-lux=") && !arg.starts_with("--lamp-degrees="))
+        .filter(|arg| arg != "--framed" && arg != "--surface" && arg != "--sdr" && arg != "--flat"
+            && !arg.starts_with("--profile=") && !arg.starts_with("--intent=")
+            && !arg.starts_with("--zoom=") && !arg.starts_with("--pitches=")
+            && !arg.starts_with("--key-lux=") && !arg.starts_with("--fill-lux=") && !arg.starts_with("--lamp-degrees=")
+            && !arg.starts_with("--view=") && !arg.starts_with("--pan-x=") && !arg.starts_with("--pan-y="))
         .collect();
     if !(3..=4).contains(&args.len()) {
-        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--tone=neutral|filmic|channel|local] [--zoom=1] [--pitches=8,0,-8] [--key-lux=1000] [--fill-lux=500] [--lamp-degrees=1]".to_owned());
+        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--flat] [--sdr] [--profile=printer.icc] [--intent=perceptual|relative|absolute] [--zoom=1] [--pitches=8,0,-8] [--key-lux=1000] [--fill-lux=500] [--lamp-degrees=1] [--view=yaw,pitch,azimuth,elevation,distance] [--pan-x=0] [--pan-y=0]".to_owned());
     }
     let output = std::path::Path::new(&args[2]);
     std::fs::create_dir_all(output).map_err(|error| error.to_string())?;
@@ -68,37 +80,37 @@ fn main() -> Result<(), String> {
     let pyramid = rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height))
         .ok_or("the source pyramid")?;
     let grade = Grade {
-        width: header.width,
-        height: header.height,
-        photograph_long: Span::measured(header.width.max(header.height)),
         colour: analysis.as_ref().and_then(|analysis| analysis.from_raw.matched.as_ref()).and_then(|matched| matched.colour.as_ref()),
-        white: header.white,
-        source_level: header.peak,
-        floor: header.floor,
-        reference_nits: header.grade.reference_white_nits,
-        peak_nits: header.grade.peak_nits,
-        exposure: Stops::ZERO,
-        adjust: Adjust::none(),
         as_shot: header.as_shot,
-        output: Output::Pq,
-        geometry: rawshim::image::Geometry::none(),
-        window: None,
-        surround_window: None,
         canvas: Some(Canvas {
             region: (0.0, 0.0, display.0, display.1),
             size: Size::measured(canvas.0, canvas.1),
             max_lod: pyramid.levels,
         }),
-        print_tone: tonemap,
+        intent,
+        ..Grade::new(
+            header.width,
+            header.height,
+            rawshim::tone::Levels { white: header.white, peak: header.peak, floor: header.floor },
+            header.grade.reference_white_nits,
+            if sdr { Light::at_diffuse_white(header.grade.reference_white_nits) } else { header.grade.peak_nits },
+        )
     };
     let peak = gpu.scene_peak();
     let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
     uploaded.collect_candidates(&grade);
+    if let Some(path) = profile {
+        let icc = std::fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
+        let started = std::time::Instant::now();
+        let printer = rawshim::printer_gamut::PrinterGamut::new(&icc)?;
+        println!("{path}: gamut read in {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
+        uploaded.set_printer(Some(std::sync::Arc::new(printer)));
+    }
     if !pitches.is_empty() {
         let white = header.grade.reference_white_nits.raw();
         for pitch in pitches {
             let scene = Scene {
-                tonemap, framed, zoom, key_lux, fill_lux, light_angular_degrees: lamp_degrees, pitch_degrees: pitch,
+                rendering_intent: intent, framed, zoom, key_lux, fill_lux, light_angular_degrees: lamp_degrees, pitch_degrees: pitch,
                 ..Scene::default()
             };
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
@@ -116,37 +128,26 @@ fn main() -> Result<(), String> {
         }
         return Ok(());
     }
-    for (name, paper, roughness, white, black, surface_texture) in [
-        ("gloss", Paper::Gloss, 0.08, 0.92, 0.004, 0.15),
-        ("satin", Paper::Satin, 0.18, 0.9, 0.008, 0.5),
-        ("matte", Paper::Matte, 0.65, 0.88, 0.025, 0.85),
-    ] {
+    for (name, paper) in [("gloss", Paper::Gloss), ("satin", Paper::Satin), ("matte", Paper::Matte)] {
         let scene = Scene {
-            paper,
-            tonemap,
             framed,
-            presentation: if surface { Presentation::Surface } else { Presentation::Scene },
-            roughness,
-            white_reflectance: Gain::of_ratio(white),
-            black_reflectance: Gain::of_ratio(black),
-            surface_texture,
+            presentation: if flat { Presentation::Flat } else if surface { Presentation::Surface } else { Presentation::Scene },
+            rendering_intent: intent,
             zoom,
             ..Scene::default()
+        }.on(paper);
+        let views = match &view {
+            Some(view) => vec![("view", Scene {
+                yaw_degrees: view[0],
+                pitch_degrees: view[1],
+                light_angular_degrees: lamp_degrees,
+                pan_x,
+                pan_y,
+                ..scene
+            }.lit_from(view[2], view[3], view[4]))],
+            None => standard_views(scene),
         };
-        for (view, scene) in [("default", scene), ("glare", Scene {
-            yaw_degrees: -15.0,
-            pitch_degrees: -12.0,
-            ..scene
-        }.lit_from(-32.0, 25.0, 4.0)), ("ceiling", Scene {
-            yaw_degrees: -8.0,
-            pitch_degrees: -40.0,
-            ..scene
-        }), ("dark-room", Scene {
-            yaw_degrees: -12.0,
-            pitch_degrees: -37.0,
-            fill_lux: Light::ZERO,
-            ..scene
-        })] {
+        for (view, scene) in views {
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
             let snapshot = Snapshot::pq(&samples, Size::<rawshim::px::Canvas>::measured(canvas.0, canvas.1));
             std::fs::write(output.join(format!("{name}-{view}.png")), snapshot.encode())
@@ -163,6 +164,23 @@ fn main() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn standard_views(scene: Scene) -> Vec<(&'static str, Scene)> {
+    vec![("default", scene), ("glare", Scene {
+        yaw_degrees: -15.0,
+        pitch_degrees: -12.0,
+        ..scene
+    }.lit_from(-32.0, 25.0, 4.0)), ("ceiling", Scene {
+        yaw_degrees: -8.0,
+        pitch_degrees: -40.0,
+        ..scene
+    }), ("dark-room", Scene {
+        yaw_degrees: -12.0,
+        pitch_degrees: -37.0,
+        fill_lux: Light::ZERO,
+        ..scene
+    })]
 }
 
 const BANDS: usize = 5;

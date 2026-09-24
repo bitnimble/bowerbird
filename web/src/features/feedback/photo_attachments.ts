@@ -97,6 +97,7 @@ function rolledToSdr(photoId: string): Promise<{ bytes: Uint8Array; mediaType: s
       halfSize: false,
       exportHdr: false,
       gainMap: false,
+      renderingIntent: 'perceptual',
     },
   });
 }

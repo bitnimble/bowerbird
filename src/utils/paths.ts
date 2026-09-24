@@ -133,6 +133,12 @@ export function backupsDir(dbPath: string): string {
   return path.join(path.dirname(path.resolve(dbPath)), 'backups');
 }
 
+// The ICC profiles a print can be proofed through, which a user puts there: beside the catalogue
+// for the reason backups are, since `DATA_DIR` is theirs to clear.
+export function printerProfilesDir(dbPath: string): string {
+  return path.join(path.dirname(path.resolve(dbPath)), 'printer-profiles');
+}
+
 // A symlinked DB_PATH is a deliberate placement - the catalogue lives on another
 // volume - and writing a restored file at the link's own path silently relocates
 // it, orphaning the real one where nothing will ever look again. So everything

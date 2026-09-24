@@ -118,7 +118,7 @@ describe('GET /image/:photoId/prepare', () => {
     expect(develops).toEqual([develop, undefined, undefined]);
   });
 
-  it('prepares the full rendition, brought up to date first, where the client asks for it', async () => {
+  it('prepares the max rendition, brought up to date first, where the client asks for it', async () => {
     const built: string[] = [];
     const asked: string[] = [];
     const app = serving(
@@ -135,7 +135,7 @@ describe('GET /image/:photoId/prepare', () => {
     );
     const got = await app.request(`${route(PathSegment.image(), 'p1', PathSegment.prepare())}?from=rendition`);
     expect(got.status).toBe(200);
-    expect(built).toEqual(['p1:full']);
+    expect(built).toEqual(['p1:max']);
     expect(asked).toEqual(['p1']);
   });
 

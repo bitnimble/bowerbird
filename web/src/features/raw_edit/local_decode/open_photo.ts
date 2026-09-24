@@ -102,7 +102,7 @@ async function preparedThere(
   const decoder = new LocalDecoder();
   try {
     const rendition = from === 'rendition';
-    const [settings, avif] = await Promise.all([settingsApi.get(), rendition ? fullRendition(photoId, onStep) : null]);
+    const [settings, avif] = await Promise.all([settingsApi.get(), rendition ? maxRendition(photoId, onStep) : null]);
     // The grade the module is told about, which for this arm the prepare already used: the picture
     // arrived coded against these, and a tick anchors to the same numbers.
     const open: LocalOpen = {
@@ -128,12 +128,12 @@ async function preparedThere(
   }
 }
 
-/** The full rendition's file, built where it is missing or behind the edits. */
-async function fullRendition(photoId: string, onStep: (step: OpenStep) => void): Promise<Uint8Array<ArrayBuffer>> {
+/** The max rendition's file, built where it is missing or behind the edits. */
+async function maxRendition(photoId: string, onStep: (step: OpenStep) => void): Promise<Uint8Array<ArrayBuffer>> {
   onStep('rendering');
-  await renditionsApi.build(photoId, 'full');
+  await renditionsApi.build(photoId, 'max');
   onStep('preparing');
-  const reply = await fetch(renditionsApi.url(photoId, 'full'), {
+  const reply = await fetch(renditionsApi.url(photoId, 'max'), {
     headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
   });
   if (!reply.ok) throw new Error(await refusal(reply));

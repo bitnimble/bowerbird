@@ -1,8 +1,8 @@
-use rawshim::gpu::{Adjust, Canvas, Grade, Output};
+use rawshim::gpu::{Canvas, Grade};
 use rawshim::image::Geometry;
-use rawshim::light::{Gain, Light, SceneNits, Stops};
+use rawshim::light::{Gain, Light, SceneNits};
 use rawshim::print::{Presentation, Scene};
-use rawshim::px::{Size, Span};
+use rawshim::px::Size;
 
 #[test]
 fn surface_fills_the_photo_and_pose_does_not_move_its_pixels() {
@@ -146,8 +146,8 @@ fn frame_glass_has_hdr_reflections_and_gains_reflectivity_at_grazing_angles() {
     assert!(linear(grazing[center]) > linear(face[center]) * 3.0,
         "glass did not gain grazing reflection: {} / {}", grazing[center], face[center]);
     // Five degrees across rather than the default lamp: the centre reads the emitter's mirror image,
-    // and a one-degree source lands its image between the probe and the frame. Not a softbox either,
-    // whose radiance coated glass returns under paper white however many lux it is set to.
+    // and a one-degree source lands its image between the probe and the frame. Not a broad lamp
+    // either, whose radiance coated glass returns under paper white however many lux it is set to.
     let lit = Scene { key_lux: Light::exactly(1000.0), light_angular_degrees: 5.0, ..scene }
         .lit_from(0.0, 0.0, 4.0);
     let reflection = draw(&black, &framed_grade, Some(&lit));
@@ -204,19 +204,21 @@ fn diffuse() -> Scene {
     Scene {
         presentation: Presentation::Surface, yaw_degrees: 0.0, pitch_degrees: 0.0,
         key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0,
-        surface_texture: 0.0, ..Scene::default()
+        surface_texture: 0.0, white_reflectance: Gain::of_ratio(0.9), black_reflectance: Gain::of_ratio(0.008),
+        ..Scene::default()
     }
 }
 
 fn grade() -> Grade<'static> {
     Grade {
-        width: 64, height: 64, photograph_long: Span::measured(64), colour: None,
-        white: Light::measured(10000.0), source_level: Light::measured(10000.0), floor: None,
-        reference_nits: Light::exactly(203.0), peak_nits: Light::exactly(1000.0),
-        exposure: Stops::ZERO, adjust: Adjust::none(), as_shot: None, output: Output::Pq,
-        geometry: Geometry::none(), window: None, surround_window: None,
         canvas: Some(Canvas { region: (0.0, 0.0, 64.0, 64.0), size: Size::measured(64, 64), max_lod: 6 }),
-        print_tone: rawshim::gpu::Tonemap::Neutral,
+        ..Grade::new(
+            64,
+            64,
+            rawshim::tone::Levels { white: Light::measured(10000.0), peak: Light::measured(10000.0), floor: None },
+            Light::exactly(203.0),
+            Light::exactly(1000.0),
+        )
     }
 }
 

@@ -124,26 +124,13 @@ fn every_stage_hands_its_working_planes_back() {
     let level = rawshim::light::Light::measured;
     let levels =
         rawshim::tone::Levels { white: level(4095.0), peak: level(4095.0), floor: None }.anchored();
-    let grade = rawshim::gpu::Grade {
-        width: WIDTH,
-        height: HEIGHT,
-        photograph_long: rawshim::px::Span::measured(WIDTH.max(HEIGHT)),
-        colour: None,
-        white: levels.white,
-        source_level: levels.peak,
-        floor: levels.floor,
-        reference_nits: rawshim::light::Light::exactly(203.0),
-        peak_nits: rawshim::light::Light::exactly(1000.0),
-        exposure: rawshim::light::Stops::ZERO,
-        adjust: rawshim::gpu::Adjust::none(),
-        as_shot: None,
-        output: rawshim::gpu::Output::Pq,
-        geometry: rawshim::image::Geometry::none(),
-        window: None,
-        surround_window: None,
-        canvas: None,
-        print_tone: rawshim::gpu::Tonemap::Neutral,
-    };
+    let grade = rawshim::gpu::Grade::new(
+        WIDTH,
+        HEIGHT,
+        *levels,
+        rawshim::light::Light::exactly(203.0),
+        rawshim::light::Light::exactly(1000.0),
+    );
     let peak = gpu.scene_peak();
     gives_it_back("upload", || {
         let uploaded = gpu.upload(&frame, &grade, &peak);

@@ -1,7 +1,7 @@
-use rawshim::gpu::{Adjust, Canvas, Grade, Output};
-use rawshim::light::{Gain, Light, Stops};
+use rawshim::gpu::{Canvas, Grade, Output};
+use rawshim::light::Light;
 use rawshim::print::{Paper, Scene};
-use rawshim::px::{Size, Span};
+use rawshim::px::Size;
 
 fn main() -> Result<(), String> {
     let path = std::env::args().nth(1).ok_or("usage: print_hdr_audit <photograph>")?;
@@ -22,18 +22,19 @@ fn main() -> Result<(), String> {
     let analysis = header.photo_analysis.as_deref().and_then(rawshim::photo_analysis::decode);
     let pyramid = rawshim::base::pyramid(gpu, base, &prepared.samples, (header.width, header.height)).ok_or("the source pyramid")?;
     let grade = Grade {
-        width: header.width, height: header.height,
-        photograph_long: Span::measured(header.width.max(header.height)),
         colour: analysis.as_ref().and_then(|analysis| analysis.from_raw.matched.as_ref()).and_then(|matched| matched.colour.as_ref()),
-        white: header.white, source_level: header.peak, floor: header.floor,
-        reference_nits: header.grade.reference_white_nits, peak_nits: Light::exactly(1000.0),
-        exposure: Stops::ZERO, adjust: Adjust::none(), as_shot: header.as_shot, output: Output::Pq,
-        geometry: rawshim::image::Geometry::none(), window: None, surround_window: None,
+        as_shot: header.as_shot,
         canvas: Some(Canvas {
             region: (0.0, 0.0, header.width as f64, header.height as f64),
             size: Size::measured(1280, 960), max_lod: pyramid.levels,
         }),
-        print_tone: rawshim::gpu::Tonemap::Neutral,
+        ..Grade::new(
+            header.width,
+            header.height,
+            rawshim::tone::Levels { white: header.white, peak: header.peak, floor: header.floor },
+            header.grade.reference_white_nits,
+            Light::exactly(1000.0),
+        )
     };
     let peak = gpu.scene_peak();
     let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
@@ -57,15 +58,8 @@ fn main() -> Result<(), String> {
     });
     eprintln!("adapter: {}", gpu.adapter);
     println!("paper,view,light_angular_degrees,key_lux,fill_lux,min_nits,peak_nits,mean_nits,peak_p3_nits,peak_canvas_code,above_203_percent,above_500_percent,above_1000_percent,pq_error_nits,pq_error_relative,sdr_proof_error,twice_light_error");
-    for (name, paper, roughness, white, black, surface_texture) in [
-        ("gloss", Paper::Gloss, 0.08, 0.92, 0.004, 0.15),
-        ("satin", Paper::Satin, 0.18, 0.9, 0.008, 0.5),
-        ("matte", Paper::Matte, 0.65, 0.88, 0.025, 0.85),
-    ] {
-        let scene = Scene {
-            paper, roughness, white_reflectance: Gain::of_ratio(white), black_reflectance: Gain::of_ratio(black),
-            surface_texture, ..Scene::default()
-        };
+    for (name, paper) in [("gloss", Paper::Gloss), ("satin", Paper::Satin), ("matte", Paper::Matte)] {
+        let scene = Scene::default().on(paper);
         for (view, scene) in [("default", scene), ("glare", Scene {
             yaw_degrees: -15.0, pitch_degrees: -12.0, ..scene
         }.lit_from(-32.0, 25.0, 4.0))] {

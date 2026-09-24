@@ -58,11 +58,11 @@ public float glass_ghost_offset(float cosine, float print_long_mm)
 }
 
 static const float GLASS_PI = 3.141592653589793;
-static const float GLASS_HAZE = 0.07;
-static const float HAZE_SPREAD = 0.045;
+static const float GLASS_HAZE = 0.03;
+static const float HAZE_SPREAD = 0.02;
 
 /// The share of a mirrored source a pane scatters around the image instead of into it, against the
-/// angle from the image's own direction.
+/// angle outside the image's own edge.
 ///
 /// **A lamp in real glass has a halo, and without one its image is a decal.** A pane's surface is
 /// not polished to a mirror and its bulk is not perfectly clear, so a few percent of what it
@@ -71,10 +71,11 @@ static const float HAZE_SPREAD = 0.045;
 /// the only part of it a reader can actually see the shape of is this skirt; drawn without one the
 /// image ends where the arithmetic says it ends, a step from clipped white to the mat, which no
 /// glass does. Integrating the pixel does not reach it either, because the step is a fraction of a
-/// pixel wide and a halo is several across.
-public float glass_haze(float cosine)
+/// pixel wide and a halo is several across. From the edge, not the centre: around a lamp wider than
+/// the halo, a centred one is swallowed by the core it should be ringing.
+public float glass_haze(float outside)
 {
-    let x = acos(clamp(cosine, -1.0, 1.0)) / HAZE_SPREAD;
+    let x = outside / HAZE_SPREAD;
     let falloff = 1.0 + x * x;
     return GLASS_HAZE / (GLASS_PI * HAZE_SPREAD * HAZE_SPREAD * falloff * falloff);
 }

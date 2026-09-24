@@ -45,7 +45,7 @@ test('desktop print retains its rotation controls', () => {
   expect(screen.queryByRole('button', { name: 'Enable tilt' })).toBeNull();
 });
 
-test('light size slides in decades, so a lamp gets as much track as a softbox', () => {
+test('light size slides in decades, so a pinpoint lamp gets as much track as a broad one', () => {
   const store = new PrintStore();
   presenter = new PrintPresenter(store, () => {}, null);
   render(<PrintPanel store={store} presenter={presenter} disabled={false} section="lighting" />);
@@ -73,17 +73,23 @@ test('a moved slider offers its way back, and a slider at rest does not', () => 
   expect(reset.disabled).toBe(true);
 });
 
-test('the roll-off names the operator the print is drawn with', () => {
+test('the rendering intent names the intent the print is drawn with', () => {
   const store = new PrintStore();
   let redraws = 0;
   presenter = new PrintPresenter(store, () => { redraws += 1; }, null);
-  render(<PrintPanel store={store} presenter={presenter} disabled={false} section="paper" />);
-  const roll = screen.getByRole('combobox', { name: 'Highlight roll-off' });
-  expect(roll.textContent).toBe('Neutral');
-  act(() => presenter?.setTonemap('channel'));
-  expect(store.scene.tonemap).toBe('channel');
+  render(<PrintPanel store={store} presenter={presenter} disabled={false} section="printer" />);
+  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Perceptual');
+  act(() => presenter?.setRenderingIntent('absoluteColorimetric'));
+  expect(store.scene.renderingIntent).toBe('absoluteColorimetric');
   expect(redraws).toBe(1);
-  expect(screen.getByRole('combobox', { name: 'Highlight roll-off' }).textContent).toBe('Per channel');
+  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Absolute colorimetric');
+});
+
+test('an sRGB proof offers the intents a file can be written with', () => {
+  const store = new PrintStore();
+  presenter = new PrintPresenter(store, () => {}, null);
+  render(<PrintPanel store={store} presenter={presenter} disabled={false} section="srgb" />);
+  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Perceptual');
 });
 
 test('a flat print offers the paper and the ink and nothing a surface needs light to show', () => {
@@ -92,12 +98,42 @@ test('a flat print offers the paper and the ink and nothing a surface needs ligh
   presenter.setView('flat');
   render(<PrintPanel store={store} presenter={presenter} disabled={false} section="paper" />);
   expect(screen.getByRole('combobox', { name: 'Paper' })).toBeTruthy();
-  expect(screen.getByRole('combobox', { name: 'Highlight roll-off' })).toBeTruthy();
   expect(screen.getByRole('slider', { name: 'Paper reflectance' })).toBeTruthy();
   expect(screen.getByRole('slider', { name: 'Black reflectance' })).toBeTruthy();
   expect(screen.queryByRole('slider', { name: 'Surface roughness' })).toBeNull();
   expect(screen.queryByRole('slider', { name: 'Paper texture' })).toBeNull();
   expect(screen.queryByRole('checkbox', { name: 'Add frame' })).toBeNull();
+});
+
+test('a printer profile takes over the paper white and black', async () => {
+  const store = new PrintStore();
+  const printer = new PrintPresenter(store, () => {}, null, {
+    list: () => Promise.resolve(['Satin.icc']),
+    bytes: () => Promise.resolve(new Uint8Array(4)),
+  });
+  presenter = printer;
+  render(<>
+    <PrintPanel store={store} presenter={printer} disabled={false} section="printer" />
+    <PrintPanel store={store} presenter={printer} disabled={false} section="paper" />
+  </>);
+  expect(screen.getByRole('combobox', { name: 'Printer profile' }).textContent).toBe('Generic paper');
+  expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Paper reflectance' }).disabled).toBe(false);
+
+  await act(() => printer.setPrinterProfile('Satin.icc'));
+  expect(screen.getByRole('combobox', { name: 'Printer profile' }).textContent).toBe('Satin.icc');
+  expect(screen.getByRole<HTMLInputElement>('slider', { name: 'Paper reflectance' }).disabled).toBe(true);
+  expect(screen.getByText('The printer profile sets paper white and black.')).toBeTruthy();
+});
+
+test('black point compensation is offered only where relative colorimetric would clip the black', () => {
+  const store = new PrintStore();
+  presenter = new PrintPresenter(store, () => {}, null);
+  render(<PrintPanel store={store} presenter={presenter} disabled={false} section="printer" />);
+  expect(screen.queryByRole('checkbox', { name: 'Black point compensation' })).toBeNull();
+  act(() => presenter?.setRenderingIntent('relativeColorimetric'));
+  expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Black point compensation' }).checked).toBe(true);
+  act(() => presenter?.setRenderingIntent('absoluteColorimetric'));
+  expect(screen.queryByRole('checkbox', { name: 'Black point compensation' })).toBeNull();
 });
 
 test('paper settings toggle framing and disable it with the other controls', () => {

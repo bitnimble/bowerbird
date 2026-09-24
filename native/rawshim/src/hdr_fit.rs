@@ -1494,26 +1494,20 @@ fn model_device(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
 /// exposure at their identities, so a sample is read as itself.
 fn probe_grade(colour: &HdrColour) -> crate::gpu::Grade<'_> {
     crate::gpu::Grade {
-        width: 1,
-        height: 1,
-        photograph_long: crate::px::Span::measured(1),
         colour: Some(colour),
         // Every anchor at its identity, which is what lets `fit_model` run the grade's own stages
         // over samples that are already scene-relative.
-        white: crate::light::Light::measured(1.0),
-        source_level: crate::light::Light::measured(1.0),
-        floor: None,
-        reference_nits: crate::light::Light::exactly(1.0),
-        peak_nits: crate::light::Light::exactly(1.0),
-        exposure: crate::light::Stops::ZERO,
-        adjust: crate::gpu::Adjust::none(),
-        as_shot: None,
-        output: crate::gpu::Output::Pq,
-        geometry: crate::image::Geometry::none(),
-        window: None,
-        surround_window: None,
-        canvas: None,
-        print_tone: crate::gpu::Tonemap::Neutral,
+        ..crate::gpu::Grade::new(
+            1,
+            1,
+            crate::tone::Levels {
+                white: crate::light::Light::measured(1.0),
+                peak: crate::light::Light::measured(1.0),
+                floor: None,
+            },
+            crate::light::Light::exactly(1.0),
+            crate::light::Light::exactly(1.0),
+        )
     }
 }
 

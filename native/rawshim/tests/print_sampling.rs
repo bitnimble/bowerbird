@@ -1,8 +1,8 @@
-use rawshim::gpu::{Adjust, Canvas, Grade, Output};
+use rawshim::gpu::{Canvas, Grade};
 use rawshim::image::Geometry;
-use rawshim::light::{Light, SceneNits, Stops};
+use rawshim::light::{Light, SceneNits};
 use rawshim::print::Scene;
-use rawshim::px::{Size, Span};
+use rawshim::px::Size;
 
 #[test]
 fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
@@ -14,28 +14,18 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
     let white = code(203.0);
     let grey = code(101.5);
     let grade = Grade {
-        width: size,
-        height: size,
-        photograph_long: Span::measured(size),
-        colour: None,
-        white: Light::measured(10000.0),
-        source_level: Light::measured(60000.0),
-        floor: None,
-        reference_nits: Light::exactly(203.0),
-        peak_nits: Light::exactly(1000.0),
-        exposure: Stops::ZERO,
-        adjust: Adjust::none(),
-        as_shot: None,
-        output: Output::Pq,
-        geometry: Geometry::none(),
-        window: None,
-        surround_window: None,
         canvas: Some(Canvas {
             region: (0.0, 0.0, size as f64, size as f64),
             size: Size::measured(canvas, canvas),
             max_lod: 10,
         }),
-        print_tone: rawshim::gpu::Tonemap::Neutral,
+        ..Grade::new(
+            size,
+            size,
+            rawshim::tone::Levels { white: Light::measured(10000.0), peak: Light::measured(60000.0), floor: None },
+            Light::exactly(203.0),
+            Light::exactly(1000.0),
+        )
     };
     let scene = Scene {
         yaw_degrees: 80.0,

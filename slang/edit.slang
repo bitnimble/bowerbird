@@ -58,9 +58,9 @@ public struct Edit {
     public float2 canvas_size;
     /// The coarsest mip the frame has, which is how far out the draw can average.
     public uint max_lod;
-    /// Which operator the print fits highlights into paper with (`print_signal`). It took the
+    /// How an sRGB file or a print is brought inside its gamut (`gamut_map.slang`). It took the
     /// spare word this struct already carried, so no offset moved.
-    public uint print_tone;
+    public uint intent;
 
     /// The photographer's own adjustments, on Camera Raw's -100..100 scales
     /// (`EditDocSchema`). Zero is no change, which is what an unedited photo carries.
@@ -227,6 +227,9 @@ public struct Edit {
     /// caller that measured no floor and reads as a picture reaching all the way down, which is
     /// the full share and so the placement every photograph with real black in it gets.
     public float black_floor;
+    /// How far, in output pixels, one printed mark reaches: the printer's own resolution and its
+    /// ink's spread into the paper (`print::Scene::ink_blur`). Zero everywhere but a print.
+    public float print_blur;
 };
 
 [vk::binding(0, 0)] public ConstantBuffer<Edit> edit;

@@ -332,7 +332,7 @@ export class ImageApi {
    * includes a library setting, the document, and every source's own analysis, so an entry that
    * outlived any of those would serve a picture the grade is no longer anchored to.
    *
-   * `from=rendition` prepares the photograph's full rendition instead, edits and all, for a client
+   * `from=rendition` prepares the photograph's max rendition instead, edits and all, for a client
    * that shows the picture rather than editing it.
    */
   private async servePrepared(c: Context): Promise<Response> {
@@ -376,7 +376,7 @@ export class ImageApi {
   ): Promise<Uint8Array> {
     // Built or fetched from a peer where it is missing or behind the edits, as the viewer's own
     // request for it would be.
-    await this.photoRenditions.buildRendition(photoId, 'full');
+    await this.photoRenditions.buildRendition(photoId, 'max');
     return pictures.prepareRendition(photoId, shownIn(c), missingIn(c));
   }
 
