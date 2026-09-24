@@ -1,0 +1,7 @@
+decoding
+measuring-noise
+finding-dust
+denoising
+demosaicing
+matching
+correcting

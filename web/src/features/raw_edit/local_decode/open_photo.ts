@@ -7,6 +7,7 @@ import { settingsApi } from '../../../api/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
 import type { PrepareDevelop } from '../../../../../src/schemas/prepare_develop';
 import { readPreparedHeader, type PreparedHeader } from '../../../../../src/schemas/prepared';
+import type { OpenStep } from '../stage/stage_store';
 import type { LocalDecoder } from './local_decoder';
 import type { LocalOpen, LocalPrepare } from './local_open';
 
@@ -30,6 +31,7 @@ export async function fetchPrepared(
   longEdge: number,
   mosaic: LocalPrepare,
   onTheBackend: boolean,
+  onStep: (step: OpenStep) => void,
   fromRendition = false,
 ): Promise<{
   header: PreparedHeader;
@@ -37,8 +39,8 @@ export async function fetchPrepared(
   local: LocalSource;
 }> {
   const local = onTheBackend || fromRendition
-    ? await preparedThere(photoId, fromRendition ? 'rendition' : undefined)
-    : await preparedHere(photoId, longEdge, mosaic);
+    ? await preparedThere(photoId, fromRendition ? 'rendition' : undefined, onStep)
+    : await preparedHere(photoId, longEdge, mosaic, onStep);
   const header = readPreparedHeader(local.prepared);
   // What this open had to measure, where nothing had kept it: a tile cannot fit its own match, and
   // an unmatched tile is a magnifier showing a different picture from the stage it sits over.
@@ -91,12 +93,16 @@ export type LocalSource = {
  * canvas they compose into - and for a phone, which cannot hold one photograph's samples let alone
  * a set of them.
  */
-async function preparedThere(photoId: string, from: PreparedFrom): Promise<LocalSource & { prepared: string }> {
+async function preparedThere(
+  photoId: string,
+  from: PreparedFrom,
+  onStep: (step: OpenStep) => void,
+): Promise<LocalSource & { prepared: string }> {
   const { LocalDecoder } = await import('./local_decoder');
   const decoder = new LocalDecoder();
   try {
     const rendition = from === 'rendition';
-    const [settings, avif] = await Promise.all([settingsApi.get(), rendition ? fullRendition(photoId) : null]);
+    const [settings, avif] = await Promise.all([settingsApi.get(), rendition ? fullRendition(photoId, onStep) : null]);
     // The grade the module is told about, which for this arm the prepare already used: the picture
     // arrived coded against these, and a tick anchors to the same numbers.
     const open: LocalOpen = {
@@ -111,8 +117,8 @@ async function preparedThere(photoId: string, from: PreparedFrom): Promise<Local
       statedWhite: rendition,
     };
     const prepared =
-      (avif == null ? null : await decoder.holdRendition(avif, open)) ??
-      (await decoder.holdPicture(await preparedPicture(photoId, undefined, from), open));
+      (avif == null ? null : await decoder.holdRendition(avif, open, onStep)) ??
+      (await decoder.holdPicture(await preparedPicture(photoId, undefined, from, onStep), open));
     return { decoder, open, onTheBackend: true, prepared };
   } catch (error) {
     // Closed on the way out, for `preparedHere`'s reason: nothing else can reach a decoder the
@@ -123,8 +129,10 @@ async function preparedThere(photoId: string, from: PreparedFrom): Promise<Local
 }
 
 /** The full rendition's file, built where it is missing or behind the edits. */
-async function fullRendition(photoId: string): Promise<Uint8Array<ArrayBuffer>> {
+async function fullRendition(photoId: string, onStep: (step: OpenStep) => void): Promise<Uint8Array<ArrayBuffer>> {
+  onStep('rendering');
   await renditionsApi.build(photoId, 'full');
+  onStep('preparing');
   const reply = await fetch(renditionsApi.url(photoId, 'full'), {
     headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
   });
@@ -137,7 +145,9 @@ export async function preparedPicture(
   photoId: string,
   shown?: Shown,
   from?: PreparedFrom,
+  onStep?: (step: OpenStep) => void,
 ): Promise<Uint8Array<ArrayBuffer>> {
+  onStep?.('rendering');
   const reply = await fetch(photosApi.preparedPictureUrl(photoId, shown, from), {
     signal: shown?.signal ?? null,
     headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
@@ -157,7 +167,7 @@ type Shown = { signal?: AbortSignal } & (
 );
 
 /**
- * Why a prepare was refused, as a line for the panel.
+ * Why a prepare was refused, as a line for the stage.
  *
  * The server's own message where it sent one - a composite whose frames this device does not
  * hold, a recipe it cannot read - because those are the reasons a reader can act on, and a status
@@ -172,6 +182,7 @@ async function preparedHere(
   photoId: string,
   longEdge: number,
   mosaic: LocalPrepare,
+  onStep: (step: OpenStep) => void,
 ): Promise<LocalSource & { prepared: string }> {
   const { LocalDecoder } = await import('./local_decoder');
   const [settings, raw, photoAnalysis] = await Promise.all([
@@ -199,7 +210,7 @@ async function preparedHere(
       open,
       photoAnalysis,
       onTheBackend: false,
-      prepared: await decoder.prepare(open, mosaic),
+      prepared: await decoder.prepare(open, mosaic, onStep),
     };
   } catch (error) {
     // **Closed on the way out, or the open outlives the failure** - the RAW, the mosaic and

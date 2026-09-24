@@ -196,9 +196,5 @@ export const styles = stylex.create({
     gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
     gap: '8px',
   },
-  status: {
-    marginBlock: '8px',
-    marginInline: 0,
-  },
 });
 export type RawEditPanelStyles = typeof styles;

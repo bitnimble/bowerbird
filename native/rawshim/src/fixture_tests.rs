@@ -914,19 +914,31 @@ mod decode_geometry {
 
         let held = pollster::block_on(crate::decode::hold_bytes(&bytes)).expect("held");
         let Some(fit) = pollster::block_on(held.fit()) else { return };
+        let stages = std::cell::RefCell::new(Vec::new());
+        let report = |stage| stages.borrow_mut().push(stage);
         let frame = pollster::block_on(held.frame(
             request.detail(),
             request.long_edge,
             crate::galosh::Fit::Given(fit),
             request.dust.wanted(request.stored().from_raw.dust.as_deref()),
+            &report,
         ))
         .expect("the whole frame");
         // Taken to the host here because this is the comparison: the browser draws this frame
         // where it lies and never asks for the samples.
         let whole = pollster::block_on(async {
-            crate::edit::from_frame(frame, &bytes, true, &request, SHARPEN).await?.shipped().await
+            crate::edit::from_frame(frame, &bytes, true, &request, SHARPEN, &report)
+                .await?
+                .shipped()
+                .await
         })
         .expect("the open");
+        use crate::open_stage::Stage;
+        assert_eq!(
+            stages.into_inner(),
+            [Stage::Denoising, Stage::Demosaicing, Stage::Matching, Stage::Correcting],
+            "the stages the page names while it waits",
+        );
         let (width, height) = (whole.header.width, whole.header.height);
 
         let rows = 512;
@@ -1054,6 +1066,7 @@ mod decode_geometry {
             0,
             crate::galosh::Fit::Given(fit),
             settings.wanted(Some(&spots)),
+            &crate::open_stage::quiet,
         ))
         .expect("the whole frame");
         let whole = pollster::block_on(decoded.to_host()).expect("the frame on the host");
@@ -3417,6 +3430,7 @@ mod pictures {
                 0,
                 crate::galosh::Fit::Only,
                 crate::dust::Wanted::Off,
+                &crate::open_stage::quiet,
             ))
             .expect("the frame");
             let resident = frame.resident().expect("the decode leaves the frame on the device");

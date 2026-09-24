@@ -1,5 +1,6 @@
 import type { z } from 'zod';
-import { AnswerSchema, MessageSchema, type Addressed } from './gpu_protocol';
+import type { OpenStage } from '../features/raw_edit/local_decode/local_open';
+import { MessageSchema, ReplySchema, type Addressed } from './gpu_protocol';
 
 /**
  * The app's GPU, on a thread of its own: one worker for the life of the page, holding the wasm
@@ -14,16 +15,25 @@ export class GpuThread {
   private readonly worker = new Worker(new URL('./gpu_worker.ts', import.meta.url), { type: 'module' });
   private readonly waiting = new Map<
     number,
-    { session: number | null; resolve: (value: unknown) => void; reject: (error: unknown) => void }
+    {
+      session: number | null;
+      resolve: (value: unknown) => void;
+      reject: (error: unknown) => void;
+      onStage: (stage: OpenStage) => void;
+    }
   >();
   private asked = 0;
   private opened = 0;
 
   constructor() {
     this.worker.onmessage = (event: MessageEvent<unknown>) => {
-      const answer = AnswerSchema.parse(event.data);
+      const answer = ReplySchema.parse(event.data);
       const waiter = this.waiting.get(answer.id);
       if (waiter == null) return;
+      if ('stage' in answer) {
+        waiter.onStage(answer.stage);
+        return;
+      }
       this.waiting.delete(answer.id);
       if (answer.ok) waiter.resolve(answer.value);
       else waiter.reject(new Error(answer.error));
@@ -49,7 +59,12 @@ export class GpuThread {
     this.worker.postMessage(MessageSchema.parse({ id: ++this.asked, to: 'close', session }));
   }
 
-  ask<S extends z.ZodType>(schema: S, message: Addressed, transfer: Transferable[] = []): Promise<z.output<S>> {
+  ask<S extends z.ZodType>(
+    schema: S,
+    message: Addressed,
+    transfer: Transferable[] = [],
+    onStage: (stage: OpenStage) => void = () => {},
+  ): Promise<z.output<S>> {
     const id = ++this.asked;
     return new Promise<z.output<S>>((resolve, reject) => {
       this.waiting.set(id, {
@@ -60,6 +75,7 @@ export class GpuThread {
           else reject(parsed.error);
         },
         reject,
+        onStage,
       });
       this.worker.postMessage(MessageSchema.parse({ ...message, id }), transfer);
     });

@@ -2,16 +2,21 @@ import { computed, observable } from 'mobx';
 import type { JobLevels, NoiseFit } from '../../../../../src/schemas/jobs';
 import type { EditStore } from '../edit/edit_store';
 import type { Region } from '../edits';
+import type { OpenStage } from '../local_decode/local_open';
 import type { SoftProof } from '../proof/soft_proof';
 
-export type EditStatus = 'idle' | 'fetching' | 'preparing' | 'live' | 'failed';
+export type EditStatus = 'idle' | 'opening' | 'live' | 'failed';
+
+/** What an open is doing: the page's own steps, then the module's. */
+export type OpenStep = 'preparing' | 'rendering' | OpenStage;
 
 // Observables and computeds only. Every mutation is on RawEditPresenter.
 export class StageStore {
   constructor(private readonly edit: EditStore) {}
 
   @observable accessor status: EditStatus = 'idle';
-  /** Why, where the status alone does not say - a fetch failure, or what is in flight. */
+  @observable accessor step: OpenStep = 'preparing';
+  /** Why the status is `failed`. */
   @observable accessor message = '';
 
   @observable accessor width = 0;

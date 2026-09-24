@@ -366,13 +366,10 @@ export const RawEditPanel = observer(function RawEditPanel({ edit, stage, crop, 
   presenter: RawEditPresenter;
   mobile?: boolean;
 }): JSX.Element {
-  const statusLabel = RawEditPanelStrings.status(stage.status);
-  const status = stage.message !== '' ? RawEditPanelStrings.statusWithMessage(statusLabel, stage.message) : statusLabel;
-  const notice = (edit.saveStatus === 'conflict' || edit.saveStatus === 'failed' || stage.status !== 'live') && (
+  const notice = (edit.saveStatus === 'conflict' || edit.saveStatus === 'failed') && (
     <Panel style={styles.group}>
       {edit.saveStatus === 'conflict' && <Text variant="muted" as="p">{RawEditPanelStrings.editedElsewhere()}</Text>}
       {edit.saveStatus === 'failed' && <Text variant="muted" as="p">{RawEditPanelStrings.couldNotSave()}</Text>}
-      {stage.status !== 'live' && <Text as="p" variant={stage.status === 'failed' ? 'muted' : 'mono'} style={styles.status}>{status}</Text>}
     </Panel>
   );
   let scope: string;

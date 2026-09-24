@@ -189,9 +189,10 @@ impl Held {
         at_least_long_edge: u32,
         fit: crate::galosh::Fit,
         dust: crate::dust::Wanted<'_>,
+        report: crate::open_stage::Report<'_>,
     ) -> Option<crate::frame::Frame> {
         match self {
-            Held::Mosaic(held) => held.frame(detail, at_least_long_edge, fit, dust).await,
+            Held::Mosaic(held) => held.frame(detail, at_least_long_edge, fit, dust, report).await,
             Held::Rendered(held) => whole(held, at_least_long_edge).await,
         }
     }

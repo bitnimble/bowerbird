@@ -540,11 +540,16 @@ export function editTools(page: Page): Locator {
   return page.getByRole('radiogroup', { name: 'Tool' });
 }
 
-/** Waits for the editor's picture to be live, throwing the reason the panel gives if the open failed. */
+/** Why the editor has no picture, over the stage where it would be. */
+export function editorFailure(page: Page): Locator {
+  return page.getByRole('alert').filter({ hasText: "We couldn't show this photo." });
+}
+
+/** Waits for the editor's picture to be live, throwing the reason the stage gives if the open failed. */
 export async function waitForEditorLive(page: Page, timeout = 170_000): Promise<void> {
   // `has` resolves relative to the stage, so the preview is named from the page, not via `editPreview`.
   const stage = photoStage(page).filter({ has: page.getByRole('img', { name: 'Edit preview' }) });
-  const failure = page.getByRole('region', { name: 'Photo details' }).getByText(/^Unavailable/);
+  const failure = editorFailure(page);
   await expect
     .poll(
       async () => {

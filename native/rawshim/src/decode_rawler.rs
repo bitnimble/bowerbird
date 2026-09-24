@@ -672,7 +672,10 @@ async fn decode_source(
     fit: crate::galosh::Fit,
     dust: crate::dust::Wanted<'_>,
 ) -> Option<Frame> {
-    hold(source).await?.into_frame(detail, at_least_long_edge, force_half, fit, dust).await
+    hold(source)
+        .await?
+        .into_frame(detail, at_least_long_edge, force_half, fit, dust, &crate::open_stage::quiet)
+        .await
 }
 
 impl Held {
@@ -835,10 +838,11 @@ impl Held {
         at_least_long_edge: u32,
         fit: crate::galosh::Fit,
         dust: crate::dust::Wanted<'_>,
+        report: crate::open_stage::Report<'_>,
     ) -> Option<Frame> {
         let copy = self.mosaic.duplicate(crate::gpu::device()?);
         Held { mosaic: copy, sensor: self.sensor.clone() }
-            .into_frame(detail, at_least_long_edge, false, fit, dust)
+            .into_frame(detail, at_least_long_edge, false, fit, dust, report)
             .await
     }
 
@@ -853,6 +857,7 @@ impl Held {
         force_half: bool,
         fit: crate::galosh::Fit,
         dust: crate::dust::Wanted<'_>,
+        report: crate::open_stage::Report<'_>,
     ) -> Option<Frame> {
         let mut lap = crate::clock::laps("  decode ");
         let gpu = crate::gpu::device();
@@ -896,6 +901,7 @@ impl Held {
                 let measured = match fit {
                     crate::galosh::Fit::Given(fit) => Some(fit),
                     _ if only || detail.could_do_anything() => {
+                        report(crate::open_stage::Stage::MeasuringNoise);
                         Some(crate::galosh::fit(gpu, kernels, frame, &cfa).await)
                     }
                     _ => None,
@@ -909,6 +915,7 @@ impl Held {
                         // undenoised photograph is a photograph.
                         match brought || measured.usable() {
                             true => {
+                                report(crate::open_stage::Stage::Denoising);
                                 match detail.denoiser {
                                     crate::galosh::Denoiser::Pmrid => match crate::pmrid::device(gpu)
                                     {
@@ -989,6 +996,7 @@ impl Held {
         let would_serve =
             at_least_long_edge > 0 && (width.max(height) / by) as u32 >= at_least_long_edge;
         let reduces = by > 1 && (would_serve || force_half);
+        report(crate::open_stage::Stage::Demosaicing);
 
         // **The sensor reads in its own orientation; the photograph has another one.** LibRaw
         // applies this from `sizes.flip` and hands back an upright frame, so this must too - and

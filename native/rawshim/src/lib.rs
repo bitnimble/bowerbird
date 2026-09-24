@@ -178,6 +178,7 @@ pub mod linearise;
 /// Demosaicing by luma-chroma demultiplexing, for the patterns RCD cannot pair into 2x2 sites.
 pub mod lslcd;
 pub mod open;
+pub mod open_stage;
 /// Which way up a file says its picture goes, in the numbering both hosts and both shaders use.
 pub mod orientation;
 pub mod planes;

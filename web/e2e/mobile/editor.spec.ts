@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { MOBILE_EDIT_PHOTOS_DIR } from '../fixture_library';
-import { editDiagnostics, editPreview, editTools, openLibrary, openPhoto, openPhotoId, photoStage, softProof, useLibrary, waitForEditorLive } from '../helpers';
+import { editDiagnostics, editorFailure, editPreview, editTools, openLibrary, openPhoto, openPhotoId, photoStage, softProof, useLibrary, waitForEditorLive } from '../helpers';
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 test.describe.configure({ timeout: 180_000 });
@@ -251,14 +251,14 @@ test.describe('zoom on a high density phone display', () => {
       const response = await prepared;
       expect(response.status()).toBe(200);
       await expect.poll(async () => (await drawnWindows()).some((key) => !previous.has(key))).toBe(true);
-      await expect(page.getByText(/^Unavailable/)).toHaveCount(0);
+      await expect(editorFailure(page)).toHaveCount(0);
       await page.getByRole('tab', { name: panel, exact: true }).click();
       const control = page.getByRole('slider', { name: slider, exact: true });
       await expect(control).toBeEnabled();
       const before = await control.getAttribute('aria-valuenow');
       await control.press('ArrowRight');
       await expect.poll(() => control.getAttribute('aria-valuenow')).not.toBe(before);
-      await expect(page.getByText(/^Unavailable/)).toHaveCount(0);
+      await expect(editorFailure(page)).toHaveCount(0);
     });
   }
 });

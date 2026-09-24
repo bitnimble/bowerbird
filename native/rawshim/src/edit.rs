@@ -354,6 +354,7 @@ async fn open(bytes: &[u8], request: &EditRequest, sharpen: f64) -> Result<Opene
         !crate::decode_rendered::is_rendered_bytes(bytes),
         request,
         sharpen,
+        &crate::open_stage::quiet,
     )
     .await
 }
@@ -375,6 +376,7 @@ pub async fn from_frame(
     mosaic: bool,
     request: &EditRequest,
     sharpen: f64,
+    report: crate::open_stage::Report<'_>,
 ) -> Result<Opened, String> {
     let strengths = Strengths {
         sharpen,
@@ -418,6 +420,9 @@ pub async fn from_frame(
             noise: frame.noise,
             matrix: frame.matrix,
         };
+        if mosaic {
+            report(crate::open_stage::Stage::Matching);
+        }
         let crate::open::Measured {
             matched,
             levels,
@@ -480,6 +485,9 @@ pub async fn from_frame(
             },
             ..Default::default()
         });
+        if mosaic {
+            report(crate::open_stage::Stage::Correcting);
+        }
         let (resident, window) = crate::tile::prepared_on_device(
             crate::tile::Source::Frame(frame),
             &crate::tile::TileRequest {

@@ -138,7 +138,7 @@ describe('the edit panel', () => {
   // Nothing has been measured before the open finishes, which is not the same as nothing being
   // measurable - so the reason must not flash up on every photograph on its way in.
   test('says nothing about the denoise until the open has finished', () => {
-    open({}, null, false, 'preparing', null);
+    open({}, null, false, 'opening', null);
     expect(screen.getByRole('slider', { name: 'Luminance' })).not.toBeNull();
     expect(screen.queryByText("Denoise unavailable for this camera's sensor")).toBeNull();
   });
@@ -267,7 +267,7 @@ describe('the edit panel', () => {
   // The frame is seconds and the document is a small row, so the panel is the reader's own
   // settings from the moment they are read - shut, because nothing can act on them yet.
   test('shows the settings while the frame is still coming, with every control shut', () => {
-    const { calls } = open({ contrast: 40 }, null, false, 'preparing');
+    const { calls } = open({ contrast: 40 }, null, false, 'opening');
 
     const contrast = screen.getByRole('slider', { name: 'Contrast' }) as HTMLInputElement;
     expect(contrast.value).toBe('40');

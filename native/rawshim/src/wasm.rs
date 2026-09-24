@@ -277,13 +277,18 @@ enum Reading<'a> {
 /// never reaches the page, because everything it then asks for is the same call
 /// ([`crate::decode::Held`]).
 #[wasm_bindgen(js_name = holdRaw)]
-pub async fn hold_raw(bytes: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
+pub async fn hold_raw(bytes: &[u8], request: &str, report: &Reporter) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;
     let request = request_of(request)?;
     let rendered = crate::decode_rendered::is_rendered_bytes(bytes);
+    let report = reporting(report);
+    report(crate::open_stage::Stage::Decoding);
     let held = crate::decode::hold_bytes(bytes)
         .await
         .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
+    if !rendered {
+        report(crate::open_stage::Stage::MeasuringNoise);
+    }
     let fit = held.fit().await;
     // The abnormal cases say so, because their only other symptom is a photograph that is not
     // denoised and nothing on the page reports why. A finished picture has no mosaic to fit and
@@ -317,6 +322,19 @@ pub async fn hold_planes(avif: &[u8], planes: &[u8], layout: &str, request: &str
     let held = crate::decode_rendered::hold_planes(avif, planes, &layout)
         .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
     Ok(HeldRaw::new(Some(crate::decode::Held::Rendered(held)), Vec::new(), false, None, request))
+}
+
+#[wasm_bindgen]
+extern "C" {
+    /// Called with each [`crate::open_stage::Stage`]'s name as it begins.
+    #[wasm_bindgen(typescript_type = "(stage: string) => void")]
+    pub type Reporter;
+    #[wasm_bindgen(method, js_name = call)]
+    fn call(this: &Reporter, receiver: &JsValue, stage: &str);
+}
+
+fn reporting(to: &Reporter) -> impl Fn(crate::open_stage::Stage) + '_ {
+    move |stage| to.call(&JsValue::NULL, stage.name())
 }
 
 fn request_of(request: &str) -> Result<crate::edit::EditRequest, JsValue> {
@@ -817,7 +835,9 @@ impl HeldRaw {
         dust_sensitivity: f64,
         dust_intensity: f64,
         repairs: &str,
+        report: &Reporter,
     ) -> Result<String, JsValue> {
+        let report = reporting(report);
         let repairs = repairs_of(repairs)?;
         // Undefined either side is the document not having said, which the decode answers with this
         // frame's own fit rather than with a number (`galosh::Detail`).
@@ -832,7 +852,7 @@ impl HeldRaw {
             sensitivity: dust_sensitivity,
             intensity: dust_intensity,
         };
-        self.look_for_dust(settings).await;
+        self.look_for_dust(settings, &report).await;
         let request = crate::edit::EditRequest {
             repairs,
             ..self.opened_as()
@@ -848,10 +868,11 @@ impl HeldRaw {
                 // whole-frame prepare and a band of one are answered from the same list. The decode
                 // detecting for itself here would find them a second time on every slider move.
                 settings.wanted(Some(stored.from_raw.dust.as_deref().unwrap_or(&[]))),
+                &report,
             )
             .await
             .ok_or_else(|| JsValue::from_str("rawshim: the held mosaic would not finish"))?;
-        let opened = crate::edit::from_frame(frame, &self.bytes, self.mosaic, &request, sharpen)
+        let opened = crate::edit::from_frame(frame, &self.bytes, self.mosaic, &request, sharpen, &report)
             .await
             .map_err(|e| JsValue::from_str(&format!("rawshim: {e}")))?;
         // Kept for the bands, which must not measure their own.
@@ -1135,7 +1156,7 @@ impl HeldRaw {
         };
         // Before the window is cut, since a window cannot look for itself. Costs a whole-frame read
         // on the first band after the switch is thrown, and nothing on the rest of the sweep.
-        self.look_for_dust(dust).await;
+        self.look_for_dust(dust, &crate::open_stage::quiet).await;
         let mosaic = self.mosaic_held()?;
         let band = self.band_request(
             luminance,
@@ -1993,7 +2014,7 @@ impl HeldRaw {
     /// Into the analysis rather than a field of its own: that is already what carries the noise fit
     /// and the camera match to every band and every loupe tile, and a second channel for the same
     /// kind of fact is a second thing to keep in step.
-    async fn look_for_dust(&self, settings: crate::dust::Settings) {
+    async fn look_for_dust(&self, settings: crate::dust::Settings, report: crate::open_stage::Report<'_>) {
         // `does_anything`, not the switch alone: with the switch on and Intensity at nothing, the
         // correction will not run, and a whole-frame readback for a list nobody will divide out is
         // the one cost this is written to avoid.
@@ -2005,6 +2026,7 @@ impl HeldRaw {
         let Some(held) = self.held.as_ref() else {
             return;
         };
+        report(crate::open_stage::Stage::FindingDust);
         let Some(spots) = held.dust().await else {
             return;
         };

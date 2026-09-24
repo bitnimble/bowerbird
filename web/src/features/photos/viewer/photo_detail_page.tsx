@@ -23,7 +23,6 @@ import { Panel } from '../../../ui/panel';
 import { Row } from '../../../ui/row';
 import { Text } from '../../../ui/text';
 import { RawEditPanel } from '../../raw_edit/raw_edit_panel';
-import { RawEditPanelStrings } from '../../raw_edit/raw_edit_panel.strings';
 import { CropStore } from '../../raw_edit/crop/crop_store';
 import { EditStore } from '../../raw_edit/edit/edit_store';
 import { KeystoneStore } from '../../raw_edit/keystone/keystone_store';
@@ -295,14 +294,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // The panels' grid gap is all the spacing between them beside and below the stage.
   const panelStyle = mobile ? undefined : styles.panelFlush;
 
-  const printNotice = session != null && session.stage.status !== 'live' ? (
-    <Panel>
-      <Text as="p" variant={session.stage.status === 'failed' ? 'muted' : 'mono'}>
-        {session.stage.message === '' ? RawEditPanelStrings.status(session.stage.status) :
-          RawEditPanelStrings.statusWithMessage(RawEditPanelStrings.status(session.stage.status), session.stage.message)}
-      </Text>
-    </Panel>
-  ) : null;
   const metaPanels = mode === 'print' ? (
     session != null && (
       <PrintControls
@@ -311,7 +302,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         presenter={session.presenter.print}
         disabled={!session.stage.live}
         mobile={mobile || touch}
-        notice={printNotice}
       />
     )
   ) : editing ? (

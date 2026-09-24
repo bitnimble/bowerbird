@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CanvasSchema, OpenAskSchema, PairSchema } from '../features/raw_edit/local_decode/local_open';
+import { CanvasSchema, OpenAskSchema, OpenStageSchema, PairSchema } from '../features/raw_edit/local_decode/local_open';
 import { TonemapSchema } from '../features/raw_edit/print/print_scene';
 
 // `typeof` first: bun's test runtime has neither.
@@ -62,3 +62,8 @@ export const AnswerSchema = z.discriminatedUnion('ok', [
   z.object({ id: z.number(), ok: z.literal(true), value: z.unknown() }),
   z.object({ id: z.number(), ok: z.literal(false), error: z.string() }),
 ]);
+
+/** A stage the message `id` asked for has begun, sent any number of times before its answer. */
+export const ProgressSchema = z.object({ id: z.number(), stage: OpenStageSchema });
+
+export const ReplySchema = z.union([ProgressSchema, AnswerSchema]);

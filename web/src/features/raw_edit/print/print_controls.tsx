@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { Fragment, type ReactNode } from 'react';
+import { Fragment } from 'react';
 import { MobileEditPanels, type MobileEditPanel } from '../mobile_edit_panels';
 import type { SoftProof } from '../proof/soft_proof';
 import { PrintPanel, type PrintSection } from './print_panel';
@@ -37,18 +37,16 @@ export function proofPanels(proof: SoftProof, store: PrintStore, presenter: Prin
   }));
 }
 
-export const PrintControls = observer(function PrintControls({ proof, store, presenter, disabled, mobile, notice }: {
+export const PrintControls = observer(function PrintControls({ proof, store, presenter, disabled, mobile }: {
   proof: SoftProof;
   store: PrintStore;
   presenter: PrintPresenter;
   disabled: boolean;
   mobile: boolean;
-  notice?: ReactNode;
 }): JSX.Element {
   const panels = proofPanels(proof, store, presenter, disabled);
-  if (mobile) return <MobileEditPanels panels={panels} scope="print" notice={notice} />;
+  if (mobile) return <MobileEditPanels panels={panels} scope="print" />;
   return <div {...stylex.props(styles.panels)}>
-    {notice}
     {panels.map(({ id, content }) => <Fragment key={id}>{content}</Fragment>)}
   </div>;
 });

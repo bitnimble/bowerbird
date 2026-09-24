@@ -79,6 +79,7 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
     );
     const bytes = raw.byteLength;
     const decoder = new LocalDecoder();
+    const stages: string[] = [];
     // The bytes are transferred to the decoder's thread, so `raw` is detached from here on.
     await decoder.hold(raw);
     // `longEdge: 0` is the sensor's own, which is what the halving decision is being held to.
@@ -98,9 +99,10 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
         dust: { enabled: false, sensitivity: 0.25, intensity: 1 },
         repairs: [],
       },
+      (stage) => stages.push(stage),
     );
     decoder.close();
-    return { bytes, header: JSON.parse(header) };
+    return { bytes, header: JSON.parse(header), stages };
   }, route(PathSegment.image(), photoId, PathSegment.download(), PathSegment.original()));
 
   expect(opened.bytes).toBeGreaterThan(1_000_000);
@@ -115,6 +117,8 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
   expect(opened.header.peak).toBeGreaterThan(opened.header.white);
   expect(opened.header.noiseFit).toBeDefined();
   expect(declined).toEqual([]);
+  // What the stage names while it waits, each as the module begins it: dust is off, so no search.
+  expect(opened.stages).toEqual(['decoding', 'measuring-noise', 'denoising', 'demosaicing', 'matching', 'correcting']);
 });
 
 /**

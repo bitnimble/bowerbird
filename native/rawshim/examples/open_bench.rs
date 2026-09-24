@@ -106,10 +106,17 @@ fn time_the_open(path: &str) -> Option<(usize, usize)> {
             request.long_edge,
             fit.map_or(rawshim::galosh::Fit::Measure, rawshim::galosh::Fit::Given),
             rawshim::dust::Wanted::Off,
+            &rawshim::open_stage::quiet,
         ));
         let frame = frame?;
-        let prepared =
-            pollster::block_on(rawshim::edit::from_frame(frame, &bytes, true, &request, 1.0));
+        let prepared = pollster::block_on(rawshim::edit::from_frame(
+            frame,
+            &bytes,
+            true,
+            &request,
+            1.0,
+            &rawshim::open_stage::quiet,
+        ));
         let ms = began.elapsed().as_millis();
         println!(
             "  {:<34} {ms}ms  (the mosaic took {held_ms}ms to reach and is held)",

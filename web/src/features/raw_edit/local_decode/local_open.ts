@@ -122,6 +122,18 @@ export const NothingSchema = z.null();
 
 export const ShownSchema = z.object({ missing: z.array(RectSchema).nullable() });
 
+/** `open_stage::Stage`, as the module reports each one beginning. */
+export const OpenStageSchema = z.enum([
+  'decoding',
+  'measuring-noise',
+  'finding-dust',
+  'denoising',
+  'demosaicing',
+  'matching',
+  'correcting',
+]);
+export type OpenStage = z.infer<typeof OpenStageSchema>;
+
 /** Where a held tile's window sits, which is what the glass is positioned by. */
 export const TileKeepSchema = z.object({ left: z.number(), top: z.number(), width: z.number(), height: z.number() });
 export type TileKeep = z.infer<typeof TileKeepSchema>;

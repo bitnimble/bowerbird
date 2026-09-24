@@ -16,7 +16,7 @@ import { cachedRecipes, PipelineWarmth } from '../features/raw_edit/stage/pipeli
 import { planarLayout } from '../features/photos/viewer/planar_layout';
 import { WebCodecs } from '../features/photos/viewer/image_decoder';
 import { StagePainter } from '../features/photos/viewer/stage_gpu';
-import { AnswerSchema, MessageSchema, type Message } from './gpu_protocol';
+import { AnswerSchema, MessageSchema, ProgressSchema, type Message } from './gpu_protocol';
 
 /** The other half of `GpuThread`, which says why the module is over here. */
 
@@ -33,8 +33,9 @@ const IdSchema = z.object({ id: z.number() });
 
 worker.onmessage = async (event: MessageEvent<unknown>): Promise<void> => {
   const { id } = IdSchema.parse(event.data);
+  const report = (stage: string): void => worker.postMessage(ProgressSchema.parse({ id, stage }));
   try {
-    const { value, transfer } = await answer(MessageSchema.parse(event.data));
+    const { value, transfer } = await answer(MessageSchema.parse(event.data), report);
     worker.postMessage(AnswerSchema.parse({ id, ok: true, value }), transfer ?? []);
   } catch (error) {
     worker.postMessage(
@@ -55,7 +56,9 @@ async function openDevice(): Promise<GPUDevice | null> {
   return (pageDevice() as Promise<GPUDevice | null>).catch(() => null);
 }
 
-async function answer(message: Message): Promise<{ value: unknown; transfer?: Transferable[] }> {
+type Report = (stage: string) => void;
+
+async function answer(message: Message, report: Report): Promise<{ value: unknown; transfer?: Transferable[] }> {
   await device;
   switch (message.to) {
     case 'stage':
@@ -70,7 +73,7 @@ async function answer(message: Message): Promise<{ value: unknown; transfer?: Tr
         open = new Open();
         opens.set(message.session, open);
       }
-      return open.answer(message.ask);
+      return open.answer(message.ask, report);
     }
   }
 }
@@ -96,7 +99,7 @@ class Open {
     this.release();
   }
 
-  async answer(ask: OpenAsk): Promise<{ value: unknown; transfer?: Transferable[] }> {
+  async answer(ask: OpenAsk, report: Report): Promise<{ value: unknown; transfer?: Transferable[] }> {
     switch (ask.kind) {
       case 'hold':
         this.raw = ask.raw;
@@ -110,11 +113,11 @@ class Open {
         return { value, transfer: [value.buffer] };
       }
       case 'prepare':
-        return { value: await this.preparedAt(ask.request, ask.mosaic) };
+        return { value: await this.preparedAt(ask.request, ask.mosaic, report) };
       case 'holdPicture':
         return { value: await this.pictureAt(ask.framed, ask.request) };
       case 'holdRendition':
-        return { value: await this.renditionAt(ask.avif, ask.request) };
+        return { value: await this.renditionAt(ask.avif, ask.request, report) };
       case 'takePicture':
         // The same open, a different picture of it: the stage stays where it was transferred.
         return { value: this.drawing().takePicture(ask.framed) };
@@ -267,10 +270,10 @@ class Open {
    * exists to avoid - and for dust that would also throw away the particle detection, which is the
    * expensive half and does not depend on any of them.
    */
-  private async preparedAt(request: string, mosaic: PrepareCrossing): Promise<string> {
+  private async preparedAt(request: string, mosaic: PrepareCrossing, report: Report): Promise<string> {
     await networkWeights(mosaic.denoiser);
     if (this.held?.request !== request) this.release();
-    const held = this.held?.held ?? this.keep(await holdRaw(this.heldRaw(), request), request);
+    const held = this.held?.held ?? this.keep(await holdRaw(this.heldRaw(), request, report), request);
     const { enabled, sensitivity, intensity } = mosaic.dust;
     return held.prepare(
       mosaic.luminance,
@@ -281,6 +284,7 @@ class Open {
       sensitivity,
       intensity,
       mosaic.repairs,
+      report,
     );
   }
 
@@ -303,12 +307,13 @@ class Open {
    * The same open, from a rendition this browser decodes, so what crosses the network is the file
    * rather than the samples the server would decode it to. Null where the decode is not planar PQ.
    */
-  private async renditionAt(avif: Uint8Array<ArrayBuffer>, request: string): Promise<string | null> {
+  private async renditionAt(avif: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<string | null> {
+    report('decoding');
     const planes = await decodedPlanes(avif);
     if (planes == null) return null;
     this.release();
     const held = this.keep(await holdPlanes(avif, planes.samples, JSON.stringify(planes.layout), request), request);
-    return held.prepare(undefined, undefined, 'galosh', 0, false, 0, 0, '[]');
+    return held.prepare(undefined, undefined, 'galosh', 0, false, 0, 0, '[]', report);
   }
 }
 

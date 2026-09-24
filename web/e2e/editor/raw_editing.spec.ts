@@ -6,6 +6,7 @@ import {
   addLibrary,
   editDiagnosticSize,
   editDiagnostics,
+  editorFailure,
   editPreview,
   editTools,
   emulateHdrDisplay,
@@ -188,10 +189,10 @@ test('says why an id it cannot open failed', async ({ page }) => {
   // `?edit` skips the viewer's empty state so the editor's own open path is what fails.
   await page.goto(`${route(PathSegment.photos(), missing)}?edit=1`);
 
-  const details = page.getByRole('region', { name: 'Photo details' });
-  await expect(details.getByText(/^Unavailable/)).toBeVisible();
-  await expect(details).toContainText(missing);
-  await expect(details).not.toContainText('[object Object]');
+  const failure = editorFailure(page);
+  await expect(failure).toBeVisible();
+  await expect(failure).toContainText(missing);
+  await expect(failure).not.toContainText('[object Object]');
 });
 
 /**
@@ -838,7 +839,7 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
     return layers;
   });
   expect(compositing.filter((layer) => layer.opacity !== '1' || layer.filter !== 'none' || layer.transform !== 'none' || layer.blend !== 'normal')).toEqual([]);
-  await expect(page.getByText(/^Unavailable/)).toHaveCount(0);
+  await expect(editorFailure(page)).toHaveCount(0);
   expect(await savedRev(page, photoId)).toBe(revision);
   await softProof(page, 'Rec.2020 PQ HDR (default)');
   await waitForEditorLive(page);

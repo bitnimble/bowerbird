@@ -19,6 +19,7 @@ import {
   type LocalPrepare,
   type LocalTileRequest,
   type OpenAsk,
+  type OpenStage,
   type TileKeep,
 } from './local_open';
 import { gpuThread } from '../../../gpu/gpu_thread';
@@ -55,8 +56,13 @@ export class LocalDecoder {
    * only these stages and what follows them run a second time - the read, the levels, the
    * conditioning and the particle detection, which are most of an open, were settled above.
    */
-  prepare(request: LocalOpen, mosaic: LocalPrepare): Promise<string> {
-    return this.ask(JsonSchema, { kind: 'prepare', request: JSON.stringify(request), mosaic: crossing(mosaic) });
+  prepare(request: LocalOpen, mosaic: LocalPrepare, onStage?: (stage: OpenStage) => void): Promise<string> {
+    return this.ask(
+      JsonSchema,
+      { kind: 'prepare', request: JSON.stringify(request), mosaic: crossing(mosaic) },
+      [],
+      onStage,
+    );
   }
 
   /**
@@ -78,10 +84,17 @@ export class LocalDecoder {
    * The same open, from a rendition's own AVIF, decoded by this browser. Null where it cannot
    * hand over planar PQ, and the server prepares the rendition instead.
    */
-  holdRendition(avif: Uint8Array<ArrayBuffer>, request: LocalOpen): Promise<string | null> {
-    return this.ask(JsonSchema.nullable(), { kind: 'holdRendition', avif, request: JSON.stringify(request) }, [
-      avif.buffer,
-    ]);
+  holdRendition(
+    avif: Uint8Array<ArrayBuffer>,
+    request: LocalOpen,
+    onStage?: (stage: OpenStage) => void,
+  ): Promise<string | null> {
+    return this.ask(
+      JsonSchema.nullable(),
+      { kind: 'holdRendition', avif, request: JSON.stringify(request) },
+      [avif.buffer],
+      onStage,
+    );
   }
 
   /**
@@ -355,7 +368,12 @@ export class LocalDecoder {
     await this.ask(NothingSchema, ask, transfer);
   }
 
-  private ask<S extends z.ZodType>(schema: S, ask: OpenAsk, transfer: Transferable[] = []): Promise<z.output<S>> {
-    return this.thread.ask(schema, { to: 'open', session: this.session, ask }, transfer);
+  private ask<S extends z.ZodType>(
+    schema: S,
+    ask: OpenAsk,
+    transfer: Transferable[] = [],
+    onStage?: (stage: OpenStage) => void,
+  ): Promise<z.output<S>> {
+    return this.thread.ask(schema, { to: 'open', session: this.session, ask }, transfer, onStage);
   }
 }

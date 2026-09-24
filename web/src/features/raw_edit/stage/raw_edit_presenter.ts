@@ -35,7 +35,7 @@ import { isSoftProof, type SoftProof } from '../proof/soft_proof';
 import type { EditTool } from '../edit_tool';
 import type { GuideKind } from '../keystone/keystone_store';
 import type { RepairStore } from '../repair/repair_store';
-import type { StageStore } from './stage_store';
+import type { OpenStep, StageStore } from './stage_store';
 import type { PrintStore } from '../print/print_store';
 import { PrintPresenter } from '../print/print_presenter';
 import { printDisplaySize } from '../print/print_scene';
@@ -376,7 +376,6 @@ export class RawEditPresenter {
       this.describeAdapter(adapter);
       this.maxTexture = adapter.limits.maxTextureDimension2D;
 
-      this.preparing();
       const saved = await edits;
       if (this.closed) return;
       const mosaic = prepareOf(saved?.doc);
@@ -395,8 +394,8 @@ export class RawEditPresenter {
       const photo = await described;
       const onTheBackend = photo != null && preparesOnTheBackend(photo.recipe, photo);
       const { header, local } = longEdge === 'rendition'
-        ? await fetchPrepared(photoId, 0, mosaic, true, true)
-        : await fetchPrepared(photoId, longEdge, mosaic, onTheBackend);
+        ? await fetchPrepared(photoId, 0, mosaic, true, this.reached, true)
+        : await fetchPrepared(photoId, longEdge, mosaic, onTheBackend, this.reached);
       if (this.closed) {
         // Closed here rather than left to `close`, which has already run and found no decoder
         // to take: leaving it would hold this photograph's RAW and frames for the life of the page.
@@ -1042,7 +1041,8 @@ export class RawEditPresenter {
 
   @action.bound
   private begin(): void {
-    this.stage.status = 'fetching';
+    this.stage.status = 'opening';
+    this.stage.step = 'preparing';
     this.stage.message = '';
     this.stage.width = 0;
     this.stage.height = 0;
@@ -1055,8 +1055,9 @@ export class RawEditPresenter {
   }
 
   @action.bound
-  private preparing(): void {
-    this.stage.status = 'preparing';
+  private reached(step: OpenStep): void {
+    if (this.closed || this.stage.status !== 'opening') return;
+    this.stage.step = step;
   }
 
   @action.bound

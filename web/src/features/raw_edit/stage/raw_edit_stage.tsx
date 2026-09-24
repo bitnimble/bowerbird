@@ -6,6 +6,7 @@ import { color } from '../../../ui/tokens.stylex';
 import { toggleFullscreenOf } from '../../photos/viewer/fullscreen';
 import { stageStyles } from '../../photos/viewer/photo_stage.stylex';
 import { Spinner } from '../../../ui/spinner';
+import { Text } from '../../../ui/text';
 import { PhotoStageStrings } from '../../photos/viewer/photo_stage.strings';
 import { ZoomControl, ZoomSlider } from '../../photos/viewer/zoom_control';
 import { CropOverlay } from '../crop/crop_overlay';
@@ -35,6 +36,10 @@ const styles = stylex.create({
   },
   loupe: {
     cursor: 'none',
+  },
+  reason: {
+    maxWidth: '48ch',
+    textAlign: 'center',
   },
   print: { cursor: 'grab' },
   draggingPrint: { cursor: 'grabbing' },
@@ -461,11 +466,25 @@ export const RawEditStage = observer(function RawEditStage({
         data-matched={stageStore.matched}
         data-rendered-mode={stageStore.renderedMode ?? undefined}
       />
-      {!stageStore.live && stageStore.status !== 'failed' && (
-        <div {...stylex.props(stageStyles.busy)}>
-          <Spinner />
-        </div>
-      )}
+      <OpenStatus stage={stageStore} />
+    </div>
+  );
+});
+
+export const OpenStatus = observer(function OpenStatus({ stage }: { stage: StageStore }): JSX.Element | null {
+  if (stage.status === 'failed') {
+    return (
+      <div {...stylex.props(stageStyles.busy)} role="alert">
+        <Text>{RawEditStageStrings.couldNotShow()}</Text>
+        <Text variant="mono" tone="error" style={styles.reason}>{stage.message}</Text>
+      </div>
+    );
+  }
+  if (stage.live) return null;
+  return (
+    <div {...stylex.props(stageStyles.busy)} role="status">
+      <Spinner />
+      <Text variant="mono">{RawEditStageStrings.step(stage.step)}</Text>
     </div>
   );
 });

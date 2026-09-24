@@ -1,5 +1,3 @@
-import type { EditStatus } from './stage/stage_store';
-
 export const RawEditPanelStrings = {
   guideVertical: () => 'Vertical',
   guideHorizontal: () => 'Horizontal',
@@ -75,14 +73,6 @@ export const RawEditPanelStrings = {
   deleteRepair: (index: number) => `Delete removal ${index}`,
   showOutlines: () => 'Show outlines',
   expandToHideSeam: () => 'Expand selection to hide seam better',
-
-  status: (status: EditStatus) =>
-    status === 'fetching' ? 'Fetching'
-    : status === 'preparing' ? 'Preparing'
-    : status === 'live' ? 'Ready'
-    : status === 'failed' ? 'Unavailable'
-    : 'Idle',
-  statusWithMessage: (status: string, message: string) => `${status}. ${message}`,
 
   editedElsewhere: () => 'These edits changed on another device. Reopen this photo to see them.',
   couldNotSave: () => "We couldn't save your edits. Try again.",
