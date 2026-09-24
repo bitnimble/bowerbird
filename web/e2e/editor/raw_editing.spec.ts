@@ -163,7 +163,7 @@ test('every soft proof crosses to the module and keeps drawing', async ({ page }
   await open(page);
 
   for (const [label, shown, panel] of [
-    ['SDR (sRGB)', 'SDR', 'sRGB'],
+    ['SDR (sRGB)', 'SDR', 'Tone mapping'],
     ['Printed media', 'Printed media', 'Paper'],
     ['HDR (Rec.2020 PQ)', 'HDR', null],
   ] as const) {
@@ -173,8 +173,7 @@ test('every soft proof crosses to the module and keeps drawing', async ({ page }
       await page.getByRole('option', { name: 'Relative colorimetric', exact: true }).click();
     }
     if (label === 'Printed media') {
-      await page.getByRole('combobox', { name: 'Rendering intent' }).click();
-      await page.getByRole('option', { name: 'Absolute colorimetric', exact: true }).click();
+      await page.getByRole('checkbox', { name: 'Black point compensation' }).uncheck();
     }
     await expect(page.getByRole('button', { name: /^Soft proof/ })).toHaveText(shown);
     if (panel != null) await expect(page.getByRole('group', { name: panel, exact: true })).toBeVisible();

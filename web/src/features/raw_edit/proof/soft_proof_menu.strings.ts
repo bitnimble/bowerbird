@@ -4,7 +4,6 @@ export const SoftProofMenuStrings = {
   sdrOption: () => 'SDR (sRGB)',
   hdr: () => 'HDR',
   sdr: () => 'SDR',
-  srgb: () => 'sRGB',
   print: () => 'Printed media',
   print3d: () => 'Printed media (3D)',
   hdrNeedsHdrRendition: () => 'Choose an HDR rendition to proof in HDR',

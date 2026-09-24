@@ -1,7 +1,7 @@
 use rawshim::gpu::{Canvas, Grade, Intent, Output};
 use rawshim::hdr_fit::HdrColour;
 use rawshim::light::{DisplayNits, Gain, Light, SceneNits};
-use rawshim::print::{Presentation, Scene};
+use rawshim::print::{Paper, Presentation, Scene};
 use rawshim::px::Size;
 
 #[test]
@@ -266,6 +266,30 @@ fn a_lit_room_leaves_a_gloss_black_where_a_print_keeps_it() {
     assert!(white / black > 55.0, "the room washed the print out: {black} against {white} nits");
 }
 
+/// The coating decides a paper's black as much as the ink does: gloss keeps the deepest, in the flat
+/// proof as in a room, and matte the shallowest.
+#[test]
+fn gloss_holds_the_deepest_black_and_matte_the_shallowest() {
+    let square = Scene { yaw_degrees: 0.0, pitch_degrees: 0.0, ..Scene::default() };
+    for scene in [Scene { presentation: Presentation::Flat, ..Scene::default() }, square] {
+        let [gloss, satin, matte] = [Paper::Gloss, Paper::Satin, Paper::Matte]
+            .map(|paper| luminance(draw([0.0; 3], scene.on(paper))).raw());
+        assert!(gloss < satin && satin < matte, "blacks out of order: {gloss} gloss, {satin} satin, {matte} matte nits");
+    }
+}
+
+/// A matte coating's lobe takes in most of the room, so turning the sheet towards a window lifts its
+/// black by the window's share of the room rather than by the window.
+#[test]
+fn a_matte_sheet_turned_to_a_window_does_not_mirror_it() {
+    let black = |yaw_degrees: f64| {
+        let scene = Scene { key_lux: Light::ZERO, yaw_degrees, pitch_degrees: 0.0, ..Scene::default() }.on(Paper::Matte);
+        luminance(draw([0.0; 3], scene)).raw()
+    };
+    let (facing, turned) = (black(0.0), black(40.0));
+    assert!(turned < 2.0 * facing, "the window reached a matte sheet as a mirror: {facing} facing, {turned} turned nits");
+}
+
 fn lit_evenly(rendering_intent: Intent) -> Scene {
     Scene {
         key_lux: Light::ZERO, fill_lux: Light::exactly(500.0), refractive_index: 1.0, yaw_degrees: 0.0, pitch_degrees: 0.0,
@@ -326,22 +350,22 @@ fn a_flat_print_is_the_paper_under_diffuse_white() {
     assert_eq!(white, nits(1.0, 8000.0), "the lamp reached a flat print");
 }
 
-/// A printer profile decides the paper and the ink in place of the scene's white and black, and the
-/// intent decides whether a colour is sent as a share of that paper or as itself.
+/// A printer profile decides the paper and the ink in place of the scene's white and black, and a
+/// colour is laid down as a share of that paper.
 #[test]
 fn a_printer_profile_lays_down_its_own_paper() {
     let icc = ideal_printer(0.5);
     let printer = std::sync::Arc::new(rawshim::printer_gamut::PrinterGamut::new(&icc).expect("a printer profile"));
-    let nits = |source: f64, intent| {
-        let scene = Scene { presentation: Presentation::Flat, rendering_intent: intent, ..Scene::default() };
+    let nits = |source: f64| {
+        let scene = Scene { presentation: Presentation::Flat, rendering_intent: Intent::RelativeColorimetric, ..Scene::default() };
         let drawn = drawn_as(&|_| [source; 3], Shown::Printed(scene, printer.clone()), 32, 1.0, None);
         linear(drawn[(16 * 32 + 16) * 4 + 1]) * 203.0
     };
-    let white = nits(1.0, Intent::RelativeColorimetric);
+    let white = nits(1.0);
     assert!((white / (0.5 * 203.0) - 1.0).abs() < 0.02, "the profile's paper read {white} nits");
-    assert!(nits(0.0, Intent::RelativeColorimetric) < 0.5, "an ideal printer's black is black");
-    let (relative, absolute) = (nits(0.3, Intent::RelativeColorimetric), nits(0.3, Intent::AbsoluteColorimetric));
-    assert!((absolute / relative - 2.0).abs() < 0.05, "absolute sent the colour itself: {relative} and {absolute} nits");
+    assert!(nits(0.0) < 0.5, "an ideal printer's black is black");
+    let grey = nits(0.3);
+    assert!((grey / white - 0.3).abs() < 0.01, "a grey left its share of the paper: {grey} against {white} nits");
 }
 
 /// A printer reproducing linear Rec.2020 exactly, on a neutral paper reflecting `white`.

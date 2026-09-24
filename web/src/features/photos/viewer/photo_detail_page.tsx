@@ -55,9 +55,8 @@ import {
 import { DetailKeys } from './detail_keys';
 import { detailMode, detailPath, isPrintRequest, mockupPath, type DetailMode } from './detail_mode';
 import { isPrintProof, type SoftProof } from '../../raw_edit/proof/soft_proof';
-import { FileRenderingIntentSchema } from '../../../../../src/schemas/rendering_intent';
 import { IntentChoice } from '../../raw_edit/proof/intent_choice';
-import { SoftProofMenuStrings } from '../../raw_edit/proof/soft_proof_menu.strings';
+import { PrintPanelStrings } from '../../raw_edit/print/print_panel.strings';
 
 const EDIT_LONG_EDGE = 0;
 
@@ -322,8 +321,8 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   ) : (
     <>
       {showsHdr && proof === 'srgb' && (
-        <Panel title={SoftProofMenuStrings.srgb()} style={panelStyle}>
-          <IntentChoice value={store.proofIntent} onChange={photos.chooseProofIntent} intents={FileRenderingIntentSchema.options} />
+        <Panel title={PrintPanelStrings.toneMapping()} style={panelStyle}>
+          <IntentChoice value={store.proofIntent} onChange={photos.chooseProofIntent} />
         </Panel>
       )}
       <DetailNotes photoId={photoId} style={panelStyle} />

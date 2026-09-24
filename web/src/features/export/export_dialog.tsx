@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { EXPORT_FORMATS, writesSdr, type ExportFormat } from '../../../../src/schemas/export';
-import { FileRenderingIntentSchema, type FileRenderingIntent } from '../../../../src/schemas/rendering_intent';
+import { RenderingIntentSchema, type RenderingIntent } from '../../../../src/schemas/rendering_intent';
 import { IntentChoiceStrings } from '../raw_edit/proof/intent_choice.strings';
 import type { ReactNode } from 'react';
 import { useExportStore, usePresenters } from '../../app/stores_context';
@@ -103,7 +103,7 @@ const LONG_EDGES: Option<string>[] = [
   ...[4096, 3840, 2560, 1920, 1280].map((px) => ({ value: String(px), label: ExportStrings.resolutionLongEdge(px) })),
 ];
 
-const INTENTS: Option<FileRenderingIntent>[] = FileRenderingIntentSchema.options
+const INTENTS: Option<RenderingIntent>[] = RenderingIntentSchema.options
   .map((intent) => ({ value: intent, label: IntentChoiceStrings[intent]() }));
 
 function hdrHint(unavailable: boolean, gainMappable: boolean, format: ExportFormat): string {

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { FileRenderingIntentSchema } from './rendering_intent';
+import { RenderingIntentSchema } from './rendering_intent';
 
 // What a reader takes a photograph away as (§10.5).
 //
@@ -59,7 +59,7 @@ export const ExportOptionsSchema = z.object({
    */
   gainMap: z.boolean().default(false),
   /** How the SDR picture an export writes, alone or as a gain map's base, reaches sRGB. */
-  renderingIntent: FileRenderingIntentSchema.default('perceptual'),
+  renderingIntent: RenderingIntentSchema.default('perceptual'),
 });
 export type ExportOptions = z.infer<typeof ExportOptionsSchema>;
 

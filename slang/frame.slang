@@ -266,7 +266,7 @@ Colour<P3Linear> proofed(float3 share)
 }
 
 /// What an sRGB file holds of this pixel before its gamut is reached, as a share of its white: the
-/// rendition's own roll-off for perceptual, and the grade unrolled for the colorimetric intents.
+/// rendition's own roll-off for perceptual, and the grade unrolled for relative colorimetric.
 float3 srgb_share(Colour<SceneNits> scene, float2 at)
 {
     if (edit.intent == INTENT_PERCEPTUAL) { return display_nits(scene, at).v / edit.peak; }
@@ -378,15 +378,15 @@ float4 fs_print_flat(float4 pos : SV_Position) : SV_Target
     let pixel = edit.region_origin + pos.xy * scale;
     let shape = float2(float(edit.output_width), float(edit.output_height));
     if (any(pixel < float2(0.0)) || any(pixel > shape)) { return float4(0.0, 0.0, 0.0, 1.0); }
-    let reflectance = print_reflectance(print_ink(pixel, float2(scale.x, 0.0), float2(0.0, scale.y)));
+    let reflectance = print_reflectance(print_ink(pixel, float2(scale.x, 0.0), float2(0.0, scale.y)), false);
     return float4(srgb_oetf_signed(on_the_canvas(measured<DisplayNits>(reflectance * edit.peak)).v), 1.0);
 }
 
 float3 print_hit_reflected(PrintHit hit, float2 pixel, float2 dx, float2 dy, float2 footprint)
 {
-    var reflectance = print_reflectance(float3(1.0));
+    var reflectance = print_reflectance(float3(1.0), true);
     if (hit.normal.z > 0.5 && (print.framing.x < 0.5 || print.illumination.w > 0.5 || hit.material == PHOTO)) {
-        reflectance = print_reflectance(print_ink(pixel, dx, dy));
+        reflectance = print_reflectance(print_ink(pixel, dx, dy), true);
     }
     return reflected_print(reflectance, hit, footprint).v;
 }
@@ -515,7 +515,7 @@ float3 coded_at(uint pixel)
     if (!outside(at, last)) {
         scene = nits_cubic(at, last);
     }
-    // An sRGB file's gamut is reached before the quantisation, since a colorimetric intent's
+    // An sRGB file's gamut is reached before the quantisation, since relative colorimetric's
     // unrolled highlights sit above what the `u16` holds.
     if (edit.output == OUTPUT_SRGB) {
         let signal = mapped(srgb_share(measured<SceneNits>(scene), at), SrgbCube(), edit.intent);

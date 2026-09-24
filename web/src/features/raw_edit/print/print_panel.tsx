@@ -8,10 +8,8 @@ import { Select } from '../../../ui/select';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
 import type { Option } from '../../../ui/option';
-import { FileRenderingIntentSchema, fileIntentOf, RenderingIntentSchema } from '../../../../../src/schemas/rendering_intent';
 import { EditControl } from '../edit_control';
 import { IntentChoice } from '../proof/intent_choice';
-import { SoftProofMenuStrings } from '../proof/soft_proof_menu.strings';
 import { styles as rows } from '../raw_edit_panel.stylex';
 import { PrintPanelStrings as strings } from './print_panel.strings';
 import { LAMP_REACH, restingValue, type Ink, type Paper, type PrintControl } from './print_scene';
@@ -115,12 +113,8 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
   });
 
   if (section === 'srgb') {
-    return <Panel title={SoftProofMenuStrings.srgb()} style={styles.group}>
-      <IntentChoice
-        value={fileIntentOf(store.scene.renderingIntent)}
-        onChange={presenter.setRenderingIntent}
-        intents={FileRenderingIntentSchema.options}
-      />
+    return <Panel title={strings.toneMapping()} style={styles.group}>
+      <IntentChoice value={store.scene.renderingIntent} onChange={presenter.setRenderingIntent} />
     </Panel>;
   }
   if (section === 'lighting') return <Panel title={strings.lighting()} style={styles.group}>{controls(LIGHT)}</Panel>;
@@ -136,11 +130,7 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
         value={store.printerProfile?.name ?? GENERIC_PAPER}
         onChange={(name) => void presenter.setPrinterProfile(name === GENERIC_PAPER ? null : name)}
       />
-      <IntentChoice
-        value={store.scene.renderingIntent}
-        onChange={presenter.setRenderingIntent}
-        intents={RenderingIntentSchema.options}
-      />
+      <IntentChoice value={store.scene.renderingIntent} onChange={presenter.setRenderingIntent} />
       {store.scene.renderingIntent === 'relativeColorimetric' && <CheckLabel>
         <input
           type="checkbox"

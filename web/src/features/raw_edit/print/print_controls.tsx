@@ -3,7 +3,6 @@ import { observer } from 'mobx-react-lite';
 import { Fragment } from 'react';
 import { MobileEditPanels, type MobileEditPanel } from '../mobile_edit_panels';
 import type { SoftProof } from '../proof/soft_proof';
-import { SoftProofMenuStrings } from '../proof/soft_proof_menu.strings';
 import { PrintPanel, type PrintSection } from './print_panel';
 import { PrintPanelStrings } from './print_panel.strings';
 import type { PrintPresenter } from './print_presenter';
@@ -26,7 +25,7 @@ export function proofPanels(proof: SoftProof, store: PrintStore, presenter: Prin
     : proof === 'print3d' ? ['paper', 'printer', 'lighting', 'orientation']
     : [];
   const titles: Record<PrintSection, string> = {
-    srgb: SoftProofMenuStrings.srgb(),
+    srgb: PrintPanelStrings.toneMapping(),
     paper: PrintPanelStrings.paper(),
     printer: PrintPanelStrings.printer(),
     lighting: PrintPanelStrings.lighting(),

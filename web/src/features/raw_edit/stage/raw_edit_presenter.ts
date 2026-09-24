@@ -39,7 +39,6 @@ import type { OpenStep, StageStore } from './stage_store';
 import type { PrinterProfile, PrintStore } from '../print/print_store';
 import { PrintPresenter, type PrinterProfileSource } from '../print/print_presenter';
 import { printDisplaySize } from '../print/print_scene';
-import { fileIntentOf } from '../../../../../src/schemas/rendering_intent';
 
 const SOFT_PROOF_KEY = 'bowerbird.edit.softProof';
 
@@ -990,7 +989,7 @@ export class RawEditPresenter {
           geometry: this.keystoneStore.geometry,
           proof: {
             output: this.stage.softProof === 'srgb' ? 'srgb' : 'hdr',
-            intent: fileIntentOf(this.printStore.scene.renderingIntent),
+            intent: this.printStore.scene.renderingIntent,
             displayHdr: displayIsHdr(),
           },
           print,

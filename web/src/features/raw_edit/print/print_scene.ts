@@ -58,9 +58,9 @@ export function printDisplaySize(photo: { width: number; height: number }, frame
 }
 
 export const PAPER_MATERIALS = {
-  gloss: { roughness: 0.16, whiteReflectance: 0.95, blackReflectance: 0.003, surfaceTexture: 0, refractiveIndex: 1.25 },
-  satin: { roughness: 0.28, whiteReflectance: 0.95, blackReflectance: 0.002, surfaceTexture: 0.08, refractiveIndex: 1.25 },
-  matte: { roughness: 0.84, whiteReflectance: 0.92, blackReflectance: 0.0035, surfaceTexture: 0, refractiveIndex: 1.5 },
+  gloss: { roughness: 0.16, whiteReflectance: 0.95, blackReflectance: 0.0031, surfaceTexture: 0, refractiveIndex: 1.25 },
+  satin: { roughness: 0.28, whiteReflectance: 0.95, blackReflectance: 0.0042, surfaceTexture: 0.025, refractiveIndex: 1.25 },
+  matte: { roughness: 0.84, whiteReflectance: 0.92, blackReflectance: 0.023, surfaceTexture: 0, refractiveIndex: 1.5 },
 } satisfies Record<Paper, Pick<PrintScene, 'roughness' | 'whiteReflectance' | 'blackReflectance' | 'surfaceTexture' | 'refractiveIndex'>>;
 
 /**

@@ -3,7 +3,7 @@ import { settingsApi } from '../../../api/settings';
 import { displayIsHdr } from '../../../app/device';
 import { gpuThread } from '../../../gpu/gpu_thread';
 import { PaintedSchema, type Painted } from '../../../gpu/gpu_protocol';
-import type { FileRenderingIntent } from '../../../../../src/schemas/rendering_intent';
+import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import type { Decoded } from './stage_bitmaps';
 import { SDR_WHITE_NITS, type Region } from './stage_gpu';
 
@@ -57,7 +57,7 @@ class StageCanvases {
     size: CanvasSize,
     frame: Decoded,
     region?: Region,
-    proof: FileRenderingIntent | null = null,
+    proof: RenderingIntent | null = null,
   ): Promise<void> {
     const [headroom, sourcePeak] = await Promise.all([this.displayHeadroom(), this.renditionHeadroom()]);
     if (this.released.has(canvas)) return;

@@ -39,7 +39,7 @@ import type { ListingStore } from './grid/listing_store';
 import type { MarksStore } from './grid/marks_store';
 import type { StacksStore } from './grid/stacks_store';
 import type { ViewerStore } from './viewer/viewer_store';
-import type { FileRenderingIntent } from '../../../../src/schemas/rendering_intent';
+import type { RenderingIntent } from '../../../../src/schemas/rendering_intent';
 
 // Blocks of rows kept in memory at once. A scroll through a hundred thousand
 // photos would otherwise accumulate every row it passed; two and a half thousand
@@ -469,7 +469,7 @@ export class PhotosPresenter {
     this.viewerPresenter.chooseProof(proof);
   };
 
-  chooseProofIntent = (intent: FileRenderingIntent): void => {
+  chooseProofIntent = (intent: RenderingIntent): void => {
     this.viewerPresenter.chooseProofIntent(intent);
   };
 

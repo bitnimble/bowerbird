@@ -1,4 +1,5 @@
 export const PrintPanelStrings = {
+  toneMapping: () => 'Tone mapping',
   paper: () => 'Paper',
   gloss: () => 'Gloss',
   satin: () => 'Satin',

@@ -1,7 +1,7 @@
 // How a picture is brought inside what its target can show - an sRGB file, or a printer's ink on
 // its paper - from an HDR grade as well as an SDR one. The intents are ICC's and keep ICC's promises:
-// perceptual compresses the whole range so gradients survive, the colorimetric intents leave every
-// colour the target can show exactly where it is and clip the rest.
+// perceptual compresses the whole range so gradients survive, relative colorimetric leaves every
+// colour the target can show exactly where it is and clips the rest.
 module gamut_map;
 
 import prelude;
@@ -10,7 +10,6 @@ import primaries;
 
 public static const uint INTENT_PERCEPTUAL = 0;
 public static const uint INTENT_RELATIVE = 1;
-public static const uint INTENT_ABSOLUTE = 2;
 
 static const float CHROMA_KNEE = 0.9;
 
@@ -37,8 +36,8 @@ public struct SrgbCube : IGamut
     }
 };
 
-/// `graded` as a share of `white`: rolled under it for perceptual, and left for the colorimetric
-/// intents, which clip at the gamut instead. `scene_peak` is the brightest `graded` reaches.
+/// `graded` as a share of `white`: rolled under it for perceptual, and left for relative
+/// colorimetric, which clips at the gamut instead. `scene_peak` is the brightest `graded` reaches.
 public float3 toned(Colour<DisplayNits> graded, Light<DisplayNits> scene_peak, Light<DisplayNits> white, uint intent)
 {
     if (intent == INTENT_PERCEPTUAL) { return within(rolled(graded, rolloff(scene_peak, white)), white).v / white.v; }

@@ -19,19 +19,28 @@ public float value_noise(float2 at)
         lerp(cell_value(cell + int2(0, 1)), cell_value(cell + int2(1, 1)), blend.x), blend.y);
 }
 
-/// [`value_noise`]'s gradient, per cell, whose RMS along either axis is `VALUE_NOISE_SLOPE`.
-public float2 value_noise_gradient(float2 at)
-{
-    let cell = int2(floor(at));
-    let fraction = frac(at);
-    let blend = fraction * fraction * (3.0 - 2.0 * fraction);
-    let rate = 6.0 * fraction * (1.0 - fraction);
-    let corner = cell_value(cell);
-    let across = cell_value(cell + int2(1, 0));
-    let up = cell_value(cell + int2(0, 1));
-    let diagonal = cell_value(cell + int2(1, 1));
-    return float2(rate.x * lerp(across - corner, diagonal - up, blend.y),
-        rate.y * (lerp(up, diagonal, blend.x) - lerp(corner, across, blend.x)));
-}
+static const uint WAVES = 32;
+static const float WAVE_TAU = 6.283185307179586;
 
-public static const float VALUE_NOISE_SLOPE = 0.771;
+/// The gradient of a sum of cosines in hashed directions and phases, spread evenly in log frequency
+/// over three octaves from 0.3 cycles a unit, with slope falling as the root of frequency; scaled to
+/// an RMS of one along either axis. One band of frequencies reads as a woven pattern, and value
+/// noise's cells as squares, once a magnified sheet puts either across many pixels.
+public float2 wave_noise_gradient(float2 at)
+{
+    var gradient = float2(0.0);
+    var power = 0.0;
+    // Unrolled so every wave's hashes, direction and slope fold to constants, leaving one sine a wave.
+    [ForceUnroll]
+    for (uint wave = 0; wave < WAVES; wave += 1) {
+        let angle = 0.5 * WAVE_TAU * cell_value(int2(int(wave), 1));
+        let octaves = 3.0 * (float(wave) + 0.5 * (cell_value(int2(int(wave), 2)) + 1.0)) / float(WAVES);
+        let frequency = WAVE_TAU * 0.3 * exp2(octaves);
+        let slope = rsqrt(frequency);
+        let direction = frequency * float2(cos(angle), sin(angle));
+        let phase = WAVE_TAU * cell_value(int2(int(wave), 3));
+        gradient -= slope * normalize(direction) * sin(dot(direction, at) + phase);
+        power += slope * slope;
+    }
+    return gradient / sqrt(0.25 * power);
+}

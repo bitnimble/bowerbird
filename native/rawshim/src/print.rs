@@ -30,16 +30,18 @@ impl Paper {
     /// Glossy and satin are microporous inkjet coats, whose voids hold their surface index near
     /// 1.25 rather than a solid's 1.5 (Monie et al., NIP19 2003; Akao et al., JIST 2010), and whose
     /// lobes are Akao's measured widths held against their makers' 60° gloss. White and black are
-    /// 45/0 readings, so neither holds the surface reflection the lobe adds: matte's black is its
-    /// polarised reading, the unpolarised one being that lobe counted twice. Satin's texture is
+    /// 45/0 readings, a maker's Dmax, so black holds what the lobe sends towards the meter: an ink
+    /// black of 0.003 under gloss and satin, plus 0.0001 and 0.0012 of lobe, and matte's polarised
+    /// reading, 0.0035, plus 0.019, which puts it at D 1.64. A drawn sheet takes the lobe's share back out
+    /// (`print_scene.slang`'s `coating_at_45_0`) and draws the lobe itself. Satin's texture is
     /// the RMS slope Arney et al. measured on textured gelatin papers (JIST 2002), 0.5 to 1.2°,
-    /// taken at 0.85°: two of its variance over its alpha's square. Nobody has measured a glossy or
+    /// taken at 0.5°: two of its variance over its alpha's square. Nobody has measured a glossy or
     /// a matte sheet's, so both are flat.
     pub fn material(self) -> Material {
         let (roughness, white, black, surface_texture, refractive_index) = match self {
-            Paper::Gloss => (0.16, 0.95, 0.003, 0.0, 1.25),
-            Paper::Satin => (0.28, 0.95, 0.002, 0.08, 1.25),
-            Paper::Matte => (0.84, 0.92, 0.0035, 0.0, 1.5),
+            Paper::Gloss => (0.16, 0.95, 0.0031, 0.0, 1.25),
+            Paper::Satin => (0.28, 0.95, 0.0042, 0.025, 1.25),
+            Paper::Matte => (0.84, 0.92, 0.023, 0.0, 1.5),
         };
         Material {
             roughness,

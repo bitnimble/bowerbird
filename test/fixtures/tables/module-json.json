@@ -17,7 +17,7 @@
   },
   "print": {
     "paper": "satin",
-    "renderingIntent": "absoluteColorimetric",
+    "renderingIntent": "relativeColorimetric",
     "blackPointCompensation": false,
     "ink": "pigment",
     "printResolutionPpi": 300,
@@ -35,10 +35,10 @@
     "lightTemperatureKelvin": 6500,
     "roughness": 0.28,
     "whiteReflectance": 0.95,
-    "blackReflectance": 0.002,
+    "blackReflectance": 0.0042,
     "refractiveIndex": 1.25,
     "paperLongEdgeMm": 300,
-    "surfaceTexture": 0.08,
+    "surfaceTexture": 0.025,
     "zoom": 2.5,
     "panX": -0.125,
     "panY": 0.25

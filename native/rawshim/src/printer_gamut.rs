@@ -7,7 +7,7 @@ use moxcms::{ColorProfile, DataColorSpace, Layout, Matrix3d, ProfileClass, Rende
 pub const TARGET_HUES: usize = 64;
 pub const TARGET_LUMAS: usize = 32;
 /// Where the edge table starts in [`target`]'s words.
-const TARGET_TABLE: usize = 22;
+const TARGET_TABLE: usize = 13;
 /// How far the eye settles on the paper's own white: 0 sees its measured cast whole, 1 none of it.
 pub const PAPER_ADAPTATION: f64 = 0.7;
 const BRADFORD: [[f64; 3]; 3] = [[0.8951, 0.2664, -0.1614], [-0.7502, 1.7135, 0.0367], [0.0389, -0.0685, 1.0296]];
@@ -17,9 +17,8 @@ pub struct PrinterGamut {
     /// The most chroma the ink reaches, by hue and then by luma, as `print_scene.slang` indexes it.
     edge: Vec<f32>,
     black: [f64; 3],
-    /// A share of the paper's white to the light it reflects, and back.
+    /// A share of the paper's white to the light it reflects.
     tint: [[f64; 3]; 3],
-    untint: [[f64; 3]; 3],
 }
 
 impl PrinterGamut {
@@ -71,31 +70,25 @@ impl PrinterGamut {
         let cone = |xyz: [f64; 3]| bradford.mul_vector(moxcms::Vector3d { v: xyz }).v;
         let (paper, neutral, reference) = (cone(media), cone(d50.map(|c| c * media[1])), cone(d50));
         let seen = [0, 1, 2].map(|c| paper[c] + adaptation * (neutral[c] - paper[c]));
-        let scaled = |by: [f64; 3]| from_xyz.mat_mul(bradford.inverse()).mat_mul(diagonal(by)).mat_mul(bradford).mat_mul(to_xyz).v;
-        Ok(PrinterGamut {
-            edge,
-            black,
-            tint: scaled([0, 1, 2].map(|c| seen[c] / reference[c])),
-            untint: scaled([0, 1, 2].map(|c| reference[c] / seen[c])),
-        })
+        let tint = from_xyz.mat_mul(bradford.inverse()).mat_mul(diagonal([0, 1, 2].map(|c| seen[c] / reference[c])))
+            .mat_mul(bradford).mat_mul(to_xyz).v;
+        Ok(PrinterGamut { edge, black, tint })
     }
 }
 
 /// The print's target as `print_scene.slang` reads it: the printer's, or else sRGB laid between the
 /// scene's own paper black and white.
 pub(crate) fn target(scene: &crate::print::Scene, printer: Option<&PrinterGamut>) -> Vec<f32> {
-    let (table, black, tint, untint) = match printer {
-        Some(printer) => (true, printer.black, printer.tint, printer.untint),
+    let (table, black, tint) = match printer {
+        Some(printer) => (true, printer.black, printer.tint),
         None => {
             let white = scene.white_reflectance.raw();
-            let scaled = |by: f64| [[by, 0.0, 0.0], [0.0, by, 0.0], [0.0, 0.0, by]];
-            (false, [scene.black_reflectance.raw() / white; 3], scaled(white), scaled(1.0 / white))
+            (false, [scene.black_reflectance.raw() / white; 3], [[white, 0.0, 0.0], [0.0, white, 0.0], [0.0, 0.0, white]])
         }
     };
     let mut words: Vec<f32> = [if table { 1.0 } else { 0.0 }].into_iter()
         .chain(black)
         .chain(tint.into_iter().flatten())
-        .chain(untint.into_iter().flatten())
         .map(|value| value as f32)
         .collect();
     debug_assert_eq!(words.len(), TARGET_TABLE);
@@ -200,8 +193,6 @@ mod tests {
         let gamut = PrinterGamut::new(&ideal_printer(0.5)).expect("a printer");
         let white = apply(gamut.tint, [1.0; 3]);
         assert!(white.iter().all(|value| (value - 0.5).abs() < 1e-3), "paper white: {white:?}");
-        let back = apply(gamut.untint, white);
-        assert!(back.iter().all(|value| (value - 1.0).abs() < 1e-3), "untinted: {back:?}");
     }
 
     #[test]
@@ -211,8 +202,6 @@ mod tests {
             let gamut = PrinterGamut::adapted(&warm, adaptation).expect("a printer");
             let white = apply(gamut.tint, [1.0; 3]);
             assert!((split(white).0 - 0.9).abs() < 0.01, "paper luma: {white:?}");
-            let back = apply(gamut.untint, white);
-            assert!(back.iter().all(|value| (value - 1.0).abs() < 1e-3), "untinted: {back:?}");
             white[0] / white[2]
         };
         let (seen_whole, seen_default, seen_none) = (cast(0.0), cast(PAPER_ADAPTATION), cast(1.0));

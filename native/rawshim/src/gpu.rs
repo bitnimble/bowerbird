@@ -1858,8 +1858,6 @@ pub enum Intent {
     Perceptual,
     /// Every colour the target can show left exactly, and the rest clipped to its edge.
     RelativeColorimetric,
-    /// As relative, with the paper's own white left showing rather than taken as white.
-    AbsoluteColorimetric,
 }
 
 /// The reader's view: which rectangle of the output is on screen, and how large the screen is.

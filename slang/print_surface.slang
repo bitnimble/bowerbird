@@ -140,7 +140,7 @@ float3 surface_nits(float2 pos)
         direct.y = surface_coefficients(surface_field_uv(mirrored_uv, hit.half), size, z).y
             / print_light_calibration[0];
     }
-    let reflectance = print_reflectance(pigment.Load(int3(int2(pos), 0)).rgb);
+    let reflectance = print_reflectance(pigment.Load(int3(int2(pos), 0)).rgb, true);
     if (print.framing.x > 0.5) {
         return framed_from_coefficients(reflectance, hit, roughness, direct, footprint) * print_exposure().g;
     }

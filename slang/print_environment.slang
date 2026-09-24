@@ -91,9 +91,11 @@ float window_share(Room room, float3 direction, float spread)
     return 0.0;
 }
 
+/// A pane from `from` to `to`, averaged over `blur` around `at`: a lobe wider than the pane spreads
+/// its light rather than mirroring it at full strength.
 float rectangle(float at, float from, float to, float blur)
 {
-    return saturate((min(at - from, to - at)) / blur + 0.5);
+    return saturate((min(to, at + 0.5 * blur) - max(from, at - 0.5 * blur)) / blur);
 }
 
 static const float BOUNCE_HIGH = 0.14;

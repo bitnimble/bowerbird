@@ -174,10 +174,10 @@ describe('the edit panel', () => {
   // and nothing else, a flat print has no light for a surface to catch, and the sheet has it all.
   test('adds what each soft proof can show below the edit panels', () => {
     for (const [proof, groups, absent] of [
-      ['hdr', [], ['sRGB', 'Paper', 'Printer', 'Lighting']],
-      ['srgb', ['sRGB'], ['Paper', 'Printer', 'Lighting']],
-      ['print', ['Paper', 'Printer'], ['sRGB', 'Lighting', 'Rotation']],
-      ['print3d', ['Paper', 'Printer', 'Lighting', 'Rotation'], ['sRGB']],
+      ['hdr', [], ['Tone mapping', 'Paper', 'Printer', 'Lighting']],
+      ['srgb', ['Tone mapping'], ['Paper', 'Printer', 'Lighting']],
+      ['print', ['Paper', 'Printer'], ['Tone mapping', 'Lighting', 'Rotation']],
+      ['print3d', ['Paper', 'Printer', 'Lighting', 'Rotation'], ['Tone mapping']],
     ] as const) {
       const edit = new EditStore();
       const stage = new StageStore(edit);

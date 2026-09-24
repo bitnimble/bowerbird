@@ -25,7 +25,7 @@
 import IMPORT_WGSL from '../generated/stage_import.wgsl?raw';
 import PLANAR_WGSL from '../generated/stage.wgsl?raw';
 import { planarLayout } from './planar_layout';
-import type { FileRenderingIntent } from '../../../../../src/schemas/rendering_intent';
+import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import type { Painted, StageAsk } from '../../../gpu/gpu_protocol';
 
 /**
@@ -39,7 +39,7 @@ import type { Painted, StageAsk } from '../../../gpu/gpu_protocol';
 export const SDR_WHITE_NITS = 203;
 
 /** `Colour.proof` in `stage.slang`: one more than the intent's number in `gamut_map.slang`. */
-const PROOF_INTENT: Record<FileRenderingIntent, number> = { perceptual: 1, relativeColorimetric: 2 };
+const PROOF_INTENT: Record<RenderingIntent, number> = { perceptual: 1, relativeColorimetric: 2 };
 
 /**
  * The imported pipeline's fragment, which is the one thing `slang/` cannot say.

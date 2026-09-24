@@ -5,7 +5,7 @@ import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { type Rendition } from '../../../../../src/services/processing/renditions/renditions';
 import type { Span } from '../../../ui/virtual_rows';
 import type { ViewerStore } from './viewer_store';
-import type { FileRenderingIntent } from '../../../../../src/schemas/rendering_intent';
+import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 
 // How many photographs' details and develop documents are kept once read. A detail is a row
 // of metadata and a document is a page of numbers, so the whole cache is smaller than one
@@ -118,7 +118,7 @@ export class ViewerPresenter {
   }
 
   @action.bound
-  chooseProofIntent(intent: FileRenderingIntent): void {
+  chooseProofIntent(intent: RenderingIntent): void {
     this.store.proofIntent = intent;
   }
 

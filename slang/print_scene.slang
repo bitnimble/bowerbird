@@ -14,13 +14,13 @@ import gamut_map;
 [vk::binding(1, 1)] StructuredBuffer<float> print_albedo;
 [vk::binding(2, 1)] public StructuredBuffer<float> print_light_calibration;
 /// `printer_gamut::target`: whether the edge is a table, the paper's black as a share of its white,
-/// the paper's tint and its inverse, row-major, then the table.
+/// the paper's tint, row-major, then the table.
 [vk::binding(3, 1)] StructuredBuffer<float> print_target;
 
 public static const uint LIGHT_SAMPLES = 128;
 static const uint TARGET_HUES = 64;
 static const uint TARGET_LUMAS = 32;
-static const uint TARGET_TABLE = 22;
+static const uint TARGET_TABLE = 13;
 
 /// A printer profile's gamut: the most chroma its ink reaches, by hue and luma
 /// (`printer_gamut::PrinterGamut`).
@@ -57,15 +57,26 @@ float3x3 target_matrix(uint start)
 }
 
 /// The reflectance the print lays down for `signal`, a share of white in Rec.2020, brought inside
-/// what the paper and ink can reach as the intent asks.
-public float3 print_reflectance(float3 signal)
+/// what the paper and ink can reach as the intent asks. `coating_drawn` where the coating's own
+/// reflection is drawn over it, which the paper's black, a 45/0 reading, already holds a share of.
+public float3 print_reflectance(float3 signal, bool coating_drawn)
 {
     let intent = uint(print.framing.z);
-    var colour = intent == INTENT_ABSOLUTE ? mul(target_matrix(13), signal) : signal;
-    colour = print_target[0] > 0.5 ? mapped(colour, PrinterGamut(), intent) : mapped(colour, SrgbCube(), intent);
-    let black = float3(print_target[1], print_target[2], print_target[3]);
-    let compensated = intent == INTENT_PERCEPTUAL || (intent == INTENT_RELATIVE && print.framing.w > 0.5);
+    let colour = print_target[0] > 0.5 ? mapped(signal, PrinterGamut(), intent) : mapped(signal, SrgbCube(), intent);
+    var black = float3(print_target[1], print_target[2], print_target[3]);
+    if (coating_drawn) {
+        let white = dot(LUMA, mul(target_matrix(4), float3(1.0)));
+        black = max(black - coating_at_45_0() / white, float3(0.0));
+    }
+    let compensated = intent == INTENT_PERCEPTUAL || print.framing.w > 0.5;
     return mul(target_matrix(4), onto_black(colour, black, compensated));
+}
+
+/// What the coating reflects towards a meter square over the sheet from light at 45°.
+float coating_at_45_0()
+{
+    let incident = float3(sqrt(0.5), 0.0, sqrt(0.5));
+    return PRINT_PI * specular_brdf(float3(0.0, 0.0, 1.0), incident, print.material.x * print.material.x, print.material.w);
 }
 
 static const float3 MAT_ALBEDO = float3(0.86, 0.845, 0.81);
@@ -228,8 +239,8 @@ static const Extent<Millimetre> TEXTURE_BUMP = { 0.2 };
 /// **The paper's roughness is measured over a gloss meter's spot, bumps and all**, so the
 /// texture's share of it (`print.surface.w`) is not added to it but taken out of it: the bumps a
 /// pixel resolves tilt the normal, and the rest of their slope widens the lobe back to what was
-/// measured. `TEXTURE_BUMP` puts value noise's wavelength inside the 0.17 to 0.5 mm Arney et al.
-/// measured on textured gelatin papers (JIST 2002).
+/// measured. `TEXTURE_BUMP` spreads the waves' wavelengths over 0.08 to 0.67 mm, around the 0.17
+/// to 0.5 mm Arney et al. measured on textured gelatin papers (JIST 2002).
 public PaperTexture paper_texture(float3 position, float2 footprint)
 {
     let alpha = print.material.x * print.material.x;
@@ -239,8 +250,7 @@ public PaperTexture paper_texture(float3 position, float2 footprint)
     PaperTexture texture;
     // Beckmann's alpha is root two of its per-axis RMS slope, which is how the split is taken.
     let bump_slope = alpha * sqrt(0.5 * share);
-    texture.slope = resolved * bump_slope / VALUE_NOISE_SLOPE
-        * value_noise_gradient(position.xy * print.surface.z / TEXTURE_BUMP.d);
+    texture.slope = resolved * bump_slope * wave_noise_gradient(position.xy * print.surface.z / TEXTURE_BUMP.d);
     texture.roughness = max(0.03, print.material.x * sqrt(sqrt(1.0 - share * resolved * resolved)));
     return texture;
 }
@@ -489,9 +499,13 @@ public float3 print_from_coefficients(float3 reflectance, PrintHit hit, float ro
     let diffuse_transmission = print.framing.x > 0.5 ? print_light_calibration[5] : 1.0;
     let specular_transmission = print.framing.x > 0.5 ? glass_transmittance(hit.view.z) : 1.0;
     let mirrored = paper_rotation(reflect(-hit.view, hit.normal));
-    let sheen = albedo * room_radiance(mirrored, paper_rotation(hit.view), roughness).v * specular_transmission;
-    let body = reflectance * (1.0 - albedo) * diffuse_transmission
-        * room_illuminance(paper_rotation(hit.normal)).v / PRINT_PI;
+    let averaged = room_illuminance(paper_rotation(hit.normal)).v / PRINT_PI;
+    // `room_radiance` reads the room along one direction, blurred at most a radian; a lobe wider
+    // than that sees the room's whole average, or a matte sheet carries the windows as a mirror would.
+    let lobe = smoothstep(0.5, 1.5, 2.0 * roughness * roughness);
+    let sheen = albedo * lerp(room_radiance(mirrored, paper_rotation(hit.view), roughness).v, averaged, lobe)
+        * specular_transmission;
+    let body = reflectance * (1.0 - albedo) * diffuse_transmission * averaged;
     return (sheen + body + print.illumination.x * print_light_calibration[0]
         * (direct.x * reflectance + direct.y)) * print_illuminant();
 }

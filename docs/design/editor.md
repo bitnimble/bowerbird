@@ -149,7 +149,7 @@ What the stage is proofed as is one choice, the `Soft proof` menu in the header 
 between the zoom and the overflow menu, in the viewer between the triage buttons and the
 filmstrip, and labelled with the proof in force. `HDR (Rec.2020 PQ)` is the default and is withheld
 from a rendition with no HDR in it; `SDR (sRGB)` is always offered and is what an SDR rendition
-already shows; the two printed media proofs are always offered. Choosing one adds its panels under the edit panels: sRGB the rendering intent,
+already shows; the two printed media proofs are always offered. Choosing one adds its panels under the edit panels: SDR the rendering intent, titled `Tone mapping`,
 `Printed media` the paper and printer, `Printed media (3D)` those and lighting and orientation.
 The editor sends sRGB to the worker as an output and an intent, and the module fits the frame into
 sRGB with the same operator a print, an SDR rendition and an SDR export use (`gamut_map.slang`).
@@ -182,12 +182,13 @@ is graded to a bounded print reflectance before illumination.
 
 **One operator takes HDR or SDR into any smaller gamut, and the rendering intent is its only
 setting.** `gamut_map.slang` is handed the graded light before any roll into a display and does
-three things. Luminance: perceptual rolls the scene's peak into white along BT.2390's curve, the
-colorimetric intents leave it where it is, so a highlight past white clips. Gamut: at constant
+three things. Luminance: perceptual rolls the scene's peak into white along BT.2390's curve,
+relative colorimetric leaves it where it is, so a highlight past white clips. Gamut: at constant
 Rec.2020 luma, chroma past what the target holds at that luma and hue is compressed from 0.9 of the
-limit (perceptual) or cut at it (colorimetric). Black: perceptual lifts the frame onto the target's
-black, relative does so with black point compensation and otherwise floors at it. Absolute maps in
-the medium's own white and lays the paper's tint over the result. The target is an interface, so
+limit (perceptual) or cut at it (relative). Black: perceptual lifts the frame onto the target's
+black, relative does so with black point compensation and otherwise floors at it. The intents are
+Lightroom's two; absolute colorimetric proofs one medium on another, which a print of a photograph
+never asks for. The target is an interface, so
 sRGB and generic paper are the cube in closed form, and a printer profile is a table of its maximum
 chroma over 64 hues and 32 lumas. A profile is read into that table with moxcms each time one is
 picked - its device grid through the profile's relative transform into linear Rec.2020, binned by
@@ -198,8 +199,7 @@ adaptation at its own luminance). A profile's white is measured under UV, so a p
 brighteners reads bluer than a room with little UV in its light shows it - Red River's UltraPro
 Luster reads b* −13 - and a reader's eye settles most of the way onto a sheet's white besides.
 Laid on whole, that white turns a whole print lavender.
-A file written in sRGB has no paper, so an export and a proof offer perceptual and relative and not
-absolute. What a vendor's own perceptual table does is not reproduced: it is built for SDR input,
+What a vendor's own perceptual table does is not reproduced: it is built for SDR input,
 and one operator for both ranges is the point.
 Surface reflections can exceed diffuse white. Dragging or arrow keys rotate the sheet, the wheel
 lengthens the camera's focal length about whatever sits under the pointer and the middle button
@@ -221,7 +221,13 @@ GPU-tabulated directional albedo couples it to the diffuse body through the reci
 [OpenPBR glossy-diffuse model](https://academysoftwarefoundation.github.io/OpenPBR/).
 This conserves reflected energy while approximating scattering inside the paper. Surface
 texture varies roughness in paper coordinates, with its physical scale set by the print's
-long edge and its visible detail filtered against the camera-ray footprint.
+long edge and its visible detail filtered against the camera-ray footprint. Its bumps are a sum
+of cosines over three octaves in random directions, which stays smooth however far the camera
+closes in. A paper's black is its maker's Dmax, a 45/0 reading, so it already holds the coating's
+reflection at that angle: the flat proof shows it as it is, and the drawn sheet takes that share
+out again (`coating_at_45_0`) because it draws the coating itself. The coating reads the room
+along its mirrored direction, blurred by its lobe, and a lobe wider than about a radian (matte)
+reads the room's average instead, as the diffuse body does, so that it carries no window.
 The ambient light is a room rather than a surround of one radiance: a box around the print, its
 walls and floor at half the ceiling, with daylight through windows six times the ceiling in both
 side walls and the wall behind the print. The wall behind the reader has none, so a pane faced
@@ -367,9 +373,10 @@ the edit on release. Panels support keyboard navigation, Escape and reduced moti
 Gloss, satin and matte are generic simulations. Predicting a specific print requires its
 printer, ink and paper colour profile, measured surface reflectance and calibrated viewing conditions.
 What sets how far a lamp's highlight spreads across a sheet is its roughness, not its refractive
-index: the index sets how strong the coating's reflection is - a twenty-fifth of the light at normal
-incidence for the 1.5 every photo coating sits near - and nothing about its width. Satin sits at
-0.18, where a one-degree lamp is a soft spot rather than a glow across half the sheet.
+index: the index sets how strong the coating's reflection is - an eightieth of the light at normal
+incidence for the 1.25 of a microporous gloss or satin coat, a twenty-fifth for matte's 1.5 - and
+nothing about its width. Satin sits at 0.28, where a one-degree lamp is a soft spot rather than a
+glow across half the sheet.
 
 ### 21.5 Tests
 

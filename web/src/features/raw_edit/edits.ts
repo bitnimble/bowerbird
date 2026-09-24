@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import type { ColourProfile } from '../../../../src/schemas/photo_edits';
-import { FileRenderingIntentSchema } from '../../../../src/schemas/rendering_intent';
+import { RenderingIntentSchema } from '../../../../src/schemas/rendering_intent';
 
 /** The window on the output a tick draws, in output pixels: what pan and zoom move. */
 export interface Region {
@@ -64,7 +64,7 @@ export interface EditGeometry {
  * `hdr` is what a library serves by default and so what the editor opens at; sRGB is what a reader
  * opts into to see where that render rolls its highlights off and clips its colours.
  */
-export const ProofSchema = z.object({ output: z.enum(['hdr', 'srgb']), intent: FileRenderingIntentSchema, displayHdr: z.boolean() });
+export const ProofSchema = z.object({ output: z.enum(['hdr', 'srgb']), intent: RenderingIntentSchema, displayHdr: z.boolean() });
 export type Proof = z.infer<typeof ProofSchema>;
 
 /** The whole frame, upright, which is what a photo nobody has cropped shows. */

@@ -11,7 +11,7 @@ import type { Region } from './stage_gpu';
 import { CanvasLost, stageCanvases, useStageCanvas } from './stage_canvas';
 import { fitScale, type Size, type View } from './zoom_pan';
 import { styles } from './photo_stage_view.stylex';
-import type { FileRenderingIntent } from '../../../../../src/schemas/rendering_intent';
+import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 
 /**
  * How much of the frame beyond what is on screen the detail canvas covers, as a fraction of
@@ -80,7 +80,7 @@ export function StageDetail({
   /** False while this is the rendition being swapped to, drawn before it is revealed. */
   shown: boolean;
   /** As `StageFrame`'s: the patch has to be the picture it lies over. */
-  proof: FileRenderingIntent | null;
+  proof: RenderingIntent | null;
   /** Whether what this lays over the frame is as sharp as the view asks for, including having nothing to add. */
   onSharp: (source: string, sharp: boolean) => void;
 }): JSX.Element | null {

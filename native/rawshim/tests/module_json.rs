@@ -76,7 +76,7 @@ fn a_tick_names_its_print_scene_the_way_this_host_reads_it() {
     let scene = sample().print;
     scene.validate().expect("a valid print scene");
     assert!(matches!(scene.paper, rawshim::print::Paper::Satin));
-    assert_eq!(scene.rendering_intent, rawshim::gpu::Intent::AbsoluteColorimetric);
+    assert_eq!(scene.rendering_intent, rawshim::gpu::Intent::RelativeColorimetric);
     assert!(!scene.black_point_compensation);
     assert!(matches!(scene.ink, rawshim::print::Ink::Pigment));
     assert_eq!(scene.print_resolution_ppi, 300.0);
@@ -95,10 +95,10 @@ fn a_tick_names_its_print_scene_the_way_this_host_reads_it() {
     assert_eq!(scene.light_temperature_kelvin, 6500.0);
     assert_eq!(scene.roughness, 0.28);
     assert_eq!(scene.white_reflectance.raw(), 0.95);
-    assert_eq!(scene.black_reflectance.raw(), 0.002);
+    assert_eq!(scene.black_reflectance.raw(), 0.0042);
     assert_eq!(scene.refractive_index, 1.25);
     assert_eq!(scene.paper_long_edge_mm.raw(), 300.0);
-    assert_eq!(scene.surface_texture, 0.08);
+    assert_eq!(scene.surface_texture, 0.025);
     assert_eq!((scene.zoom, scene.pan_x, scene.pan_y), (2.5, -0.125, 0.25));
 }
 

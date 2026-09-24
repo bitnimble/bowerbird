@@ -79,13 +79,13 @@ test('the rendering intent names the intent the print is drawn with', () => {
   presenter = new PrintPresenter(store, () => { redraws += 1; }, null);
   render(<PrintPanel store={store} presenter={presenter} disabled={false} section="printer" />);
   expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Perceptual');
-  act(() => presenter?.setRenderingIntent('absoluteColorimetric'));
-  expect(store.scene.renderingIntent).toBe('absoluteColorimetric');
+  act(() => presenter?.setRenderingIntent('relativeColorimetric'));
+  expect(store.scene.renderingIntent).toBe('relativeColorimetric');
   expect(redraws).toBe(1);
-  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Absolute colorimetric');
+  expect(screen.getByRole('combobox', { name: 'Rendering intent' }).textContent).toBe('Relative colorimetric');
 });
 
-test('an sRGB proof offers the intents a file can be written with', () => {
+test('an sRGB proof offers the rendering intent', () => {
   const store = new PrintStore();
   presenter = new PrintPresenter(store, () => {}, null);
   render(<PrintPanel store={store} presenter={presenter} disabled={false} section="srgb" />);
@@ -132,7 +132,7 @@ test('black point compensation is offered only where relative colorimetric would
   expect(screen.queryByRole('checkbox', { name: 'Black point compensation' })).toBeNull();
   act(() => presenter?.setRenderingIntent('relativeColorimetric'));
   expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Black point compensation' }).checked).toBe(true);
-  act(() => presenter?.setRenderingIntent('absoluteColorimetric'));
+  act(() => presenter?.setRenderingIntent('perceptual'));
   expect(screen.queryByRole('checkbox', { name: 'Black point compensation' })).toBeNull();
 });
 
