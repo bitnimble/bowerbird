@@ -127,10 +127,16 @@ commit.
 
 ## 7. The page's half
 
-`local_open_worker.ts` owns the module; `local_open.ts` is the protocol between it and the page, a
-tagged `Ask`/`Answer` pair over `postMessage`. The RAW is transferred in once and kept, so a tile
-costs neither a download nor a copy - and a picture the tab did not decode is transferred the same
-way, once, for the reason in §8.
+`gpu_worker.ts` owns the module, on the one worker the app starts at boot and keeps
+(`gpu_thread.ts`); `gpu_protocol.ts` is the protocol between it and the page, a tagged message and
+answer pair over `postMessage`. **That worker holds the app's only GPU device**: the module opens it
+(`gpu::page_device`) and hands the browser's `GPUDevice` under it to the viewer's own WebGPU drawing
+(`stage_gpu.ts`), whose canvases the page transfers in on their first paint (`stage_canvas.ts`). So
+the editor, the print mockup, the merge page, the viewer and the renditions this device builds share
+one device and one set of compiled pipelines for the life of the page. Each editor open is a session
+on it (`LocalDecoder`), freed when the editor closes. The RAW is transferred in once and kept, so a
+tile costs neither a download nor a copy - and a picture the tab did not decode is transferred the
+same way, once, for the reason in §8.
 
 `stage_resolution.ts` is what the page still decides, and it is short on purpose. Two things
 cannot move into the module because both are the page's to know: the header the open answers with,

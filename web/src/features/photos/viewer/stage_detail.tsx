@@ -4,11 +4,11 @@ import {
   canvasSizeFor,
   decodeDetail,
   decodedFrame,
-  drawInto,
   fittedCanvasSize,
   releaseDetail,
 } from './stage_bitmaps';
-import { CanvasLost, type Region } from './stage_gpu';
+import type { Region } from './stage_gpu';
+import { CanvasLost, stageCanvases, useStageCanvas } from './stage_canvas';
 import { fitScale, type Size, type View } from './zoom_pan';
 import { styles } from './photo_stage_view.stylex';
 import type { Tonemap } from '../../raw_edit/print/print_scene';
@@ -85,6 +85,7 @@ export function StageDetail({
   onSharp: (source: string, sharp: boolean) => void;
 }): JSX.Element | null {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const handCanvas = useStageCanvas(canvasRef);
   const [covered, setCovered] = useState<Covered | null>(null);
   // Replaces the canvas element, for the same reason `StageFrame` has one.
   const [attempt, setAttempt] = useState(0);
@@ -163,10 +164,7 @@ export function StageDetail({
         // fitted to what a canvas will hold, which a long thin region of a panorama reaches
         // on its own axis while sitting well inside the area cap.
         const scale = Math.min(1, Math.sqrt(DETAIL_PIXELS / (cropped.width * cropped.height)));
-        const bitmap = canvasSizeFor(cropped.width * scale, cropped.height * scale);
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        await drawInto(canvas, frame, cropped, proof);
+        await stageCanvases.paint(canvas, canvasSizeFor(cropped.width * scale, cropped.height * scale), frame, cropped, proof);
         if (live) setCovered({ region: drawing, density });
       })
       // Nothing covered rather than the last thing that was: what is held is a rectangle of a
@@ -203,7 +201,7 @@ export function StageDetail({
   return (
     <canvas
       key={attempt}
-      ref={canvasRef}
+      ref={handCanvas}
       {...stylex.props(styles.detail)}
       aria-hidden
       style={{

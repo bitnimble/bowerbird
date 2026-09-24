@@ -225,6 +225,12 @@ impl Levels {
             && self.floor.is_some_and(|floor| floor.is_finite() && floor <= self.white)
     }
 
+    /// These levels with diffuse white where the file says it is, for a picture shown as it was
+    /// encoded rather than graded again.
+    pub fn at_stated_white(self, white: Light<Level>) -> Levels {
+        Levels { white, peak: self.peak.max(white), ..self }
+    }
+
     /// The same levels with a white the pipeline can divide by.
     ///
     /// **One floor, in one place.** Both the coding and the grade divide by diffuse white, and

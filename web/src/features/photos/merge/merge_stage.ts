@@ -2,11 +2,10 @@ import { rasteriseMask } from './merge_mask';
 import type { DrawnLayer } from './merge_layers';
 import { PREVIEW_HOLDER, type Compositor } from './merge_presenter';
 import { decodeFrame, keepOnly, releaseHolder, type Decoded } from '../viewer/stage_bitmaps';
-import { paintMasked } from '../viewer/stage_gpu';
+import { type CanvasSize, stageCanvases } from '../viewer/stage_canvas';
 
 /**
- * The real `Compositor`: a fresh one per canvas mount, exactly like `paintExtended`'s callers
- * already are.
+ * The real `Compositor`: a fresh one per canvas mount, exactly like the viewer's frames.
  *
  * **One paint at a time, and only the newest waiting.** A paint copies every layer's planes out
  * before it touches the canvas, so two started together finish in whichever order the copies do,
@@ -18,6 +17,8 @@ export class MergeStage implements Compositor {
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
+    /** The analysis plane's, which the canvas is drawn at. */
+    private readonly size: () => CanvasSize,
     private readonly layers: ReadonlyMap<number, Decoded>,
   ) {}
 
@@ -52,27 +53,34 @@ export class MergeStage implements Compositor {
     // Held before the decode, so a render landing after the next pick is swept rather than drawn.
     keepOnly(PREVIEW_HOLDER, [url]);
     const settled = await decodeFrame(url);
-    if (this.waiting != null || settled.closed || !isFrame(settled.picture)) return;
-    await paintMasked(this.canvas, settled.picture, []);
+    const size = this.size();
+    if (this.waiting != null || settled.closed || !isFrame(settled.picture) || isEmpty(size)) return;
+    await stageCanvases.paintMasked(this.canvas, size, settled.picture, []);
   }
 
   private async paint(base: number, layers: DrawnLayer[]): Promise<void> {
     const baseLayer = this.layers.get(base);
-    if (baseLayer == null || baseLayer.closed || !isFrame(baseLayer.picture)) return;
+    const size = this.size();
+    if (baseLayer == null || baseLayer.closed || !isFrame(baseLayer.picture) || isEmpty(size)) return;
     const masked = layers.flatMap((layer) => {
       const decoded = this.layers.get(layer.source);
       if (decoded == null || decoded.closed || !isFrame(decoded.picture)) return [];
       return [
         {
           picture: decoded.picture,
-          mask: rasteriseMask(this.canvas.width, this.canvas.height, layer.mask, layer.feather),
+          mask: rasteriseMask(size.width, size.height, layer.mask, layer.feather),
           shift: layer.shift,
           gain: layer.gain,
         },
       ];
     });
-    await paintMasked(this.canvas, baseLayer.picture, masked);
+    await stageCanvases.paintMasked(this.canvas, size, baseLayer.picture, masked);
   }
+}
+
+/** Before the analysis plane is known. */
+function isEmpty(size: CanvasSize): boolean {
+  return size.width === 0 || size.height === 0;
 }
 
 function isFrame(picture: ImageBitmap | VideoFrame): picture is VideoFrame {

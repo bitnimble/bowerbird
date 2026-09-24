@@ -180,6 +180,7 @@ pub mod lslcd;
 pub mod open;
 /// Which way up a file says its picture goes, in the numbering both hosts and both shaders use.
 pub mod orientation;
+pub mod planes;
 /// A set of photographs into a recipe: what overlaps what, and where each one points.
 pub mod composite_align;
 /// Corners of a frame and what each one looks like, so a match can be asked whether it is *unique*

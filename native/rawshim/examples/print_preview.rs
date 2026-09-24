@@ -54,6 +54,7 @@ fn main() -> Result<(), String> {
         denoiser: rawshim::galosh::Denoiser::Galosh,
         dust: Default::default(),
         repairs: Vec::new(),
+        stated_white: false,
     }, 40.0)?;
     let gpu = rawshim::gpu::device().ok_or("print requires Vulkan")?;
     let base = rawshim::base::device(gpu).ok_or("the source pyramid")?;

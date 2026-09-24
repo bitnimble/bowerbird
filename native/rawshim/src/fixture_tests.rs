@@ -909,6 +909,7 @@ mod decode_geometry {
             // wrong photosites and this is what says so.
             dust: crate::dust::Settings { enabled: true, sensitivity: 0.5, intensity: 1.0 },
             repairs: Vec::new(),
+            stated_white: false,
         };
 
         let held = pollster::block_on(crate::decode::hold_bytes(&bytes)).expect("held");
@@ -3485,6 +3486,7 @@ mod pictures {
                 denoiser: crate::galosh::Denoiser::Galosh,
                 dust: Default::default(),
                 repairs: Vec::new(),
+                stated_white: false,
             },
             40.0,
         )
@@ -3607,6 +3609,7 @@ mod one_open_at_a_time {
             photo_analysis: None,
             dust: Default::default(),
             repairs: Vec::new(),
+            stated_white: false,
             // The document's own defaults, so the open this times is the one a reader gets
             // rather than a cheaper one that skips the denoise.
             denoise_luminance: Some(20.0),

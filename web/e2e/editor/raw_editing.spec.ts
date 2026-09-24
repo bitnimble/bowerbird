@@ -669,7 +669,7 @@ test('editor rotation lives in overflow and saves orientation edit', async ({ pa
 });
 
 test('print mode rotates with a real pointer and keyboard without saving a photo edit', async ({ page }) => {
-  await page.route(/\/local_open_worker\.ts(?:\?|$)/, async (route) => {
+  await page.route(/\/gpu_worker\.ts(?:\?|$)/, async (route) => {
     const response = await route.fetch();
     await route.fulfill({
       response,
@@ -685,8 +685,9 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
         let wantedReadback;
         let readbackId = 0;
         self.addEventListener('message', (event) => {
-          if (event.data?.kind === 'attach' && event.data.which === 'stage') editorCanvases.add(event.data.canvas);
-          if (event.data?.kind === 'tick') currentPrint = event.data.print;
+          const ask = event.data?.ask;
+          if (ask?.kind === 'attach' && ask.which === 'stage') editorCanvases.add(ask.canvas);
+          if (ask?.kind === 'tick') currentPrint = ask.print;
         });
         Object.defineProperty(globalThis, 'editorCanvasConfigurations', { get: () => hdrConfigurations });
         Object.defineProperty(globalThis, 'editorCanvasReadbacks', { get: () => hdrReadbacks });
@@ -771,8 +772,8 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   });
   await emulateHdrDisplay(page);
   await open(page);
-  const worker = page.workers().find((worker) => worker.url().includes('local_open_worker'));
-  if (worker == null) throw new Error('The editor worker was not created');
+  const worker = page.workers().find((worker) => worker.url().includes('gpu_worker'));
+  if (worker == null) throw new Error('The GPU worker was not created');
   const Configurations = z.array(z.object({ format: z.string(), colorSpace: z.string(), toneMapping: z.string().nullable() }));
   const canvasConfigurations = async (): Promise<z.infer<typeof Configurations>> => Configurations.parse(
     await worker.evaluate(() => Reflect.get(globalThis, 'editorCanvasConfigurations')),

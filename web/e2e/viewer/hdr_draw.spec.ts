@@ -25,6 +25,7 @@ import {
   openPhoto,
   openPhotoId,
   photoStage,
+  recordCanvasContexts,
   setRenditionSource,
   setViewerRendition,
   shownFrame,
@@ -57,6 +58,7 @@ test('an HDR rendition reaches the GPU and draws a photograph', async ({ page })
   // outran and says which; a budget of exactly 180 + 60 leaves the navigation, the screenshot
   // and the decode with none, and kills a correct run at the least informative place.
   test.setTimeout(320_000);
+  const contexts = await recordCanvasContexts(page);
 
   await page.goto(route(PathSegment.settings()));
   await setRenditionSource(page, HDR_PHOTOS_DIR, 'Rendered RAW');
@@ -88,10 +90,10 @@ test('an HDR rendition reaches the GPU and draws a photograph', async ({ page })
   await expect(shown).toHaveAccessibleName(/Rendered RAW$/, { timeout: 60_000 });
   await expect(photoStage(page)).not.toContainText('Rendering');
 
-  // A canvas holds one kind of context for its whole life, so a 2D one coming back null is the
-  // GPU path having committed to this element. `no_webgpu.spec.ts` reads it the other way.
-  const took = await shown.evaluate((frame: HTMLCanvasElement) => frame.getContext('2d') == null);
-  expect(took, 'the GPU path drew it, rather than the 2D fallback').toBe(true);
+  // A canvas holds one kind of context for its whole life, and the stage's are drawn on the GPU
+  // worker, which is the one place that can say which kind each one took.
+  expect(await contexts(), 'the GPU path drew it, rather than the 2D fallback').not.toContain('2d');
+  expect(await contexts()).toContain('webgpu');
 
   // **Through a screenshot, because a WebGPU canvas cannot be read by script after the task
   // that drew it.** Measured in this browser: `drawImage` and `createImageBitmap` both hand

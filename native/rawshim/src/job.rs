@@ -714,11 +714,9 @@ impl Base {
         let as_shot = frame.as_shot;
         let wb_gains = frame.wb_gains;
         let dust = frame.dust.clone();
-        let stated_white = match (job.stated_white, frame.stated_white) {
-            (false, _) => None,
-            (true, Some(white)) => Some(white),
-            (true, None) => return Err(format!("{} states no white to anchor at", job.raw_file_path)),
-        };
+        let stated_white = frame
+            .white_to_anchor(job.stated_white)
+            .map_err(|why| format!("{}: {why}", job.raw_file_path))?;
         let crate::frame::Pixels::Resident(resident) = frame.pixels else {
             return Err("the render needs a 16-bit scene-linear decode on the device".to_string());
         };
@@ -753,7 +751,7 @@ impl Base {
             .capture_sigma
             .or_else(|| blur.map(|blur| blur * frame_reduced as f32));
         let measured = match stated_white {
-            Some(white) => crate::tone::Levels { white, peak: measured.peak.max(white), ..measured },
+            Some(white) => measured.at_stated_white(white),
             None => measured,
         };
         // Floored here and carried, so the white the frame is *coded* against and the white the

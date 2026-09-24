@@ -164,6 +164,7 @@ fn request() -> rawshim::edit::EditRequest {
         photo_analysis: None,
         dust: Default::default(),
         repairs: Vec::new(),
+        stated_white: false,
         // Nothing: this example denoises the mosaic itself, so an open that had already done it
         // would be measuring a filtered frame filtered again.
         denoise_luminance: Some(0.0),

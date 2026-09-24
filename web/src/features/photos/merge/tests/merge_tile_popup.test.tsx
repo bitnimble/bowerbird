@@ -3,6 +3,7 @@ import { runInAction } from 'mobx';
 import { registerDom } from '../../../../test_dom';
 
 registerDom();
+await import('../../viewer/tests/stage_canvases');
 const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
 const React = await import('react');
 const { MergeTilePopup, flyoutAt } = await import('../merge_tile_popup');

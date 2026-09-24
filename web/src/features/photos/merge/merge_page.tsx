@@ -20,6 +20,7 @@ import { MergeStage } from './merge_stage';
 import { MergeStore } from './merge_store';
 import { MergeTilePopup } from './merge_tile_popup';
 import { stageStyles } from '../viewer/photo_stage.stylex';
+import { type CanvasSize, useStageCanvas } from '../viewer/stage_canvas';
 import { Spinner } from '../../../ui/spinner';
 import { PhotoStageStrings } from '../viewer/photo_stage.strings';
 import { collectionPath, photoPath, sourceOfPath } from '../photos_store';
@@ -116,6 +117,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
   const navigate = useNavigate();
   const source = useMemo(() => sourceOfPath(location.pathname), [location.pathname]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const handCanvas = useStageCanvas(canvasRef);
   const pressedAt = useRef<Point | null>(null);
   const dragged = useRef(false);
   // Whether the press a click ends found a popup open: that press closed it, and opens or seeds nothing.
@@ -148,11 +150,12 @@ export const MergePage = observer(function MergePage(): JSX.Element {
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    session.stage.current = canvas == null ? null : new MergeStage(canvas, layers);
+    const size = (): CanvasSize => ({ width: store.layerSize?.width ?? 0, height: store.layerSize?.height ?? 0 });
+    session.stage.current = canvas == null ? null : new MergeStage(canvas, size, layers);
     // The analysis lands before this canvas exists, so without a draw from here the picture stays
     // black until the reader happens to press something.
     if (canvas != null) session.presenter.redraw();
-  }, [session, layers]);
+  }, [session, layers, store]);
 
   // §2.8's `[` and `]`. On the window rather than the stage: the reader's focus is wherever they
   // last clicked, and the picture is not a focusable element to put this on.
@@ -362,7 +365,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
             {...stylex.props(styles.view)}
             style={{ transform: `translate(${zoom.view.x}px, ${zoom.view.y}px) scale(${zoom.view.scale})` }}
           >
-            <canvas ref={canvasRef} {...stylex.props(styles.layer, styles.canvas)} width={width} height={height} />
+            <canvas ref={handCanvas} {...stylex.props(styles.layer, styles.canvas)} />
             <svg {...stylex.props(styles.layer)} viewBox={`0 0 ${width} ${height}`}>
               {store.pieces.map(({ tile, d }, piece) =>
                 tile == null ?

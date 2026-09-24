@@ -6,8 +6,6 @@ import {
 import type { EditAdjust, EditGeometry, Proof, Region } from '../edits';
 import type { PrintScene } from '../print/print_scene';
 import {
-  AnswerSchema,
-  AskSchema,
   BlobSchema,
   BytesSchema,
   crossing,
@@ -17,45 +15,23 @@ import {
   RectSchema,
   ShownSchema,
   TileKeepSchema,
-  type Job,
   type LocalOpen,
   type LocalPrepare,
   type LocalTileRequest,
+  type OpenAsk,
   type TileKeep,
 } from './local_open';
+import { gpuThread } from '../../../gpu/gpu_thread';
 
 /**
- * The wasm module, on a thread of its own.
- *
- * **Every call here is seconds of unyielding wasm**, so none of it may run where the editor draws:
- * a 61MP open measured eight seconds in one task, which froze the page from the moment the panel
- * mounted until the frame arrived. The module has no seam to yield through and the frame is copied
- * out of its memory anyway, so it lives behind a worker and the results are transferred.
+ * One photograph opened on the GPU thread (`gpu_thread.ts`), and everything asked of it.
  *
  * The RAW is `hold`-ed once rather than passed per call: it is tens of megabytes, and a tile that
  * carried it would copy all of it across the boundary for every position the loupe stops at.
  */
 export class LocalDecoder {
-  private readonly worker = new Worker(new URL('./local_open_worker.ts', import.meta.url), {
-    type: 'module',
-  });
-  private readonly waiting = new Map<
-    number,
-    { resolve: (value: unknown) => void; reject: (error: unknown) => void }
-  >();
-  private asked = 0;
-
-  constructor() {
-    this.worker.onmessage = (event: MessageEvent<unknown>) => {
-      const answer = AnswerSchema.parse(event.data);
-      const waiter = this.waiting.get(answer.id);
-      if (waiter == null) return;
-      this.waiting.delete(answer.id);
-      if (answer.ok) waiter.resolve(answer.value);
-      else waiter.reject(new Error(answer.error));
-    };
-    this.worker.onerror = (event) => this.refuse(new Error(event.message));
-  }
+  private readonly thread = gpuThread();
+  private readonly session = this.thread.open();
 
   /** The bytes every later call reads, transferred: the page has no use for them afterwards. */
   hold(raw: Uint8Array<ArrayBuffer>): Promise<void> {
@@ -95,6 +71,16 @@ export class LocalDecoder {
   holdPicture(framed: Uint8Array<ArrayBuffer>, request: LocalOpen): Promise<string> {
     return this.ask(JsonSchema, { kind: 'holdPicture', framed, request: JSON.stringify(request) }, [
       framed.buffer,
+    ]);
+  }
+
+  /**
+   * The same open, from a rendition's own AVIF, decoded by this browser. Null where it cannot
+   * hand over planar PQ, and the server prepares the rendition instead.
+   */
+  holdRendition(avif: Uint8Array<ArrayBuffer>, request: LocalOpen): Promise<string | null> {
+    return this.ask(JsonSchema.nullable(), { kind: 'holdRendition', avif, request: JSON.stringify(request) }, [
+      avif.buffer,
     ]);
   }
 
@@ -358,36 +344,18 @@ export class LocalDecoder {
   }
 
   /**
-   * Terminated rather than left to be collected: the thread holds the RAW, the module's heap and
-   * the device it opened, and a decode in flight for an editor nobody is looking at any more still
-   * runs to the end of the file.
+   * Freed rather than left to be collected: the open holds the RAW and the frames on the device,
+   * which the thread keeps for as long as the page does.
    */
   close(): void {
-    this.refuse(new Error('this decoder was closed'));
-    this.worker.terminate();
+    this.thread.close(this.session, new Error('this decoder was closed'));
   }
 
-  private async nothing(job: Job, transfer: Transferable[] = []): Promise<void> {
-    await this.ask(NothingSchema, job, transfer);
+  private async nothing(ask: OpenAsk, transfer: Transferable[] = []): Promise<void> {
+    await this.ask(NothingSchema, ask, transfer);
   }
 
-  private ask<S extends z.ZodType>(schema: S, job: Job, transfer: Transferable[] = []): Promise<z.output<S>> {
-    const id = ++this.asked;
-    return new Promise<z.output<S>>((resolve, reject) => {
-      this.waiting.set(id, {
-        resolve: (value) => {
-          const parsed = schema.safeParse(value);
-          if (parsed.success) resolve(parsed.data);
-          else reject(parsed.error);
-        },
-        reject,
-      });
-      this.worker.postMessage(AskSchema.parse({ ...job, id }), transfer);
-    });
-  }
-
-  private refuse(error: Error): void {
-    for (const waiter of this.waiting.values()) waiter.reject(error);
-    this.waiting.clear();
+  private ask<S extends z.ZodType>(schema: S, ask: OpenAsk, transfer: Transferable[] = []): Promise<z.output<S>> {
+    return this.thread.ask(schema, { to: 'open', session: this.session, ask }, transfer);
   }
 }

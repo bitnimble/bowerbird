@@ -132,6 +132,7 @@ fn request(photo_analysis: Option<Vec<u8>>) -> rawshim::edit::EditRequest {
         photo_analysis,
         dust: Default::default(),
         repairs: Vec::new(),
+        stated_white: false,
         // The document's defaults, so the open being timed is the one a reader waits for -
         // the denoise is inside it now.
         denoise_luminance: Some(20.0),

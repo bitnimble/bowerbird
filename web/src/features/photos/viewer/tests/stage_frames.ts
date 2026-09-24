@@ -1,6 +1,7 @@
-// The decode a stage frame owns, stood in for. jsdom has no WebCodecs, no `createImageBitmap`
-// and no canvas to draw into, so a real `stage_bitmaps` reports every frame missing and the
-// stage never paints one - and what these tests are about is which frame is on screen.
+// The decode a stage frame owns, and the paint, stood in for. jsdom has no WebCodecs, no
+// `createImageBitmap` and no canvas to draw into, so a real `stage_bitmaps` reports every frame
+// missing and the stage never paints one - and what these tests are about is which frame is on
+// screen.
 //
 // Imported for its side effect, and imported *before* `photo_stage`: the module registry is
 // replaced as this evaluates, so anything already holding the real one keeps it.
@@ -110,7 +111,8 @@ void mock.module('../stage_bitmaps', () => ({
   releaseDetail: (source: string): void => {
     released.push(source);
   },
-  drawInto: (): Promise<void> => Promise.resolve(),
   keepOnly: (): void => undefined,
   releaseHolder: (): void => undefined,
 }));
+
+await import('./stage_canvases');

@@ -39,6 +39,7 @@ fn main() -> Result<(), String> {
             denoiser: rawshim::galosh::Denoiser::Galosh,
             dust: Default::default(),
             repairs: Vec::new(),
+            stated_white: false,
         },
         40.0,
     )?;

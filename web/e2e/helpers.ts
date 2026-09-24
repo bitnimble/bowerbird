@@ -1,4 +1,5 @@
 import { expect, type APIRequestContext, type Browser, type Locator, type Page } from '@playwright/test';
+import { z } from 'zod';
 import { LibrariesSchema } from '../../src/schemas/libraries';
 import { EditStateSchema } from '../../src/schemas/photo_edits';
 import { PathSegment, route } from '../../src/schemas/route';
@@ -424,6 +425,40 @@ export async function emulateHdrDisplay(page: Page): Promise<void> {
       return query === '(dynamic-range: high)' ? Object.create(list, { matches: { value: true } }) : list;
     };
   });
+}
+
+/**
+ * The kind of context each canvas on the GPU worker took, one entry per canvas in the order they
+ * took one: a canvas the page has handed over can no longer be asked on the page. Set up before
+ * the page loads, which is when the worker starts.
+ */
+export async function recordCanvasContexts(page: Page): Promise<() => Promise<string[]>> {
+  await page.route(/\/gpu_worker\.ts(?:\?|$)/, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      body: `
+        const canvasContexts = [];
+        const counted = new WeakSet();
+        Object.defineProperty(globalThis, 'canvasContexts', { get: () => canvasContexts });
+        const getCanvasContext = OffscreenCanvas.prototype.getContext;
+        OffscreenCanvas.prototype.getContext = function (kind, ...rest) {
+          const context = getCanvasContext.call(this, kind, ...rest);
+          if (context != null && !counted.has(this)) {
+            counted.add(this);
+            canvasContexts.push(kind);
+          }
+          return context;
+        };
+        ${await response.text()}
+      `,
+    });
+  });
+  return async () => {
+    const worker = page.workers().find((each) => each.url().includes('gpu_worker'));
+    if (worker == null) throw new Error('The GPU worker was not created');
+    return z.array(z.string()).parse(await worker.evaluate(() => Reflect.get(globalThis, 'canvasContexts')));
+  };
 }
 
 /** Chooses a proof from the bar's soft proof menu, whichever one it is showing. */

@@ -27,6 +27,16 @@ async fn needs_webgpu() -> Result<(), JsValue> {
     }
 }
 
+/// The page's device as the browser's `GPUDevice`, for what the app draws with WebGPU itself, or
+/// null where there is no adapter.
+#[wasm_bindgen(js_name = pageDevice)]
+pub async fn page_device() -> JsValue {
+    crate::gpu::page_device()
+        .await
+        .and_then(crate::gpu::Gpu::webgpu_device)
+        .unwrap_or(JsValue::NULL)
+}
+
 /// A photograph opened and kept at the mosaic, so a Detail slider costs a denoise and not a file.
 ///
 /// **The frame below the denoise is a function of the amounts; everything above it is not.** The
@@ -269,8 +279,7 @@ enum Reading<'a> {
 #[wasm_bindgen(js_name = holdRaw)]
 pub async fn hold_raw(bytes: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;
-    let request: crate::edit::EditRequest = serde_json::from_str(request)
-        .map_err(|e| JsValue::from_str(&format!("rawshim: this open request is malformed: {e}")))?;
+    let request = request_of(request)?;
     let rendered = crate::decode_rendered::is_rendered_bytes(bytes);
     let held = crate::decode::hold_bytes(bytes)
         .await
@@ -289,36 +298,68 @@ pub async fn hold_raw(bytes: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
         _ => {}
     }
     let fit = fit.filter(crate::galosh::NoiseFit::usable);
-    Ok(HeldRaw {
-        held: Some(held),
-        bytes: match rendered {
-            true => Vec::new(),
-            false => bytes.to_vec(),
-        },
-        mosaic: !rendered,
-        fit,
-        request,
-        levels: std::cell::Cell::new(None),
-        analysis: std::cell::RefCell::new(None),
-        defocus: std::cell::Cell::new(None),
-        drawing: std::cell::RefCell::new(None),
-        stage: std::cell::RefCell::new(None),
-        loupe: std::cell::RefCell::new(None),
-        thumbnail: std::cell::RefCell::new(None),
-        tile: std::cell::RefCell::new(None),
-        held_tiles: std::cell::RefCell::new(Vec::new()),
-        shown: std::cell::Cell::new(None),
-        repairs: std::cell::RefCell::new(Vec::new()),
-        searched: std::cell::RefCell::new(None),
-        tick: std::cell::Cell::new(0),
-        geometry: std::cell::Cell::new(crate::image::Geometry::none()),
-        adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
-        proof: std::cell::Cell::new(crate::gpu::Output::Pq),
-        proof_tone: std::cell::Cell::new(crate::gpu::Tonemap::Neutral),
-        display_hdr: std::cell::Cell::new(true),
-        print: std::cell::Cell::new(None),
-        header: String::new(),
-    })
+    let bytes = match rendered {
+        true => Vec::new(),
+        false => bytes.to_vec(),
+    };
+    Ok(HeldRaw::new(Some(held), bytes, !rendered, fit, request))
+}
+
+/// Opens an AVIF rendition the page decoded with its own `ImageDecoder`, which this build has no
+/// decoder for: `avif` is the file, for its colour and its turn, and `planes` what `copyTo` wrote
+/// as `layout` ([`crate::planes::Layout`] as JSON) describes it.
+#[wasm_bindgen(js_name = holdPlanes)]
+pub async fn hold_planes(avif: &[u8], planes: &[u8], layout: &str, request: &str) -> Result<HeldRaw, JsValue> {
+    needs_webgpu().await?;
+    let request = request_of(request)?;
+    let layout: crate::planes::Layout = serde_json::from_str(layout)
+        .map_err(|e| JsValue::from_str(&format!("rawshim: these planes are described wrongly: {e}")))?;
+    let held = crate::decode_rendered::hold_planes(avif, planes, &layout)
+        .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
+    Ok(HeldRaw::new(Some(crate::decode::Held::Rendered(held)), Vec::new(), false, None, request))
+}
+
+fn request_of(request: &str) -> Result<crate::edit::EditRequest, JsValue> {
+    serde_json::from_str(request)
+        .map_err(|e| JsValue::from_str(&format!("rawshim: this open request is malformed: {e}")))
+}
+
+impl HeldRaw {
+    fn new(
+        held: Option<crate::decode::Held>,
+        bytes: Vec<u8>,
+        mosaic: bool,
+        fit: Option<crate::galosh::NoiseFit>,
+        request: crate::edit::EditRequest,
+    ) -> HeldRaw {
+        HeldRaw {
+            held,
+            bytes,
+            mosaic,
+            fit,
+            request,
+            levels: std::cell::Cell::new(None),
+            analysis: std::cell::RefCell::new(None),
+            defocus: std::cell::Cell::new(None),
+            drawing: std::cell::RefCell::new(None),
+            stage: std::cell::RefCell::new(None),
+            loupe: std::cell::RefCell::new(None),
+            thumbnail: std::cell::RefCell::new(None),
+            tile: std::cell::RefCell::new(None),
+            held_tiles: std::cell::RefCell::new(Vec::new()),
+            shown: std::cell::Cell::new(None),
+            repairs: std::cell::RefCell::new(Vec::new()),
+            searched: std::cell::RefCell::new(None),
+            tick: std::cell::Cell::new(0),
+            geometry: std::cell::Cell::new(crate::image::Geometry::none()),
+            adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
+            proof: std::cell::Cell::new(crate::gpu::Output::Pq),
+            proof_tone: std::cell::Cell::new(crate::gpu::Tonemap::Neutral),
+            display_hdr: std::cell::Cell::new(true),
+            print: std::cell::Cell::new(None),
+            header: String::new(),
+        }
+    }
 }
 
 /// Opens a picture somebody else prepared, uploading it to this page's device.
@@ -339,35 +380,7 @@ pub async fn hold_raw(bytes: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
 #[wasm_bindgen(js_name = holdPicture)]
 pub async fn hold_picture(framed: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;
-    let request: crate::edit::EditRequest = serde_json::from_str(request)
-        .map_err(|e| JsValue::from_str(&format!("rawshim: this open request is malformed: {e}")))?;
-    let mut held = HeldRaw {
-        held: None,
-        bytes: Vec::new(),
-        mosaic: false,
-        fit: None,
-        request,
-        levels: std::cell::Cell::new(None),
-        analysis: std::cell::RefCell::new(None),
-        defocus: std::cell::Cell::new(None),
-        drawing: std::cell::RefCell::new(None),
-        stage: std::cell::RefCell::new(None),
-        loupe: std::cell::RefCell::new(None),
-        thumbnail: std::cell::RefCell::new(None),
-        tile: std::cell::RefCell::new(None),
-        held_tiles: std::cell::RefCell::new(Vec::new()),
-        shown: std::cell::Cell::new(None),
-        repairs: std::cell::RefCell::new(Vec::new()),
-        searched: std::cell::RefCell::new(None),
-        tick: std::cell::Cell::new(0),
-        geometry: std::cell::Cell::new(crate::image::Geometry::none()),
-        adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
-        proof: std::cell::Cell::new(crate::gpu::Output::Pq),
-        proof_tone: std::cell::Cell::new(crate::gpu::Tonemap::Neutral),
-        display_hdr: std::cell::Cell::new(true),
-        print: std::cell::Cell::new(None),
-        header: String::new(),
-    };
+    let mut held = HeldRaw::new(None, Vec::new(), false, None, request_of(request)?);
     held.take_picture(framed)?;
     Ok(held)
 }

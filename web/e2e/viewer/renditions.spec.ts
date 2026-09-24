@@ -21,6 +21,7 @@ import {
   showMetadata,
   shownFilename,
   shownFrame,
+  recordCanvasContexts,
   stepZoom,
   tiles,
   useLibrary,
@@ -338,6 +339,7 @@ test('a photo reopens at the rendition it was last read in, without the library 
 
 test('viewer rotation turns embedded display and tags full AVIF without moving coded pixels', async ({ page }) => {
   test.setTimeout(180_000);
+  const contexts = await recordCanvasContexts(page);
   await page.goto(route(PathSegment.settings()));
   await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'Rendered RAW');
   await setViewerRendition(page, 'Embedded JPEG');
@@ -367,8 +369,10 @@ test('viewer rotation turns embedded display and tags full AVIF without moving c
 
   await photoAction(page, 'Rendition', 'Rendered RAW (max quality)', { exact: true });
   await expect(photoStage(page).getByRole('img', { name: /\(max quality\)$/ })).toBeVisible({ timeout: 90_000 });
+  const unzoomed = (await contexts()).length;
   await stepZoom(page);
   await stepZoom(page);
-  const detail = shownFrame(page).locator('..').locator('canvas:not([role])');
-  await expect.poll(() => detail.evaluate((canvas: HTMLCanvasElement) => canvas.getContext('webgpu') != null), { timeout: 30_000 }).toBe(true);
+  // The zoom's own canvas, drawn on the GPU like the frame under it.
+  await expect.poll(async () => (await contexts()).slice(unzoomed), { timeout: 30_000 }).toContain('webgpu');
+  expect(await contexts()).not.toContain('2d');
 });

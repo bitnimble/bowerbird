@@ -89,6 +89,20 @@ pub fn holding(read: Read) -> Result<Held, String> {
     Ok(Held { picture })
 }
 
+/// An AVIF the page decoded itself: `avif` for what the container says around the pixels, and the
+/// planes its `ImageDecoder` handed back.
+///
+/// No gain map: a rendition's base is the HDR picture, so the map would only lead away from it.
+pub fn hold_planes(avif: &[u8], planes: &[u8], layout: &crate::planes::Layout) -> Result<Held, String> {
+    let gpu = crate::gpu::device()
+        .ok_or_else(|| crate::base::without_a_device("reading a decoded rendition"))?;
+    let primary = crate::heif::read(avif)?.primary;
+    let codes = crate::planes::codes(gpu, planes, layout)?;
+    let picture =
+        crate::linearise::Picture::on_device(gpu, codes, coding_of(&primary, 16), primary.turn, None);
+    Ok(Held { picture })
+}
+
 impl Held {
     /// The picture's size the way a reader sees it.
     pub fn size(&self) -> crate::px::Size<crate::px::Photograph> {

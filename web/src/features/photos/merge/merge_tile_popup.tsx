@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { focusRing } from '../../../ui/focus_ring';
 import { menuStyles } from '../../../ui/menu_styles';
 import { Row } from '../../../ui/row';
@@ -10,7 +10,8 @@ import { MergePageStrings } from './merge_page.strings';
 import type { MergePresenter } from './merge_presenter';
 import type { MergeStore } from './merge_store';
 import { Spinner } from '../../../ui/spinner';
-import { drawInto, type Decoded } from '../viewer/stage_bitmaps';
+import type { Decoded } from '../viewer/stage_bitmaps';
+import { CanvasLost, stageCanvases, useStageCanvas } from '../viewer/stage_canvas';
 import { NO_SIZE, stagePointOf, type Size, type ZoomPan } from '../viewer/zoom_pan';
 
 /** The crop's own size in CSS pixels, which `styles.crop` is drawn at. */
@@ -221,24 +222,32 @@ function SwatchCanvas({
   label: string;
 }): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const handCanvas = useStageCanvas(canvasRef);
   const swatch = swatchRegion(loop, frame, SWATCH_BOX);
   const { x, y, width, height } = swatch.region;
   const density = globalThis.devicePixelRatio ?? 1;
+  const backingWidth = Math.max(1, Math.round(swatch.width * density));
+  const backingHeight = Math.max(1, Math.round(swatch.height * density));
+
+  // Replaces the canvas element, for the same reason `StageFrame` has one.
+  const [attempt, setAttempt] = useState(0);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (canvas == null || frame.closed) return;
-    void drawInto(canvas, frame, { x, y, width, height }).catch(() => undefined);
-  }, [frame, x, y, width, height]);
+    const size = { width: backingWidth, height: backingHeight };
+    void stageCanvases.paint(canvas, size, frame, { x, y, width, height }).catch((err: unknown) => {
+      if (err instanceof CanvasLost) setAttempt((was) => was + 1);
+    });
+  }, [frame, x, y, width, height, backingWidth, backingHeight, attempt]);
 
   return (
     <canvas
-      ref={canvasRef}
+      key={attempt}
+      ref={handCanvas}
       role="img"
       aria-label={label}
       {...stylex.props(styles.picture)}
-      width={Math.max(1, Math.round(swatch.width * density))}
-      height={Math.max(1, Math.round(swatch.height * density))}
       style={{ width: `${swatch.width}px`, height: `${swatch.height}px`, clipPath: swatch.clipPath }}
     />
   );

@@ -1,6 +1,7 @@
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
 import { REQUEST_ACTIVITY_HEADER } from '../../../../../src/schemas/request_activity';
 import { photosApi, type PreparedFrom } from '../../../api/photos';
+import { renditionsApi } from '../../../api/renditions';
 import { envelopeOf } from '../../../api/request';
 import { settingsApi } from '../../../api/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
@@ -92,28 +93,43 @@ export type LocalSource = {
  */
 async function preparedThere(photoId: string, from: PreparedFrom): Promise<LocalSource & { prepared: string }> {
   const { LocalDecoder } = await import('./local_decoder');
-  const [settings, framed] = await Promise.all([settingsApi.get(), preparedPicture(photoId, undefined, from)]);
-  // The grade the module is told about, which for this arm the prepare already used: the picture
-  // arrived coded against these, and a tick anchors to the same numbers.
-  const open: LocalOpen = {
-    longEdge: 0,
-    grade: {
-      peakNits: settings.hdr_peak_nits,
-      referenceWhiteNits: settings.hdr_reference_white_nits,
-      whiteQuantile: settings.hdr_white_quantile,
-    },
-    defringe: settings.raw_defringe,
-  };
   const decoder = new LocalDecoder();
   try {
-    const prepared = await decoder.holdPicture(framed, open);
+    const rendition = from === 'rendition';
+    const [settings, avif] = await Promise.all([settingsApi.get(), rendition ? fullRendition(photoId) : null]);
+    // The grade the module is told about, which for this arm the prepare already used: the picture
+    // arrived coded against these, and a tick anchors to the same numbers.
+    const open: LocalOpen = {
+      longEdge: 0,
+      grade: {
+        peakNits: settings.hdr_peak_nits,
+        referenceWhiteNits: settings.hdr_reference_white_nits,
+        whiteQuantile: settings.hdr_white_quantile,
+      },
+      // A rendition is shown as it was encoded, as `prepareRendition` shows it on the server.
+      defringe: rendition ? 0 : settings.raw_defringe,
+      statedWhite: rendition,
+    };
+    const prepared =
+      (avif == null ? null : await decoder.holdRendition(avif, open)) ??
+      (await decoder.holdPicture(await preparedPicture(photoId, undefined, from), open));
     return { decoder, open, onTheBackend: true, prepared };
   } catch (error) {
     // Closed on the way out, for `preparedHere`'s reason: nothing else can reach a decoder the
-    // caller never received, so a reader retrying would leak a worker and a device per attempt.
+    // caller never received, so a reader retrying would leak an open's frames per attempt.
     decoder.close();
     throw error;
   }
+}
+
+/** The full rendition's file, built where it is missing or behind the edits. */
+async function fullRendition(photoId: string): Promise<Uint8Array<ArrayBuffer>> {
+  await renditionsApi.build(photoId, 'full');
+  const reply = await fetch(renditionsApi.url(photoId, 'full'), {
+    headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
+  });
+  if (!reply.ok) throw new Error(await refusal(reply));
+  return new Uint8Array(await reply.arrayBuffer());
 }
 
 /** This photograph's picture, framed as the library framed it, for what this client can show. */
@@ -186,10 +202,10 @@ async function preparedHere(
       prepared: await decoder.prepare(open, mosaic),
     };
   } catch (error) {
-    // **Closed on the way out, or the thread outlives the open that failed** - and with it the
-    // device, the mosaic and whatever the decode had already put on the GPU. Nothing else can
-    // reach it: the caller only learns of a decoder through the value this never returned, so a
-    // reader retrying an unreadable file would leak a worker and a device per attempt.
+    // **Closed on the way out, or the open outlives the failure** - the RAW, the mosaic and
+    // whatever the decode had already put on the GPU, held on the thread for the life of the page.
+    // Nothing else can reach it: the caller only learns of a decoder through the value this never
+    // returned, so a reader retrying an unreadable file would leak one per attempt.
     decoder.close();
     throw error;
   }

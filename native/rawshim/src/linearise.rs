@@ -177,6 +177,19 @@ impl Picture {
         if width == 0 || height == 0 || codes.len() < width * height * 3 {
             return None;
         }
+        let codes = crate::resident::Resident::upload(gpu, codes, width, height);
+        Some(Picture::on_device(gpu, codes, coding, upright, gain))
+    }
+
+    /// The same, for codes already on the device.
+    pub fn on_device(
+        gpu: &'static crate::gpu::Gpu,
+        codes: crate::resident::Resident,
+        coding: crate::transfer::Coding,
+        upright: rawler::decoders::Orientation,
+        gain: Option<GainMap>,
+    ) -> Picture {
+        let (width, height) = codes.size();
         let terms = gain.filter(GainMap::does_anything);
         let table = float_storage(gpu, &coding.table());
         // One word either way, because a binding may not be empty and the kernel's `gain_width`
@@ -185,8 +198,8 @@ impl Picture {
             Some(map) => ((map.width, map.height), map.samples.as_slice()),
             None => ((0, 0), [0u16, 0].as_slice()),
         };
-        Some(Picture {
-            codes: crate::resident::Resident::upload(gpu, codes, width, height),
+        Picture {
+            codes,
             table,
             gain: packed_storage(gpu, samples),
             gain_size,
@@ -194,7 +207,7 @@ impl Picture {
             stored: Size::exact(width, height),
             upright,
             coding,
-        })
+        }
     }
 
     /// The level this picture's diffuse white sits at in the frames it produces.

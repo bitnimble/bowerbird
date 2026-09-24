@@ -15,26 +15,7 @@ import stage_shared;
 import light;
 import primaries;
 import print_tone;
-
-/// Ten-bit video range. A twelve-bit frame's are four times these, so `depth` divides the sample
-/// rather than a second set of constants existing to be kept in step.
-static const float LUMA_FLOOR = 64.0;
-static const float LUMA_SPAN = 876.0;
-static const float CHROMA_MID = 512.0;
-
-/// Ten-bit video range quantises chroma as `896 * C + 512`, and C spans +-0.5 rather than +-1.
-///
-/// So this is the whole span and not the half one the code range (64..960) suggests: halving it
-/// doubles every chroma, which is a picture with the hues and the white intact and twice the
-/// saturation. Checked against ffmpeg's decode of a real render, where 896 is exact to 0.0% on all
-/// three channels and 448 is out by 15-65%.
-static const float CHROMA_SPAN = 896.0;
-
-/// BT.2020 non-constant luminance, which is what the encoder wrote.
-static const float3x3 YUV_TO_RGB = float3x3(
-    1.0,  0.0,          1.4746,
-    1.0, -0.16455313,  -0.57135313,
-    1.0,  1.8814,       0.0);
+import video_range;
 
 struct Colour {
     float headroom;
@@ -42,11 +23,10 @@ struct Colour {
     /// Region pixels per canvas pixel. The planes hold the region, and the canvas is capped by
     /// DETAIL_PIXELS, so the two are the same size only when nothing capped it.
     float2 sample;
-    /// What to divide a loaded sample by to put it on the ten-bit scale the ranges above are
-    /// written against: 1 for a ten-bit frame, 4 for a twelve-bit one. The two depths differ by
-    /// exactly two bits, so every one of those four constants scales by the same factor and
-    /// dividing here is the whole of it - and f32 keeps the extra bits as fraction rather than
-    /// throwing them away, which is the point of writing twelve in the first place.
+    /// What to divide a loaded sample by to put it on the ten-bit scale `video_range` is written
+    /// against: 1 for a ten-bit frame, 4 for a twelve-bit one. f32 keeps the extra bits as
+    /// fraction rather than throwing them away, which is the point of writing twelve in the first
+    /// place.
     float depth;
     /// Chroma pixels per luma pixel: a half for 4:2:0, one for the 4:4:4 a still with a measured
     /// chroma leak is written as (`job::CHROMA_LEAK_TILE_FRACTION`).
@@ -141,14 +121,10 @@ float3 stage_light(float2 position, Gain gain)
     }
     let at = min(uint2(stored), uint2(wide - 1, tall - 1));
     let chroma_at = uint2(float2(at) * colour.chroma);
-    let y = float(luma.Load(int3(int2(at), 0)).r) / colour.depth;
-    let u = float(chroma_u.Load(int3(int2(chroma_at), 0)).r) / colour.depth;
-    let v = float(chroma_v.Load(int3(int2(chroma_at), 0)).r) / colour.depth;
-
-    let level = (y - LUMA_FLOOR) / LUMA_SPAN;
-    let blue = (u - CHROMA_MID) / CHROMA_SPAN;
-    let red = (v - CHROMA_MID) / CHROMA_SPAN;
-    let signal = clamp(mul(YUV_TO_RGB, float3(level, blue, red)), float3(0.0), float3(1.0));
+    let signal = pq_of_video(float3(
+        float(luma.Load(int3(int2(at), 0)).r),
+        float(chroma_u.Load(int3(int2(chroma_at), 0)).r),
+        float(chroma_v.Load(int3(int2(chroma_at), 0)).r)) / colour.depth).v;
 
     // Linear light at last, in the primaries it was authored in, against the white the renderer
     // wrote it against. `pq_inv` answers in nits, which is what `colour.reference` is stated in.

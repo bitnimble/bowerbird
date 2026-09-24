@@ -26,7 +26,7 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
       value: async () => { requests += 1; return 'granted'; }, configurable: true,
     });
   });
-  await page.route(/\/local_open_worker\.ts(?:\?|$)/, async (route) => {
+  await page.route(/\/gpu_worker\.ts(?:\?|$)/, async (route) => {
     const response = await route.fetch();
     await route.fulfill({
       response,
@@ -34,7 +34,7 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
         let printMotionScene = null;
         Object.defineProperty(globalThis, 'printMotionScene', { get: () => printMotionScene });
         self.addEventListener('message', (event) => {
-          if (event.data?.kind === 'tick') printMotionScene = event.data.print;
+          if (event.data?.ask?.kind === 'tick') printMotionScene = event.data.ask.print;
         });
         ${await response.text()}
       `,
@@ -43,8 +43,8 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
   await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
   await waitForEditorLive(page);
   const aspect = await editPreview(page).evaluate((canvas: HTMLCanvasElement) => canvas.width / canvas.height);
-  const worker = page.workers().find((worker) => worker.url().includes('local_open_worker'));
-  if (worker == null) throw new Error('The editor worker was not created');
+  const worker = page.workers().find((worker) => worker.url().includes('gpu_worker'));
+  if (worker == null) throw new Error('The GPU worker was not created');
   const Scene = z.object({ presentation: z.literal('surface'), yawDegrees: z.number(), pitchDegrees: z.number() });
   const scene = async (): Promise<z.infer<typeof Scene>> => Scene.parse(
     await worker.evaluate(() => Reflect.get(globalThis, 'printMotionScene')),
@@ -189,7 +189,7 @@ test.describe('zoom on a high density phone display', () => {
     { tool: 'Print', panel: 'Lighting', slider: 'Ambient light' },
   ]) {
     test(`tapping the photo in ${tool} loads detail and keeps sliders usable`, async ({ page }) => {
-      await page.route(/\/local_open_worker\.ts(?:\?|$)/, async (route) => {
+      await page.route(/\/gpu_worker\.ts(?:\?|$)/, async (route) => {
         const response = await route.fetch();
         await route.fulfill({
           response,
@@ -200,8 +200,8 @@ test.describe('zoom on a high density phone display', () => {
             let zoomReady = [];
             Object.defineProperty(globalThis, 'drawnPhotoWindows', { get: () => [...zoomDrawn] });
             self.addEventListener('message', ({ data }) => {
-              zoomRequests.set(data.id, { kind: data.kind, level: data.level, ready: zoomReady });
-              if (data.kind === 'takeTiles') zoomReady = [];
+              zoomRequests.set(data.id, { kind: data.ask?.kind, level: data.ask?.level, ready: zoomReady });
+              if (data.ask?.kind === 'takeTiles') zoomReady = [];
             });
             const zoomSend = self.postMessage.bind(self);
             self.postMessage = (answer, ...rest) => {
@@ -228,8 +228,8 @@ test.describe('zoom on a high density phone display', () => {
       });
       await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
       await waitForEditorLive(page);
-      const worker = page.workers().find((worker) => worker.url().includes('local_open_worker'));
-      if (worker == null) throw new Error('The editor worker was not created');
+      const worker = page.workers().find((worker) => worker.url().includes('gpu_worker'));
+      if (worker == null) throw new Error('The GPU worker was not created');
       if (tool === 'Print') await softProof(page, 'Printed media (3D)');
       else await editTools(page).getByRole('radio', { name: tool, exact: true }).click();
       if (tool === 'Print') {

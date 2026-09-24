@@ -384,14 +384,6 @@ pub fn device() -> Option<&'static Gpu> {
     PAGE.with(std::cell::Cell::get)
 }
 
-/// The device this crate opens for the page, on the first call and once.
-///
-/// **Ours, and nothing else's.** wgpu 30 has no `from_webgpu` to inject a JS `GPUDevice` through -
-/// `wgpu-hal` has no WebGPU backend at all, since WebGPU there is a backend rather than a hal
-/// target - so a page that wanted to run its own shaders over this frame could not be given the
-/// device to do it on. It hands over its canvas instead ([`Stage::attach`]), which is the way
-/// round that works: one device, and nothing read back between the decode and the draw.
-///
 /// The most storage buffers one shader stage binds: what an Apple GPU offers a page, where
 /// Windows, Linux and Android mostly offer sixteen. Every host asks for no more, so a kernel that
 /// binds an eleventh is refused on the machine it was written on rather than on a Mac.
@@ -429,7 +421,9 @@ fn limits_of(adapter: &wgpu::Adapter) -> wgpu::Limits {
     }
 }
 
-/// None where the browser offers no adapter, which is supported rather than fatal.
+/// The device this crate opens for the page, on the first call and once: the app's only one, which
+/// its own WebGPU drawing borrows through [`Gpu::webgpu_device`]. None where the browser offers no
+/// adapter, which is supported rather than fatal.
 #[cfg(target_arch = "wasm32")]
 pub async fn page_device() -> Option<&'static Gpu> {
     if let Some(open) = PAGE.with(std::cell::Cell::get) {
@@ -942,6 +936,12 @@ impl Gpu {
 
     pub fn limits(&self) -> wgpu::Limits {
         self.device.limits()
+    }
+
+    /// The browser's own `GPUDevice` under this one.
+    #[cfg(target_arch = "wasm32")]
+    pub fn webgpu_device(&self) -> Option<wasm_bindgen::JsValue> {
+        self.device.as_webgpu().map(|device| device.clone().into())
     }
 
     pub fn nudge(&self) {
@@ -4122,6 +4122,24 @@ mod tests {
         keystone: Option<[f64; 8]>,
     ) -> crate::image::Geometry {
         crate::image::Geometry { crop, angle_degrees, rotate, keystone }
+    }
+
+    /// The device is opened at the adapter's texture limit rather than WebGPU's default of 8192.
+    ///
+    /// **A silent failure in the browser.** The viewer reads the limit back to decide whether a
+    /// frame can be uploaded as planes, and a native-resolution rendition off a 61MP body is 9504 on
+    /// its long edge: under the default, every one fell to the import, which tone maps HDR down.
+    #[test]
+    fn the_device_is_opened_at_the_adapters_texture_limit() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        else {
+            eprintln!("SKIPPED: no adapter answered, so no limits were asked for.");
+            return;
+        };
+        let asked = super::limits_of(&adapter);
+        assert_eq!(asked.max_texture_dimension_2d, adapter.limits().max_texture_dimension_2d);
+        assert!(asked.max_storage_buffers_per_shader_stage <= super::MOST_STORAGE_BUFFERS);
     }
 
     /// The host builds `detail` under exactly the test the shader reads it under.

@@ -159,6 +159,12 @@ mod tests {
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/linearise.wgsl")).to_string(),
                 crate::linearise::BLOCK_BYTES,
             ),
+            (
+                "planes.wgsl",
+                "Params",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/planes.wgsl")).to_string(),
+                crate::planes::BLOCK_BYTES,
+            ),
         ];
 
         for (file, name, source, wrote) in cases {

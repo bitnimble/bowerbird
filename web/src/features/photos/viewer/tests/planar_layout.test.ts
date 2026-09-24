@@ -6,7 +6,8 @@
 // scale hands the shader samples four times too large and blows the picture to white; reading a
 // full-chroma frame at half its chroma shows the top-left quarter's colour over the whole of it.
 import { expect, test } from 'bun:test';
-import { planarLayout, storedRegion } from '../stage_gpu';
+import { planarLayout } from '../planar_layout';
+import { storedRegion } from '../stage_gpu';
 
 function frame(over: Partial<Record<string, unknown>> = {}): VideoFrame {
   return {

@@ -154,6 +154,16 @@ impl Frame {
         }
     }
 
+    /// The white to anchor the levels at, where a caller `asked` for the file's own over the
+    /// measured one.
+    pub fn white_to_anchor(&self, asked: bool) -> Result<Option<crate::light::Light<crate::light::Level>>, String> {
+        match (asked, self.stated_white) {
+            (false, _) => Ok(None),
+            (true, Some(white)) => Ok(Some(white)),
+            (true, None) => Err("this photograph states no white to anchor at".to_string()),
+        }
+    }
+
     /// The 8-bit samples, borrowed. None for a 16-bit frame.
     ///
     /// Separate accessors per depth rather than one returning bytes, because the two

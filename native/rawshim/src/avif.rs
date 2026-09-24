@@ -704,6 +704,81 @@ pub(crate) unsafe fn message(status: raw::avifResult) -> String {
 mod tests {
     use super::*;
 
+    /// A file's YUV planes, laid out one after another as `VideoFrame.copyTo` lays out a page's.
+    fn yuv_planes(bytes: &[u8]) -> (Vec<u8>, crate::planes::Layout) {
+        let decoder = Decoder::new().expect("a decoder");
+        let image = Image::empty().expect("an image");
+        let mut samples = Vec::new();
+        // SAFETY: both handles are live for the block, and each plane is `rows * yuvRowBytes` long.
+        #[expect(unsafe_code)]
+        unsafe {
+            let status = raw::avifDecoderReadMemory(decoder.0, image.0, bytes.as_ptr(), bytes.len());
+            assert_eq!(status, AVIF_RESULT_OK, "libavif decodes the still");
+            let image = &*image.0;
+            let subsampled = image.yuvFormat == AVIF_PIXEL_FORMAT_YUV420;
+            let planes = [0, 1, 2].map(|at| {
+                let rows = match at > 0 && subsampled {
+                    true => (image.height as usize).div_ceil(2),
+                    false => image.height as usize,
+                };
+                let stride = image.yuvRowBytes[at] as usize;
+                let offset = samples.len();
+                samples.extend_from_slice(std::slice::from_raw_parts(image.yuvPlanes[at], rows * stride));
+                crate::planes::Plane { offset, stride }
+            });
+            let layout = crate::planes::Layout {
+                width: image.width as usize,
+                height: image.height as usize,
+                bits: image.depth,
+                subsampled,
+                planes,
+            };
+            (samples, layout)
+        }
+    }
+
+    /// `planes.slang` against libavif's own conversion, which the page's planes stand in for: the
+    /// mockup opens from one and the server's prepare from the other.
+    #[test]
+    fn planes_convert_to_the_codes_libavif_decodes() {
+        let Some(gpu) = crate::gpu::device() else {
+            eprintln!("SKIPPED: no adapter answered, so the plane conversion was not run.");
+            return;
+        };
+        let frame = |width: usize, height: usize, code: &dyn Fn(usize, usize) -> [u16; 3]| -> Vec<u16> {
+            (0..width * height).flat_map(|at| code(at % width, at / width)).collect()
+        };
+        let colours = |x: usize, y: usize| [20_000 + x as u16 * 300, 22_000 + y as u16 * 300, 30_000 - x as u16 * 150];
+        // One ramp under all three channels, so the chroma is flat: libavif upsamples 4:2:0 chroma
+        // bilinear where the viewer reads it nearest, and on a flat plane the two cannot differ.
+        let shades = |x: usize, y: usize| {
+            let ramp = (x * 300 + y * 200) as u16;
+            [24_000 + ramp, 20_000 + ramp, 16_000 + ramp]
+        };
+        // Odd at 4:2:0, where the last chroma sample covers a single luma column and row.
+        let cases = [
+            (AVIF_PIXEL_FORMAT_YUV444, 64usize, 48usize, frame(64, 48, &colours)),
+            (AVIF_PIXEL_FORMAT_YUV420, 63, 47, frame(63, 47, &shades)),
+        ];
+        for (format, width, height, picture) in cases {
+            let options =
+                StillOptions { cicp: Cicp { primaries: 9, transfer: 16, matrix: 9 }, format, quantizer: 0, speed: 10 };
+            let file = encode_still(picture.into(), width, height, &options).expect("the still encodes");
+            let (libavif, ..) = decode_at_unturned(&file, 16).expect("libavif converts it");
+            let (samples, layout) = yuv_planes(&file);
+            let codes = crate::planes::codes(gpu, &samples, &layout).expect("the planes convert");
+            let ours = pollster::block_on(codes.into_host()).expect("the codes read back");
+            let worst = ours
+                .iter()
+                .zip(&libavif)
+                .map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs())
+                .max()
+                .unwrap_or(0);
+            // A twelve-bit step is sixteen codes.
+            assert!(worst <= 16, "format {format}: a code {worst} away from libavif's");
+        }
+    }
+
     #[test]
     fn rotation_is_container_metadata_and_decode_honours_it() {
         let (width, height) = (8usize, 6usize);

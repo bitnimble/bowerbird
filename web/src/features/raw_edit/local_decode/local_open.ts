@@ -39,6 +39,8 @@ export type LocalOpen = {
    * the photograph happened to be opened at.
    */
   defringe: number;
+  /** Diffuse white where a rendition states it, so the picture is shown as it was encoded. */
+  statedWhite?: boolean;
 };
 
 /**
@@ -104,14 +106,14 @@ export type LocalTileRequest = {
   repairs: Repair[];
 };
 
-const PairSchema = z.tuple([z.number(), z.number()]);
+export const PairSchema = z.tuple([z.number(), z.number()]);
 export const RectSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 export const PointsSchema = z.array(PairSchema);
 export const BytesSchema = z.custom<Uint8Array<ArrayBuffer>>(
   (value) => value instanceof Uint8Array && value.buffer instanceof ArrayBuffer,
 );
 // `typeof` first: bun's test runtime has no `OffscreenCanvas` at all.
-const CanvasSchema = z.custom<OffscreenCanvas>(
+export const CanvasSchema = z.custom<OffscreenCanvas>(
   (value) => typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas,
 );
 export const BlobSchema = z.instanceof(Blob);
@@ -133,40 +135,38 @@ const PrepareCrossingSchema = z.object({
   repairs: JsonSchema,
 });
 
-/** What `local_open_worker.ts` is asked for, each with the id its answer carries back. */
-export const AskSchema = z.discriminatedUnion('kind', [
-  z.object({ id: z.number(), kind: z.literal('hold'), raw: BytesSchema }),
-  z.object({ id: z.number(), kind: z.literal('render'), raw: BytesSchema, job: JsonSchema }),
-  z.object({ id: z.number(), kind: z.literal('prepare'), request: JsonSchema, mosaic: PrepareCrossingSchema }),
-  z.object({ id: z.number(), kind: z.literal('holdPicture'), framed: BytesSchema, request: JsonSchema }),
-  z.object({ id: z.number(), kind: z.literal('takePicture'), framed: BytesSchema }),
-  z.object({ id: z.number(), kind: z.literal('takeTiles'), framed: BytesSchema, asked: JsonSchema }),
-  z.object({ id: z.number(), kind: z.literal('showTiles'), level: JsonSchema, rect: JsonSchema }),
-  z.object({ id: z.number(), kind: z.literal('picturePart'), region: JsonSchema }),
+/** What one open on the GPU worker is asked for (`gpu_worker.ts`). */
+export const OpenAskSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('hold'), raw: BytesSchema }),
+  z.object({ kind: z.literal('render'), raw: BytesSchema, job: JsonSchema }),
+  z.object({ kind: z.literal('prepare'), request: JsonSchema, mosaic: PrepareCrossingSchema }),
+  z.object({ kind: z.literal('holdPicture'), framed: BytesSchema, request: JsonSchema }),
+  z.object({ kind: z.literal('holdRendition'), avif: BytesSchema, request: JsonSchema }),
+  z.object({ kind: z.literal('takePicture'), framed: BytesSchema }),
+  z.object({ kind: z.literal('takeTiles'), framed: BytesSchema, asked: JsonSchema }),
+  z.object({ kind: z.literal('showTiles'), level: JsonSchema, rect: JsonSchema }),
+  z.object({ kind: z.literal('picturePart'), region: JsonSchema }),
   z.object({
-    id: z.number(),
     kind: z.literal('attach'),
     which: z.enum(['stage', 'loupe']),
     canvas: CanvasSchema,
     width: z.number(),
     height: z.number(),
   }),
-  z.object({ id: z.number(), kind: z.literal('releaseLoupe') }),
-  z.object({ id: z.number(), kind: z.literal('holdTile'), request: JsonSchema }),
-  z.object({ id: z.number(), kind: z.literal('releaseTile') }),
-  z.object({ id: z.number(), kind: z.literal('analysis') }),
+  z.object({ kind: z.literal('releaseLoupe') }),
+  z.object({ kind: z.literal('holdTile'), request: JsonSchema }),
+  z.object({ kind: z.literal('releaseTile') }),
+  z.object({ kind: z.literal('analysis') }),
   z.object({
-    id: z.number(),
     kind: z.literal('bandInto'),
     mosaic: PrepareCrossingSchema,
     top: z.number(),
     rows: z.number(),
     frame: PairSchema,
   }),
-  z.object({ id: z.number(), kind: z.literal('redrawRepairs'), repairs: JsonSchema }),
-  z.object({ id: z.number(), kind: z.literal('refreshDetail') }),
+  z.object({ kind: z.literal('redrawRepairs'), repairs: JsonSchema }),
+  z.object({ kind: z.literal('refreshDetail') }),
   z.object({
-    id: z.number(),
     kind: z.literal('solveRepair'),
     drawn: JsonSchema,
     others: JsonSchema,
@@ -174,13 +174,12 @@ export const AskSchema = z.discriminatedUnion('kind', [
     without: JsonSchema.nullable(),
     donor: JsonSchema.nullable(),
   }),
-  z.object({ id: z.number(), kind: z.literal('setRepairs'), repairs: JsonSchema }),
-  z.object({ id: z.number(), kind: z.literal('setSearched'), drawn: JsonSchema, donor: JsonSchema.nullable() }),
-  z.object({ id: z.number(), kind: z.literal('dropTiles') }),
-  z.object({ id: z.number(), kind: z.literal('pictureOfOutput'), geometry: JsonSchema, points: JsonSchema }),
-  z.object({ id: z.number(), kind: z.literal('outputOfPicture'), geometry: JsonSchema, points: JsonSchema }),
+  z.object({ kind: z.literal('setRepairs'), repairs: JsonSchema }),
+  z.object({ kind: z.literal('setSearched'), drawn: JsonSchema, donor: JsonSchema.nullable() }),
+  z.object({ kind: z.literal('dropTiles') }),
+  z.object({ kind: z.literal('pictureOfOutput'), geometry: JsonSchema, points: JsonSchema }),
+  z.object({ kind: z.literal('outputOfPicture'), geometry: JsonSchema, points: JsonSchema }),
   z.object({
-    id: z.number(),
     kind: z.literal('repairThumbnail'),
     side: z.number(),
     ev: z.number(),
@@ -188,7 +187,6 @@ export const AskSchema = z.discriminatedUnion('kind', [
     repair: JsonSchema,
   }),
   z.object({
-    id: z.number(),
     kind: z.literal('optionThumbnail'),
     side: z.number(),
     ev: z.number(),
@@ -197,7 +195,6 @@ export const AskSchema = z.discriminatedUnion('kind', [
     option: JsonSchema,
   }),
   z.object({
-    id: z.number(),
     kind: z.literal('tick'),
     ev: z.number(),
     /** Whether the stage is drawn at all: a pointer move over the glass draws only the loupe. */
@@ -218,12 +215,4 @@ export const AskSchema = z.discriminatedUnion('kind', [
     stage: z.object({ width: z.number(), height: z.number() }).nullable(),
   }),
 ]);
-export type Ask = z.infer<typeof AskSchema>;
-export type Job = DistributiveOmit<Ask, 'id'>;
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-
-export const AnswerSchema = z.discriminatedUnion('ok', [
-  z.object({ id: z.number(), ok: z.literal(true), value: z.unknown() }),
-  z.object({ id: z.number(), ok: z.literal(false), error: z.string() }),
-]);
-export type Answer = z.infer<typeof AnswerSchema>;
+export type OpenAsk = z.infer<typeof OpenAskSchema>;

@@ -78,7 +78,7 @@ test('the mockup opens on its own address', async ({ page }) => {
 });
 
 // A sheet two thousand pixels across does not need the sensor, and the full rendition already
-// holds every edit: the RAW never crosses.
+// holds every edit: the RAW never crosses, and this browser decodes the rendition itself.
 test('the mockup is drawn from the full rendition rather than the RAW', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, PRINT_PHOTOS_DIR);
@@ -88,9 +88,9 @@ test('the mockup is drawn from the full rendition rather than the RAW', async ({
 
   await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
-  const prepares = requested.filter((url) => url.pathname.endsWith(route(PathSegment.prepare())));
-  expect(prepares.length).toBeGreaterThan(0);
-  expect(prepares.every((url) => url.searchParams.get('from') === 'rendition')).toBe(true);
+  const full = route(PathSegment.renditions(), 'full');
+  expect(requested.some((url) => url.pathname.endsWith(full))).toBe(true);
+  expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.prepare())))).toEqual([]);
   expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.download(), 'original')))).toEqual([]);
   // Still more than the sheet can show at any angle.
   expect(Math.max(...(await editDiagnosticSize(page, 'data-size')))).toBeGreaterThan(2500);

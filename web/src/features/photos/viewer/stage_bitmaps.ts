@@ -11,10 +11,10 @@
 // away - a JPEG scales during the decode itself, so asking for 4K is both smaller and faster
 // than asking for all of it.
 
-import { type Region, paintExtended, planarLayout } from './stage_gpu';
+import { planarLayout } from './planar_layout';
+import { WebCodecs } from './image_decoder';
 import { orientationOfAvif } from 'avif-hdr-video';
 import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../../../src/schemas/request_activity';
-import type { Tonemap } from '../../raw_edit/print/print_scene';
 
 /** The longest edge a frame is decoded to: a 4K stage at 2x, which is past any display we draw on. */
 const DECODE_CAP = 4096;
@@ -48,23 +48,6 @@ export function fittedCanvasSize(frame: Decoded): { width: number; height: numbe
   return canvasSizeFor(frame.width, frame.height, DECODE_CAP);
 }
 
-// WebCodecs, which TypeScript's DOM library does not describe. Only what is used here.
-interface ImageDecoderInit {
-  data: ArrayBuffer;
-  type: string;
-  desiredWidth?: number;
-  desiredHeight?: number;
-}
-interface ImageDecoderResult {
-  image: VideoFrame;
-}
-interface ImageDecoderLike {
-  decode(): Promise<ImageDecoderResult>;
-  close(): void;
-}
-type ImageDecoderConstructor = new (init: ImageDecoderInit) => ImageDecoderLike;
-
-const WebCodecs = (globalThis as { ImageDecoder?: ImageDecoderConstructor }).ImageDecoder;
 function avifRotation(bytes: ArrayBuffer, type: string): 0 | 90 | 180 | 270 {
   if (type !== 'image/avif') return 0;
   try {
@@ -132,7 +115,7 @@ async function shapeOf(blob: Blob): Promise<{ width: number; height: number }> {
  * render exists for is gone before any canvas sees it, whatever that canvas is configured
  * as. `ImageDecoder` hands back a `VideoFrame`, which carries its own primaries and transfer
  * function - the same thing that lets a browser show HDR video - and drawing one into an
- * extended-range surface keeps them (`drawInto`). It also decodes to a size, and closing it
+ * extended-range surface keeps them (`stage_gpu.ts`). It also decodes to a size, and closing it
  * genuinely stops work that is still running, which a bitmap decode gives no way to do.
  */
 async function decodePicture(
@@ -215,7 +198,7 @@ function holdsEveryPixel(frame: Decoded): boolean {
  * Uncapped, which is the point of it: what a reader reaches at 100% is the file, and a cap
  * here is a cap on that. Nothing uploads the whole of it - the GPU path takes the drawn region
  * out with `copyTo`, and a frame too large to import is drawn through the 2D path instead
- * (`drawInto`) - so the size that matters is the screen's, not the file's.
+ * (`StagePainter.paint`) - so the size that matters is the screen's, not the file's.
  *
  * Answered by the stage's own frame where that already holds every pixel, which an AVIF always
  * does: its decoder ignores the size it is asked for.
@@ -333,54 +316,6 @@ function forget(
   abort: AbortController,
 ): void {
   if (running.get(source)?.abort === abort) running.delete(source);
-}
-
-/**
- * Draws a decoded frame into the canvas that shows it, at the widest range the browser gives.
- *
- * **Asked for on every frame, not only the HDR ones.** A rendition built HDR carries values
- * above SDR white, and an eight-bit `srgb` surface clamps them on the way in. Asking for the
- * wide surface unconditionally is what keeps one drawing path rather than a canvas for one
- * kind of file and an `<img>` for the other: SDR values occupy nought to one either way, so
- * nothing about an ordinary camera JPEG changes. Where the browser has neither, the
- * attributes are ignored and this is an ordinary 2D context.
- *
- * The attributes are read only the first time a context is asked for, so this is the only
- * place that asks.
- */
-export async function drawInto(
-  canvas: HTMLCanvasElement,
-  frame: Decoded,
-  region?: Region,
-  proof: Tonemap | null = null,
-): Promise<void> {
-  // Through the GPU where there is one, which is what carries an HDR rendition's headroom and
-  // decodes the frame's own transfer function on the way (`stage_gpu.ts`). It answers for an
-  // ordinary camera JPEG too: the curve and the primaries differ, the work does not.
-  if (await paintExtended(canvas, frame.picture, region, frame.rotation, proof)) return;
-  // Otherwise plain and unconfigured, which is what a machine with no WebGPU shows: no colour
-  // space asked for is no colour space converted to, so an SDR photograph comes out as the
-  // `<img>` drew it, and the browser tone maps an HDR rendition on the way in rather than
-  // clipping it - measured on a 1500-nit render, where a clip would blow the 2.9% of samples
-  // above SDR white and this blows 0.04%.
-  const flat = canvas.getContext('2d');
-  // Null once the canvas has been configured for WebGPU, because a canvas holds one kind of
-  // context for its whole life. Reported rather than skipped: `drawImage` silently doing
-  // nothing leaves a blank canvas that the stage goes on to treat as a painted picture.
-  if (flat == null) throw new Error('no drawable context');
-  // To the canvas rather than at the frame's own size: the canvas is capped at what a browser
-  // will allocate (`canvasSizeFor`), and a frame past that would otherwise be drawn corner-first
-  // and cropped to the part that fitted.
-  const bitmap = region != null && frame.rotation !== 0 && typeof VideoFrame === 'function' && frame.picture instanceof VideoFrame
-    ? await createImageBitmap(frame.picture, { imageOrientation: 'from-image' })
-    : null;
-  try {
-    const picture = bitmap ?? frame.picture;
-    if (region == null) flat.drawImage(picture, 0, 0, canvas.width, canvas.height);
-    else flat.drawImage(picture, region.x, region.y, region.width, region.height, 0, 0, canvas.width, canvas.height);
-  } finally {
-    bitmap?.close();
-  }
 }
 
 const holders = new Map<string, { sources: ReadonlySet<string>; zoomable: ReadonlySet<string> }>();

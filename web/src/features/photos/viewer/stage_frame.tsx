@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { decodeFrame, decodedFrame, drawInto, fittedCanvasSize, type Decoded } from './stage_bitmaps';
-import { CanvasLost } from './stage_gpu';
+import { decodeFrame, decodedFrame, fittedCanvasSize, type Decoded } from './stage_bitmaps';
+import { CanvasLost, stageCanvases, useStageCanvas } from './stage_canvas';
 import type { Tonemap } from '../../raw_edit/print/print_scene';
 import { stageStyles } from './photo_stage.stylex';
 
@@ -110,14 +110,9 @@ export function StageFrame({
       // Closed while its decode was in flight - the run moved on and this frame is not held
       // any more - and drawing a closed one throws.
       if (!live || frame.closed) return;
-      const box = fittedCanvasSize(frame);
-      if (element.width !== box.width || element.height !== box.height) {
-        element.width = box.width;
-        element.height = box.height;
-      }
       // Reported after the draw, not beside it: the picture is up once the frame is in the
       // canvas, and everything that waits on a picture being up waits on this.
-      void drawInto(element, frame, undefined, proof).then(
+      void stageCanvases.paint(element, fittedCanvasSize(frame), frame, undefined, proof).then(
         () => {
           if (!live) return;
           // The file's own shape, not the decoded one's: what is decoded is capped at what this
@@ -164,9 +159,15 @@ export function StageFrame({
     // photo whichever slot was asked for. Redrawing it costs the blit and no decode.
   }, [source, photoKey, hold, attempt, proof]);
 
-  const capture = useCallback((element: HTMLCanvasElement | HTMLVideoElement | null): void => {
-    elementRef.current = element;
-  }, []);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const handCanvas = useStageCanvas(canvasRef);
+  const capture = useCallback(
+    (element: HTMLCanvasElement | HTMLVideoElement | null): void => {
+      elementRef.current = element;
+      handCanvas(element instanceof HTMLVideoElement ? null : element);
+    },
+    [handCanvas],
+  );
 
   const styled = stylex.props(
     stageStyles.content,

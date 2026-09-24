@@ -72,11 +72,11 @@ The take-best-parts merge page (§18.3.5) draws a picture that is not being edit
 nobody is dragging an exposure slider - but the rule against a second implementation applies to it exactly,
 because what it draws is a photograph leaving this pipeline through a route other than a stored rendition.
 
-**Every preview on the page, a hover or a pick, is `paintExtended`'s own pipeline with one addition: a
+**Every preview on the page, a hover or a pick, is the viewer's own pipeline with one addition: a
 mask.** `stage.slang`'s `stage_light` is the whole of what turns a decoded plane into a canvas pixel - the
 planes read, PQ taken back to nits, rolled into the display's headroom, rotated onto the canvas's primaries
 - and it is called once, from both `planar` and `planar_masked`, so a masked draw is the same picture with
-an alpha rather than a second copy of that arithmetic. `paintMasked` (`stage_gpu.ts`) draws the base layer
+an alpha rather than a second copy of that arithmetic. `StagePainter.paintMasked` (`stage_gpu.ts`) draws the base layer
 opaque, then each source a tile currently picks blended over it, its alpha sampled from an 8-bit mask
 `merge_mask.ts` rasterises from the tile outlines on an offscreen 2D canvas - fine for a mask, where it
 would not be for the picture itself. Hovering a swatch and clicking it call the identical draw, so the two
@@ -157,11 +157,19 @@ module, so an HDR rendition proofed as sRGB is fitted in `stage.slang` on the cl
 rendition's own headroom; a print proof from the viewer opens the photograph's `/mockup`, which
 builds the editor's session for it and saves nothing, and choosing an HDR or sRGB proof there or
 pressing Escape returns to the photograph. The mockup draws the full rendition rather than the RAW:
-every edit is already in it, so the server prepares it with `from=rendition` - built or fetched
-first where it is missing or behind the edits, unedited, with no analysis read or filed, and anchored
-at the white its file states (`Job::stated_white`) rather than at a quantile - and the page draws it
-at neutral without reading the saved edits. A neutral grade of that frame is the file's own light,
-so the print starts from the picture the viewer shows, without a RAW crossing or a decode.
+every edit is already in it, so the page asks for it to be built or fetched where it is missing or
+behind the edits, downloads the file, and decodes it with WebCodecs' `ImageDecoder` in the worker.
+The module has no AV1 decoder (`decode_rendered::av1`), so what it takes is the planes `copyTo`
+writes, and `planes.slang` converts them to the sixteen-bit codes libavif would have given - by the
+same video-range arithmetic the viewer's stage draws with (`video_range.slang`), and pinned against
+libavif (`planes_convert_to_the_codes_libavif_decodes`). The open is a finished picture's, unedited,
+with no analysis read or filed, and anchored at the white its file states (`EditRequest::stated_white`)
+rather than at a quantile, and the page draws it at neutral without reading the saved edits. A
+neutral grade of that frame is the file's own light, so the print starts from the picture the viewer
+shows, and what crosses the network is the AVIF rather than the samples it decodes to - 3MB against
+59MB for a 10MP rendition. A browser with no `ImageDecoder`, or one that hands back anything other
+than planar PQ, gets the server's prepare of the same file instead (`from=rendition`, which runs the
+job with `Job::stated_white`).
 
 Print mode holds its paper, lighting and orientation in a separate `PrintStore`, written by
 `PrintPresenter`. These are viewing settings and leave the photo document and its history alone.

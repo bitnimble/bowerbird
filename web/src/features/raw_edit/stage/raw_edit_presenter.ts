@@ -399,7 +399,7 @@ export class RawEditPresenter {
         : await fetchPrepared(photoId, longEdge, mosaic, onTheBackend);
       if (this.closed) {
         // Closed here rather than left to `close`, which has already run and found no decoder
-        // to take: leaving it would hold a thread and this photograph's RAW for the life of the page.
+        // to take: leaving it would hold this photograph's RAW and frames for the life of the page.
         local.decoder.close();
         return;
       }
@@ -1043,7 +1043,7 @@ export class RawEditPresenter {
   @action.bound
   private begin(): void {
     this.stage.status = 'fetching';
-    this.stage.message = 'asking the server for the frame';
+    this.stage.message = '';
     this.stage.width = 0;
     this.stage.height = 0;
     this.stage.matched = false;
@@ -1057,7 +1057,6 @@ export class RawEditPresenter {
   @action.bound
   private preparing(): void {
     this.stage.status = 'preparing';
-    this.stage.message = 'decoding, fitting the camera match and warping';
   }
 
   @action.bound

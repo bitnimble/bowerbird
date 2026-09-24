@@ -60,6 +60,10 @@ pub struct EditRequest {
     /// The reader's repairs, which the open applies after the chain as every window does.
     #[serde(default)]
     pub repairs: Vec<crate::repair::Repair>,
+    /// Diffuse white where a finished picture states it rather than where its histogram puts it:
+    /// a rendition shown as it was encoded (`job::Job::stated_white`).
+    #[serde(default)]
+    pub stated_white: bool,
 }
 
 impl EditRequest {
@@ -383,6 +387,7 @@ pub async fn from_frame(
         let noise_fit = frame.noise;
         let stored = request.stored();
         let as_shot = frame.as_shot;
+        let stated_white = frame.white_to_anchor(request.stated_white)?;
         let (width, height) = (frame.width, frame.height);
         // The sigma above is in sensor pixels, and this frame's may not be: a decode that
         // halved hands the window machinery a frame at half the sensor's density.
@@ -420,6 +425,10 @@ pub async fn from_frame(
             blur,
         } = crate::open::measure(resident, &opening).await?;
         lap("defringe, camera match, levels");
+        let levels = match stated_white {
+            Some(white) => levels.at_stated_white(white),
+            None => levels,
+        };
         // The frame's own where nothing was on file, in the sensor's pixels rather than this
         // decode's: the same scaling `sensor_long` above carries, for the same halving.
         let capture_sigma = stored
