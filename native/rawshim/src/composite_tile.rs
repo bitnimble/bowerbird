@@ -502,14 +502,15 @@ pub struct Blending {
     alpha: crate::gpu::Buffer,
     accumulator: crate::gpu::Buffer,
     uniform: crate::gpu::Buffer,
-    /// The anchoring layer's luma a pixel, for the ones compared against it (`Merit::ghost`).
+    /// The anchoring layer's luma a pixel and its noise there, for the layers compared against it
+    /// (`Merit::deghosts`).
     anchor: crate::gpu::Buffer,
     pixels: usize,
     added: usize,
 }
 
 /// `composite_blend.slang`'s mark for a pixel no anchoring layer could vouch for.
-const UNANCHORED: f32 = -1.0;
+const UNANCHORED: u32 = u32::MAX;
 
 impl Blending {
     pub fn over(
@@ -696,12 +697,11 @@ pub struct Merit {
     /// the way there. Zero for a layer that is never rolled off - the shortest exposure, so a
     /// highlight every frame clipped is still something rather than black.
     pub clip: f32,
-    /// How far this layer's light may stray from the anchor's before it counts for nothing, which is
-    /// the scene having moved between the frames. Zero compares nothing.
-    pub ghost: crate::light::Stops,
-    /// Whether this layer is the anchor the later ones are compared against, which has to be added
-    /// first.
-    pub anchors: bool,
+    /// Whether this layer counts for nothing where it strays from the anchor by more than its and
+    /// the anchor's noise allow, which is the scene having moved between the frames - and is the
+    /// anchor wherever no earlier layer could be.
+    pub deghosts: bool,
+    pub noise: LightNoise,
 }
 
 impl Merit {
@@ -709,9 +709,21 @@ impl Merit {
     pub const EVEN: Merit = Merit {
         scale: 1.0,
         clip: 0.0,
-        ghost: crate::light::Stops::ZERO,
-        anchors: false,
+        deghosts: false,
+        noise: LightNoise::NONE,
     };
+}
+
+/// A layer's noise in the blend's units, `Base::light_of_code`'s: a pixel at light `l` varies by
+/// `slope * l + floor`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct LightNoise {
+    pub slope: f32,
+    pub floor: f32,
+}
+
+impl LightNoise {
+    pub const NONE: LightNoise = LightNoise { slope: 0.0, floor: 0.0 };
 }
 
 /// `composite_blend.slang`'s block, padded to std140's own multiple of sixteen.
@@ -719,8 +731,9 @@ fn blend_params(pixels: usize, merit: Merit) -> Vec<u8> {
     let mut block = (pixels as u32).to_le_bytes().to_vec();
     block.extend_from_slice(&merit.scale.to_le_bytes());
     block.extend_from_slice(&merit.clip.to_le_bytes());
-    block.extend_from_slice(&(merit.ghost.raw() as f32).to_le_bytes());
-    block.extend_from_slice(&u32::from(merit.anchors).to_le_bytes());
+    block.extend_from_slice(&u32::from(merit.deghosts).to_le_bytes());
+    block.extend_from_slice(&merit.noise.slope.to_le_bytes());
+    block.extend_from_slice(&merit.noise.floor.to_le_bytes());
     block.resize(block.len().next_multiple_of(16), 0);
     block
 }
@@ -1039,7 +1052,7 @@ async fn prepared_with(
     let mut blending = Blending::over(gpu, base, request.window);
     // The largest gain is the shortest exposure, which is never rolled off: see `Merit::clip`.
     let shortest = spec.sources.iter().map(|source| source.gain).fold(0.0, f64::max);
-    for i in order_of(spec) {
+    for i in order_of(spec, &request.weight) {
         let Some(taken) = taken(gpu, base, spec, request, i, levels, burst, &mut lap).await? else {
             continue;
         };
@@ -1057,8 +1070,7 @@ async fn prepared_with(
                 taken.neutral_ceiling,
                 &taken.levels,
                 request.reference_white_nits,
-                // First of the layers, by `order_of`.
-                i == spec.reference,
+                taken.noise,
             ),
             Weight::Feather | Weight::Mask(_) | Weight::Sharpness => Merit::EVEN,
         };
@@ -1110,10 +1122,21 @@ async fn prepared_with(
 /// about these sources, so the anchor is taken off the reference's own region as it is decoded and
 /// everything after it is coded against that. Every source is coded against one white either way,
 /// which is what makes them one picture rather than a strip of separately-graded ones.
-fn order_of(spec: &Composition) -> Vec<usize> {
-    std::iter::once(spec.reference)
-        .chain((0..spec.sources.len()).filter(|i| *i != spec.reference))
-        .collect()
+///
+/// An exposure bracket's then nearest the reference in exposure, shorter before longer: where the
+/// reference clipped, the frame that anchors the pixel in its place is the one that reads it most
+/// like the reference would have (`composite_blend.slang`'s `anchor`).
+fn order_of(spec: &Composition, weight: &Weight<'_>) -> Vec<usize> {
+    let mut rest: Vec<usize> = (0..spec.sources.len()).filter(|i| *i != spec.reference).collect();
+    if let Weight::Exposure = weight {
+        let reference = spec.sources[spec.reference].gain;
+        let away = |i: &usize| {
+            let stops = (spec.sources[*i].gain / reference).log2();
+            (stops.abs(), stops < 0.0)
+        };
+        rest.sort_by(|a, b| away(a).partial_cmp(&away(b)).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    std::iter::once(spec.reference).chain(rest).collect()
 }
 
 /// What one source contributed to a window, and what the composite's grade reads off whichever of
@@ -1353,37 +1376,36 @@ async fn taken(
 
 /// What one source of an exposure bracket is worth in the blend (`Merit`).
 ///
-/// **The clip in the blend's own units**: the coding writes a sample `s` at `s / white * nits`, the
-/// white being the set's divided by this source's gain, and `Base::light_of_code` hands that back
-/// over PQ's own ceiling - so a neutral clipping at `neutral_ceiling` lands at this.
+/// **The clip and the noise in the blend's own units**: the coding writes a sample `s` at
+/// `s / white * nits`, the white being the set's divided by this source's gain, and
+/// `Base::light_of_code` hands that back over PQ's own ceiling - so a sample lands at `s * k`, and a
+/// neutral clipping at `neutral_ceiling` at that times it. The noise GALOSH fitted, `alpha * s +
+/// sigma_sq`, is then `k * alpha * l + k^2 * sigma_sq` at light `l`: a short frame's gain is what
+/// makes its shadows the noisy ones. Fitted before the denoise, so it is what the frame could be at
+/// worst.
 fn merit_of(
     source: &SourceSpec,
     shortest: f64,
     neutral_ceiling: f32,
     levels: &crate::tone::Anchored,
     reference_white_nits: crate::light::Light<crate::light::SceneNits>,
-    anchors: bool,
+    noise: Option<crate::galosh::NoiseFit>,
 ) -> Merit {
     let ceiling = crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(1.0));
-    let clip = f64::from(neutral_ceiling) * source.gain * reference_white_nits.raw()
-        / (levels.white.raw() * ceiling.raw());
+    let k = source.gain * reference_white_nits.raw() / (levels.white.raw() * ceiling.raw());
     Merit {
         scale: (1.0 / source.gain) as f32,
         clip: match source.gain >= shortest {
             true => 0.0,
-            false => clip as f32,
+            false => (f64::from(neutral_ceiling) * k) as f32,
         },
-        ghost: match anchors {
-            true => crate::light::Stops::ZERO,
-            false => BRACKET_GHOST,
-        },
-        anchors,
+        deghosts: true,
+        noise: noise.map_or(LightNoise::NONE, |fit| LightNoise {
+            slope: (k * f64::from(fit.alpha)) as f32,
+            floor: (k * k * f64::from(fit.sigma_sq)) as f32,
+        }),
     }
 }
-
-/// How far a bracket's frame may disagree with the reference before it is taken for a scene that
-/// moved. Wide of what the header's exposure arithmetic misses by, a tenth of a stop or so.
-const BRACKET_GHOST: crate::light::Stops = crate::light::Stops::exactly(0.5);
 
 /// Every source of the recipe, prepared exactly as [`prepared`] prepares one and handed to `take`
 /// in place of the blend, the reference first (see [`order_of`]). A source the window does not
@@ -1409,7 +1431,7 @@ pub async fn layers_of(
     let mut levels: Option<crate::tone::Anchored> =
         request.levels.or_else(|| whole_anchor(spec, request));
     let mut lap = crate::clock::laps("    pano source ");
-    for i in order_of(spec) {
+    for i in order_of(spec, &request.weight) {
         let Some(taken) = taken(gpu, base, spec, request, i, levels, &[], &mut lap).await? else {
             continue;
         };
@@ -2125,6 +2147,20 @@ mod tests {
         );
     }
 
+    /// An exposure bracket's frames after the reference go nearest it in exposure first, shorter
+    /// before longer, so where the reference clipped the pixel is anchored by the frame nearest it.
+    #[test]
+    fn a_bracket_is_taken_nearest_the_reference_first() {
+        let mut spec = Composition::of_one([64, 64], crate::composition::LensSpec::none());
+        let one = spec.sources[0].clone();
+        spec.sources = [1.0, 4.0, 0.25, 2.0, 0.5]
+            .into_iter()
+            .map(|gain| SourceSpec { gain, ..one.clone() })
+            .collect();
+        assert_eq!(order_of(&spec, &Weight::Exposure), vec![0, 3, 4, 1, 2]);
+        assert_eq!(order_of(&spec, &Weight::Feather), vec![0, 1, 2, 3, 4], "a panorama's order moved");
+    }
+
     /// A focus bracket's layers, one textured and one the same scene blurred flat: the merge keeps
     /// the texture rather than averaging it with the blur.
     #[test]
@@ -2212,14 +2248,26 @@ mod tests {
         let dropped = merged(&[(200.0, even), (400.0, clipped)]);
         assert!((dropped - alone).abs() < 1.0, "a layer past its clip still counted: {dropped}");
 
-        // Against an anchor, a layer two stops off it is a scene that moved, and one a tenth of a
-        // stop off is the same scene.
-        let anchor = Merit { anchors: true, ..Merit::EVEN };
-        let wary = Merit { ghost: crate::light::Stops::exactly(0.5), ..heavy };
+        // Against the anchor, a quiet layer two stops off it is a scene that moved, and one a tenth
+        // of a stop off is the same scene.
+        let anchor = Merit { deghosts: true, ..Merit::EVEN };
+        let wary = Merit { deghosts: true, ..heavy };
         let ghosted = merged(&[(200.0, anchor), (800.0, wary)]);
         assert!((ghosted - alone).abs() < 1.0, "a layer two stops off the anchor still counted: {ghosted}");
         let near = merged(&[(200.0, anchor), (215.0, wary)]);
         assert!((near - 211.25).abs() < 3.0, "a layer agreeing with the anchor was dropped: {near}");
+
+        // A frame noisy enough that the same two stops are its noise rather than a ghost: a floor of
+        // 2e-3 in light deviates by 447 nits at its own 800.
+        let noisy = Merit { noise: LightNoise { slope: 0.0, floor: 2e-3 }, ..wary };
+        let kept = merged(&[(200.0, anchor), (800.0, noisy)]);
+        assert!((kept - 650.0).abs() < 25.0, "a layer within its own noise of the anchor was dropped: {kept}");
+
+        // Where the reference is blown it vouches for nothing, and the next frame anchors instead: a
+        // third layer two stops off that one is still a ghost.
+        let blown = Merit { clip: 150.0 / 10000.0, ..anchor };
+        let stand_in = merged(&[(200.0, blown), (220.0, anchor), (900.0, wary)]);
+        assert!((stand_in - 220.0).abs() < 2.0, "nothing anchored where the reference was blown: {stand_in}");
     }
 
     /// A frame every sample of which is the same code, which is what makes a blend's answer

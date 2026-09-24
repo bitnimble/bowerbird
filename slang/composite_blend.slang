@@ -17,20 +17,29 @@ import prelude;
 
 struct Params {
     uint pixels;
-    /// The layer's worth against the others, where it clips, how far it may stray from the anchor
-    /// and whether it is the anchor: `composite_tile::Merit`.
+    /// The layer's worth against the others, where it clips, whether it is compared against the
+    /// anchor, and its noise in the blend's own units: `composite_tile::Merit`.
     float merit;
     float clip;
-    float ghost;
-    uint anchors;
+    uint deghosts;
+    /// A pixel at light `l` varies by `noise_slope * l + noise_floor`.
+    float noise_slope;
+    float noise_floor;
 };
 
-/// `composite_tile::UNANCHORED`: a pixel the anchor could not vouch for, which nothing is compared at.
-static const float UNANCHORED = -1.0;
+/// `composite_tile::UNANCHORED`: a pixel no layer has vouched for yet. A pair of half NaNs, which
+/// no anchor packs to.
+static const uint UNANCHORED = 0xFFFFFFFFu;
 
-/// A light below which two are not told apart, in the blend's own units: a nit, where a short
-/// frame's shadow is mostly noise and its ratio to the anchor would be too.
+/// A light below which two are not told apart, in the blend's own units: a nit.
 static const float DARK = 1e-4;
+
+/// What two frames of one still scene may still differ by once their noise is allowed for: the
+/// headers' exposure arithmetic, whose nominal shutters and apertures miss by up to a sixth of a
+/// stop, and what the demosaic and the lens leave between two exposures.
+static const float EXPOSURE_ALLOWANCE = 0.3;
+/// The combined noise, in its own deviations, a disagreement has to pass before it is a ghost.
+static const float GHOST_DEVIATIONS = 3.0;
 
 /// Where below its clip a layer starts giving way, as a share of the clip: far enough down that
 /// a channel near saturation has already lost its linearity before it counts for nothing.
@@ -55,19 +64,37 @@ float unclipped(float3 light)
 [vk::binding(5, 0)] RWStructuredBuffer<uint> alpha;
 /// The frame's coding undone: light, normalised so that the largest code is one, per code.
 [vk::binding(6, 0)] StructuredBuffer<float> light_of_code;
-/// The anchoring layer's luma a pixel, or `UNANCHORED`.
-[vk::binding(7, 0)] RWStructuredBuffer<float> anchor;
+/// The luma a pixel's anchor read and its relative deviation there, as half floats, or
+/// `UNANCHORED`. The anchor is the first layer that could vouch for the pixel: the reference, and
+/// where it clipped, the next frame in exposure (`composite_tile::order_of`).
+[vk::binding(7, 0)] RWStructuredBuffer<uint> anchor;
+
+/// A light's deviation as a share of it: what it is in stops, but for the `ln 2`.
+float relative_deviation(float luma)
+{
+    let level = luma + DARK;
+    return sqrt(max(params.noise_slope * luma + params.noise_floor, 0.0)) / level;
+}
 
 /// How much of a layer to trust where the scene may have moved since the anchor was taken: all of
-/// it within `ghost` of the anchor's light, none at twice that.
-float consistent(float3 light, uint pixel)
+/// it within its and the anchor's noise of the anchor's light, none at twice that.
+float consistent(float mine, float2 anchored)
 {
-    if (params.ghost <= 0.0) { return 1.0; }
-    let anchored = anchor[pixel];
-    if (anchored == UNANCHORED) { return 1.0; }
-    let mine = dot(LUMA, max(light, float3(0.0)));
-    let apart = abs(stops_of(gain((mine + DARK) / (anchored + DARK))).s);
-    return 1.0 - smoothstep(params.ghost, 2.0 * params.ghost, apart);
+    let apart = abs(stops_of(gain((mine + DARK) / (anchored.x + DARK))).s);
+    let spread = length(float2(relative_deviation(mine), anchored.y)) / log(2.0);
+    let tolerance = EXPOSURE_ALLOWANCE + GHOST_DEVIATIONS * spread;
+    return 1.0 - smoothstep(tolerance, 2.0 * tolerance, apart);
+}
+
+/// What a deghosted layer is worth at a pixel against its anchor, claiming the anchor where no
+/// layer has yet and this one is sound enough to.
+float anchored_at(uint pixel, float mine, float sound)
+{
+    let held = anchor[pixel];
+    if (held != UNANCHORED) { return consistent(mine, unpackHalf2x16ToFloat(held)); }
+    // Half-clipped is past vouching for: a shorter frame is what the pixel is short of there.
+    if (sound > 0.5) { anchor[pixel] = packHalf2x16(float2(mine, relative_deviation(mine))); }
+    return 1.0;
 }
 
 uint code_at(uint index)
@@ -90,11 +117,8 @@ void composite_add(uint3 id : SV_DispatchThreadID)
         light_of_code[code_at(base + 1)],
         light_of_code[code_at(base + 2)]);
     let sound = unclipped(light);
-    if (params.anchors != 0u) {
-        // Half-clipped is past vouching for: the later frames are what it is short of there.
-        anchor[pixel] = sound > 0.5 ? dot(LUMA, max(light, float3(0.0))) : UNANCHORED;
-    }
-    let w = reach * params.merit * sound * consistent(light, pixel);
+    let trusted = params.deghosts != 0u ? anchored_at(pixel, dot(LUMA, max(light, float3(0.0))), sound) : 1.0;
+    let w = reach * params.merit * sound * trusted;
     if (w <= 0.0) { return; }
     let at = pixel * 4;
     acc[at] = acc[at] + w * light.r;
