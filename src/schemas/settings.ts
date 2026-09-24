@@ -36,6 +36,7 @@ export const SettingsSchema = z.object({
   hide_sidebar_in_viewer: z.boolean().default(true),
   // Off until asked for: turning it on has the server search the local network for TVs.
   frame_tv_enabled: z.boolean().default(false),
+  onboarding_complete: z.boolean().default(false),
 
   // `debug` adds a line per HTTP request and per finished processing stage;
   // everything an operator normally wants (imports, batches, failures) is `info`.

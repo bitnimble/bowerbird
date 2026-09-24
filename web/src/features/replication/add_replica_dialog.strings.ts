@@ -1,6 +1,6 @@
 export const AddReplicaStrings = {
   /** The dialog's title, and the button in Settings that opens it. */
-  title: () => 'Add synced library',
+  title: () => 'Connect to another Bowerbird',
 
   otherDevice: () => 'Other device',
   deviceAddress: () => 'Device address',

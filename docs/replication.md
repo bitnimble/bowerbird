@@ -989,7 +989,7 @@ window.
 
 ## 9. Replica creation
 
-"Add synced library", alongside "Add library", takes the other device's address, lists what it
+"Connect to another Bowerbird", alongside "Add library", takes the other device's address, lists what it
 offers, and takes a local root for the one picked. It refuses a readonly library, creates the bin
 folder with identity columns recorded (the same helper library creation uses, not the scan's
 healing path), then clones: the ordinary stream from an empty vector, ids preserved verbatim. The
@@ -1012,7 +1012,7 @@ candidate that is known to work, and the only one that survives a reverse proxy 
 followed by this machine's interfaces, marked as guesses. In a bridged container those are the
 container's own network and reach nothing, which is exactly why they are not offered as facts.
 
-On the joining device: **"Add synced library"** is three steps. The address; the list of what
+On the joining device: **"Connect to another Bowerbird"** is three steps. The address; the list of what
 that device offers; then the folder and whether to keep originals (§7.10).
 
 **Nothing is presented and nothing is exchanged to earn the pairing** - the network is the
@@ -1046,7 +1046,7 @@ before this; it is the cheapest moment to catch it.
 
 **Pairing requires the server reachable, so the replica must exist before the trip.** A
 standalone library created on the road can never become a replica (§1). Settings puts "Add
-library" and "Add synced library" side by side so the fork is visible at the moment it matters,
+library" and "Connect to another Bowerbird" side by side so the fork is visible at the moment it matters,
 and this sentence is the one that belongs in the user docs in bold.
 
 ## 10. UI

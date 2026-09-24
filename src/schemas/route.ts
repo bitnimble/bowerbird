@@ -114,6 +114,7 @@ export const PathSegment = {
   unstack: segment('unstack'),
   updates: segment('updates'),
   verify: segment('verify'),
+  welcome: segment('welcome'),
 
   param: <const N extends string>(name: N): `:${N}` => `:${name}`,
   optionalParam: <const N extends string>(name: N): `:${N}?` => `:${name}?`,

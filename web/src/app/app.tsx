@@ -41,6 +41,7 @@ import { StackTriagePage } from '../features/photos/stack_triage/stack_triage_pa
 import { ConflictsPage } from '../features/replication/conflicts_page';
 import { SettingsPage } from '../features/settings/settings_page';
 import { SettingsStrings } from '../features/settings/settings_page.strings';
+import { OnboardingPage } from '../features/onboarding/onboarding_page';
 import { NoShootPhotosPage } from '../features/shoots/no_shoot_photos_page';
 import { ShootPhotosPage } from '../features/shoots/shoot_photos_page';
 import { ShootsPage } from '../features/shoots/shoots_page';
@@ -70,6 +71,7 @@ import { SidebarButton, SidebarIcon, SidebarLink, SidebarText, sidebarStyles } f
 import type { ShootNode } from './sidebar_store';
 import {
   useAlbumsStore,
+  useAppSettingsStore,
   useExportStore,
   useLibrariesStore,
   usePresenters,
@@ -859,11 +861,14 @@ const TRIAGE_ROUTE = route(PathSegment.stacks(), PathSegment.param('stackId'), P
 const MERGE_ROUTE = route(PathSegment.photos(), PathSegment.merge(), PathSegment.param('jobId'));
 const MERGE_EDIT_ROUTE = route(PathSegment.photos(), PathSegment.param('photoId'), PathSegment.merge());
 
-// Nothing to land on until the libraries are known: with one registered the
-// photographs are the home screen, and only a fresh install starts in Settings.
+// Nothing to land on until the libraries and settings are known: a fresh install
+// starts in the welcome wizard, and after it the first library's photographs are
+// the home screen, or Settings where there is none.
 const Home = observer(function Home(): JSX.Element | null {
   const libraries = useLibrariesStore();
-  if (libraries.loading) return null;
+  const settings = useAppSettingsStore();
+  if (libraries.loading || (settings.onboardingComplete == null && !settings.unavailable)) return null;
+  if (settings.onboardingComplete === false) return <Navigate to={route(PathSegment.welcome())} replace />;
   const first = libraries.libraries[0];
   return <Navigate to={first == null ? route(PathSegment.settings()) : route(PathSegment.libraries(), first.id)} replace />;
 });
@@ -889,6 +894,15 @@ export const App = observer(function App(): JSX.Element {
 
   useDrawerSwipe({ active: mobile, open: drawerOpen, setOpen: sidebarPresenter.setDrawerOpen, setDragging, shell });
   const toggleSidebar = sidebarPresenter.toggleOpen;
+
+  if (pathname === route(PathSegment.welcome())) {
+    return (
+      <>
+        <Toasts />
+        <OnboardingPage />
+      </>
+    );
+  }
 
   return (
     <div

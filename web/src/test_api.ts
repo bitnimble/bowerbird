@@ -4,6 +4,7 @@
 // the file that installed it: one that never resolves hangs an unrelated test several files later.
 import { afterAll } from 'bun:test';
 import { albumsApi } from './api/albums';
+import { backupApi } from './api/backup';
 import { blobsApi } from './api/blobs';
 import { browseApi } from './api/browse';
 import { compositesApi } from './api/composites';
@@ -29,6 +30,7 @@ function restore<T extends object>(domainApi: T): () => void {
 
 const RESTORE = [
   albumsApi,
+  backupApi,
   blobsApi,
   browseApi,
   compositesApi,

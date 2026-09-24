@@ -49,11 +49,13 @@ export default defineConfig({
   // editor at all. What it used to cover - the three sinks, the rewrap, the thread pool -
   // went with the routes (`docs/raw-edit-gpu.md` §7).
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' } },
+    { name: 'onboarded', testMatch: /onboarded\.setup\.ts/ },
+    { name: 'chromium', use: { browserName: 'chromium' }, dependencies: ['onboarded'] },
     {
       name: 'firefox',
       use: { browserName: 'firefox' },
       testMatch: /grid\/bands\.spec\.ts/,
+      dependencies: ['onboarded'],
     },
   ],
   webServer: [

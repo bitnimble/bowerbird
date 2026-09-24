@@ -15,6 +15,8 @@ export class AppSettingsStore {
   @observable.ref accessor settings: Settings | null = null;
   /** What the app ships with, for the settings page's reset. Null until it has arrived. */
   @observable.ref accessor defaults: Settings | null = null;
+  /** The load failed, so `settings` is not coming and callers fall back to the shipped behaviour. */
+  @observable accessor unavailable = false;
   // What a render was measured to cost on the machine the server is on (§10.1). Empty is nothing
   // measured, which is the panel quoting estimates instead.
   @observable.ref accessor renderTimings: RenderTimings = {};
@@ -42,5 +44,10 @@ export class AppSettingsStore {
 
   get frameTvEnabled(): boolean {
     return this.settings?.frame_tv_enabled ?? false;
+  }
+
+  /** Null until the settings arrive. */
+  get onboardingComplete(): boolean | null {
+    return this.settings?.onboarding_complete ?? null;
   }
 }
