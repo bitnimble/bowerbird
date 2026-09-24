@@ -132,6 +132,9 @@ pub struct Frame {
     /// Ones for a frame that came from no sensor, which is every synthetic fixture, and the case
     /// the correction collapses to a constant in.
     pub wb_gains: [f32; 3],
+    /// The level the file states diffuse white at, for a finished picture; None for a RAW, whose
+    /// white is a quantile of its own scene.
+    pub stated_white: Option<crate::light::Light<crate::light::Level>>,
 }
 
 impl Frame {
@@ -147,6 +150,7 @@ impl Frame {
             matrix: None,
             neutral_ceiling: 1.0,
             wb_gains: [1.0; 3],
+            stated_white: None,
         }
     }
 

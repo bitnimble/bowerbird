@@ -539,7 +539,7 @@ export const DetailNav = observer(function DetailNav({
         </Button>
       )}
 
-      <SoftProofMenu value={proof} hdrOffered={hdrOffered} printOffered={editable} onChange={onProof} />
+      <SoftProofMenu value={proof} hdrOffered={hdrOffered} onChange={onProof} />
 
       {stripOpen != null && (
         <Button

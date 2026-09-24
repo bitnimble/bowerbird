@@ -838,7 +838,7 @@ impl Gpu {
     pub(crate) fn print_light_calibration(&self, parameters: [f32; 4], temperature: f32) -> Buffer {
         let mut recording = self.record();
         let buffer = self.own_buffer(&wgpu::BufferDescriptor {
-            label: Some("print light calibration"), size: 64,
+            label: Some("print light calibration"), size: 80,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
         });
         recording.holding(&buffer);
@@ -3614,6 +3614,7 @@ impl Uploaded<'_> {
         pq: bool,
         pigment: bool,
     ) {
+        let display_peak = grade.peak_nits;
         let print_grade;
         let grade = if print.is_some() || pigment {
             print_grade = Grade {
@@ -3714,7 +3715,7 @@ impl Uploaded<'_> {
             recording.holding(&calibration);
             let buffer = recording.init(&wgpu::util::BufferInitDescriptor {
                 label: Some("print"),
-                contents: &scene.uniform(),
+                contents: &scene.uniform(display_peak),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
             self.gpu.bind_group(&wgpu::BindGroupDescriptor {

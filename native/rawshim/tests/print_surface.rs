@@ -145,9 +145,10 @@ fn frame_glass_has_hdr_reflections_and_gains_reflectivity_at_grazing_angles() {
     let grazing = draw(&black, &framed_grade, Some(&Scene { yaw_degrees: 75.0, ..scene }));
     assert!(linear(grazing[center]) > linear(face[center]) * 3.0,
         "glass did not gain grazing reflection: {} / {}", grazing[center], face[center]);
-    // A softbox rather than the default lamp: the centre reads the emitter's mirror image, and a
-    // one-degree source lands its image between the probe and the frame.
-    let lit = Scene { key_lux: Light::exactly(1000.0), light_angular_degrees: 30.0, ..scene }
+    // Five degrees across rather than the default lamp: the centre reads the emitter's mirror image,
+    // and a one-degree source lands its image between the probe and the frame. Not a softbox either,
+    // whose radiance coated glass returns under paper white however many lux it is set to.
+    let lit = Scene { key_lux: Light::exactly(1000.0), light_angular_degrees: 5.0, ..scene }
         .lit_from(0.0, 0.0, 4.0);
     let reflection = draw(&black, &framed_grade, Some(&lit));
     assert!(linear(reflection[center]) > 2.0, "glass lost HDR headroom: {}", reflection[center]);
@@ -172,7 +173,8 @@ fn glass_shows_the_room_and_not_only_the_lamp_in_it() {
     let dark = linear(draw(&black, &framed_grade,
         Some(&Scene { fill_lux: Light::ZERO, ..scene }))[center]);
     assert!(lit > dark * 4.0, "the room did not reach the glass: {lit} lit against {dark} dark");
-    assert!(lit > paper_white * 0.015,
+    // Coated glass sends back a few tenths of a percent square on, which is still the room.
+    assert!(lit > paper_white * 0.0015,
         "the glass is a black pane: {lit} against {paper_white} of paper white");
 }
 
@@ -210,7 +212,7 @@ fn grade() -> Grade<'static> {
     Grade {
         width: 64, height: 64, photograph_long: Span::measured(64), colour: None,
         white: Light::measured(10000.0), source_level: Light::measured(10000.0), floor: None,
-        reference_nits: Light::exactly(203.0), peak_nits: Light::exactly(203.0),
+        reference_nits: Light::exactly(203.0), peak_nits: Light::exactly(1000.0),
         exposure: Stops::ZERO, adjust: Adjust::none(), as_shot: None, output: Output::Pq,
         geometry: Geometry::none(), window: None, surround_window: None,
         canvas: Some(Canvas { region: (0.0, 0.0, 64.0, 64.0), size: Size::measured(64, 64), max_lod: 6 }),

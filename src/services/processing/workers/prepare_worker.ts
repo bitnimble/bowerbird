@@ -48,7 +48,8 @@ self.onmessage = (event: MessageEvent<PrepareAsk>): void => {
     // the canvas's rather than the rectangle's - so a window that had to measure them keeps the
     // next one from measuring them again.
     const measured = picture.header.photoAnalysis;
-    if (measured != null) {
+    const ofThePhotograph = ask.job.kind === 'composite' || ask.job.statedWhite !== true;
+    if (measured != null && ofThePhotograph) {
       writePhotoAnalysis(ask.job.dataPath, ask.job.photoId, Uint8Array.from(measured));
     }
     // Transferred, not copied: a picture is tens of megabytes, and structured-cloning it would

@@ -24,6 +24,7 @@
 import IMPORT_WGSL from '../generated/stage_import.wgsl?raw';
 import PLANAR_WGSL from '../generated/stage.wgsl?raw';
 import { settingsApi } from '../../../api/settings';
+import { displayIsHdr } from '../../../app/device';
 import type { Tonemap } from '../../raw_edit/print/print_scene';
 
 /**
@@ -63,7 +64,7 @@ let peak: Promise<number> | null = null;
  * headroom on `screen`, and `dynamic-range` is a boolean.
  */
 async function displayHeadroom(): Promise<number> {
-  if (!matchMedia('(dynamic-range: high)').matches) return 1;
+  if (!displayIsHdr()) return 1;
   return renditionHeadroom();
 }
 

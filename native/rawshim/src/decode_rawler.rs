@@ -357,6 +357,7 @@ pub(crate) async fn decode_tile_source(
         matrix: Some(colour.matrix),
         neutral_ceiling: neutral_ceiling_of(colour.ceiling),
         wb_gains: colour.ceiling,
+        stated_white: None,
     })
 }
 
@@ -820,7 +821,8 @@ impl Held {
             dust: None,
             matrix: Some(colour.matrix),
             neutral_ceiling: neutral_ceiling_of(colour.ceiling),
-        wb_gains: colour.ceiling,
+            wb_gains: colour.ceiling,
+            stated_white: None,
         })
     }
 
@@ -1034,7 +1036,8 @@ impl Held {
             dust: spots,
             matrix: Some(colour.matrix),
             neutral_ceiling: neutral_ceiling_of(colour.ceiling),
-        wb_gains: colour.ceiling,
+            wb_gains: colour.ceiling,
+            stated_white: None,
         })
     }
 }

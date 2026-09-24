@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { Fragment, useState } from 'react';
 import { PathSegment, route } from '../../../../src/schemas/route';
+import { displayIsHdr } from '../../app/device';
 import { focusRing } from '../../ui/focus_ring';
 import { Heading } from '../../ui/heading';
 import { Page, PageLead } from '../../ui/page';
@@ -525,20 +526,9 @@ function Comparison({ scene }: { scene: Scene }): JSX.Element {
   );
 }
 
-/**
- * Whether this display has been told to expect more than SDR.
- *
- * Worth saying out loud, because without it the page is two identical pictures and
- * nothing on screen would explain why. It is not a reliable "no": Firefox answers
- * `standard` on an HDR display, which is why the copy hedges rather than hiding
- * anything. Read once, like the same query on the settings page: a display that
- * changes under a live window is not worth a listener here.
- */
-function displayIsHdr(): boolean {
-  return window.matchMedia != null && window.matchMedia('(dynamic-range: high)').matches;
-}
-
 export function HdrPage(): JSX.Element {
+  // Not a reliable "no": Firefox answers `standard` on an HDR display, which is why the copy
+  // hedges rather than hiding anything.
   const high = displayIsHdr();
 
   return (

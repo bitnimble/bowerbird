@@ -35,6 +35,16 @@ import type { Missing, Shown } from '../../services/processing/workers/prepare_p
 // drive before there is a path to read (docs/replication.md §14.4).
 type PathFor = (library: Library, photo: BasicPhoto) => string | null | Promise<string | null>;
 
+type PreparesPictures = {
+  preparePicture: (
+    photoId: string,
+    shown?: Shown,
+    missing?: Missing,
+    develop?: PrepareDevelop,
+  ) => Promise<Uint8Array>;
+  prepareRendition: (photoId: string, shown?: Shown, missing?: Missing) => Promise<Uint8Array>;
+};
+
 const JPEG_QUALITY = 92;
 
 // Sentry's own ceiling on a report, which is the only thing that asks for a scrubbed original.
@@ -194,14 +204,7 @@ export class ImageApi {
      * refuses the prepare by name rather than making every one of them build a processing
      * service to ignore.
      */
-    private readonly pictures: {
-      preparePicture: (
-        photoId: string,
-        shown?: Shown,
-        missing?: Missing,
-        develop?: PrepareDevelop,
-      ) => Promise<Uint8Array>;
-    } | null = null,
+    private readonly pictures: PreparesPictures | null = null,
   ) {
     const app = new Hono();
     // One route for every rendition, named rather than spelled out per size: `grid`, `full`,
@@ -328,6 +331,9 @@ export class ImageApi {
    * everything a reader is browsing to hold one they are editing - and what it is a function of
    * includes a library setting, the document, and every source's own analysis, so an entry that
    * outlived any of those would serve a picture the grade is no longer anchored to.
+   *
+   * `from=rendition` prepares the photograph's full rendition instead, edits and all, for a client
+   * that shows the picture rather than editing it.
    */
   private async servePrepared(c: Context): Promise<Response> {
     const photoId = c.req.param('photoId');
@@ -338,12 +344,9 @@ export class ImageApi {
     // Refused here rather than resolved, so the reason names the photograph: `locate` is what
     // says whether this id is one at all.
     const { photo, library } = this.photoRenditions.locate(photoId);
-    // What tells a composite this device cannot compose apart from an ordinary photograph is
-    // whether the frames are on this disk, so a photograph given up to a backup is fetched
-    // before the prepare asks (§14.4).
-    await this.originals.openAll(library, photo);
-
-    const framed = await this.pictures.preparePicture(photoId, shownIn(c), missingIn(c), developIn(c));
+    const framed = c.req.query('from') === 'rendition'
+      ? await this.preparedRendition(this.pictures, photoId, c)
+      : await this.preparedPicture(this.pictures, photo, library, c);
     return new Response(framed, {
       headers: {
         'Content-Type': 'application/octet-stream',
@@ -351,6 +354,30 @@ export class ImageApi {
         ...TIMING_ALLOW_ORIGIN,
       },
     });
+  }
+
+  private async preparedPicture(
+    pictures: PreparesPictures,
+    photo: BasicPhoto,
+    library: Library,
+    c: Context,
+  ): Promise<Uint8Array> {
+    // What tells a composite this device cannot compose apart from an ordinary photograph is
+    // whether the frames are on this disk, so a photograph given up to a backup is fetched
+    // before the prepare asks (§14.4).
+    await this.originals.openAll(library, photo);
+    return pictures.preparePicture(photo.id, shownIn(c), missingIn(c), developIn(c));
+  }
+
+  private async preparedRendition(
+    pictures: PreparesPictures,
+    photoId: string,
+    c: Context,
+  ): Promise<Uint8Array> {
+    // Built or fetched from a peer where it is missing or behind the edits, as the viewer's own
+    // request for it would be.
+    await this.photoRenditions.buildRendition(photoId, 'full');
+    return pictures.prepareRendition(photoId, shownIn(c), missingIn(c));
   }
 
   /**

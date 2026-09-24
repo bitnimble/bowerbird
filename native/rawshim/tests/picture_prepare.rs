@@ -63,6 +63,65 @@ fn check_photo(width: usize, height: usize, half_height: usize) {
     std::fs::remove_file(path).expect("fixture removed");
 }
 
+/// The print mockup's claim about a rendition: graded neutral, it shows the light it was encoded with.
+#[test]
+fn a_rendition_prepared_at_its_stated_white_grades_neutral_to_itself() {
+    let (width, height) = (64usize, 48usize);
+    let path = std::env::temp_dir().join(format!("bowerbird-picture-stated-{}.png", std::process::id()));
+    // Dim and coloured, which a quantile would lift to reference white.
+    let pixels: Vec<u8> = (0..width * height)
+        .flat_map(|at| {
+            let level = (at % 90) as u8;
+            [level + 20, level / 2 + 40, 110 - level]
+        })
+        .collect();
+    let mut encoder = png::Encoder::new(std::fs::File::create(&path).expect("fixture file"), width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header().expect("PNG header").write_image_data(&pixels).expect("PNG pixels");
+
+    let mut job = job(path.to_str().expect("fixture path"));
+    job.camera_match = rawshim::hdr_fit::CameraMatch::None;
+    job.sharpen = 0.0;
+    job.defringe = 0.0;
+    let measured = rawshim::picture::prepared(&job, 0, None, &[]).expect("the picture prepares");
+    job.stated_white = true;
+    let stated = rawshim::picture::prepared(&job, 0, None, &[]).expect("the rendition prepares");
+    std::fs::remove_file(path).expect("fixture removed");
+
+    let shown = |prepared: &rawshim::edit::Prepared| -> Vec<u8> {
+        let gpu = rawshim::gpu::device().expect("an adapter");
+        let header = &prepared.header;
+        let grade = rawshim::gpu::Grade {
+            width: header.width,
+            height: header.height,
+            photograph_long: rawshim::px::Span::measured(header.width.max(header.height)),
+            colour: None,
+            white: header.white,
+            source_level: header.peak,
+            floor: header.floor,
+            reference_nits: header.grade.reference_white_nits,
+            peak_nits: rawshim::light::Light::at_diffuse_white(header.grade.reference_white_nits),
+            exposure: rawshim::light::Stops::ZERO,
+            adjust: rawshim::gpu::Adjust::none(),
+            as_shot: None,
+            output: rawshim::gpu::Output::Srgb,
+            geometry: rawshim::image::Geometry::none(),
+            window: None,
+            surround_window: None,
+            canvas: None,
+            print_tone: rawshim::gpu::Tonemap::Neutral,
+        };
+        gpu.upload(&prepared.samples, &grade, &gpu.scene_peak()).encode_bytes(&grade)
+    };
+    let worst = |got: &[u8]| -> u8 {
+        assert_eq!(got.len(), pixels.len());
+        got.iter().zip(&pixels).map(|(got, want)| got.abs_diff(*want)).max().unwrap_or(0)
+    };
+    assert!(worst(&shown(&measured)) > 20, "a quantile anchor re-exposes the picture");
+    assert!(worst(&shown(&stated)) <= 2, "the rendition comes back as it was encoded");
+}
+
 #[cfg(feature = "fixtures")]
 #[test]
 fn raw_photo_windows_keep_whole_photo_calibration() {

@@ -74,6 +74,14 @@ public Gain print_exposure()
     return gain(PRINT_PI * white.v / max(received.v, minimum.v));
 }
 
+/// The scene's light onto the display the grade assumes, rolled as the grade rolls a frame.
+public Colour<DisplayNits> print_displayed(Colour<DisplayNits> nits)
+{
+    // A sheet turned to the lamp gathers past any display's peak, and a compositor left to clip it
+    // clips each channel apart, which moves the hue.
+    return rolled(nits, rolloff(exactly<DisplayNits>(PQ_MAX_NITS), measured<DisplayNits>(print.view.w)));
+}
+
 /// The ambient the reader set, and what the lamp returns off the room's own surfaces.
 Light<Illuminance> room_lit()
 {
@@ -99,23 +107,30 @@ public Colour<DisplayNits> print_background()
 public Light<DisplayNits> room_radiance(float3 world_direction, float3 world_view, float roughness)
 {
     let spread = min(2.0 * roughness * roughness, 1.0);
-    let lit = room_lit().v * print_light_calibration[6] * room_profile(world_direction.y, spread)
-        + bounce_lit().v * print_light_calibration[10] * bounce_profile(world_direction.y, spread);
+    Room room;
+    measure_room(room);
+    let lit = room_lit().v * print_light_calibration[6] * room_shape(room, world_direction, spread)
+        + bounce_lit().v * print_light_calibration[16] * bounce_profile(world_direction.y, spread);
     return measured<DisplayNits>(lit * reader_share(world_direction, world_view, spread));
 }
 
 /// The room's illuminance on a surface facing a world direction.
 public Light<Illuminance> room_illuminance(float3 world_normal)
 {
-    let up = world_normal.y;
+    let n = world_normal;
+    let first = float3(print_light_calibration[8], print_light_calibration[9], print_light_calibration[10]);
+    let mixed = float3(print_light_calibration[11], print_light_calibration[12], print_light_calibration[14]);
+    // Clamped per profile, not on the sum: the bands of a room whose light is all on one side ring
+    // below zero on the other, and a floor's bounce owes an upturned sheet nothing rather than
+    // owing it a debt against the ceiling's.
+    let ambient = max(print_light_calibration[7] * 0.282095 + 0.488603 * dot(first, n.yzx)
+        + 1.092548 * dot(mixed, float3(n.x * n.y, n.y * n.z, n.x * n.z))
+        + print_light_calibration[13] * 0.315392 * (3.0 * n.z * n.z - 1.0)
+        + print_light_calibration[15] * 0.546274 * (n.x * n.x - n.y * n.y), 0.0);
+    let up = n.y;
     let zonal = float3(1.0, up, 0.5 * (3.0 * up * up - 1.0));
-    // Clamped per profile, not on the sum: three bands of a room whose light is all on one side
-    // ring below zero on the other, and a floor's bounce owes an upturned sheet nothing rather
-    // than owing it a debt against the ceiling's.
-    let ambient = max(dot(zonal, float3(print_light_calibration[7], print_light_calibration[8],
-        print_light_calibration[9])), 0.0);
-    let bounced = max(dot(zonal, float3(print_light_calibration[11], print_light_calibration[12],
-        print_light_calibration[13])), 0.0);
+    let bounced = max(dot(zonal, float3(print_light_calibration[17], print_light_calibration[18],
+        print_light_calibration[19])), 0.0);
     return measured<Illuminance>(room_lit().v * ambient + bounce_lit().v * bounced);
 }
 

@@ -8,6 +8,7 @@ import {
   editDiagnostics,
   editPreview,
   editTools,
+  emulateHdrDisplay,
   openLibrary,
   openPhoto,
   openPhotoId,
@@ -768,6 +769,7 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
       `,
     });
   });
+  await emulateHdrDisplay(page);
   await open(page);
   const worker = page.workers().find((worker) => worker.url().includes('local_open_worker'));
   if (worker == null) throw new Error('The editor worker was not created');

@@ -148,15 +148,20 @@ A drag emits far more pointer positions than the grade can serve, so requests **
 What the stage is proofed as is one choice, the `Soft proof` menu in the header - in the editor
 between the zoom and the overflow menu, in the viewer between the triage buttons and the
 filmstrip. Rec.2020 PQ HDR is the default and is withheld from a rendition with no HDR in it; sRGB
-is always offered and is what an SDR rendition already shows; the two printed media proofs need
-the original. Choosing one adds its panels under the edit panels: sRGB the highlights operator,
+is always offered and is what an SDR rendition already shows; the two printed media proofs are
+always offered. Choosing one adds its panels under the edit panels: sRGB the highlights operator,
 `Printed media` the paper, `Printed media (3D)` the paper, lighting and orientation. The editor
 sends sRGB to the worker as an output and an operator, and the module fits the frame's highlights
 into sRGB white with the same operators a print uses (`print_tone.slang`). The viewer has no
 module, so an HDR rendition proofed as sRGB is fitted in `stage.slang` on the client, against the
 rendition's own headroom; a print proof from the viewer opens the photograph's `/mockup`, which
 builds the editor's session for it and saves nothing, and choosing an HDR or sRGB proof there or
-pressing Escape returns to the photograph.
+pressing Escape returns to the photograph. The mockup draws the full rendition rather than the RAW:
+every edit is already in it, so the server prepares it with `from=rendition` - built or fetched
+first where it is missing or behind the edits, unedited, with no analysis read or filed, and anchored
+at the white its file states (`Job::stated_white`) rather than at a quantile - and the page draws it
+at neutral without reading the saved edits. A neutral grade of that frame is the file's own light,
+so the print starts from the picture the viewer shows, without a RAW crossing or a decode.
 
 Print mode holds its paper, lighting and orientation in a separate `PrintStore`, written by
 `PrintPresenter`. These are viewing settings and leave the photo document and its history alone.
@@ -206,12 +211,16 @@ GPU-tabulated directional albedo couples it to the diffuse body through the reci
 This conserves reflected energy while approximating scattering inside the paper. Surface
 texture varies roughness in paper coordinates, with its physical scale set by the print's
 long edge and its visible detail filtered against the camera-ray footprint.
-The ambient light is a room rather than a surround of one radiance: its ceiling and the luminaires
-in it carry the light, and the wall opposite, the floor and the reader in front of the print sit at
-a fifth of that. The ambient setting is the illuminance an upright print stands in, and the
-room is scaled to deliver exactly that, so the shape above only decides which direction it arrives
-from. A sheen is then a reflection of the room and follows what the sheet is turned towards: the
-wall, or the ceiling five times brighter. The reader is in that room too, and is a body rather than
+The ambient light is a room rather than a surround of one radiance: a box around the print, its
+walls and floor at half the ceiling, with daylight through windows six times the ceiling in both
+side walls and the wall behind the print. The wall behind the reader has none, so a pane faced
+square on never mirrors one. The ambient setting is the illuminance an upright print facing the
+reader stands in, and the room is scaled to deliver exactly that, so the shape above only decides
+which direction it arrives from. A sheen is then a reflection of the room and follows what the sheet
+is turned towards, and the windows are what makes that a reflection rather than a veil. A ceiling
+carrying the whole ambient stands at several times a white page, and a satin sheet tipped back
+mirrors it edge to edge at once; a window's image is a band that enters at the top as the sheet tips
+back and crosses it. The reader is in that room too, and is a body rather than
 a head: a third of a radian across and most of a radian tall, standing on the floor rather than
 floating at eye level, so the silhouette hangs below the direction a square-on sheet mirrors into
 the eye and reaches half the wall's own radiance. A print faced straight therefore reflects a
@@ -230,10 +239,11 @@ body multiplied together put a framed print behind a black pane with the lamp's 
 thing in it. The silhouette washes out as the lobe reading it opens, in the ratio the two solid
 angles stand in, so it belongs to gloss and barely to matte. Nothing shadows the diffuse side,
 where the same cone is worth under a percent of the illuminance.
-The diffuse side reads the same room through zonal harmonics to the second band, which is
-all a Lambert cosine keeps of any surround. A surround of one radiance instead puts the whole
-room's illuminance in the direction the reader's own reflection comes from, which lifts that black
-four times over and leaves every off-axis reflection a flat wash.
+The diffuse side reads the same room through its spherical harmonics to the second band, fitted
+over the whole sphere once per lamp, which is all a Lambert cosine keeps of any surround - windows
+included. The lamp's bounce is the same about the vertical, so its zonal bands suffice. A surround of
+one radiance instead puts the whole room's illuminance in the direction the reader's own reflection
+comes from, which lifts that black four times over and leaves every off-axis reflection a flat wash.
 Camera exposure meters the room against a sheet hung facing the reader, and never against the pose:
 a camera meters a room once, and re-metering as the print is turned holds the sheet at one
 brightness while moving everything that did not turn - the background with it - which reads as the
@@ -241,7 +251,16 @@ room changing colour under a rotation. Turning a print towards the ceiling gathe
 arrives brighter, which is what the HDR headroom above diffuse white is for.
 The GPU integrates the finite light against the sheet's orientation, including light crossing
 its horizon. One exposure gain applies to the whole scene, anchored to 203-nit diffuse white
-and bounded in dark rooms; coating reflections retain their HDR headroom.
+and bounded in dark rooms; coating reflections retain their HDR headroom. The scene is then rolled
+onto the display's peak on its brightest channel, as a frame is, because nothing else bounds it: a
+sheet turned to the lamp gathers past any display, and what a compositor clips it clips per
+channel, which is a hue shift across the brightest paper.
+
+The display's peak is the library's own on an HDR display and SDR white on one that is not. Every
+tick carries `(dynamic-range: high)` to the module, which aims every draw - a frame, a proof, a
+sheet - at SDR white when it is false, which is the rule the viewer's `displayHeadroom` keeps. It is
+asked per tick because a window dragged to another screen changes the answer, and Firefox answering
+`standard` on an HDR display is right here: the canvas is the one thing it composites in SDR.
 The featureless background follows ambient illumination and is black at zero ambient. Defaults
 use 500 lux ambient, a 1000-lux light one degree across - a ceiling downlight, near the
 sun's half degree - and 6500 K illumination. The lamp is placed by where it hangs rather than by
@@ -257,7 +276,10 @@ directional Fresnel response, producing a broad sheen at grazing angles.
 A framed print stands flat behind 2mm glass, above a mat and inside a moulding that casts its own
 shadow. The glass mirrors the room and the lamp twice, once off each of its surfaces, with the
 second image offset by the thickness it crossed and refracted on the way - which is what makes it
-read as glass rather than as a light painted on the picture. The paper's own sheen reaches the
+read as glass rather than as a light painted on the picture. The pane is anti-reflection coated, as
+framing glass is: each surface sends back 0.4% square on rather than bare glass's 4%, and follows
+Fresnel's own rise from there, so a frame tipped back a few degrees shows the picture and only a
+steep one fills with the room. The paper's own sheen reaches the
 reader through that glass twice over and under the glass's own reflection of the same room, so
 half of what separates satin from gloss goes behind it, the way it does on a wall.
 Light also travels the other way and comes back. A tenth of what the mat and the photograph send up
@@ -270,15 +292,15 @@ and a pane in a rebate adds its own bow, a few thousandths of a radian over a ha
 bends the lamp's straight edges into curves. Nor is the pane perfectly clear, so a fourteenth of
 what it mirrors leaves within a couple of degrees of the specular direction rather than along it,
 as a halo around the image. That halo is the only part of a mirrored lamp whose shape a reader can
-see: the core is a hundred times paper white and clips whatever is done to it, and the taper that
+see: the core is far past paper white and meets the display's peak whatever is done to it, and the taper that
 would soften the rim falls inside a pixel, so integrating the pixel does not reach it - measured,
 four rays across a pixel moved the rim and nothing else, and cost as much as the halo does.
 A frame costs about 1.4x an unframed sheet on the scene path, measured at 1920 on radv: a quarter
-more canvas to cover, the moulding and mat to intersect, and the glass's own two reflections. What
-it no longer costs is the light integration answering for all three surfaces at every pixel - a
-pixel shows the photograph or the mat or the moulding, and only the footprint's width between them
-needs two - nor a ray-box test against the moulding for each of the emitter's samples, since the
-hole is convex and so is the emitter, which makes four corner tests decide it for all of them.
+more canvas to cover, the moulding and mat to intersect, and the glass's own two reflections. The
+light integration answers for one surface per pixel - a pixel shows the photograph or the mat or the
+moulding, and only the footprint's width between them needs two - and the moulding's shadow takes
+four corner tests rather than a ray-box test per emitter sample, since the hole is convex and so is
+the emitter.
 **What the print costs is the emitter's integral, and it is paid per canvas pixel on the desktop
 path and per field texel on the touch one.** Four things keep it in proportion. The emitter is
 sampled against how much of the sky it covers, from 64 for a lamp to 128 for a softbox, since a
@@ -306,9 +328,9 @@ no ray-tracing API, and the editor and a rendition are one implementation of the
 And the scene path's canvas is one pixel per
 device pixel rather than supersampled, the photograph arriving there through the pyramid's
 anisotropic taps and every edge carrying its own subpixel coverage, so the 2.25x bought nothing.
-The mockup also opens the photograph at half the sensor where the editor takes all of it: a 61MP
-frame is 366MB of samples and 650MB of pyramid to draw a sheet two thousand pixels across, and the
-mockup has no loupe to spend it on. The sheet's fragment shaders are also the longest thing here
+The mockup also opens the full rendition where the editor takes the whole sensor: a 61MP frame is
+366MB of samples and 650MB of pyramid to draw a sheet two thousand pixels across, and the mockup has
+no loupe to spend it on. The sheet's fragment shaders are also the longest thing here
 to compile, and a pipeline is built synchronously on the browser's GPU thread, where it blocks
 every page the browser is drawing - so `pipeline_warmth.ts` hands wgpu a stand-in for each one and
 builds it at the pass that sets it, leaving an editor open that never shows a print compiling none

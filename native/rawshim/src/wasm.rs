@@ -114,6 +114,8 @@ pub struct HeldRaw {
     proof: std::cell::Cell<crate::gpu::Output>,
     /// How an sRGB proof fits its highlights under diffuse white.
     proof_tone: std::cell::Cell<crate::gpu::Tonemap>,
+    /// Whether the display shows light past SDR white, which caps every draw's peak when it does not.
+    display_hdr: std::cell::Cell<bool>,
     print: std::cell::Cell<Option<crate::print::Scene>>,
     /// What an open answered with, for a picture that arrived already prepared.
     ///
@@ -313,6 +315,7 @@ pub async fn hold_raw(bytes: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
         adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
         proof: std::cell::Cell::new(crate::gpu::Output::Pq),
         proof_tone: std::cell::Cell::new(crate::gpu::Tonemap::Neutral),
+        display_hdr: std::cell::Cell::new(true),
         print: std::cell::Cell::new(None),
         header: String::new(),
     })
@@ -361,6 +364,7 @@ pub async fn hold_picture(framed: &[u8], request: &str) -> Result<HeldRaw, JsVal
         adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
         proof: std::cell::Cell::new(crate::gpu::Output::Pq),
         proof_tone: std::cell::Cell::new(crate::gpu::Tonemap::Neutral),
+        display_hdr: std::cell::Cell::new(true),
         print: std::cell::Cell::new(None),
         header: String::new(),
     };
@@ -1780,9 +1784,11 @@ impl HeldRaw {
     /// that differs between this library's two renditions (`job::peak_nits`, `frame.slang`'s `fs`).
     ///
     /// `tone` is the operator an sRGB proof fits its highlights with, named as a print scene names
-    /// its own; the neutral one is the rendition's.
+    /// its own; the neutral one is the rendition's. `display_hdr` false rolls every draw onto SDR
+    /// white, as the viewer's does.
     #[wasm_bindgen(js_name = setProof)]
-    pub fn set_proof(&self, proof: &str, tone: &str) -> Result<(), JsValue> {
+    pub fn set_proof(&self, proof: &str, tone: &str, display_hdr: bool) -> Result<(), JsValue> {
+        self.display_hdr.set(display_hdr);
         self.proof_tone.set(serde_json::from_value(serde_json::Value::from(tone))
             .map_err(|e| JsValue::from_str(&format!("rawshim: no highlights are fitted by {tone}: {e}")))?);
         self.proof.set(match proof {
@@ -1866,10 +1872,13 @@ impl HeldRaw {
 
         // The proofed target's own peak, which is the whole of what an SDR render does to the
         // grade: everything above diffuse white rolls into it rather than clipping there.
+        // A display that shows nothing past SDR white is the same target: aimed higher, the compositor
+        // clips what is left over per channel and moves the hue.
         let proofed = |peak_nits: crate::light::Light<crate::light::DisplayNits>| match proof {
             crate::gpu::Output::Srgb => {
                 crate::light::Light::at_diffuse_white(drawing.reference_nits)
             }
+            _ if !self.display_hdr.get() => crate::light::Light::at_diffuse_white(drawing.reference_nits),
             _ => peak_nits,
         };
         // Neutral anywhere else, where nothing reads it and the regional operator would build a

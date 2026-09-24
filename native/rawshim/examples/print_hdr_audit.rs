@@ -13,7 +13,7 @@ fn main() -> Result<(), String> {
             peak_nits: Light::exactly(1000.0), reference_white_nits: Light::exactly(203.0), white_quantile: 0.995,
         },
         defringe: 1.0, photo_analysis: None, denoise_luminance: None, denoise_colour: None,
-        dust: Default::default(), repairs: Vec::new(),
+        denoiser: rawshim::galosh::Denoiser::Galosh, dust: Default::default(), repairs: Vec::new(),
     }, 40.0)?;
     let gpu = rawshim::gpu::device().ok_or("print requires Vulkan")?;
     let base = rawshim::base::device(gpu).ok_or("the source pyramid")?;
@@ -23,7 +23,7 @@ fn main() -> Result<(), String> {
     let grade = Grade {
         width: header.width, height: header.height,
         photograph_long: Span::measured(header.width.max(header.height)),
-        colour: analysis.as_ref().and_then(|analysis| analysis.from_raw.matched.as_ref()).map(|matched| &matched.colour),
+        colour: analysis.as_ref().and_then(|analysis| analysis.from_raw.matched.as_ref()).and_then(|matched| matched.colour.as_ref()),
         white: header.white, source_level: header.peak, floor: header.floor,
         reference_nits: header.grade.reference_white_nits, peak_nits: Light::exactly(1000.0),
         exposure: Stops::ZERO, adjust: Adjust::none(), as_shot: header.as_shot, output: Output::Pq,

@@ -1,26 +1,99 @@
 module print_environment;
+import px;
 
 static const float ROOM_PI = 3.141592653589793;
 
-static const float ROOM_LOW = 0.2;
+static const float ROOM_LOW = 0.5;
 static const float ROOM_HORIZON = 0.1;
 static const float ROOM_CEILING = 0.5;
 
-/// The room the print hangs in, as radiance against the sine of the elevation looked along, in
-/// shares of the ceiling's own.
-///
-/// **A room is not an integrating sphere, and the difference is most of a print's black.** Ambient
-/// light reaches a picture on a wall from the ceiling and the luminaires in it; the wall opposite,
-/// the floor and the reader standing in front of it are an order of magnitude darker. A surround of
-/// one radiance puts the room's whole illuminance in the direction a reader's own reflection comes
-/// from, which lifts a gloss black four times over and leaves every off-axis reflection a flat wash
-/// with nothing in it to be a reflection *of*.
+/// The room's walls, floor and ceiling, as radiance against the sine of the elevation looked along,
+/// in shares of the ceiling's own.
 ///
 /// `spread` widens the ceiling's edge by the reach of the lobe reading it, so a matte sheet sees the
 /// room averaged where a gloss one mirrors the edge itself.
-public float room_profile(float up, float spread)
+float room_profile(float up, float spread)
 {
     return lerp(ROOM_LOW, 1.0, smoothstep(ROOM_HORIZON - spread, ROOM_CEILING + spread, up));
+}
+
+static const Extent<Millimetre> SIDE_WALL = { 2500.0 };
+static const Extent<Millimetre> REAR_WALL = { 3000.0 };
+static const Extent<Millimetre> READER_WALL = { 3500.0 };
+static const Extent<Millimetre> CEILING_HEIGHT = { 1200.0 };
+static const Extent<Millimetre> FLOOR_DEPTH = { 1500.0 };
+static const Extent<Millimetre> WINDOW_SILL = { -600.0 };
+static const Extent<Millimetre> WINDOW_HEAD = { 900.0 };
+static const Extent<Millimetre> SIDE_WINDOW_FROM = { -1500.0 };
+static const Extent<Millimetre> SIDE_WINDOW_TO = { 2500.0 };
+static const Extent<Millimetre> REAR_WINDOW_HALF = { 1500.0 };
+static const float WINDOW_RADIANCE = 6.0;
+
+/// The room's radiance along a world direction, in shares of the ceiling's own: [`room_profile`],
+/// and daylight through windows in both side walls and the wall behind the print.
+///
+/// **The windows are the room's bright parts, and a sheet mirrors them as bands.** Without them the
+/// ceiling carries the whole ambient at several times a white page, and a sheet tipped back mirrors
+/// it edge to edge as one flat veil. None in the wall behind the reader: a pane faced square on
+/// would carry it.
+///
+/// Measured from the print's centre, which the sheet is small enough beside the room to stand for.
+public float room_shape(Room room, float3 direction, float spread)
+{
+    return lerp(room_profile(direction.y, spread), WINDOW_RADIANCE, window_share(room, direction, spread));
+}
+
+/// The walls and windows as millimetres, taken out of their units once for a caller that reads
+/// them in a loop.
+public struct Room
+{
+    float side;
+    float rear;
+    float reader;
+    float ceiling;
+    float floor;
+    float sill;
+    float head;
+    float side_from;
+    float side_to;
+    float rear_half;
+}
+
+public void measure_room(out Room room)
+{
+    room.side = SIDE_WALL.d;
+    room.rear = REAR_WALL.d;
+    room.reader = READER_WALL.d;
+    room.ceiling = CEILING_HEIGHT.d;
+    room.floor = FLOOR_DEPTH.d;
+    room.sill = WINDOW_SILL.d;
+    room.head = WINDOW_HEAD.d;
+    room.side_from = SIDE_WINDOW_FROM.d;
+    room.side_to = SIDE_WINDOW_TO.d;
+    room.rear_half = REAR_WINDOW_HALF.d;
+}
+
+float window_share(Room room, float3 direction, float spread)
+{
+    let away = max(abs(direction), float3(1e-6));
+    let reach = float3(room.side, direction.y > 0.0 ? room.ceiling : room.floor,
+        direction.z > 0.0 ? room.reader : room.rear) / away;
+    let distance = min(reach.x, min(reach.y, reach.z));
+    let at = direction * distance;
+    // A lobe's spread in radians, times how far away the wall it lands on is; a pane's own is a
+    // pixel's worth rather than none, or the window's edge aliases.
+    let blur = max(spread, 0.002) * distance;
+    let height = rectangle(at.y, room.sill, room.head, blur);
+    if (reach.x <= distance) { return height * rectangle(at.z, room.side_from, room.side_to, blur); }
+    if (reach.z <= distance && direction.z < 0.0) {
+        return height * rectangle(at.x, -room.rear_half, room.rear_half, blur);
+    }
+    return 0.0;
+}
+
+float rectangle(float at, float from, float to, float blur)
+{
+    return saturate((min(at - from, to - at)) / blur + 0.5);
 }
 
 static const float BOUNCE_HIGH = 0.14;

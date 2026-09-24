@@ -304,7 +304,7 @@ describe('print viewing', () => {
     editor.presenter.setSoftProof('print');
     await drawnBy(editor);
     expect(editor.decoder.print?.presentation).toBe('flat');
-    expect(editor.decoder.proof).toEqual({ output: 'hdr', tone: 'neutral' });
+    expect(editor.decoder.proof).toEqual({ output: 'hdr', tone: 'neutral', displayHdr: false });
     expect(editor.decoder.stage).toEqual(photo);
     editor.presenter.print.beginDrag(1, 100, 100, 200);
     expect(editor.print.dragging).toBe(false);
@@ -328,7 +328,7 @@ describe('print viewing', () => {
     editor.presenter.setSoftProof('srgb');
     editor.presenter.print.setTonemap('filmic');
     await drawnBy(editor);
-    expect(editor.decoder.proof).toEqual({ output: 'srgb', tone: 'filmic' });
+    expect(editor.decoder.proof).toEqual({ output: 'srgb', tone: 'filmic', displayHdr: false });
     expect(editor.decoder.print).toBeNull();
   });
 

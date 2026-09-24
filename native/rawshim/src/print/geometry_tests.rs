@@ -147,7 +147,7 @@ fn probe(scene: &Scene, probes: &[[f32; 8]]) -> Vec<[f32; 16]> {
         usage: wgpu::BufferUsages::STORAGE,
     });
     let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-        label: Some("print geometry scene"), contents: &scene.uniform(), usage: wgpu::BufferUsages::UNIFORM,
+        label: Some("print geometry scene"), contents: &scene.uniform(crate::light::Light::ZERO), usage: wgpu::BufferUsages::UNIFORM,
     });
     let bytes = probes.len() as u64 * 64;
     let output = recording.buffer(&wgpu::BufferDescriptor {

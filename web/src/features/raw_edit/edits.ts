@@ -57,13 +57,14 @@ export interface EditGeometry {
 }
 
 /**
- * Which rendition a tick draws the picture as - the names `wasm::set_proof` reads - and the operator
- * an sRGB one fits its highlights under diffuse white with.
+ * Which rendition a tick draws the picture as - the names `wasm::set_proof` reads - the operator
+ * an sRGB one fits its highlights under diffuse white with, and whether the display shows anything
+ * past SDR white at all.
  *
  * `hdr` is what a library serves by default and so what the editor opens at; sRGB is what a reader
  * opts into to see where that render rolls its highlights off and clips its colours.
  */
-export const ProofSchema = z.object({ output: z.enum(['hdr', 'srgb']), tone: TonemapSchema });
+export const ProofSchema = z.object({ output: z.enum(['hdr', 'srgb']), tone: TonemapSchema, displayHdr: z.boolean() });
 export type Proof = z.infer<typeof ProofSchema>;
 
 /** The whole frame, upright, which is what a photo nobody has cropped shows. */

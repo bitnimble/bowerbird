@@ -13,7 +13,7 @@ import type { CompositeJob, ProcessingStarted, RenditionJob, RenditionTarget } f
 // photograph, and a path's worth of nothing crosses `postMessage` instead.
 
 export function toCommand(job: RenditionJob, onAnalysis?: (cache: ProcessingStarted['analysisCache']) => void): Job {
-  const photoAnalysis = job.remeasure ? undefined : readPhotoAnalysis(job.dataPath, job.photoId);
+  const photoAnalysis = job.remeasure || job.statedWhite === true ? undefined : readPhotoAnalysis(job.dataPath, job.photoId);
   onAnalysis?.(job.remeasure ? 'refresh' : photoAnalysis == null ? 'missing' : 'supplied');
   return {
     rawFilePath: job.rawFilePath,
@@ -25,6 +25,7 @@ export function toCommand(job: RenditionJob, onAnalysis?: (cache: ProcessingStar
     denoiser: job.denoiser,
     halfSize: job.halfSize,
     measure: job.measure,
+    statedWhite: job.statedWhite,
     reportProgress: job.reportProgress,
     dust: job.dust,
     repairs: job.repairs,

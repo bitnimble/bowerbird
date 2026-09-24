@@ -251,6 +251,10 @@ export abstract class RenderService {
     return this.prepareRenderer.preparePicture(photoId, shown, missing, develop);
   }
 
+  async prepareRendition(photoId: string, shown?: Shown, missing?: Missing): Promise<Uint8Array> {
+    return this.prepareRenderer.prepareRendition(photoId, shown, missing);
+  }
+
   async renderOne(
     rawFilePath: string,
     photoId: string,

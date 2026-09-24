@@ -412,6 +412,20 @@ export async function photoAction(page: Page, section: string, name: string, opt
   await page.getByRole('group', { name: section }).getByRole('menuitem', { name, exact: options?.exact }).click();
 }
 
+/**
+ * A display that shows light past SDR white, which headless Chromium says it is not. Patched into
+ * the page rather than emulated: `Emulation.setEmulatedMedia` leaves `dynamic-range` alone.
+ */
+export async function emulateHdrDisplay(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const answer = window.matchMedia.bind(window);
+    window.matchMedia = (query) => {
+      const list = answer(query);
+      return query === '(dynamic-range: high)' ? Object.create(list, { matches: { value: true } }) : list;
+    };
+  });
+}
+
 /** Chooses a proof from the bar's soft proof menu, whichever one it is showing. */
 export async function softProof(page: Page, proof: string): Promise<void> {
   await page.getByRole('button', { name: /^Soft proof/ }).click();

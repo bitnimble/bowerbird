@@ -1,6 +1,6 @@
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
 import { REQUEST_ACTIVITY_HEADER } from '../../../../../src/schemas/request_activity';
-import { photosApi } from '../../../api/photos';
+import { photosApi, type PreparedFrom } from '../../../api/photos';
 import { envelopeOf } from '../../../api/request';
 import { settingsApi } from '../../../api/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
@@ -29,13 +29,14 @@ export async function fetchPrepared(
   longEdge: number,
   mosaic: LocalPrepare,
   onTheBackend: boolean,
+  fromRendition = false,
 ): Promise<{
   header: PreparedHeader;
   /** What the loupe's tiles are built from. */
   local: LocalSource;
 }> {
-  const local = onTheBackend
-    ? await preparedThere(photoId)
+  const local = onTheBackend || fromRendition
+    ? await preparedThere(photoId, fromRendition ? 'rendition' : undefined)
     : await preparedHere(photoId, longEdge, mosaic);
   const header = readPreparedHeader(local.prepared);
   // What this open had to measure, where nothing had kept it: a tile cannot fit its own match, and
@@ -89,9 +90,9 @@ export type LocalSource = {
  * canvas they compose into - and for a phone, which cannot hold one photograph's samples let alone
  * a set of them.
  */
-async function preparedThere(photoId: string): Promise<LocalSource & { prepared: string }> {
+async function preparedThere(photoId: string, from: PreparedFrom): Promise<LocalSource & { prepared: string }> {
   const { LocalDecoder } = await import('./local_decoder');
-  const [settings, framed] = await Promise.all([settingsApi.get(), preparedPicture(photoId)]);
+  const [settings, framed] = await Promise.all([settingsApi.get(), preparedPicture(photoId, undefined, from)]);
   // The grade the module is told about, which for this arm the prepare already used: the picture
   // arrived coded against these, and a tick anchors to the same numbers.
   const open: LocalOpen = {
@@ -115,16 +116,13 @@ async function preparedThere(photoId: string): Promise<LocalSource & { prepared:
   }
 }
 
-/**
- * This photograph's picture, framed as the library framed it, for what this client can show, at
- * `develop` where the reader has moved it from the last save.
- */
+/** This photograph's picture, framed as the library framed it, for what this client can show. */
 export async function preparedPicture(
   photoId: string,
   shown?: Shown,
-  develop?: PrepareDevelop,
+  from?: PreparedFrom,
 ): Promise<Uint8Array<ArrayBuffer>> {
-  const reply = await fetch(photosApi.preparedPictureUrl(photoId, shown, develop), {
+  const reply = await fetch(photosApi.preparedPictureUrl(photoId, shown, from), {
     signal: shown?.signal ?? null,
     headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
   });

@@ -89,6 +89,7 @@ impl Uploaded<'_> {
         &self, recording: &mut Recording<'_>, grade: &Grade<'_>, pyramid: &crate::base::Pyramid,
         target: &wgpu::TextureView, scene: &Scene, pq: bool,
     ) {
+        let display_peak = grade.peak_nits;
         let grade = Grade {
             peak_nits: Light::at_diffuse_white(grade.reference_nits),
             // The pigment pass carries no print group, so the operator travels with the grade -
@@ -115,7 +116,7 @@ impl Uploaded<'_> {
         recording.holding(&albedo);
         recording.holding(&calibration);
         let parameters = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("print surface parameters"), contents: &scene.uniform(), usage: wgpu::BufferUsages::UNIFORM,
+            label: Some("print surface parameters"), contents: &scene.uniform(display_peak), usage: wgpu::BufferUsages::UNIFORM,
         });
         let pipelines = &self.gpu.print_surface;
         let scene_group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
@@ -179,7 +180,7 @@ impl Uploaded<'_> {
     ) -> Texture {
         let normalized = Scene { key_lux: Light::ZERO, fill_lux: Light::ZERO, light_temperature_kelvin: 6500.0,
             white_reflectance: crate::light::Gain::of_ratio(1.0), black_reflectance: crate::light::Gain::of_ratio(0.0), ..*scene };
-        let mut key = normalized.uniform();
+        let mut key = normalized.uniform(Light::ZERO);
         key.extend(shape.0.to_le_bytes());
         key.extend(shape.1.to_le_bytes());
         let dark = scene.key_lux.raw() == 0.0;

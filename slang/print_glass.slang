@@ -23,9 +23,23 @@ public float2 glass_wave(float2 millimetres)
     return GLASS_SLOPE * float2(value_noise(at), value_noise(at + float2(31.7, 11.9)));
 }
 
+static const float COATED_REFLECTANCE = 0.004;
+
+/// One surface of the pane, anti-reflection coated as framing glass is.
+///
+/// **Bare glass mirrors a lamp at any tilt, and a framed print does not.** The coating holds each
+/// surface near a twentieth of bare glass's four percent until Fresnel's own rise takes over, so a
+/// pane tipped back a few degrees shows the picture and only a steep one fills with the room.
+float coated_interface(float cosine)
+{
+    let bare = dielectric_fresnel(cosine, GLASS_INDEX);
+    let normal = dielectric_fresnel(1.0, GLASS_INDEX);
+    return COATED_REFLECTANCE + (bare - normal) * (1.0 - COATED_REFLECTANCE) / (1.0 - normal);
+}
+
 public float glass_reflectance(float cosine)
 {
-    let interface = dielectric_fresnel(cosine, GLASS_INDEX);
+    let interface = coated_interface(cosine);
     return 2.0 * interface / (1.0 + interface);
 }
 
@@ -33,7 +47,7 @@ public float glass_reflectance(float cosine)
 /// surface's own image of the same room, two thicknesses of glass to the side of it.
 public float glass_front_reflectance(float cosine)
 {
-    return dielectric_fresnel(cosine, GLASS_INDEX);
+    return coated_interface(cosine);
 }
 
 /// How far the second surface's image sits from the first, in print lengths.

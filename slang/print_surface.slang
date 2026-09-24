@@ -139,14 +139,14 @@ float4 vs(uint i : SV_VertexID) : SV_Position
 [shader("fragment")]
 float4 fs(float4 pos : SV_Position) : SV_Target
 {
-    let nits = measured<DisplayNits>(surface_nits(pos.xy));
+    let nits = print_displayed(measured<DisplayNits>(surface_nits(pos.xy)));
     return float4(srgb_oetf_signed(mul(R2020_TO_P3, nits.v) / 203.0), 1.0);
 }
 
 [shader("fragment")]
 uint4 fs_pq(float4 pos : SV_Position) : SV_Target
 {
-    let nits = surface_nits(pos.xy);
+    let nits = print_displayed(measured<DisplayNits>(surface_nits(pos.xy))).v;
     let codes = float3(pq(measured<DisplayNits>(nits.r)).v, pq(measured<DisplayNits>(nits.g)).v,
         pq(measured<DisplayNits>(nits.b)).v);
     return uint4(uint3(round(codes * 65535.0)), 65535);

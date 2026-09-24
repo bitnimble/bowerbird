@@ -31,6 +31,7 @@ public static const float PQ_M2 = 78.84375;
 public static const float PQ_C1 = 0.8359375;
 public static const float PQ_C2 = 18.8515625;
 public static const float PQ_C3 = 18.6875;
+public static const float PQ_MAX_NITS = 10000.0;
 
 /// **The domain is the caller's to name.** ST 2084 is absolute, so what goes in and comes back out
 /// is real nits whichever stage asked - `decode.slang` fills a table of the *scene's*, `roll`
@@ -38,7 +39,7 @@ public static const float PQ_C3 = 18.6875;
 /// what stops the two meeting further down.
 public Light<Pq> pq<D : INits>(Light<D> nits)
 {
-    let y = pow(clamp(nits.v / 10000.0, 0.0, 1.0), PQ_M1);
+    let y = pow(clamp(nits.v / PQ_MAX_NITS, 0.0, 1.0), PQ_M1);
     return measured<Pq>(pow((PQ_C1 + PQ_C2 * y) / (1.0 + PQ_C3 * y), PQ_M2));
 }
 
@@ -46,7 +47,7 @@ public Light<D> pq_inv<D : INits>(Light<Pq> signal)
 {
     let e = pow(clamp(signal.v, 0.0, 1.0), 1.0 / PQ_M2);
     return measured<D>(
-        10000.0 * pow(max(e - PQ_C1, 0.0) / (PQ_C2 - PQ_C3 * e), 1.0 / PQ_M1));
+        PQ_MAX_NITS * pow(max(e - PQ_C1, 0.0) / (PQ_C2 - PQ_C3 * e), 1.0 / PQ_M1));
 }
 
 /// A colour's luminance, which is a light in the same domain the colour is.

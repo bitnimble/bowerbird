@@ -1,14 +1,15 @@
 import { AppError } from '../../../errors';
 import type { Library } from '../../../schemas/libraries';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
-import { isComposite } from '../../../schemas/recipes';
-import { getDataPath, originalPathOf } from '../../../utils/paths';
+import { fileRecipe, isComposite } from '../../../schemas/recipes';
+import { getDataPath, getRenditionPath, originalPathOf } from '../../../utils/paths';
+import { readRawHeader } from '../rawshim/raw_decoder';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import { openPrepareWorker, pictureLevel, type Missing, type PrepareWorker, type Shown } from '../workers/prepare_pool';
 import type { CompositeJobSource, WorkerJob } from '../workers/processing_types';
-import { developed } from './developed';
+import { AS_METERED, developed } from './developed';
 import type { RenderTargets } from './render_targets';
 
 export class PrepareRenderer {
@@ -25,8 +26,6 @@ export class PrepareRenderer {
     ) => { kind: 'panorama' | 'assembly'; recipe: unknown; sources: CompositeJobSource[] } | null,
     private readonly targets: RenderTargets,
   ) {}
-
-
 
   /**
    * One picture of a photograph, coded, for a client that will grade it itself.
@@ -48,8 +47,7 @@ export class PrepareRenderer {
    * Whatever the prepare measured is kept here rather than by the client, so the next open of this
    * picture reads it instead of stacking every source again - and so a reader who never opens it
    * twice still leaves the library better off.
-   */
-  /**
+   *
    * `develop` is what a client is previewing of the settings that run before the samples cross,
    * over the stored document, which is only the last save.
    */
@@ -116,7 +114,38 @@ export class PrepareRenderer {
       .run({ job, level, width: size.width, height: size.height, window, parts });
   }
 
-
+  /**
+   * The photograph's full rendition as a picture to prepare, for a client that only shows it.
+   *
+   * Every edit is already in the file, so it is prepared unedited and at the white it was encoded
+   * with, and the client draws it with neutral edits. The caller makes sure the file is current.
+   */
+  async prepareRendition(photoId: string, shown?: Shown, missing?: Missing): Promise<Uint8Array> {
+    const photo = this.photoPaths.getBasicById(photoId);
+    if (photo == null) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
+    const library = this.libraryOf(photo.library_id);
+    if (library == null) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
+    const path = getRenditionPath(library, photoId, 'full', library.rendition_hdr);
+    // Sized off the file rather than the row: the rendition is cropped and capped in size.
+    const at = pictureLevel(fileRecipe(path), readRawHeader(path), shown, missing);
+    if (at == null) throw new AppError('VALIDATION_ERROR', `${photoId}'s rendition has no dimensions`);
+    const { level, size, window, parts } = at;
+    const job: WorkerJob = {
+      kind: 'rendition',
+      photoId,
+      dataPath: getDataPath(library),
+      rawFilePath: path,
+      cameraMatch: 'none',
+      statedWhite: true,
+      targets: [],
+      grade: this.targets.grade(),
+      ...AS_METERED,
+      sharpen: 0,
+      defringe: 0,
+    };
+    return this.prepares()
+      .run({ job, level, width: size.width, height: size.height, window, parts });
+  }
 
   /**
    * The worker every prepare goes through, opened on the first one and kept.

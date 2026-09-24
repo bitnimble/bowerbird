@@ -146,6 +146,7 @@ impl Held {
             // it was written, so there is nothing here to undo and nothing to correct a noise model
             // by - there being no fit either.
             wb_gains: [1.0; 3],
+            stated_white: Some(self.white_level()),
         })
     }
 }

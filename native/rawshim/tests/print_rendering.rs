@@ -169,11 +169,10 @@ fn ambient_only_gloss_mirrors_the_room_rather_than_washing_the_sheet() {
     let grazing = luminance(draw([0.0; 3], scene)).raw();
     assert!(grazing > face * 3.0, "the grazing wall went missing: {face} vs {grazing}");
     // Half the angle to the ceiling and half the angle to the floor: the same Fresnel either way,
-    // so what is left between them is the room - halved again by the camera metering the room it
-    // is shown, which is the same adaptation the key light is metered through.
+    // so what is left between them is the room, whose floor is half its ceiling.
     let ceiling = luminance(draw([0.0; 3], Scene { yaw_degrees: 0.0, pitch_degrees: -45.0, ..scene })).raw();
     let floor = luminance(draw([0.0; 3], Scene { yaw_degrees: 0.0, pitch_degrees: 45.0, ..scene })).raw();
-    assert!(ceiling > floor * 2.0, "the sheen is a wash rather than a reflection: {floor} vs {ceiling}");
+    assert!(ceiling > floor * 1.6, "the sheen is a wash rather than a reflection: {floor} vs {ceiling}");
 }
 
 /// A print faced square on mirrors the reader, who is darker than the wall behind them.

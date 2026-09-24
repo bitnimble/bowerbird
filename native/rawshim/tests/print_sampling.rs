@@ -22,7 +22,7 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
         source_level: Light::measured(60000.0),
         floor: None,
         reference_nits: Light::exactly(203.0),
-        peak_nits: Light::exactly(203.0),
+        peak_nits: Light::exactly(1000.0),
         exposure: Stops::ZERO,
         adjust: Adjust::none(),
         as_shot: None,

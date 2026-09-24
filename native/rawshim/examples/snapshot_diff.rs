@@ -1,12 +1,13 @@
 //! Every snapshot that moved, drawn before | after | difference, as an SDR PNG anything can open.
 //!
 //! ```text
-//! snapshot_diff [--against <rev>] [name...]
+//! snapshot_diff [--against <rev> | --before <dir>] [name...]
 //! ```
 //!
-//! Before is the snapshot at `<rev>` (HEAD by default), after is the working tree's. With no names,
-//! every snapshot that differs from `<rev>` or is new since it. Writes under
-//! `$TMPDIR/bowerbird-snapshots/` and prints each path with how far it moved.
+//! Before is the snapshot at `<rev>` (HEAD by default), or `<dir>/<name>.png` for a picture no
+//! revision holds yet; after is the working tree's. With no names, every snapshot that differs from
+//! `<rev>` or is new since it. Writes under `$TMPDIR/bowerbird-snapshots/` and prints each path
+//! with how far it moved.
 
 use rawshim::snapshot::{self, Snapshot};
 use std::path::{Path, PathBuf};
@@ -16,11 +17,13 @@ const SNAPSHOTS: &str = "test/fixtures/snapshots";
 
 fn main() {
     let mut rev = "HEAD".to_string();
+    let mut before_dir: Option<PathBuf> = None;
     let mut names: Vec<String> = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--against" => rev = args.next().expect("--against <rev>"),
+            "--before" => before_dir = Some(PathBuf::from(args.next().expect("--before <dir>"))),
             _ => names.push(arg.trim_end_matches(".png").to_string()),
         }
     }
@@ -40,7 +43,11 @@ fn main() {
             continue;
         };
         let after = Snapshot::decode(&bytes).unwrap_or_else(|e| panic!("{relative}: {e}"));
-        let before = committed(&root, &rev, &relative).map(|bytes| {
+        let held = match &before_dir {
+            Some(dir) => std::fs::read(dir.join(format!("{name}.png"))).ok(),
+            None => committed(&root, &rev, &relative),
+        };
+        let before = held.map(|bytes| {
             Snapshot::decode(&bytes).unwrap_or_else(|e| panic!("{rev}:{relative}: {e}"))
         });
 

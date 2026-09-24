@@ -134,6 +134,12 @@ export interface RenditionJob extends Developed {
    */
   measure?: boolean;
   /**
+   * `rawFilePath` is this photograph's own rendition, shown as it was encoded (`Job.statedWhite`).
+   *
+   * Nothing measured of it describes the photograph, so no analysis is read for it or filed from it.
+   */
+  statedWhite?: boolean;
+  /**
    * Count the job's steps where another thread can read them (`jobProgress`).
    *
    * Only what a reader is watching asks - an export, and a merge's own jobs: there is one counter

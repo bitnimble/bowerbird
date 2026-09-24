@@ -36,6 +36,7 @@ fn main() -> Result<(), String> {
             photo_analysis: None,
             denoise_luminance: None,
             denoise_colour: None,
+            denoiser: rawshim::galosh::Denoiser::Galosh,
             dust: Default::default(),
             repairs: Vec::new(),
         },
@@ -65,7 +66,7 @@ fn main() -> Result<(), String> {
         colour: analysis
             .as_ref()
             .and_then(|analysis| analysis.from_raw.matched.as_ref())
-            .map(|matched| &matched.colour),
+            .and_then(|matched| matched.colour.as_ref()),
         white: header.white,
         source_level: header.peak,
         floor: header.floor,

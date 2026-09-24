@@ -276,15 +276,32 @@ describe('a slider reaching the picture', () => {
     // than one the setter has just been handed.
     presenter.settle({ exposure: 0.25 });
     const drew = await drawn();
-    expect(decoder.proof).toEqual({ output: 'hdr', tone: 'neutral' });
+    expect(decoder.proof).toEqual({ output: 'hdr', tone: 'neutral', displayHdr: false });
 
     presenter.setSoftProof('srgb');
     await drawn();
 
-    expect(decoder.proof).toEqual({ output: 'srgb', tone: 'neutral' });
+    expect(decoder.proof).toEqual({ output: 'srgb', tone: 'neutral', displayHdr: false });
     // The picture is what moved, so a tick has to have been asked for: the edits are untouched
     // and nothing else on this path would go and get one.
     expect(decoder.draws).toBeGreaterThan(drew);
+  });
+
+  test('tells the module whether the display shows past SDR white, asked on every tick', async () => {
+    const asked: string[] = [];
+    const original = globalThis.matchMedia;
+    globalThis.matchMedia = ((query: string) => {
+      asked.push(query);
+      return { matches: query === '(dynamic-range: high)' };
+    }) as typeof matchMedia;
+    try {
+      presenter.settle({ exposure: 0.25 });
+      await drawn();
+    } finally {
+      globalThis.matchMedia = original;
+    }
+    expect(asked).toContain('(dynamic-range: high)');
+    expect(decoder.proof?.displayHdr).toBe(true);
   });
 
   test('sends the perspective correction the guides produced', async () => {
@@ -780,6 +797,18 @@ describe('the level a zoom is served at', () => {
     presenter.showRegion({ ...QUARTER, x: QUARTER.x + 900 });
     await settled();
     expect(develop(asked.at(-1))).toMatchObject({ sharpening: 80 });
+  });
+
+  test('an open of the rendition asks for the rendition on every window and tile after it', async () => {
+    Object.assign(presenter, { fromRendition: true });
+    presenter.showRegion(QUARTER);
+    await settled();
+    decoder.missing = [[[1024, 2048, 1024, 1024]]];
+    presenter.showRegion({ ...QUARTER, x: QUARTER.x + 900 });
+    await settled();
+
+    expect(asked.map((url) => url.searchParams.get('from'))).toEqual(['rendition', 'rendition']);
+    expect(asked.map((url) => url.searchParams.get('develop'))).toEqual([null, null]);
   });
 
   test('a small pan inside what is held asks for nothing', async () => {

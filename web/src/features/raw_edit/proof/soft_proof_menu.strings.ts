@@ -6,5 +6,4 @@ export const SoftProofMenuStrings = {
   print: () => 'Printed media',
   print3d: () => 'Printed media (3D)',
   hdrNeedsHdrRendition: () => 'Choose an HDR rendition to proof in HDR',
-  printNeedsOriginal: () => 'Fetch original to proof a print',
 };

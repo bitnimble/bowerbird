@@ -133,6 +133,13 @@ pub struct Job {
     /// per request rather than once at the open.
     #[serde(default)]
     pub scene_peak: Option<Light<DisplayNits>>,
+    /// Anchor diffuse white where a finished picture's file states it rather than at a quantile of
+    /// the frame, so a rendition graded neutral shows the light it was encoded with.
+    ///
+    /// A RAW states none, and an ordinary JPEG or HEIC original is a scene to grade like one, so
+    /// only the prepare that serves a photograph's own rendition asks.
+    #[serde(default)]
+    pub stated_white: bool,
     /// What has already been measured about this photograph, if the caller kept it
     /// (`crate::photo_analysis`).
     ///
@@ -707,6 +714,11 @@ impl Base {
         let as_shot = frame.as_shot;
         let wb_gains = frame.wb_gains;
         let dust = frame.dust.clone();
+        let stated_white = match (job.stated_white, frame.stated_white) {
+            (false, _) => None,
+            (true, Some(white)) => Some(white),
+            (true, None) => return Err(format!("{} states no white to anchor at", job.raw_file_path)),
+        };
         let crate::frame::Pixels::Resident(resident) = frame.pixels else {
             return Err("the render needs a 16-bit scene-linear decode on the device".to_string());
         };
@@ -740,6 +752,10 @@ impl Base {
             .from_raw
             .capture_sigma
             .or_else(|| blur.map(|blur| blur * frame_reduced as f32));
+        let measured = match stated_white {
+            Some(white) => crate::tone::Levels { white, peak: measured.peak.max(white), ..measured },
+            None => measured,
+        };
         // Floored here and carried, so the white the frame is *coded* against and the white the
         // shader is told about are one number rather than two computed alike.
         let levels = measured.anchored();

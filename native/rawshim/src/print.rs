@@ -1,4 +1,4 @@
-use crate::light::{Gain, Illuminance, Light};
+use crate::light::{DisplayNits, Gain, Illuminance, Light};
 use crate::px::{Extent, Millimetre, PrintUnit, Share, Span};
 
 pub(crate) const ALBEDO_VIEWS: u32 = 128;
@@ -177,7 +177,8 @@ impl Scene {
             component(tangent), component(bitangent), component(light)]
     }
 
-    pub(crate) fn uniform(&self) -> Vec<u8> {
+    /// `display_peak` is the grade's own, which the sheet's light is rolled onto as a frame's is.
+    pub(crate) fn uniform(&self, display_peak: Light<DisplayNits>) -> Vec<u8> {
         let (yaw_sin, yaw_cos) = self.yaw_degrees.to_radians().sin_cos();
         let (pitch_sin, pitch_cos) = self.pitch_degrees.to_radians().sin_cos();
         let (light, lengths) = self.lamp();
@@ -193,7 +194,7 @@ impl Scene {
             if matches!(self.presentation, Presentation::Surface) { 1.0 } else { 0.0 },
             distance.raw(), half_width.raw(), half_paper.raw(), self.surface_texture,
             if self.framed { 1.0 } else { 0.0 }, if self.framed { FRAME_BORDER.raw() } else { 0.0 }, 0.0, 0.0,
-            self.zoom, self.pan_x, self.pan_y, 0.0,
+            self.zoom, self.pan_x, self.pan_y, display_peak.raw(),
         ].into_iter().flat_map(|word| (word as f32).to_le_bytes()).collect()
     }
 
@@ -288,7 +289,7 @@ mod tests {
             usage: wgpu::BufferUsages::STORAGE,
         });
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("print optical scene"), contents: &scene.uniform(), usage: wgpu::BufferUsages::UNIFORM,
+            label: Some("print optical scene"), contents: &scene.uniform(Light::ZERO), usage: wgpu::BufferUsages::UNIFORM,
         });
         let bytes = probes.len() as u64 * 32;
         let output = recording.buffer(&wgpu::BufferDescriptor {
@@ -578,7 +579,7 @@ mod tests {
             source_level: Light::measured(60000.0),
             floor: None,
             reference_nits: Light::exactly(203.0),
-            peak_nits: Light::exactly(203.0),
+            peak_nits: Light::exactly(1000.0),
             exposure: Stops::ZERO,
             adjust: Adjust::none(),
             as_shot: None,

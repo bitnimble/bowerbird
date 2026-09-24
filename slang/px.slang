@@ -46,6 +46,7 @@
 //   shader only resolved, as `repair.slang`'s `cell` and `feather`.
 //   Print geometry and lighting use `PrintUnit`, half the paper's long edge, for camera, bend and emitter distances.
 //   Stock thickness, coating texture, frame rails, mat and glass depths use millimetres resolved from the physical long edge.
+//   The room's walls and windows are millimetres from the print's centre.
 //
 // **A struct constant used inside a loop wants its number hoisted first.** Slang synthesises an
 // initializer per use site, and a struct returned by value under a loop is a call Metal drops

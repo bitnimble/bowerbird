@@ -198,6 +198,7 @@ fn tile_job(path: &str, tile: Option<[usize; 4]>, levels: Option<crate::tone::Le
         noise_fit: None,
         levels,
         scene_peak: None,
+        stated_white: false,
         photo_analysis: None,
         // **On, and that took a bug to learn.** Off, this compared everything about a tile
         // except the one stage that reads a *neighbourhood* of the region it was handed - so a
@@ -3522,6 +3523,12 @@ mod pictures {
                 light_angular_degrees: 10.0,
                 ..Scene::default()
             }.lit_from(-30.0, 44.0, 4.0)),
+            // Glass reads its surroundings by angle, so a framed print tipped back through the
+            // default room: barely, where it should still read as the picture, part way, and
+            // almost onto its back.
+            ("print/framed-tilt-5", false, Scene { framed: true, yaw_degrees: 0.0, pitch_degrees: -5.0, ..Scene::default() }),
+            ("print/framed-tilt-30", false, Scene { framed: true, yaw_degrees: 0.0, pitch_degrees: -30.0, ..Scene::default() }),
+            ("print/framed-tilt-85", false, Scene { framed: true, yaw_degrees: 0.0, pitch_degrees: -85.0, ..Scene::default() }),
         ] {
             // The surface presentation maps the whole sheet into the canvas, so its canvas takes
             // the sheet's shape; the scene one draws the sheet inside a canvas of its own.
@@ -3541,7 +3548,7 @@ mod pictures {
                 source_level: header.peak,
                 floor: header.floor,
                 reference_nits: header.grade.reference_white_nits,
-                peak_nits: Light::at_diffuse_white(header.grade.reference_white_nits),
+                peak_nits: header.grade.peak_nits,
                 exposure: Stops::ZERO,
                 adjust: crate::gpu::Adjust::none(),
                 as_shot: header.as_shot,

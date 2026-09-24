@@ -18,12 +18,24 @@ fn main() -> Result<(), String> {
     let zoom = std::env::args()
         .find_map(|arg| arg.strip_prefix("--zoom=").map(str::to_owned))
         .map_or(Ok(1.0), |value| value.parse::<f64>().map_err(|_| "invalid zoom"))?;
+    let pitches: Vec<f64> = std::env::args()
+        .find_map(|arg| arg.strip_prefix("--pitches=").map(str::to_owned))
+        .map_or(Ok(Vec::new()), |list| list.split(',').map(|value| value.parse::<f64>().map_err(|_| "invalid pitch")).collect())?;
+    let number = |name: &str, default: f64| -> Result<f64, String> {
+        std::env::args()
+            .find_map(|arg| arg.strip_prefix(&format!("--{name}=")).map(str::to_owned))
+            .map_or(Ok(default), |value| value.parse::<f64>().map_err(|_| format!("invalid {name}")))
+    };
+    let key_lux = Light::exactly(number("key-lux", Scene::default().key_lux.raw())?);
+    let fill_lux = Light::exactly(number("fill-lux", Scene::default().fill_lux.raw())?);
+    let lamp_degrees = number("lamp-degrees", Scene::default().light_angular_degrees)?;
     let args: Vec<String> = std::env::args()
         .filter(|arg| arg != "--framed" && arg != "--surface"
-            && !arg.starts_with("--tone=") && !arg.starts_with("--zoom="))
+            && !arg.starts_with("--tone=") && !arg.starts_with("--zoom=") && !arg.starts_with("--pitches=")
+            && !arg.starts_with("--key-lux=") && !arg.starts_with("--fill-lux=") && !arg.starts_with("--lamp-degrees="))
         .collect();
     if !(3..=4).contains(&args.len()) {
-        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--tone=neutral|filmic|channel|local] [--zoom=1]".to_owned());
+        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--tone=neutral|filmic|channel|local] [--zoom=1] [--pitches=8,0,-8] [--key-lux=1000] [--fill-lux=500] [--lamp-degrees=1]".to_owned());
     }
     let output = std::path::Path::new(&args[2]);
     std::fs::create_dir_all(output).map_err(|error| error.to_string())?;
@@ -39,6 +51,7 @@ fn main() -> Result<(), String> {
         photo_analysis: None,
         denoise_luminance: None,
         denoise_colour: None,
+        denoiser: rawshim::galosh::Denoiser::Galosh,
         dust: Default::default(),
         repairs: Vec::new(),
     }, 40.0)?;
@@ -57,12 +70,12 @@ fn main() -> Result<(), String> {
         width: header.width,
         height: header.height,
         photograph_long: Span::measured(header.width.max(header.height)),
-        colour: analysis.as_ref().and_then(|analysis| analysis.from_raw.matched.as_ref()).map(|matched| &matched.colour),
+        colour: analysis.as_ref().and_then(|analysis| analysis.from_raw.matched.as_ref()).and_then(|matched| matched.colour.as_ref()),
         white: header.white,
         source_level: header.peak,
         floor: header.floor,
         reference_nits: header.grade.reference_white_nits,
-        peak_nits: Light::at_diffuse_white(header.grade.reference_white_nits),
+        peak_nits: header.grade.peak_nits,
         exposure: Stops::ZERO,
         adjust: Adjust::none(),
         as_shot: header.as_shot,
@@ -80,6 +93,28 @@ fn main() -> Result<(), String> {
     let peak = gpu.scene_peak();
     let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
     uploaded.collect_candidates(&grade);
+    if !pitches.is_empty() {
+        let white = header.grade.reference_white_nits.raw();
+        for pitch in pitches {
+            let scene = Scene {
+                tonemap, framed, zoom, key_lux, fill_lux, light_angular_degrees: lamp_degrees, pitch_degrees: pitch,
+                ..Scene::default()
+            };
+            let samples = uploaded.print_pq(&grade, &pyramid, &scene);
+            let snapshot = Snapshot::pq(&samples, Size::<rawshim::px::Canvas>::measured(canvas.0, canvas.1));
+            std::fs::write(output.join(format!("pitch{pitch}.preview.png")), rawshim::snapshot::side_by_side_png(None, &snapshot))
+                .map_err(|error| error.to_string())?;
+            let (tops, lumas, bands) = sheet_levels(&samples, canvas);
+            let at = |sorted: &[f64], share: f64| sorted[((sorted.len() - 1) as f64 * share) as usize];
+            let bands: Vec<String> = bands.iter().map(|band| format!("{:>6.2}", at(band, 0.1))).collect();
+            println!(
+                "pitch {pitch:>5}: max channel p99.5 {:>7.1} nits ({:+.2} stops), max {:>7.1}; luma p1 {:>6.2} nits ({:+.2} stops); luma p10 top to bottom {}",
+                at(&tops, 0.995), (at(&tops, 0.995) / white).log2(), at(&tops, 1.0),
+                at(&lumas, 0.01), (at(&lumas, 0.01) / white).log2(), bands.join(" "),
+            );
+        }
+        return Ok(());
+    }
     for (name, paper, roughness, white, black, surface_texture) in [
         ("gloss", Paper::Gloss, 0.08, 0.92, 0.004, 0.15),
         ("satin", Paper::Satin, 0.18, 0.9, 0.008, 0.5),
@@ -127,4 +162,39 @@ fn main() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+const BANDS: usize = 5;
+
+/// The drawn sheet's brightest channel and its luma, per pixel, in display nits, sorted, and the
+/// luma again split into horizontal bands of the canvas rows the sheet covers, top first.
+fn sheet_levels(samples: &[u16], canvas: (usize, usize)) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
+    let nits = |code: u16| rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(Light::measured(f64::from(code) / 65535.0)).raw();
+    let background = {
+        let corner = &samples[..3];
+        (nits(corner[0]), nits(corner[1]), nits(corner[2]))
+    };
+    let mut tops = Vec::new();
+    let mut lumas = Vec::new();
+    let mut rows = Vec::new();
+    for (at, pixel) in samples.chunks_exact(samples.len() / (canvas.0 * canvas.1)).enumerate() {
+        let (r, g, b) = (nits(pixel[0]), nits(pixel[1]), nits(pixel[2]));
+        if (r - background.0).abs() + (g - background.1).abs() + (b - background.2).abs() < 1e-3 { continue; }
+        tops.push(r.max(g).max(b));
+        let luma = 0.2627 * r + 0.678 * g + 0.0593 * b;
+        lumas.push(luma);
+        rows.push((at / canvas.0, luma));
+    }
+    let first = rows.iter().map(|(row, _)| *row).min().unwrap_or(0);
+    let last = rows.iter().map(|(row, _)| *row).max().unwrap_or(0);
+    let mut bands = vec![Vec::new(); BANDS];
+    for (row, luma) in rows {
+        bands[((row - first) * BANDS / (last - first + 1)).min(BANDS - 1)].push(luma);
+    }
+    for band in &mut bands {
+        band.sort_by(f64::total_cmp);
+    }
+    tops.sort_by(f64::total_cmp);
+    lumas.sort_by(f64::total_cmp);
+    (tops, lumas, bands)
 }

@@ -164,6 +164,11 @@ export const JobSchema = z.object({
    */
   measure: z.boolean().optional(),
   /**
+   * Anchor diffuse white where a finished picture's file states it, rather than at a quantile of
+   * the frame: the file is the photograph's own rendition, to be shown as it was encoded.
+   */
+  statedWhite: z.boolean().optional(),
+  /**
    * Count this job's steps in the library's own cell, for `jobProgress` to read from this thread.
    *
    * Only an export asks: there is one cell for the process, so a job nobody is watching would

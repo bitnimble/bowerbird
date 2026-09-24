@@ -56,7 +56,7 @@ mod tests {
     /// value, they all write a fixed run of words - so the length is the whole of what is asked.
     #[test]
     fn every_uniform_is_the_size_its_shader_reads() {
-        assert_eq!(crate::print::Scene::default().uniform().len(), 112);
+        assert_eq!(crate::print::Scene::default().uniform(crate::light::Light::ZERO).len(), 112);
         // The blocks whose bytes a function returns. `base.rs` builds its other four inline into
         // the buffer they go to, so there is nothing to call and no length to take; extract them
         // the same way when one is next touched and add a line here.
@@ -71,7 +71,7 @@ mod tests {
                 "frame.wgsl",
                 "PrintParams",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/frame.wgsl")).to_string(),
-                crate::print::Scene::default().uniform().len(),
+                crate::print::Scene::default().uniform(crate::light::Light::ZERO).len(),
             ),
             (
                 "assemble.wgsl",

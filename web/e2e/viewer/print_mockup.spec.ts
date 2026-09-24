@@ -14,14 +14,13 @@ import {
   savedRev,
   softProof,
   useLibrary,
-  waitForEditorLive,
 } from '../helpers';
 
 // The mockup's stage is the print's own region rather than the viewer's "Photo", so the
 // editor's live helper cannot see it: a drawn mode is what says a device rendered this.
 const DRAWN = { timeout: 170_000 };
 
-// A real RAW decode on the browser's own adapter, same as the editor's.
+// The full rendition built on the server first, where nothing has asked for it yet.
 test.describe.configure({ timeout: 180_000, mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
@@ -78,24 +77,23 @@ test('the mockup opens on its own address', async ({ page }) => {
   await expect(page.getByRole('group', { name: 'Paper', exact: true })).toBeVisible();
 });
 
-// A sheet two thousand pixels across does not need the sensor, and the editor's open is sized for
-// a loupe the mockup does not have: whole, a 61MP frame is a gigabyte of samples and pyramid.
-test('the mockup opens the photograph smaller than the editor does', async ({ page }) => {
+// A sheet two thousand pixels across does not need the sensor, and the full rendition already
+// holds every edit: the RAW never crosses.
+test('the mockup is drawn from the full rendition rather than the RAW', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, PRINT_PHOTOS_DIR);
   await openPhoto(page);
-  const photoPath = new URL(page.url()).pathname;
+  const requested: URL[] = [];
+  page.on('request', (request) => requested.push(new URL(request.url())));
 
   await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
-  const mockup = Math.max(...(await editDiagnosticSize(page, 'data-size')));
-
-  await page.goto(`${photoPath}?edit`);
-  await waitForEditorLive(page);
-  const editor = Math.max(...(await editDiagnosticSize(page, 'data-size')));
-  expect(mockup).toBeLessThan(editor * 0.6);
+  const prepares = requested.filter((url) => url.pathname.endsWith(route(PathSegment.prepare())));
+  expect(prepares.length).toBeGreaterThan(0);
+  expect(prepares.every((url) => url.searchParams.get('from') === 'rendition')).toBe(true);
+  expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.download(), 'original')))).toEqual([]);
   // Still more than the sheet can show at any angle.
-  expect(mockup).toBeGreaterThan(2500);
+  expect(Math.max(...(await editDiagnosticSize(page, 'data-size')))).toBeGreaterThan(2500);
 });
 
 test('escape leaves the print mockup', async ({ page }) => {

@@ -496,14 +496,14 @@ Colour<DisplayNits> print_nits(float2 pos)
 [shader("fragment")]
 float4 fs_print(float4 pos : SV_Position) : SV_Target
 {
-    let nits = print_nits(pos.xy);
+    let nits = print_displayed(print_nits(pos.xy));
     return float4(srgb_oetf_signed(on_the_canvas(nits).v), 1.0);
 }
 
 [shader("fragment")]
 uint4 fs_print_pq(float4 pos : SV_Position) : SV_Target
 {
-    let nits = print_nits(pos.xy);
+    let nits = print_displayed(print_nits(pos.xy));
     let codes = float3(pq(measured<DisplayNits>(nits.v.r)).v, pq(measured<DisplayNits>(nits.v.g)).v,
         pq(measured<DisplayNits>(nits.v.b)).v);
     return uint4(uint3(round(codes * 65535.0)), 65535);

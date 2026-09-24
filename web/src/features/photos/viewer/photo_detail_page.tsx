@@ -61,18 +61,6 @@ import { PrintPanelStrings } from '../../raw_edit/print/print_panel.strings';
 
 const EDIT_LONG_EDGE = 0;
 
-/**
- * What the print mockup opens the photograph at, where the editor takes the whole sensor.
- *
- * **The mockup is a sheet on a screen, and the editor's open is sized for a loupe it does not
- * have.** A 61MP frame is 366MB of samples and 650MB of pyramid to draw a print two thousand pixels
- * across, which is most of what a browser will hand a tab before it stops handing it anything. Half
- * the sensor is still more than the sheet can show at any angle, and the decode asks for the
- * smallest long edge it may answer with rather than a size, so a photograph too small to halve
- * arrives whole.
- */
-const PRINT_LONG_EDGE = 3000;
-
 const PANELS_KEY = 'bowerbird.detail.panels';
 
 const STRIP_KEY = 'bowerbird.detail.filmstrip';
@@ -198,7 +186,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     else presenter.restoreSoftProof();
     setSession({ photoId, mode, touch, edit, stage, crop, keystone, repair, loupe, print, presenter });
     let startingRotation: number | null = null;
-    void presenter.open(photoId, mode === 'print' ? PRINT_LONG_EDGE : EDIT_LONG_EDGE).then(() => {
+    void presenter.open(photoId, mode === 'print' ? 'rendition' : EDIT_LONG_EDGE).then(() => {
       startingRotation = edit.doc?.rotate ?? 0;
     });
     return () => {
