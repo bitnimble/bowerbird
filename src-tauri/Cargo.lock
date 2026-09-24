@@ -55,6 +55,7 @@ dependencies = [
  "launcher",
  "objc2-app-kit",
  "objc2-foundation",
+ "plist",
  "raw-window-handle",
  "reqwest 0.12.28",
  "rfd",

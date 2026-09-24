@@ -70,11 +70,16 @@ struct Layout {
 /// executable run loose out of Application Support is a different application to look at.
 #[cfg(target_os = "macos")]
 fn layout(payload: &Path) -> Layout {
-    let macos = payload.join("Bowerbird.app").join("Contents").join("MacOS");
+    let contents = payload.join("Bowerbird.app").join("Contents");
+    let executable = plist::Value::from_file(contents.join("Info.plist"))
+        .ok()
+        .and_then(|info| Some(info.as_dictionary()?.get("CFBundleExecutable")?.as_string()?.to_owned()))
+        .unwrap_or_default();
+    let macos = contents.join("MacOS");
     Layout {
-        app: macos.join("Bowerbird"),
+        app: macos.join(executable),
         server: macos.join("bowerbird-server"),
-        resources: payload.join("Bowerbird.app").join("Contents").join("Resources").join("resources"),
+        resources: contents.join("Resources").join("resources"),
     }
 }
 

@@ -3,7 +3,7 @@
 // `--target <triple>` for a cross build; this machine's otherwise. `--out <dir>` says
 // where to leave it.
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -58,53 +58,26 @@ function need(path: string, how: string): string {
 
 need(sidecar, 'Run `bun run build:sidecar` first.');
 need(join(resources, 'server', 'index.js'), 'Run `bun run build:sidecar` first.');
-need(join(resources, 'reference_frame.ARW'), 'Run `bun run build:sidecar` first.');
 
-/**
- * The `.app` a macOS build produced, wherever the bundler left it and whatever it called
- * the binary inside.
- *
- * Both are the bundler's to choose - `mainBinaryName` and `productName` between them
- * decide it, and which wins has moved across Tauri versions - so neither is written down
- * twice. This finds the one bundle and reads the executable's name out of its own plist.
- */
-function macBundle(): { path: string; executable: string } {
+/** The one `.app` a macOS build produced. */
+function macBundle(): string {
   const bundles = join(releaseDir, 'bundle', 'macos');
   need(bundles, 'Run `bun run tauri build` (or `bun run mac:build`) first.');
   const found = readdirSync(bundles).filter((entry) => entry.endsWith('.app'));
   if (found.length !== 1) {
     throw new Error(`${bundles} holds ${found.length} bundles, so which one ships is ambiguous: ${found.join(', ')}`);
   }
-  const path = join(bundles, found[0]!);
-  const plist = readFileSync(join(path, 'Contents', 'Info.plist'), 'utf8');
-  const executable = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
-  if (executable == null) throw new Error(`${path} has no CFBundleExecutable, so nothing knows what to start`);
-  return { path, executable };
+  return join(bundles, found[0]!);
 }
 
 if (triple.includes('apple')) {
   // The whole bundle, because a window, a menu bar and a dock icon come from being
   // inside one: a bare executable run out of Application Support is a different
-  // application to look at.
-  const bundle = macBundle();
-  // Renamed into the shape `src-tauri/src/main.rs` starts, rather than that file being
-  // taught every name a bundler might pick: the supervisor runs before there is a Tauri
-  // context to ask, so the one place that can settle this is here, where the plist is.
+  // application to look at. Copied as built: the supervisor reads the executable's
+  // name out of its `Info.plist`, and an edited bundle no longer matches its signature.
   const app = join(staging, 'Bowerbird.app');
-  cpSync(bundle.path, app, { recursive: true, verbatimSymlinks: true });
+  cpSync(macBundle(), app, { recursive: true, verbatimSymlinks: true });
   const macos = join(app, 'Contents', 'MacOS');
-  if (bundle.executable !== 'Bowerbird') {
-    renameSync(join(macos, bundle.executable), join(macos, 'Bowerbird'));
-    const plist = join(app, 'Contents', 'Info.plist');
-    writeFileSync(
-      plist,
-      readFileSync(plist, 'utf8').replace(
-        /(<key>CFBundleExecutable<\/key>\s*<string>)[^<]+(<\/string>)/,
-        '$1Bowerbird$2',
-      ),
-    );
-  }
-  need(join(macos, 'Bowerbird'), 'The bundle does not hold the executable the supervisor starts.');
   // Already inside - Tauri puts the sidecar beside the executable and the resources
   // under `Contents/Resources` - so this is a check rather than a copy.
   need(join(macos, 'bowerbird-server'), 'The bundle does not hold the server.');

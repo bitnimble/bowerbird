@@ -11,7 +11,7 @@ import {
   type RenderedRendition,
 } from '../../../schemas/render_stages';
 import type { RenderTimingsFile } from '../renditions/render_timings_file';
-import { assertReferenceFrame, REFERENCE_FRAME } from '../renditions/reference_frame';
+import { fetchReferenceFrame, REFERENCE_FRAME } from '../renditions/reference_frame';
 import { readRawHeader } from '../rawshim/raw_decoder';
 import { openCompositeWorker } from '../workers/composite_worker';
 import type { SinglePhotoRenderer } from './single_photo_renderer';
@@ -33,6 +33,8 @@ const REFERENCE_FRAME_PATH = process.env.BOWERBIRD_REFERENCE_FRAME ?? REFERENCE_
  * Tens of seconds on a `full` and minutes on a `max`: the caller is a button somebody pressed.
  */
 export class RenderBenchmark {
+  private fetching: Promise<void> | null = null;
+
   constructor(
     private readonly renderer: SinglePhotoRenderer,
     private readonly frame: string = REFERENCE_FRAME_PATH,
@@ -43,7 +45,9 @@ export class RenderBenchmark {
    * owns the file is the caller, and a benchmark is the only thing here that writes it.
    */
   async run(rendition: RenderedRendition, into: RenderTimingsFile): Promise<RenderTiming> {
-    assertReferenceFrame(this.frame);
+    // Shared, so a second rendition's Measure does not write the same file while the first reads it.
+    this.fetching ??= fetchReferenceFrame(this.frame).finally(() => (this.fetching = null));
+    await this.fetching;
     const header = readRawHeader(this.frame);
     const benchmarkPhotoId = newId();
 

@@ -175,7 +175,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: env.TAG != ''
         with:
-          name: dist-docker-x86_64
+          name: dist-docker-x86_64-payload
           path: dist/
 
   # One row per platform, from `plan`, which is where the rows are written.
@@ -290,6 +290,9 @@ jobs:
       # The server the app carries, and the pixel library behind it. One triple on every
       # platform: the shell, the library and the Bun runtime beside them are all the same build.
       - name: The bundled server
+        env:
+          # Here, not in rawshim's release profile: `test:bench` builds that profile too, and a profiler wants the symbols.
+          CARGO_PROFILE_RELEASE_STRIP: symbols
         run: |
           set -eu
           bun run build:native:release --target ${{ matrix.target }}
@@ -303,16 +306,23 @@ jobs:
       - name: Assemble the payload and collect the installer
         run: |
           set -eu
-          bun run scripts/build-payload.ts --target ${{ matrix.target }} --out dist
+          bun run scripts/build-payload.ts --target ${{ matrix.target }} --out dist/payload
+          mkdir -p dist/installer/${{ matrix.platform }}
           find src-tauri/target/${{ matrix.target }}/release/bundle -type f \
             \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*-setup.exe' \) \
-            -exec cp {} dist/${{ matrix.platform }}/ \;
+            -exec cp {} dist/installer/${{ matrix.platform }}/ \;
         shell: bash
 
+      # Two artifacts, each holding `<platform>/<file>`, so one can be fetched without the other and
+      # `publish` still merges both into `dist/<platform>/`.
       - uses: actions/upload-artifact@v6
         with:
-          name: dist-${{ matrix.platform }}
-          path: dist/
+          name: dist-${{ matrix.platform }}-installer
+          path: dist/installer/
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist-${{ matrix.platform }}-payload
+          path: dist/payload/
 
   # Shell only: `rawshim` without `renditions` links no C at all, and with it would want the
   # codecs `get:codecs` builds, for an Android triplet it does not name.
@@ -396,7 +406,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: dist-android-aarch64
+          name: dist-android-aarch64-installer
           path: dist/
 
   # One release, made once everything that could fail has. The manifest is written from

@@ -15,7 +15,6 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { elfClosure, machNames } from './native_closure';
-import { assertReferenceFrame, REFERENCE_FRAME } from '../src/services/processing/renditions/reference_frame';
 
 const ROOT = join(import.meta.dir, '..');
 const BINARIES = join(ROOT, 'src-tauri', 'binaries');
@@ -290,13 +289,8 @@ copyFileSync(library, shippedLibrary());
 chmodSync(shippedLibrary(), 0o755);
 shipTheClosure(triple);
 
-const frame = join(ROOT, 'assets', REFERENCE_FRAME.filename);
-assertReferenceFrame(frame);
-copyFileSync(frame, join(RESOURCES, REFERENCE_FRAME.filename));
-
 console.log(`sidecar: ${sidecar} (the Bun runtime, from ${runtime})`);
 console.log(`server:  ${join(SERVER, 'index.js')}`);
 console.log(`native:  ${shippedLibrary()} (from ${library})`);
-console.log(`frame:   ${join(RESOURCES, REFERENCE_FRAME.filename)}`);
 console.log(`schema:  ${join(SERVER, 'migrations')}`);
 console.log(`libsql:  ${join(SERVER, 'node_modules', libsqlPackage(triple))}`);
