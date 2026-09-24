@@ -3,14 +3,21 @@ import type { Option } from '../../../ui/option';
 import { SOFT_PROOFS, type SoftProof } from './soft_proof';
 import { SoftProofMenuStrings as strings } from './soft_proof_menu.strings';
 
-const LABELS: Record<SoftProof, () => string> = {
-  hdr: strings.hdrDefault,
-  srgb: strings.srgb,
+const OPTIONS: Record<SoftProof, () => string> = {
+  hdr: strings.hdrOption,
+  srgb: strings.sdrOption,
   print: strings.print,
   print3d: strings.print3d,
 };
 
-/** The header's soft proof choice, named for the proof in force once one is. */
+const SHOWN: Record<SoftProof, () => string> = {
+  hdr: strings.hdr,
+  srgb: strings.sdr,
+  print: strings.print,
+  print3d: strings.print3d,
+};
+
+/** The header's soft proof choice, named for the proof in force. */
 export function SoftProofMenu({
   value,
   onChange,
@@ -23,15 +30,15 @@ export function SoftProofMenu({
 }): JSX.Element {
   const options: Option<SoftProof>[] = SOFT_PROOFS.map((proof) => ({
     value: proof,
-    label: LABELS[proof](),
+    label: OPTIONS[proof](),
     active: proof === value,
     ...(proof === 'hdr' && !hdrOffered ? { disabled: true, title: strings.hdrNeedsHdrRendition() } : {}),
   }));
-  const shown = value === 'hdr' ? null : LABELS[value]();
+  const shown = SHOWN[value]();
   return (
     <ActionMenu
-      trigger={shown ?? strings.softProof()}
-      label={shown == null ? strings.softProof() : strings.softProofAs(shown)}
+      trigger={shown}
+      label={strings.softProofAs(shown)}
       options={options}
       onSelect={onChange}
     />

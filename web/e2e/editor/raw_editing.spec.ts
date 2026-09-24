@@ -162,9 +162,13 @@ test('grades through the camera match, as the renditions do', async ({ page }) =
 test('every soft proof crosses to the module and keeps drawing', async ({ page }) => {
   await open(page);
 
-  for (const [label, panel] of [['sRGB', 'sRGB'], ['Printed media', 'Paper'], ['Rec.2020 PQ HDR (default)', null]] as const) {
+  for (const [label, shown, panel] of [
+    ['SDR (sRGB)', 'SDR', 'sRGB'],
+    ['Printed media', 'Printed media', 'Paper'],
+    ['HDR (Rec.2020 PQ)', 'HDR', null],
+  ] as const) {
     await softProof(page, label);
-    if (label === 'sRGB') {
+    if (label === 'SDR (sRGB)') {
       await page.getByRole('combobox', { name: 'Rendering intent' }).click();
       await page.getByRole('option', { name: 'Relative colorimetric', exact: true }).click();
     }
@@ -172,7 +176,7 @@ test('every soft proof crosses to the module and keeps drawing', async ({ page }
       await page.getByRole('combobox', { name: 'Rendering intent' }).click();
       await page.getByRole('option', { name: 'Absolute colorimetric', exact: true }).click();
     }
-    await expect(page.getByRole('button', { name: /^Soft proof/ })).toHaveText(label === 'Rec.2020 PQ HDR (default)' ? 'Soft proof' : label);
+    await expect(page.getByRole('button', { name: /^Soft proof/ })).toHaveText(shown);
     if (panel != null) await expect(page.getByRole('group', { name: panel, exact: true })).toBeVisible();
     // A refused command comes back asynchronously and lands on the tick after it
     // (`gpu::refusal`), so the status is read for a while rather than once.
@@ -845,7 +849,7 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   expect(compositing.filter((layer) => layer.opacity !== '1' || layer.filter !== 'none' || layer.transform !== 'none' || layer.blend !== 'normal')).toEqual([]);
   await expect(editorFailure(page)).toHaveCount(0);
   expect(await savedRev(page, photoId)).toBe(revision);
-  await softProof(page, 'Rec.2020 PQ HDR (default)');
+  await softProof(page, 'HDR (Rec.2020 PQ)');
   await waitForEditorLive(page);
   await expect(editTools(page)).toBeVisible();
   await expect(print).toHaveCount(0);

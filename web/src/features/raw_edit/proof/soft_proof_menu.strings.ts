@@ -1,7 +1,9 @@
 export const SoftProofMenuStrings = {
-  softProof: () => 'Soft proof',
   softProofAs: (proof: string) => `Soft proof: ${proof}`,
-  hdrDefault: () => 'Rec.2020 PQ HDR (default)',
+  hdrOption: () => 'HDR (Rec.2020 PQ)',
+  sdrOption: () => 'SDR (sRGB)',
+  hdr: () => 'HDR',
+  sdr: () => 'SDR',
   srgb: () => 'sRGB',
   print: () => 'Printed media',
   print3d: () => 'Printed media (3D)',

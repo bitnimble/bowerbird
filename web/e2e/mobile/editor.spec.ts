@@ -78,7 +78,7 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await cdp.detach();
   expect(await scene()).toEqual(tilted);
-  await softProof(page, 'Rec.2020 PQ HDR (default)');
+  await softProof(page, 'HDR (Rec.2020 PQ)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'photo');
   await page.evaluate(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 20, gamma: -30 })));
   expect(await worker.evaluate(() => Reflect.get(globalThis, 'printMotionScene'))).toBeNull();

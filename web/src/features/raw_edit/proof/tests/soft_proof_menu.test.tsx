@@ -17,13 +17,17 @@ async function opened(value: SoftProof, hdrOffered = true): Promise<SoftProof[]>
   return chosen;
 }
 
-test('names the proof in force once there is one, and offers the library default by name', async () => {
+test('names the proof in force, and offers each by its colour space', async () => {
   await opened('hdr');
-  expect(screen.getByRole('button', { name: 'Soft proof' })).toBeTruthy();
-  expect(screen.getByRole('menuitem', { name: 'Rec.2020 PQ HDR (default)' }).getAttribute('aria-current')).toBe('true');
-  expect(screen.getByRole('menuitem', { name: 'sRGB' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Soft proof: HDR' }).textContent).toBe('HDR');
+  expect(screen.getByRole('menuitem', { name: 'HDR (Rec.2020 PQ)' }).getAttribute('aria-current')).toBe('true');
+  expect(screen.getByRole('menuitem', { name: 'SDR (sRGB)' })).toBeTruthy();
   expect(screen.getByRole('menuitem', { name: 'Printed media' })).toBeTruthy();
   expect(screen.getByRole('menuitem', { name: 'Printed media (3D)' })).toBeTruthy();
+  cleanup();
+
+  await opened('srgb');
+  expect(screen.getByRole('button', { name: 'Soft proof: SDR' }).textContent).toBe('SDR');
   cleanup();
 
   await opened('print3d');
@@ -40,7 +44,7 @@ test('hands the choice to its owner', async () => {
 
 test('withholds an HDR proof from an SDR frame', async () => {
   await opened('srgb', false);
-  expect(screen.getByRole('menuitem', { name: 'Rec.2020 PQ HDR (default)' }).getAttribute('aria-disabled')).toBe('true');
+  expect(screen.getByRole('menuitem', { name: 'HDR (Rec.2020 PQ)' }).getAttribute('aria-disabled')).toBe('true');
   expect(screen.getByRole('menuitem', { name: 'Printed media' }).getAttribute('aria-disabled')).not.toBe('true');
-  expect(screen.getByRole('menuitem', { name: 'sRGB' }).getAttribute('aria-disabled')).not.toBe('true');
+  expect(screen.getByRole('menuitem', { name: 'SDR (sRGB)' }).getAttribute('aria-disabled')).not.toBe('true');
 });

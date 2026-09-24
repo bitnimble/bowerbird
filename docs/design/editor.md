@@ -147,9 +147,9 @@ A drag emits far more pointer positions than the grade can serve, so requests **
 
 What the stage is proofed as is one choice, the `Soft proof` menu in the header - in the editor
 between the zoom and the overflow menu, in the viewer between the triage buttons and the
-filmstrip. Rec.2020 PQ HDR is the default and is withheld from a rendition with no HDR in it; sRGB
-is always offered and is what an SDR rendition already shows; the two printed media proofs are
-always offered. Choosing one adds its panels under the edit panels: sRGB the rendering intent,
+filmstrip, and labelled with the proof in force. `HDR (Rec.2020 PQ)` is the default and is withheld
+from a rendition with no HDR in it; `SDR (sRGB)` is always offered and is what an SDR rendition
+already shows; the two printed media proofs are always offered. Choosing one adds its panels under the edit panels: sRGB the rendering intent,
 `Printed media` the paper and printer, `Printed media (3D)` those and lighting and orientation.
 The editor sends sRGB to the worker as an output and an intent, and the module fits the frame into
 sRGB with the same operator a print, an SDR rendition and an SDR export use (`gamut_map.slang`).

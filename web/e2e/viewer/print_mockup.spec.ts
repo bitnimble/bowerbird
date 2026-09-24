@@ -36,7 +36,7 @@ test('the viewer shows a print mockup and comes back to the photograph unedited'
   const revision = await savedRev(page, photoId);
 
   // The camera's JPEG is what this library shows, so its own gamut is the proof in force.
-  await expect(page.getByRole('button', { name: 'Soft proof: sRGB' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Soft proof: SDR' })).toBeVisible();
   await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
   await expect(page.getByRole('group', { name: 'Lighting', exact: true })).toBeVisible();
@@ -45,7 +45,7 @@ test('the viewer shows a print mockup and comes back to the photograph unedited'
   // nothing of the editor's saved onto it.
   await expect(editTools(page)).toHaveCount(0);
 
-  await softProof(page, 'sRGB');
+  await softProof(page, 'SDR (sRGB)');
   await expect(page.getByRole('img', { name: 'Edit preview' })).toHaveCount(0);
   expect(new URL(page.url()).pathname).toBe(photoPath);
   expect(await savedRev(page, photoId)).toBe(revision);
