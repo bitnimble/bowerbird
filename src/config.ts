@@ -36,4 +36,5 @@ export const config = {
   // Every generated file, one subdirectory per library (§6). Resolved absolute
   // at load, so nothing downstream has to care what the working directory was.
   dataDir: path.resolve(process.env.DATA_DIR ?? './data'),
+  apiToken: process.env.BOWERBIRD_API_TOKEN || undefined,
 } as const;

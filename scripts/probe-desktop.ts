@@ -82,9 +82,13 @@ try {
   for (let attempt = 0; attempt < 240 && origin == null; attempt++) await Bun.sleep(250);
   if (origin == null) throw new Error('the app never reported a local library');
 
+  // Only the shell holds the server's token, so what a stranger can check is that it is refused.
   const listed = await fetch(`${origin}/api/libraries`);
-  if (!listed.ok) throw new Error(`the local server answered ${listed.status}`);
-  console.log(`the desktop app is serving its own library on ${origin}`);
+  const body = (await listed.json().catch(() => null)) as { error?: { code?: string } } | null;
+  if (listed.status !== 401 || body?.error?.code !== 'UNAUTHORIZED') {
+    throw new Error(`the local server answered ${listed.status} to a request without its token`);
+  }
+  console.log(`the desktop app is serving its own library on ${origin}, to itself only`);
 } finally {
   // The shell forks a browser's worth of children, and killing the one this
   // spawned leaves the rest holding the process group open - which reads as a

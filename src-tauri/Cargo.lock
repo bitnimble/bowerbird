@@ -52,6 +52,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "ashpd",
+ "getrandom 0.3.4",
  "launcher",
  "objc2-app-kit",
  "objc2-foundation",

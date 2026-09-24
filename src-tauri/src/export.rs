@@ -63,8 +63,7 @@ pub async fn export_to_folder(
     run_id: String,
 ) -> Result<String, String> {
     let url = format!("{}/api/export", crate::api::origin());
-    let reply = crate::api::client()
-        .post(&url)
+    let reply = crate::api::request(reqwest::Method::POST, &url)
         // The run is carried into the render because the history's tile is a second size off
         // it; where the file then lands is reported by the page, which is what knows.
         .json(&serde_json::json!({ "photoId": photo_id, "options": options, "runId": run_id }))

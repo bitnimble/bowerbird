@@ -91,6 +91,7 @@ import { holdingRenderMemory } from './services/processing/rawshim/rawshim_job';
 import { config } from './config';
 import { Logger, setLogLevel } from './logger';
 import { requestLogLevel } from './api/request_logging';
+import { requireToken } from './api/require_token';
 import { REQUEST_ACTIVITY_HEADER } from './schemas/request_activity';
 import type { Settings } from './schemas/settings';
 
@@ -393,6 +394,8 @@ function allowedOrigin(origin: string, c: Context): string | null {
 }
 
 const app = new Hono();
+// Ahead of CORS too, so a preflight from a page in the reader's browser learns nothing.
+if (config.apiToken != null) app.use(route(PathSegment.any()), requireToken(config.apiToken));
 // Before the routes so preflights are answered too. Expose the range/length
 // headers the image endpoints set, else a cross-origin client can't read them.
 app.use(

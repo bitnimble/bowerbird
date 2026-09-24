@@ -26,11 +26,34 @@ use tauri::Manager;
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 
 static RUNNING: Mutex<Option<Child>> = Mutex::new(None);
-static ORIGIN: Mutex<Option<String>> = Mutex::new(None);
+static LOCAL: Mutex<Option<Local>> = Mutex::new(None);
+
+struct Local {
+    origin: String,
+    token: String,
+}
+
+impl Local {
+    fn serves(&self, url: &str) -> bool {
+        url.strip_prefix(&self.origin).is_some_and(|path| path.starts_with('/'))
+    }
+}
 
 /// The local server's address, once it is answering.
 pub(crate) fn local_origin() -> Option<String> {
-    ORIGIN.lock().ok().and_then(|held| held.clone())
+    LOCAL.lock().ok().and_then(|held| held.as_ref().map(|local| local.origin.clone()))
+}
+
+/// The secret the local server requires of every request, where `url` is on it.
+pub(crate) fn token_for(url: &str) -> Option<String> {
+    let held = LOCAL.lock().ok()?;
+    held.as_ref().filter(|local| local.serves(url)).map(|local| local.token.clone())
+}
+
+fn fresh_token() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|err| format!("no randomness for the server's token: {err}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 /// A port nothing else holds.
@@ -122,10 +145,13 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, St
     std::fs::create_dir_all(&data).map_err(|err| format!("could not make {}: {err}", data.display()))?;
 
     let port = free_port().map_err(|err| format!("no port to start the server on: {err}"))?;
+    let token = fresh_token()?;
     let child = Command::new(&sidecar)
         .arg(&bundle)
         .env("PORT", port.to_string())
         .env("HOST", "127.0.0.1")
+        // Env, not an argument: any user on the machine can read another's argv.
+        .env("BOWERBIRD_API_TOKEN", &token)
         .env("DB_PATH", data.join("bowerbird.db"))
         .env("DATA_DIR", data.join("data"))
         .env("BOWERBIRD_WORKER_DIR", &workers)
@@ -144,8 +170,8 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, St
     }
     watch_for_restart(app.clone());
     wait_until_answering(&origin)?;
-    if let Ok(mut held) = ORIGIN.lock() {
-        *held = Some(origin.clone());
+    if let Ok(mut held) = LOCAL.lock() {
+        *held = Some(Local { origin: origin.clone(), token });
     }
     Ok(origin)
 }
@@ -255,5 +281,19 @@ pub(crate) fn stop() {
     if let Some(mut child) = held.take() {
         let _ = child.kill();
         let _ = child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Local;
+
+    #[test]
+    fn the_token_goes_only_to_the_local_server() {
+        let local = Local { origin: "http://127.0.0.1:1234".into(), token: "secret".into() };
+        assert!(local.serves("http://127.0.0.1:1234/api/libraries"));
+        assert!(!local.serves("http://127.0.0.1:12345/api/libraries"));
+        assert!(!local.serves("http://127.0.0.1:1234.evil.test/api"));
+        assert!(!local.serves("https://library.example/api/libraries"));
     }
 }

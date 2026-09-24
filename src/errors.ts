@@ -20,6 +20,7 @@ export type ErrorCode =
   // backup drive nobody has plugged in (§14.4). Not NOT_FOUND: the file exists, and the answer
   // changes when the drive does, so a client says "plug it in" rather than "it is gone".
   | 'UNAVAILABLE'
+  | 'UNAUTHORIZED'
   | 'INTERNAL_ERROR';
 
 const STATUS: Record<ErrorCode, ContentfulStatusCode> = {
@@ -31,6 +32,7 @@ const STATUS: Record<ErrorCode, ContentfulStatusCode> = {
   SYNC_IN_PROGRESS: 409,
   CLOCK_SKEW: 500,
   UNAVAILABLE: 503,
+  UNAUTHORIZED: 401,
   INTERNAL_ERROR: 500,
 };
 

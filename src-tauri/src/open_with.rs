@@ -54,8 +54,7 @@ async fn downloaded(photo_id: &str) -> Result<PathBuf, String> {
 
 /// The body of a successful reply, and the file name it came under if it named one.
 async fn fetched(url: &str) -> Result<(Option<String>, Vec<u8>), String> {
-    let reply = crate::api::client()
-        .get(url)
+    let reply = crate::api::request(reqwest::Method::GET, url)
         .send()
         .await
         .map_err(|e| format!("could not reach {url}: {e}"))?;

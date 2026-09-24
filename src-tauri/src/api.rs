@@ -155,11 +155,20 @@ pub fn set_server_origin(
     Ok(origin())
 }
 
+/// Every request the shell makes, so none reaches the local server without its token.
+pub(crate) fn request(method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+    let send = client().request(method, url);
+    match crate::server::token_for(url) {
+        Some(token) => send.bearer_auth(token),
+        None => send,
+    }
+}
+
 /// One client for the process, because a client is a connection pool.
 ///
 /// A grid is a hundred thumbnails at once; building a pool per request means a hundred TCP
 /// handshakes, and a hundred TLS ones against a remote library.
-pub(crate) fn client() -> &'static reqwest::Client {
+fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(reqwest::Client::new)
 }
@@ -188,7 +197,7 @@ impl Request {
     fn into_http(self, url: &str) -> Result<reqwest::RequestBuilder, String> {
         let method = reqwest::Method::from_bytes(self.method.as_bytes())
             .map_err(|e| format!("bad method {}: {e}", self.method))?;
-        let mut send = client().request(method, url);
+        let mut send = request(method, url);
         if let Some(activity) = self.activity {
             send = send.header("X-Bowerbird-Activity", match activity {
                 RequestActivity::Interactive => "interactive",
@@ -393,7 +402,7 @@ struct Fetched {
 }
 
 async fn fetch(url: &str, forwarded: &[(String, String)]) -> Result<Fetched, reqwest::Error> {
-    let mut send = client().get(url);
+    let mut send = request(reqwest::Method::GET, url);
     for (name, value) in forwarded {
         send = send.header(name, value);
     }

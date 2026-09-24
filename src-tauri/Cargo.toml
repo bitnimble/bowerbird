@@ -28,6 +28,7 @@ tokio = { version = "1", features = ["time", "sync", "macros"] }
 # `main.rs` is the supervisor before it is the app; the container's PID 1 is this crate's
 # own binary, so the two hosts share one implementation of what a version is.
 launcher = { path = "../native/launcher" }
+getrandom = "0.3"
 
 # The folder an export is written into (§10.5.1), asked for in the reader's own file manager.
 # `tauri-plugin-dialog` is what would normally provide this and cannot: it depends on `tauri`

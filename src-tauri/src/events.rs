@@ -177,7 +177,8 @@ async fn stream(
 
     let origin = crate::api::origin();
     let url = format!("{origin}/api/events");
-    let mut request = crate::api::client().get(&url).header("accept", "text/event-stream");
+    let mut request =
+        crate::api::request(reqwest::Method::GET, &url).header("accept", "text/event-stream");
     if let Some(id) = resume.at(&origin) {
         request = request.header("last-event-id", id);
     }
