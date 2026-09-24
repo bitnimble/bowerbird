@@ -825,6 +825,14 @@ export class PhotosPresenter {
     await this.sharePresenter.openWith(photoId);
   }
 
+  async revealOriginal(photoId: string): Promise<void> {
+    await this.sharePresenter.revealOriginal(photoId);
+  }
+
+  async revealFile(path: string): Promise<void> {
+    await this.sharePresenter.revealFile(path);
+  }
+
   /**
    * The photograph on screen, into whatever the platform's share sheet offers.
    *

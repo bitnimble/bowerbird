@@ -26,7 +26,6 @@ export const ExportsPageStrings = {
   // The settings this one export was written with, which are not necessarily the ones the
   // photograph carries now.
   editsInThisExport: () => 'Edits in this export',
-  showInFolder: () => 'Show in folder',
   exportActions: () => 'Export actions',
   goToPhoto: (sourcePath: string) => `Go to ${sourcePath}`,
   removeFromHistory: () => 'Remove from history',

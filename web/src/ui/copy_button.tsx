@@ -1,9 +1,7 @@
-import * as stylex from '@stylexjs/stylex';
 import { Check, Copy, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { CopyButtonStrings } from './copy_button.strings';
-import { focusRing } from './focus_ring';
-import { color } from './tokens.stylex';
+import { InlineIconButton } from './inline_icon_button';
 
 type Result = 'idle' | 'copied' | 'failed';
 
@@ -12,19 +10,6 @@ const LABEL: Record<Result, () => string> = {
   copied: CopyButtonStrings.copied,
   failed: CopyButtonStrings.failed,
 };
-
-const styles = stylex.create({
-  button: {
-    paddingBlock: 0,
-    paddingRight: 0,
-    paddingLeft: '6px',
-    borderWidth: 0,
-    backgroundColor: 'transparent',
-    color: { default: color.boneDim, ':hover': color.bone },
-    cursor: 'pointer',
-    verticalAlign: '-2px',
-  },
-});
 
 export function CopyButton({ text }: { text: string }): JSX.Element {
   const [result, setResult] = useState<Result>('idle');
@@ -38,10 +23,8 @@ export function CopyButton({ text }: { text: string }): JSX.Element {
   };
 
   return (
-    <button
-      type="button"
-      {...stylex.props(styles.button, focusRing.ring)}
-      aria-label={LABEL[result]()}
+    <InlineIconButton
+      label={LABEL[result]()}
       onClick={() => {
         // no navigator.clipboard at all off a secure origin, and a library is served over LAN http
         const copying = navigator.clipboard?.writeText(text);
@@ -53,6 +36,6 @@ export function CopyButton({ text }: { text: string }): JSX.Element {
       }}
     >
       {result === 'copied' ? <Check size={12} /> : result === 'failed' ? <X size={12} /> : <Copy size={12} />}
-    </button>
+    </InlineIconButton>
   );
 }

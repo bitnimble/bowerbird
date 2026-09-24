@@ -1,6 +1,6 @@
 // The two transports have to agree, and the places they quietly did not.
 import { afterEach, describe, expect, test } from 'bun:test';
-import { appDataDir, assetUrl, openAppDataDir, subscribeEvents, type EventHandlers } from '../transport';
+import { appDataDir, assetUrl, canRevealFile, openAppDataDir, subscribeEvents, type EventHandlers } from '../transport';
 import { PathSegment, route } from '../../../../src/schemas/route';
 
 const gridRendition = route(PathSegment.image(), 'abc', PathSegment.renditions(), 'grid');
@@ -92,6 +92,25 @@ describe('the app data folder', () => {
   test('is nothing where the shell says there is nowhere to open', async () => {
     shellAnswering(null);
     expect(await appDataDir()).toBeNull();
+  });
+});
+
+describe('showing a file in its folder', () => {
+  const userAgent = navigator.userAgent;
+  const pretend = (agent: string): void => {
+    Object.defineProperty(navigator, 'userAgent', { value: agent, configurable: true });
+  };
+  afterEach(() => pretend(userAgent));
+
+  test('is offered by a desktop shell, and by neither a browser nor Android', () => {
+    pretend('Mozilla/5.0 (X11; Linux x86_64)');
+    expect(canRevealFile()).toBe(false);
+
+    global.__TAURI__ = { core: { invoke: async () => null } };
+    expect(canRevealFile()).toBe(true);
+
+    pretend('Mozilla/5.0 (Linux; Android 14; Pixel 8)');
+    expect(canRevealFile()).toBe(false);
   });
 });
 

@@ -19,6 +19,15 @@ pub async fn open_original_with(window: Window, photo_id: String) -> Result<(), 
 /// The RAW itself where the server shares this machine's disk, so another application's sidecar
 /// lands beside it; a downloaded copy where the library is hosted elsewhere.
 async fn local_original(photo_id: &str) -> Result<PathBuf, String> {
+    let path = original_path(photo_id).await?;
+    if path.exists() {
+        return Ok(path);
+    }
+    downloaded(photo_id).await
+}
+
+/// Where the RAW is on the server's disk, which is this machine's only where the server is local.
+pub(crate) async fn original_path(photo_id: &str) -> Result<PathBuf, String> {
     #[derive(serde::Deserialize)]
     struct Original {
         path: PathBuf,
@@ -27,10 +36,7 @@ async fn local_original(photo_id: &str) -> Result<PathBuf, String> {
     let (_, bytes) = fetched(&url).await?;
     let original: Original =
         serde_json::from_slice(&bytes).map_err(|e| format!("{url} answered something else: {e}"))?;
-    if original.path.exists() {
-        return Ok(original.path);
-    }
-    downloaded(photo_id).await
+    Ok(original.path)
 }
 
 /// One folder per photo, so opening it again replaces the copy rather than numbering another.

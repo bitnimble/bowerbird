@@ -1,7 +1,7 @@
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { REQUEST_ACTIVITY_HEADER } from '../../../../../src/schemas/request_activity';
 import { photosApi } from '../../../api/photos';
-import { openOriginalWith } from '../../../api/transport';
+import { openOriginalWith, revealFile, revealOriginal } from '../../../api/transport';
 import type { ToastsPresenter } from '../../toasts/toasts_presenter';
 import type { ViewerStore } from './viewer_store';
 import { PhotosPresenterStrings } from '../photos_presenter.strings';
@@ -25,6 +25,14 @@ export class SharePresenter {
     } catch {
       this.toasts.show(PhotosPresenterStrings.openWithFailed());
     }
+  }
+
+  async revealOriginal(photoId: string): Promise<void> {
+    await this.revealed(revealOriginal(photoId));
+  }
+
+  async revealFile(path: string): Promise<void> {
+    await this.revealed(revealFile(path));
   }
 
   async share(photoId: string): Promise<void> {
@@ -66,6 +74,14 @@ export class SharePresenter {
       this.toasts.show(PhotosPresenterStrings.shareFailed());
     } finally {
       this.sharing = false;
+    }
+  }
+
+  private async revealed(revealing: Promise<void>): Promise<void> {
+    try {
+      await revealing;
+    } catch {
+      this.toasts.show(PhotosPresenterStrings.revealFailed());
     }
   }
 

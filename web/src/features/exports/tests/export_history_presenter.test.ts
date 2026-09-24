@@ -135,7 +135,7 @@ test('showing a file in its folder is asked of the shell, and only offered there
 
   expect(presenter.canReveal).toBe(true);
   await presenter.reveal('/exports/a.jpg');
-  expect(asked).toEqual([{ command: 'reveal_export', args: { path: '/exports/a.jpg' } }]);
+  expect(asked).toEqual([{ command: 'reveal_file', args: { path: '/exports/a.jpg' } }]);
 });
 
 // A file the reader has since moved or deleted is the ordinary case, and it is their filing

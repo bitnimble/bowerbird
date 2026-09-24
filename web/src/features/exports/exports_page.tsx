@@ -31,6 +31,7 @@ import { Text } from '../../ui/text';
 import { color, size } from '../../ui/tokens.stylex';
 import { editRows } from '../photos/viewer/edit_rows';
 import { EditsPanel } from '../photos/viewer/edits_panel';
+import { PhotoDetailStrings } from '../photos/viewer/photo_detail_page.strings';
 import type { Size } from '../photos/viewer/zoom_pan';
 import { ExportsPageStrings } from './exports_page.strings';
 
@@ -497,8 +498,8 @@ function PhotoRow({ photo, inRun = false }: { photo: ExportedPhoto; inRun?: bool
       {exportHistory.canReveal && (
         <Button
           iconOnly
-          aria-label={ExportsPageStrings.showInFolder()}
-          title={ExportsPageStrings.showInFolder()}
+          aria-label={PhotoDetailStrings.openContainingFolder()}
+          title={PhotoDetailStrings.openContainingFolder()}
           onClick={() => void exportHistory.reveal(photo.output_path)}
         >
           <FolderOpen size={ICON} />

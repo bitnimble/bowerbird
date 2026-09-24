@@ -12,6 +12,7 @@ mod events;
 /// Renders the page asks for and this app writes to a folder, rather than answers.
 mod export;
 mod open_with;
+mod reveal;
 /// The Bowerbird server this app carries, so the library is local and works offline.
 mod server;
 
@@ -66,8 +67,9 @@ pub fn run() {
             events::events_following,
             export::pick_export_folder,
             export::export_to_folder,
-            export::reveal_export,
             open_with::open_original_with,
+            reveal::reveal_file,
+            reveal::reveal_original,
             server::app_data_dir,
             server::open_app_data_dir
         ])

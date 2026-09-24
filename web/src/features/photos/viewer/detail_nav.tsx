@@ -8,6 +8,7 @@ import {
   Eye,
   EyeOff,
   FileType,
+  FolderOpen,
   GalleryThumbnails,
   HardDriveDownload,
   Info,
@@ -29,7 +30,7 @@ import {
 import { observer } from 'mobx-react-lite';
 import { Link, useNavigate } from 'react-router-dom';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
-import { canOpenOriginalWith } from '../../../api/transport';
+import { canOpenOriginalWith, canRevealFile } from '../../../api/transport';
 import { useIsMobile, useIsTouch } from '../../../app/device';
 import { useListingStore, usePresenters, useViewerStore } from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
@@ -76,12 +77,13 @@ const RENDITIONS: Option<ViewerRendition>[] = [
 // working copies at the viewer's own settings, where an export is a question with eight answers.
 // The share is the exception, and only because sharing is a gesture about the picture in front
 // of the reader.
-type Send = 'share' | 'original' | 'openWith' | 'export';
+type Send = 'share' | 'original' | 'openWith' | 'reveal' | 'export';
 
 const DOWNLOADS: Option<Send>[] = [
   { value: 'share', label: PhotoDetailStrings.share(), icon: <Share2 size={ICON} /> },
   { value: 'original', label: PhotoDetailStrings.downloadOriginal(), icon: <FileType size={ICON} /> },
   { value: 'openWith', label: PhotoDetailStrings.openWith(), icon: <AppWindow size={ICON} /> },
+  { value: 'reveal', label: PhotoDetailStrings.openContainingFolder(), icon: <FolderOpen size={ICON} /> },
   { value: 'export', label: BulkBarStrings.exportPhotos(), icon: <HardDriveDownload size={ICON} /> },
 ];
 
@@ -95,6 +97,7 @@ function sendable(option: Option<Send>, composite: boolean): boolean {
   if (option.value === 'share') return SHAREABLE;
   // A composite has no RAW of its own to open.
   if (option.value === 'openWith') return OPENS_WITH && !composite;
+  if (option.value === 'reveal') return canRevealFile() && !composite;
   return true;
 }
 
@@ -353,6 +356,10 @@ export const DetailNav = observer(function DetailNav({
         }
         if (form === 'openWith') {
           void photos.openWith(photoId);
+          return;
+        }
+        if (form === 'reveal') {
+          void photos.revealOriginal(photoId);
           return;
         }
         if (form === 'original') {

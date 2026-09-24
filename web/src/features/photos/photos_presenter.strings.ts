@@ -18,6 +18,7 @@ export const PhotosPresenterStrings = {
   preparingShare: () => 'Preparing to share…',
   shareFailed: () => "We couldn't prepare this photo to share. Try again.",
   openWithFailed: () => "We couldn't open this photo in another app. Try again.",
+  revealFailed: () => "We couldn't open this photo's folder. Check the file is on this device.",
   // What the merge is doing right now, so a minute of nothing visible is a minute the reader can
   // read. The phases are the picture being assembled, not the machinery: nobody merging a
   // panorama wants to be told about strips.

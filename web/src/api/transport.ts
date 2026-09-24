@@ -175,6 +175,25 @@ export function canOpenOriginalWith(): boolean {
   return shellInvoke() != null && !/Android/i.test(navigator.userAgent);
 }
 
+/** Android's shell has no file manager to show a file in. */
+export function canRevealFile(): boolean {
+  return shellInvoke() != null && !/Android/i.test(navigator.userAgent);
+}
+
+/** Selects the file in the reader's own file manager. */
+export async function revealFile(path: string): Promise<void> {
+  const invoke = shellInvoke();
+  if (invoke == null) throw new Error('showing a file in its folder is the desktop app’s to do');
+  await invoke('reveal_file', { path });
+}
+
+/** The same for a photo's RAW, which rejects where the library's disk is not this device's. */
+export async function revealOriginal(photoId: string): Promise<void> {
+  const invoke = shellInvoke();
+  if (invoke == null) throw new Error('showing a file in its folder is the desktop app’s to do');
+  await invoke('reveal_original', { photoId });
+}
+
 /** Resolves once the reader has picked an app from the platform's chooser, or dismissed it. */
 export async function openOriginalWith(photoId: string): Promise<void> {
   const invoke = shellInvoke();

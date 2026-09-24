@@ -1,7 +1,7 @@
 import { action } from 'mobx';
 import { type ExportRun } from '../../../../src/schemas/exports';
 import { exportsApi } from '../../api/exports';
-import { shellInvoke } from '../../api/transport';
+import { canRevealFile, revealFile } from '../../api/transport';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import type { ExportHistoryStore } from './export_history_store';
 import { ExportsPageStrings } from './exports_page.strings';
@@ -24,16 +24,14 @@ export class ExportHistoryPresenter {
     }
   }
 
-  /** Only the desktop shell has a file manager to show a file in; a browser has no path. */
   get canReveal(): boolean {
-    return shellInvoke() != null;
+    return canRevealFile();
   }
 
   async reveal(path: string): Promise<void> {
-    const invoke = shellInvoke();
-    if (invoke == null) return;
+    if (!canRevealFile()) return;
     try {
-      await invoke('reveal_export', { path });
+      await revealFile(path);
     } catch {
       this.toasts.show(ExportsPageStrings.couldNotShowFile());
     }

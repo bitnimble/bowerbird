@@ -95,48 +95,6 @@ pub async fn export_to_folder(
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Shows an exported file where it lives, in the reader's own file manager.
-///
-/// The file rather than the folder: every platform's manager can select one, which is what
-/// makes this worth a button at all when a folder holds four hundred exports.
-#[tauri::command]
-pub fn reveal_export(path: String) -> Result<(), String> {
-    let file = Path::new(&path);
-    // A path out of the history is a path this app wrote, but the history outlives the file:
-    // handing a deleted one to the manager opens somebody's home folder instead.
-    if !file.exists() {
-        return Err(format!("{path} is no longer there"));
-    }
-    reveal(file).map_err(|e| format!("could not show {path}: {e}"))
-}
-
-// Spawned rather than waited on, throughout: the command is a file manager, and `status`
-// would hold the IPC thread for as long as the reader leaves the window open.
-#[cfg(target_os = "macos")]
-fn reveal(file: &Path) -> std::io::Result<()> {
-    std::process::Command::new("open").arg("-R").arg(file).spawn().map(|_| ())
-}
-
-#[cfg(target_os = "windows")]
-fn reveal(file: &Path) -> std::io::Result<()> {
-    // One argument, comma and all: `explorer` parses `/select,<path>` itself.
-    std::process::Command::new("explorer")
-        .arg(format!("/select,{}", file.display()))
-        .spawn()
-        .map(|_| ())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn reveal(file: &Path) -> std::io::Result<()> {
-    // `xdg-open` has no notion of selecting a file, and opening the export itself would hand
-    // it to an image viewer rather than showing where it is.
-    //
-    // A bare name's parent is `Some("")` rather than `None`, and `xdg-open ""` opens nothing
-    // and reports nothing - so the empty one is filtered out rather than spawned.
-    let folder = file.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(file);
-    std::process::Command::new("xdg-open").arg(folder).spawn().map(|_| ())
-}
-
 /// The name the library gave this render, out of the `Content-Disposition` the route sets.
 ///
 /// **A name from a database column reaching `fs::write`**, so what comes back is one ordinary

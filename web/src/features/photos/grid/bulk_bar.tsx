@@ -5,6 +5,7 @@ import {
   Eye,
   EyeOff,
   FolderInput,
+  FolderOpen,
   HardDrive,
   ImagePlus,
   Images,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { canRevealFile } from '../../../api/transport';
 import {
   useAlbumsStore,
   useLibrariesStore,
@@ -46,7 +48,7 @@ import { Rating, Verdict } from '../marks';
 import { MergePageStrings } from '../merge/merge_page.strings';
 import { PanoramaIcon } from './panorama_icon';
 import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
-import { mergeJobPath, triagePath, type MergeCandidate, type StackSelection } from '../photos_store';
+import { isComposite, mergeJobPath, triagePath, type MergeCandidate, type StackSelection } from '../photos_store';
 
 // Behind the overflow, so the bar's own row holds only what a cull does
 // constantly - the verdict. The rest is reached deliberately, and most of it
@@ -55,7 +57,7 @@ import { mergeJobPath, triagePath, type MergeCandidate, type StackSelection } fr
 type StackAction = 'stack' | 'unstack' | 'triage';
 type MergeAction = 'panorama' | 'assembly';
 type FilingAction = 'remove' | 'banner';
-type PhotoAction = 'export' | 'thumbnails' | 'metadata' | 'hide' | 'unhide' | 'bin';
+type PhotoAction = 'export' | 'reveal' | 'thumbnails' | 'metadata' | 'hide' | 'unhide' | 'bin';
 
 const styles = stylex.create({
   // Floating over the foot of the viewport, out of the flow: in the flow its arrival moved every
@@ -185,8 +187,11 @@ const filingOptions = ({
 // like any other (§12.4), so a grid can hold the put-away beside the live and a selection across it
 // is mixed. A row that guessed from the grid's filters would be the wrong one for half of it, and
 // the selection can reach rows this client has never held, so there is nothing to guess from either.
-const photoOptions = (bin: string): Option<PhotoAction>[] => [
+const photoOptions = (bin: string, revealable: boolean): Option<PhotoAction>[] => [
   { value: 'export', label: BulkBarStrings.exportPhotos(), icon: <Download size={ICON} /> },
+  ...(revealable ?
+    [{ value: 'reveal' as const, label: PhotoDetailStrings.openContainingFolder(), icon: <FolderOpen size={ICON} /> }]
+  : []),
   { value: 'thumbnails', label: BulkBarStrings.rebuildThumbnails(), icon: <Sparkles size={ICON} /> },
   { value: 'metadata', label: BulkBarStrings.refreshMetadata(), icon: <RotateCw size={ICON} /> },
   { value: 'hide', label: BulkBarStrings.hide(), icon: <EyeOff size={ICON} /> },
@@ -289,6 +294,8 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   // A hidden shoot is not somewhere to file a photograph: it would move the file and then take the
   // photograph out of the grid it was chosen in, which reads as a bulk action that lost them.
   const filable = shoots.shoots.filter((shoot) => shoot.id !== store.selectionShootId && !shoot.is_hidden);
+  const revealId =
+    canRevealFile() && count === 1 && !store.selectedLoadedPhotos.some(isComposite) ? store.firstSelectedPhotoId : null;
 
   return (
     <div {...stylex.props(styles.bar)} role="group" aria-label={BulkBarStrings.selection()}>
@@ -464,9 +471,10 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
               }),
               menuSection({
                 content: <SendToFrameTv onSend={(tvId) => void frameTv.sendSelection(tvId)} />,
-                options: photoOptions(binLabel),
+                options: photoOptions(binLabel, revealId != null),
                 onSelect: (action) => {
                   if (action === 'export') openExport();
+                  else if (action === 'reveal') void (revealId != null && photos.revealOriginal(revealId));
                   else if (action === 'thumbnails') void photos.rebuildGridRenditions();
                   else if (action === 'metadata') void photos.refreshMetadataForSelection();
                   else if (action === 'hide') void photos.hideSelected(true);

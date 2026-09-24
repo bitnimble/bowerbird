@@ -1,10 +1,11 @@
 import * as stylex from '@stylexjs/stylex';
-import { HardDriveDownload } from 'lucide-react';
+import { FolderOpen, HardDriveDownload } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect } from 'react';
 import { PathSegment, route } from '../../../../../src/schemas/route';
 import { type Settings, type ViewerRendition } from '../../../../../src/schemas/settings';
 import { localDateTime } from '../../../api/dates';
+import { canRevealFile } from '../../../api/transport';
 import {
   useAlbumsStore,
   useAppSettingsStore,
@@ -18,6 +19,7 @@ import { Button } from '../../../ui/button';
 import { CopyButton } from '../../../ui/copy_button';
 import { fileSizeLabel } from '../../../ui/format';
 import { ICON } from '../../../ui/icon';
+import { InlineIconButton } from '../../../ui/inline_icon_button';
 import { TextLink } from '../../../ui/link';
 import { Row } from '../../../ui/row';
 import { Text } from '../../../ui/text';
@@ -64,6 +66,16 @@ export const StaleRendition = observer(function StaleRendition({ photoId }: { ph
     </div>
   );
 });
+
+function RevealButton({ path }: { path: string }): JSX.Element | null {
+  const { photos } = usePresenters();
+  if (!canRevealFile()) return null;
+  return (
+    <InlineIconButton label={PhotoDetailStrings.openContainingFolder()} onClick={() => void photos.revealFile(path)}>
+      <FolderOpen size={12} />
+    </InlineIconButton>
+  );
+}
 
 interface DetailPanelProps {
   photoId: string;
@@ -213,6 +225,7 @@ export const RenditionPanel = observer(function RenditionPanel({ photoId, defaul
               <>
                 {showing === 'embedded' ? PhotoDetailStrings.embeddedPath(shownFile.path) : shownFile.path}
                 <CopyButton text={shownFile.path} />
+                <RevealButton path={shownFile.path} />
               </>
             );
           }),
@@ -302,6 +315,7 @@ export const RawPanel = observer(function RawPanel({ photoId, defaultOpen, style
                   <>
                     {path}
                     <CopyButton text={path} />
+                    {p.has_original && <RevealButton path={path} />}
                   </>
                 );
               }),
