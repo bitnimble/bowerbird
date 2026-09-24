@@ -87,6 +87,7 @@ import { PruneService, ScheduledPrune } from './services/maintenance/prune_servi
 import { BackupService, ScheduledBackup } from './services/maintenance/backup_service';
 import { ProcessingService } from './services/processing/pipeline/processing_service';
 import { shim } from './services/processing/rawshim/rawshim';
+import { holdingRenderMemory } from './services/processing/rawshim/rawshim_job';
 import { config } from './config';
 import { Logger, setLogLevel } from './logger';
 import { requestLogLevel } from './api/request_logging';
@@ -185,6 +186,7 @@ const processingService: ProcessingService = new ProcessingService(
   // Late-bound deliberately: `compositesService` is built on this one, so the reference has to be
   // a call at the moment the queue needs it rather than a value at construction.
   (photoId) => compositesService.renderable(photoId),
+  holdingRenderMemory,
 );
 const eventsApi = new EventsApi(processingService);
 const replicationChanged = (libraryId: string): void => eventsApi.announce('replication', { library_id: libraryId });

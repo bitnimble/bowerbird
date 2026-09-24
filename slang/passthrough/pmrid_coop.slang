@@ -1,4 +1,5 @@
-// PMRID's 1x1 convolutions as a cooperative-matrix multiply, which is what reaches a tensor core.
+// PMRID's separable convolutions on a cooperative-matrix multiply, which is what reaches a tensor
+// core.
 //
 // **Why this is not in `pmrid.slang` and not WGSL.** A 1x1 convolution over an NCHW arena is a
 // matrix multiply already: the weights are `[out][in]` row-major, an activation plane is `[in]`
@@ -7,17 +8,39 @@
 // WGSL has no spelling for, so this compiles to SPIR-V and is handed to the driver as it stands.
 //
 // **Two hosts dispatch it, and only one of them is a picture.** `native/rawshim/src/pmrid.rs` runs
-// `stage`, one multiply and `finish` per 1x1 layer of a rendition, on the device wgpu already
-// opened, where a browser has neither the instruction nor a way to pass SPIR-V through and takes
-// the WGSL pass instead. `native/rawshim/examples/coopmat.rs` is the measurement the shapes below
-// were chosen by, on a Vulkan device of its own, over the same layer list.
+// [`separable`] or [`pointwise`] for each 1x1 layer of a rendition, on the device wgpu already
+// opened and over the `half` arena the WGSL beside it holds, where a browser has neither the
+// instruction nor a way to pass a driver its own language and takes the WGSL pass instead.
+// `native/rawshim/examples/coopmat.rs` is the measurement the multiply's shapes at the bottom were
+// swept by, on a Vulkan device of its own, over the same layer list.
 //
-// Sixteen-by-sixteen fragments, which is what an Ampere subgroup's `f16` multiply is; the host
-// refuses a device whose reported configurations do not include that shape.
+// **Two languages out of it, because a cooperative matrix is reached through the driver's own.**
+// `build.rs` compiles this to SPIR-V for Vulkan and to MSL for Metal, where the same op spells
+// `simdgroup_matrix`. What differs is `FRAGMENT`: Vulkan's multiply is 16x16 on the parts the sweep
+// ran on, and Metal has 8x8 and nothing else, so the fragment is a define the build sets and the
+// host holds a copy of.
 //
-// The entry points at the bottom are one multiply in every shape worth trying - how many fragments
-// of rows and of columns a subgroup carries, and how many subgroups share a workgroup - because
-// which of them is fastest is a measurement rather than a derivation, and the host times them all.
+// **The Metal arm is a weaker trade than the Vulkan one, and the reason is the hardware under the
+// instruction.** An Ampere `OpCooperativeMatrixMulAddKHR` reaches a pipe the lanes cannot, which is
+// why it is worth holding the arena in `half` to get at. Through M4 an Apple GPU has no such pipe:
+// `simdgroup_matrix` runs on the same FP16 ALUs the rest of the shader does, and what it buys is
+// the blocked loads and the thirty-two lanes sharing operands rather than a throughput multiple.
+// What these kernels spend is almost all around the multiply rather than in it (the end of this
+// header), and that is the same work on both, so on Apple the arm can lose. **Measure it before
+// trusting it**, and where it loses, the answer is `passthrough` answering `None` for Metal.
+//
+// **Nothing here reaches a neural accelerator of any kind, and no shader does.** The ANE is
+// CoreML's alone - it takes a compiled graph rather than a kernel, and a frame would have to leave
+// the device this pipeline holds it on. M5 put matrix hardware in the GPU's own cores, but it is
+// reached through Metal 4's tensor ops, which is neither a shader nor anything wgpu exposes;
+// nothing says this instruction lowers onto it.
+//
+// The host refuses a device whose reported configurations do not include the shape it asks for.
+//
+// The entry points after the rendition's are one multiply in every shape worth trying - how many
+// fragments of rows and of columns a subgroup carries, and how many subgroups share a workgroup -
+// because which of them is fastest is a measurement rather than a derivation, and the sweep times
+// them all.
 //
 // **What this kernel is short of, measured rather than argued.** Two of those entry points are the
 // ends of a roofline: `bound_wide_math` is the best shape with its loads hoisted out of the depth
@@ -92,13 +115,26 @@
 // take a 32-channel layer, so more of the network falls back as well. What the subgroups share is
 // not what this kernel is waiting on.
 //
-// **What it is worth in a rendition, which is less than the multiply is.** A 25MP frame is 30 tiles
-// and the whole denoise is 256ms with these kernels against 285 on the WGSL pass; with the 1x1
-// layers left out entirely it is 168, so the pointwise third of the network is 88ms here and 117
-// there. Of those 88, the multiplies are 25 and `stage` and `finish` are 63 - the conversions
-// either side of an arena that is `float` and row-major because the rest of the network is WGSL
-// over it. So the instruction is no longer what this costs, and what would buy the next thirty
-// milliseconds is a layer either side that could read or write the `half` itself.
+// **What it is worth in a rendition, which has little to do with the multiply.** On an RTX 3080,
+// by `examples/pmrid.rs <raw> <out> whole`: a 24MP frame is 6 tiles and the whole denoise is 55ms
+// with these kernels against 131 on the WGSL pass, and a 61MP frame is 12 tiles, 143ms against
+// 311. With every separable layer on [`separable`], they were 66ms of a 91ms frame, and with the
+// multiplies in them left out 65: the matrix units are all but idle, and what the layers cost is
+// feeding them - staging the patch, the depthwise, the barriers between the two, and writing the
+// answer back, in roughly equal parts. That is what [`separable`] is shaped around. A tenth of the
+// frame is not a layer at all: allocating the 384MB arena is 5.5ms and freeing it about 4, which a
+// queue of renders pays once rather than a frame (`pmrid::hold_arenas`).
+//
+// **And the feeding is bound by how many workgroups a multiprocessor holds, from both sides at
+// once.** `coopmat registers` reads what the driver compiled: `separable_64` is 79 registers a
+// thread and 15KB of shared memory, and on Ampere either alone allows six workgroups. So shrinking
+// one moves nothing - a smaller `reach` and answer, 7KB of shared memory rather than 15, measured
+// the same - where growing either costs straight away (`spread`). The registers are the
+// compiler's budget more than the kernel's need: a depthwise of half the run, or on `half2` two
+// channels at a time, still compiled to 80, and only no depthwise at all came in under it (61).
+// Fewer barriers a channel measured the same, and so did workgroups of 128 or 256 rows
+// ([`COOP_ROWS`] in `pmrid.rs`), sixteen loads in flight rather than eight (slower), and tiles
+// 16 pixels by 4, whose rows are whole sectors.
 
 using namespace linalg;
 
@@ -111,26 +147,47 @@ struct Shape {
     uint weights_at;
     uint samples_at;
     uint out_at;
-    /// The arena tensors [`stage`] reads and [`finish`] writes, and the one a residual adds.
+    /// The arena tensors a layer reads and writes, and the one a residual adds.
     uint plane_at;
     uint into_at;
     uint skip_at;
     uint bias_at;
-    /// 1 rectifies what [`finish`] wrote, 2 adds `skip_at` to it first.
+    /// 1 rectifies what [`answer`] writes, 2 adds `skip_at` to it first.
     uint after;
+    /// The depthwise half of a [`separable`] layer: its input plane's size, the output's width
+    /// (`columns` over it is the height), its kernel and stride, and where its taps are in
+    /// `biases`.
+    uint in_width;
+    uint in_height;
+    uint out_width;
+    uint kernel;
+    uint stride;
+    uint spread_at;
 };
 
 [vk::push_constant] ConstantBuffer<Shape> pc;
 [vk::binding(0, 0)] StructuredBuffer<half> weights;
-[vk::binding(1, 0)] RWStructuredBuffer<half> samples;
-[vk::binding(2, 0)] RWStructuredBuffer<half> predicted;
-/// The forward pass's own arena, which is `float` and is where a layer's input comes from and its
-/// answer goes back to - and which a `float` accumulator can therefore multiply straight into.
-[vk::binding(3, 0)] RWStructuredBuffer<float> predicted_wide;
-/// The network's weights as the host stores them, read here for a layer's biases alone.
-[vk::binding(4, 0)] StructuredBuffer<float> biases;
+/// `Stored` in `slang/pmrid.slang`, as the module this arm runs beside is compiled.
+typealias Stored = half;
 
-static const uint FRAG = 16;
+/// The forward pass's own arena, where a layer's input comes from and its answer goes back to.
+[vk::binding(1, 0)] RWStructuredBuffer<Stored> arena;
+/// The network's weights as the host stores them, read here for the depthwise taps and the biases.
+[vk::binding(2, 0)] StructuredBuffer<float> biases;
+/// The sweep's own matrices, which a rendition never binds.
+///
+/// **After the rendition's bindings, never among them.** wgpu's Metal backend numbers buffers by
+/// their place in the layout and slangc by their binding, so a rendition's layout with a gap in it
+/// would bind every buffer after the gap one slot off.
+[vk::binding(3, 0)] RWStructuredBuffer<half> samples;
+[vk::binding(4, 0)] RWStructuredBuffer<half> predicted;
+[vk::binding(5, 0)] RWStructuredBuffer<float> predicted_wide;
+
+#ifndef FRAGMENT
+#define FRAGMENT 16
+#endif
+
+static const uint FRAG = FRAGMENT;
 static const uint LANES = 32;
 
 typealias FragA = CoopMat<half, MemoryScope.Subgroup, FRAG, FRAG, CoopMatMatrixUse.MatrixA>;
@@ -222,51 +279,335 @@ uint fragment_at(uint row, uint column, uint columns)
     return ((row / FRAG) * (columns / FRAG) + column / FRAG) * (FRAG * FRAG);
 }
 
-/// One fragment a workgroup, which is what [`stage`] and [`finish`] are dispatched over.
-///
-/// **A thread a cell of the fragment, rather than a thread a cell of the row.** The `half` side of
-/// both kernels is the blocked one, so a workgroup laid along the plane writes 32 bytes here and 32
-/// bytes 1KB away, sixteen times over; laid on a fragment it writes the whole 512 contiguous.
-static const uint CROSSING = FRAG * FRAG;
+static const uint SEPARABLE_GANGS = 4;
+static const uint SEPARABLE_THREADS = LANES * SEPARABLE_GANGS;
+static const uint PIXELS_WIDE = 8;
+static const uint PIXELS_TALL = 8;
+static const uint PIXELS = PIXELS_WIDE * PIXELS_TALL;
+static const uint SPANS = PIXELS / FRAG;
+/// The input a tile of the depthwise reads at the network's widest reach, stride 2 and 5x5.
+static const uint REACH_WIDE = PIXELS_WIDE * 2 + 4;
+static const uint REACH_TALL = PIXELS_TALL * 2 + 4;
+/// The most rows of an answer a workgroup has, which `reach` holds for [`settle`].
+static const uint ROWS_MOST = 64;
+/// A row of `spread` and of the answer, padded so a fragment's rows do not share banks.
+static const uint PADDED = PIXELS + 8;
+static const uint IN_FLIGHT = 8;
 
-/// The layer's input, from the arena into the `half` the multiply reads.
+static const uint REACHED_MOST = FRAG * REACH_WIDE * REACH_TALL;
+static const uint ANSWERED_MOST = ROWS_MOST * PADDED;
+groupshared half reach[REACHED_MOST > ANSWERED_MOST ? REACHED_MOST : ANSWERED_MOST];
+/// One step of `FRAG` input channels' depthwise, which is all a pass between two barriers holds.
 ///
-/// **The two sides of this kernel are the two things a tensor core asks for that the rest of the
-/// forward pass does not**: an activation plane in `half`, and it held a fragment at a time
-/// ([`fragment_at`]). Both are this layer's alone - the arena stays `float` and row-major, because
-/// the other three quarters of the network are WGSL over it.
-[shader("compute")]
-[numthreads(CROSSING, 1, 1)]
-void stage(uint3 group : SV_GroupID, uint slot : SV_GroupIndex)
+/// **Not more, though the barriers would halve.** Two steps a pass measured the same work in the
+/// same time, and the second step's room here cost a workgroup a multiprocessor: 81ms a 24MP frame
+/// with one step's room, 87 with two, 89 with four, on an RTX 3080 whatever the steps taken.
+groupshared half spread[FRAG * PADDED];
+
+/// Output pixels of one row a thread of the depthwise carries, and how many of those make a row.
+static const uint RUN = FRAG * PIXELS / SEPARABLE_THREADS;
+static const uint RUNS = PIXELS / RUN;
+
+/// One thread's run of the depthwise, from `reach` into `spread`.
+///
+/// **A run of one channel rather than a pixel of any**, so the taps are read once into registers
+/// and a row of `reach` once for all `RUN` pixels it reaches, where a thread a pixel reads both
+/// again for every output.
+void depthwise<let K : uint, let S : uint>(uint slot, uint reached, uint span, uint taps)
 {
-    let row = group.y * FRAG + slot / FRAG;
-    let column = group.x * FRAG + slot % FRAG;
-    let into = (group.y * (pc.columns / FRAG) + group.x) * CROSSING + slot;
-    samples[pc.samples_at + into] = half(predicted_wide[pc.plane_at + row * pc.columns + column]);
+    let channel = slot / RUNS;
+    let first = (slot % RUNS) * RUN;
+    float tap[K * K];
+    [ForceUnroll]
+    for (uint i = 0; i < K * K; i++) { tap[i] = biases[taps + channel * K * K + i]; }
+    float sums[RUN];
+    [ForceUnroll]
+    for (uint p = 0; p < RUN; p++) { sums[p] = 0.0; }
+    [ForceUnroll]
+    for (uint ky = 0; ky < K; ky++) {
+        let at = channel * reached + ((first / PIXELS_WIDE) * S + ky) * span
+            + (first % PIXELS_WIDE) * S;
+        float line[(RUN - 1) * S + K];
+        [ForceUnroll]
+        for (uint i = 0; i < (RUN - 1) * S + K; i++) { line[i] = float(reach[at + i]); }
+        [ForceUnroll]
+        for (uint kx = 0; kx < K; kx++) {
+            [ForceUnroll]
+            for (uint p = 0; p < RUN; p++) { sums[p] += line[p * S + kx] * tap[ky * K + kx]; }
+        }
+    }
+    [ForceUnroll]
+    for (uint p = 0; p < RUN; p++) { spread[channel * PADDED + first + p] = half(sums[p]); }
 }
 
-/// The multiply's answer back into the arena, with what the convolution still owed it.
-///
-/// The bias, the residual a block folded into this layer's store, and the rectifier: everything
-/// `pmrid.slang`'s own pointwise does around its accumulator, done here because the multiply that
-/// replaced it has only the accumulator.
-[shader("compute")]
-[numthreads(CROSSING, 1, 1)]
-void finish(uint3 group : SV_GroupID, uint slot : SV_GroupIndex)
+/// The bias of the multiply's row `row`: `UP` says the rows are a 2x2 transposed convolution's,
+/// `out_channels * 4` of them in `(channel, tap)` order over the *input's* pixels, rather than a
+/// 1x1's output channels.
+uint biased<let UP : bool>(uint row)
 {
-    let row = group.y * FRAG + slot / FRAG;
-    let column = group.x * FRAG + slot % FRAG;
-    let cell = row * pc.columns + column;
-    let from = (group.y * (pc.columns / FRAG) + group.x) * CROSSING + slot;
-    var value = float(predicted[pc.out_at + from]) + biases[pc.bias_at + row];
-    if ((pc.after & 2) != 0) {
-        value += predicted_wide[pc.skip_at + cell];
-    }
-    if ((pc.after & 1) != 0) {
-        value = max(value, 0.0);
-    }
-    predicted_wide[pc.into_at + cell] = value;
+    return UP ? row / 4 : row;
 }
+
+/// Where the multiply's answer for row `row` at `(x, y)` lands in the output tensor.
+///
+/// An upsample's row is a channel and one of the four taps, and its `x` a pixel of the input, which
+/// is an output pixel `(2x + tap % 2, 2y + tap / 2)` of a plane twice the input's size.
+uint landing<let UP : bool>(uint row, uint x, uint y, uint out_width)
+{
+    if (!UP) { return row * pc.columns + y * out_width + x; }
+    let wide = pc.in_width * 2;
+    let across = (x % pc.in_width) * 2 + row % 2;
+    let down = (x / pc.in_width) * 2 + (row % 4) / 2;
+    return (row / 4) * wide * pc.in_height * 2 + down * wide + across;
+}
+
+/// The multiply's answer, held in `reach` a row of `PADDED` an output channel, into the arena with
+/// the bias, the residual and the rectifier: `ROWS` channels from `row` over a tile `WIDE` pixels
+/// across whose corner is `(left, top)` in a plane `out_width` by `out_height`.
+///
+/// **The residual is read `IN_FLIGHT` cells at a time before any is added**, for the reason
+/// [`separable_as`] stages that way.
+void answer<let ROWS : uint, let WIDE : uint, let UP : bool>(
+    uint slot, uint row, uint left, uint top, uint out_width, uint out_height)
+{
+    let skipping = (pc.after & 2) != 0;
+    for (uint from = 0; from < ROWS * PIXELS; from += IN_FLIGHT * SEPARABLE_THREADS) {
+        float skipped[IN_FLIGHT];
+        [ForceUnroll]
+        for (uint j = 0; j < IN_FLIGHT; j++) {
+            let i = from + j * SEPARABLE_THREADS + slot;
+            let pixel = i % PIXELS;
+            let x = left + pixel % WIDE;
+            let y = top + pixel / WIDE;
+            skipped[j] = 0.0;
+            if (skipping && i < ROWS * PIXELS && x < out_width && y < out_height) {
+                let cell = landing<UP>(row + i / PIXELS, x, y, out_width);
+                skipped[j] = float(arena[pc.skip_at + cell]);
+            }
+        }
+        [ForceUnroll]
+        for (uint j = 0; j < IN_FLIGHT; j++) {
+            let i = from + j * SEPARABLE_THREADS + slot;
+            let pixel = i % PIXELS;
+            let x = left + pixel % WIDE;
+            let y = top + pixel / WIDE;
+            if (i >= ROWS * PIXELS || x >= out_width || y >= out_height) { continue; }
+            let channel = row + i / PIXELS;
+            var value = float(reach[(i / PIXELS) * PADDED + pixel])
+                + biases[pc.bias_at + biased<UP>(channel)] + skipped[j];
+            if ((pc.after & 1) != 0) {
+                value = max(value, 0.0);
+            }
+            arena[pc.into_at + landing<UP>(channel, x, y, out_width)] = Stored(value);
+        }
+    }
+}
+
+/// A whole separable convolution, the depthwise and the 1x1 after it, in one dispatch.
+///
+/// A workgroup is `ROWS` output channels over a tile of `PIXELS` output pixels. The depthwise is
+/// computed a fragment of channels at a time straight into shared memory, where it is the
+/// multiply's `B` operand as it stands: the plane between the two layers never reaches the arena.
+/// Dispatched over tiles across in x, `rows / ROWS` in y and tiles down in z.
+void separable<let ROWS : uint>(uint3 group, uint slot)
+{
+    switch (pc.kernel * 10 + pc.stride) {
+    case 52: separable_as<ROWS, 5, 2>(group, slot); break;
+    case 51: separable_as<ROWS, 5, 1>(group, slot); break;
+    case 32: separable_as<ROWS, 3, 2>(group, slot); break;
+    default: separable_as<ROWS, 3, 1>(group, slot); break;
+    }
+}
+
+/// What this thread stages of the patch one step of `FRAG` input channels from `k` reaches: cell
+/// `slot + j * SEPARABLE_THREADS`, zero outside the plane.
+half gathered<let K : uint, let S : uint>(
+    uint j, uint k, uint slot, int reach_x, int reach_y, uint plane)
+{
+    const uint span = PIXELS_WIDE * S + K - 1;
+    const uint reached = span * (PIXELS_TALL * S + K - 1);
+    let i = j * SEPARABLE_THREADS + slot;
+    let within = i % reached;
+    let y = reach_y + int(within / span);
+    let x = reach_x + int(within % span);
+    let inside = i < FRAG * reached && x >= 0 && y >= 0 && x < int(pc.in_width)
+        && y < int(pc.in_height);
+    if (!inside) { return half(0); }
+    return arena[pc.plane_at + (k + i / reached) * plane + uint(y) * pc.in_width + uint(x)];
+}
+
+/// [`separable`] for one kernel and stride, which are constants so that the staging's walk over
+/// `reach` divides by a constant rather than by a uniform.
+void separable_as<let ROWS : uint, let K : uint, let S : uint>(uint3 group, uint slot)
+{
+    typealias Acc = CoopMat<half, MemoryScope.Subgroup, FRAG, FRAG, CoopMatMatrixUse.MatrixAccumulator>;
+    const uint HELD = (ROWS / FRAG) * SPANS / SEPARABLE_GANGS;
+    const uint HELD_ROWS = HELD > SPANS ? HELD / SPANS : 1;
+    const uint HELD_SPANS = HELD / HELD_ROWS;
+    const uint span = PIXELS_WIDE * S + K - 1;
+    const uint reached = span * (PIXELS_TALL * S + K - 1);
+
+    let gang = slot / LANES;
+    let first_row = gang * HELD / SPANS;
+    let first_span = gang * HELD % SPANS;
+    let left = group.x * PIXELS_WIDE;
+    let top = group.z * PIXELS_TALL;
+    let row = group.y * ROWS;
+    let reach_x = int(left * S) - int(K / 2);
+    let reach_y = int(top * S) - int(K / 2);
+    let plane = pc.in_width * pc.in_height;
+
+    var sums: Acc[HELD];
+    [ForceUnroll]
+    for (uint i = 0; i < HELD; i++) { sums[i] = Acc(half(0)); }
+
+    for (uint k = 0; k < pc.depth; k += FRAG) {
+        // Asked for before the staging, so their latency is spent under it rather than after it.
+        FragA a[HELD_ROWS];
+        [ForceUnroll]
+        for (uint r = 0; r < HELD_ROWS; r++) {
+            a[r] = FragA.Load<CoopMatMatrixLayout.RowMajor>(
+                weights,
+                pc.weights_at + fragment_at(row + (first_row + r) * FRAG, k, pc.depth),
+                FRAG);
+        }
+        // `IN_FLIGHT` loads asked for before any is stored: stored as each arrives, every load
+        // waits out the one before it, and the staging costs the kernel half again.
+        for (uint from = 0; from < FRAG * reached; from += IN_FLIGHT * SEPARABLE_THREADS) {
+            half held[IN_FLIGHT];
+            [ForceUnroll]
+            for (uint j = 0; j < IN_FLIGHT; j++) {
+                let cell = from / SEPARABLE_THREADS + j;
+                held[j] = gathered<K, S>(cell, k, slot, reach_x, reach_y, plane);
+            }
+            [ForceUnroll]
+            for (uint j = 0; j < IN_FLIGHT; j++) {
+                let i = from + j * SEPARABLE_THREADS + slot;
+                if (i < FRAG * reached) { reach[i] = held[j]; }
+            }
+        }
+        GroupMemoryBarrierWithGroupSync();
+        depthwise<K, S>(slot, reached, span, pc.spread_at + k * K * K);
+        GroupMemoryBarrierWithGroupSync();
+        [ForceUnroll]
+        for (uint r = 0; r < HELD_ROWS; r++) {
+            [ForceUnroll]
+            for (uint s = 0; s < HELD_SPANS; s++) {
+                let b = FragB.Load<CoopMatMatrixLayout.RowMajor>(
+                    spread, (first_span + s) * FRAG, PADDED);
+                sums[r * HELD_SPANS + s] =
+                    coopMatMulAdd<half, false>(a[r], b, sums[r * HELD_SPANS + s]);
+            }
+        }
+    }
+
+    // `reach` is free once the last step's depthwise has read it, and holding the answer there
+    // rather than beside it is a smaller workgroup and more of them on a multiprocessor.
+    settle<ROWS, PIXELS_WIDE, HELD, false>(
+        sums, slot, row, left, top, pc.out_width, pc.columns / pc.out_width);
+}
+
+/// A 1x1 convolution whose input is already in the arena, read as the multiply's `B` where it lies.
+///
+/// A workgroup is `ROWS` output channels over `PIXELS` consecutive pixels of the plane, which has
+/// to divide by them. Dispatched over `columns / PIXELS` in x and `rows / ROWS` in y.
+void pointwise<let ROWS : uint, let UP : bool>(uint3 group, uint slot)
+{
+    typealias Acc = CoopMat<half, MemoryScope.Subgroup, FRAG, FRAG, CoopMatMatrixUse.MatrixAccumulator>;
+    const uint HELD = (ROWS / FRAG) * SPANS / SEPARABLE_GANGS;
+    const uint HELD_ROWS = HELD > SPANS ? HELD / SPANS : 1;
+    const uint HELD_SPANS = HELD / HELD_ROWS;
+
+    let gang = slot / LANES;
+    let first_row = gang * HELD / SPANS;
+    let first_span = gang * HELD % SPANS;
+    let column = group.x * PIXELS;
+    let row = group.y * ROWS;
+
+    var sums: Acc[HELD];
+    [ForceUnroll]
+    for (uint i = 0; i < HELD; i++) { sums[i] = Acc(half(0)); }
+
+    for (uint k = 0; k < pc.depth; k += FRAG) {
+        FragA a[HELD_ROWS];
+        [ForceUnroll]
+        for (uint r = 0; r < HELD_ROWS; r++) {
+            a[r] = FragA.Load<CoopMatMatrixLayout.RowMajor>(
+                weights,
+                pc.weights_at + fragment_at(row + (first_row + r) * FRAG, k, pc.depth),
+                FRAG);
+        }
+        FragB b[HELD_SPANS];
+        [ForceUnroll]
+        for (uint s = 0; s < HELD_SPANS; s++) {
+            b[s] = FragB.Load<CoopMatMatrixLayout.RowMajor>(
+                arena, pc.plane_at + k * pc.columns + column + (first_span + s) * FRAG, pc.columns);
+        }
+        [ForceUnroll]
+        for (uint r = 0; r < HELD_ROWS; r++) {
+            [ForceUnroll]
+            for (uint s = 0; s < HELD_SPANS; s++) {
+                sums[r * HELD_SPANS + s] =
+                    coopMatMulAdd<half, false>(a[r], b[s], sums[r * HELD_SPANS + s]);
+            }
+        }
+    }
+
+    settle<ROWS, PIXELS, HELD, UP>(sums, slot, row, column, 0, pc.columns, 1);
+}
+
+/// A workgroup's accumulators through `reach` into the arena: [`answer`], over the tile it
+/// describes.
+void settle<let ROWS : uint, let WIDE : uint, let HELD : uint, let UP : bool>(
+    CoopMat<half, MemoryScope.Subgroup, FRAG, FRAG, CoopMatMatrixUse.MatrixAccumulator> sums[HELD],
+    uint slot, uint row, uint left, uint top, uint out_width, uint out_height)
+{
+    const uint HELD_ROWS = HELD > SPANS ? HELD / SPANS : 1;
+    const uint HELD_SPANS = HELD / HELD_ROWS;
+    let gang = slot / LANES;
+    let first_row = gang * HELD / SPANS;
+    let first_span = gang * HELD % SPANS;
+    [ForceUnroll]
+    for (uint r = 0; r < HELD_ROWS; r++) {
+        [ForceUnroll]
+        for (uint s = 0; s < HELD_SPANS; s++) {
+            sums[r * HELD_SPANS + s].Store<CoopMatMatrixLayout.RowMajor>(
+                reach, (first_row + r) * FRAG * PADDED + (first_span + s) * FRAG, PADDED);
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+    answer<ROWS, WIDE, UP>(slot, row, left, top, out_width, out_height);
+}
+
+/// The kernels a rendition dispatches, [`separable`] and [`pointwise`] for a workgroup of `rows`
+/// output channels, which is what the Metal artefact is compiled to hold.
+///
+/// **Metal has no object file here: `newLibraryWithSource` compiles the string it is handed when
+/// the device opens**, so every entry point in the file is a kernel compiled on the way to the six
+/// that run, and the sweep below is fifty of them. `build.rs` reads the names off these lines.
+#define DISPATCHED(rows)                                                           \
+    [shader("compute")]                                                            \
+    [numthreads(SEPARABLE_THREADS, 1, 1)]                                          \
+    void separable_##rows(uint3 group : SV_GroupID, uint slot : SV_GroupIndex)     \
+    {                                                                              \
+        separable<rows>(group, slot);                                              \
+    }                                                                              \
+    [shader("compute")]                                                            \
+    [numthreads(SEPARABLE_THREADS, 1, 1)]                                          \
+    void pointwise_##rows(uint3 group : SV_GroupID, uint slot : SV_GroupIndex)     \
+    {                                                                              \
+        pointwise<rows, false>(group, slot);                                       \
+    }                                                                              \
+    [shader("compute")]                                                            \
+    [numthreads(SEPARABLE_THREADS, 1, 1)]                                          \
+    void upsample_##rows(uint3 group : SV_GroupID, uint slot : SV_GroupIndex)      \
+    {                                                                              \
+        pointwise<rows, true>(group, slot);                                        \
+    }
+
+DISPATCHED(16)
+DISPATCHED(32)
+DISPATCHED(64)
 
 /// [`multiply`] over matrices held a fragment at a time rather than row by row.
 void blocked_multiply<
@@ -468,9 +809,10 @@ AHEAD(widef_2x2x1, float, predicted_wide, 2, 2, 1, 1)
 AHEAD(widef_2x4x1, float, predicted_wide, 2, 4, 1, 1)
 AHEAD(widef_1x4x1, float, predicted_wide, 1, 4, 1, 1)
 AHEAD(widef_2x2x1_2, float, predicted_wide, 2, 2, 1, 2)
+AHEAD(halff_2x2x2_2, half, predicted, 2, 2, 2, 2)
+AHEAD(halff_1x2x1, half, predicted, 1, 2, 1, 1)
 AHEAD(halff_2x2x1, half, predicted, 2, 2, 1, 1)
 AHEAD(halff_2x4x1, half, predicted, 2, 4, 1, 1)
-AHEAD(halff_1x2x1, half, predicted, 1, 2, 1, 1)
 AHEAD(halff_4x2x1, half, predicted, 4, 2, 1, 1)
 AHEAD(halff_2x2x1_2, half, predicted, 2, 2, 1, 2)
 AHEAD(halff_1x2x1_2, half, predicted, 1, 2, 1, 2)
@@ -488,7 +830,6 @@ AHEAD(halff_1x4x8, half, predicted, 1, 4, 8, 1)
 AHEAD(halff_1x8x2, half, predicted, 1, 8, 2, 1)
 AHEAD(halff_2x2x4, half, predicted, 2, 2, 4, 1)
 AHEAD(halff_2x2x1_4, half, predicted, 2, 2, 1, 4)
-AHEAD(halff_2x2x2_2, half, predicted, 2, 2, 2, 2)
 AHEAD(halff_4x2x1_2, half, predicted, 4, 2, 1, 2)
 AHEAD(halff_2x4x2_2, half, predicted, 2, 4, 2, 2)
 AHEAD(halff_4x4x1_2, half, predicted, 4, 4, 1, 2)

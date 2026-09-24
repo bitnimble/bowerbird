@@ -688,6 +688,24 @@ pub extern "C" fn bb_cancel_job() {
     progress::cancel();
 }
 
+/// Keeps what a render allocates for the next render to reuse, until as many
+/// `bb_release_render_memory` calls as holds. For a queue of renders; a render with no hold frees
+/// everything it allocated as it finishes.
+#[expect(unsafe_code)]
+#[cfg(feature = "renditions")]
+#[unsafe(no_mangle)]
+pub extern "C" fn bb_hold_render_memory() {
+    pmrid::hold_arenas();
+}
+
+/// Ends one `bb_hold_render_memory`; the last frees everything kept.
+#[expect(unsafe_code)]
+#[cfg(feature = "renditions")]
+#[unsafe(no_mangle)]
+pub extern "C" fn bb_release_render_memory() {
+    pmrid::release_arenas();
+}
+
 /// Size of `BbHeader`, which the caller checks against the layout it reads.
 #[expect(unsafe_code)]
 #[cfg(feature = "renditions")]

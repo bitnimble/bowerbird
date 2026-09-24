@@ -102,6 +102,12 @@ export class ProcessingService extends RenderService {
     compositeOf: (
       photoId: string,
     ) => { kind: 'panorama' | 'assembly'; recipe: unknown; sources: CompositeJobSource[] } | null = () => null,
+    /**
+     * `run`, with what each render allocates kept for the next: `rawshim_job.holdingRenderMemory`,
+     * which a batch runs inside and a one-off render does not. Defaulted so a test, whose workers
+     * are mocks, never loads the native library.
+     */
+    private readonly holdingRenderMemory: <T>(run: () => Promise<T>) => Promise<T> = (run) => run(),
   ) {
     super(photoProcessing, photoPaths, photoListing, settings, editsFor, libraryOf, compositeOf);
   }
@@ -168,7 +174,7 @@ export class ProcessingService extends RenderService {
   // `queued` with nothing running to take it. So the same check that ends a batch
   // is made again after it is out of the map, and starts the next one.
   private start(libraryId: string | undefined, key: string, stopped?: () => boolean): Promise<void> {
-    const run = this.drain(libraryId, key, stopped).finally(() => {
+    const run = this.holdingRenderMemory(() => this.drain(libraryId, key, stopped)).finally(() => {
       this.inFlight.delete(key);
       // Not while stopped: `drain` returns without consuming `queued` in that
       // case, so relaunching on it would spin.
