@@ -41,12 +41,11 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
       // Without them "All folders" can only show what the shoots already say, so
       // a library with none - every folder pass-through, or set aside - shows an
       // empty page under a message telling the reader to look here.
-      // Both readings take the same flag, or the tree keeps a hidden shoot's folders after the
-      // shoot itself has gone from it and draws them as unclaimed (§12.4).
-      const includeHidden = this.store.showHidden;
+      // The hidden come too whether or not they are shown, so `Show hidden shoots` is a filter over
+      // rows in hand rather than a second walk of the disk (§12.4).
       const [shoots, folders, root] = await Promise.all([
-        shootsApi.list(libraryId, includeHidden),
-        librariesApi.folders(libraryId, includeHidden),
+        shootsApi.list(libraryId, true),
+        librariesApi.folders(libraryId, true),
         // What the "not in any shoot" row shows, the way a shoot's row shows its
         // own first photograph. Named by nobody, so it is asked for rather than
         // derived: one row of the listing that row opens into, in the ordering
@@ -57,9 +56,9 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
       ]);
       if (this.store.libraryId !== libraryId) return; // navigated away while this was in flight
       // Handed to the sidebar so it follows a rename without reading the same list again -
-      // but only the reading it would have asked for itself. With Hidden showing, this
-      // one holds the shoots put away, which the sidebar offers no way to put back (§12.4).
-      if (!includeHidden) this.sidebar.adopt(libraryId, shoots);
+      // but only the shoots it would have asked for itself: it offers no way to put a hidden one
+      // back (§12.4).
+      this.sidebar.adopt(libraryId, shoots.filter((s) => !s.is_hidden));
       runInAction(() => {
         this.store.shoots = shoots;
         this.store.folders = folders;
@@ -111,17 +110,12 @@ export class ShootsPresenter extends CollectionListPresenter<ShootsStore> {
 
   // Whether the shoots put away are drawn, which is about this reader looking rather than about the
   // catalogue - so it is remembered here, beside the reading (§12.4).
-  //
-  // A re-read rather than a filter lifting: the server does not send a hidden shoot unless the
-  // request asks for it, so there is nothing already in hand for a computed to reveal.
-  // Hands back the re-read rather than firing it off, so a caller that has to know the rows have
-  // landed can wait for them. The writes above it are the action's; only the fetch is awaited.
   @action.bound
-  setShowHidden(showHidden: boolean): Promise<void> {
+  setShowHidden(showHidden: boolean): void {
     this.store.showHidden = showHidden;
     this.store.scrollTop = 0;
     writeSetting(SHOW_HIDDEN_KEY, String(showHidden));
-    return this.reload();
+    this.settleCursor();
   }
 
   @action.bound
