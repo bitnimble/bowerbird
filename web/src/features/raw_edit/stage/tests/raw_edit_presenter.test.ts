@@ -114,6 +114,24 @@ describe('a slider reaching the picture', () => {
     expect(edit.doc?.colourProfile).toBe('none');
   });
 
+  // A panel hands these to its controls as bare references, which call them with no `this`.
+  test('keeps its presenter in every method a control holds on its own', () => {
+    const {
+      setDenoiser, setColourProfile, setCropAspect, previewStraighten, settleStraighten, setGuideKind, clearKeystone,
+    } = presenter;
+    setDenoiser('pmrid');
+    setColourProfile('none');
+    setCropAspect('original');
+    previewStraighten(2);
+    settleStraighten(3);
+    setGuideKind('horizontal');
+    clearKeystone();
+
+    expect(edit.doc?.denoiser).toBe('pmrid');
+    expect(edit.doc?.colourProfile).toBe('none');
+    expect(edit.doc?.cropAngle).toBe(3);
+  });
+
   test('leaves the white balance as the frame own until the reader moves it', async () => {
     edit.asShot = { temperature: 5487.3, tint: 11.4 };
 

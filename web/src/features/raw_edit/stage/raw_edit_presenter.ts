@@ -511,6 +511,7 @@ export class RawEditPresenter {
     this.crop.settleCrop(rect);
   }
 
+  @action.bound
   setCropAspect(key: AspectKey): void {
     this.crop.setCropAspect(key);
   }
@@ -566,10 +567,12 @@ export class RawEditPresenter {
     this.crop.setCropToFit(on);
   }
 
+  @action.bound
   previewStraighten(degrees: number): void {
     this.crop.previewStraighten(degrees);
   }
 
+  @action.bound
   settleStraighten(degrees: number): void {
     this.crop.settleStraighten(degrees);
   }
@@ -630,6 +633,7 @@ export class RawEditPresenter {
     this.keystone.setGuides(guides, settle);
   }
 
+  @action.bound
   setGuideKind(kind: GuideKind): void {
     this.keystone.setGuideKind(kind);
   }
@@ -664,6 +668,7 @@ export class RawEditPresenter {
     this.keystone.removeGuide(index);
   }
 
+  @action.bound
   clearKeystone(): void {
     this.keystone.clearKeystone();
   }
@@ -684,10 +689,12 @@ export class RawEditPresenter {
     this.edit.settle(patch);
   }
 
+  @action.bound
   setColourProfile(colourProfile: ColourProfile): void {
     this.edit.setColourProfile(colourProfile);
   }
 
+  @action.bound
   setDenoiser(denoiser: Denoiser): void {
     this.edit.setDenoiser(denoiser);
   }
