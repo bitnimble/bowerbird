@@ -199,6 +199,7 @@ export class StagePainter {
    * found out; every later frame takes the 2D path instead of spending another.
    */
   private declined = false;
+  private readonly said = new Set<string>();
 
   constructor(private readonly device: GPUDevice | null) {}
 
@@ -289,10 +290,14 @@ export class StagePainter {
   private async paintExtended(canvas: OffscreenCanvas, ask: Paint): Promise<Painted> {
     const { device } = this;
     const { picture, region, rotation, proof } = ask;
-    if (this.declined || device == null) return 'declined';
+    if (this.declined) return 'declined';
+    if (device == null) return this.decline('there is no WebGPU device');
     if (!(typeof VideoFrame === 'function' && picture instanceof VideoFrame)) return 'declined';
     const layout = planarLayout(picture, rotation);
     const planar = layout != null;
+    if (!planar && carriesHdr(picture)) {
+      this.warn(`an HDR frame (${described(picture)}) is not one the planar path reads, so it is imported and drawn flat`);
+    }
     const whole = { x: 0, y: 0, width: picture.displayWidth, height: picture.displayHeight };
     const displayed = region ?? whole;
     const stored = planar ? storedRegion(displayed, rotation, picture.codedWidth, picture.codedHeight) : displayed;
@@ -315,15 +320,15 @@ export class StagePainter {
       planar ?
         Math.max(drawnRegion.width, drawnRegion.height) > limit
       : Math.max(picture.codedWidth, picture.codedHeight) > limit;
-    if (tooLarge) return 'declined';
+    if (tooLarge) return this.decline(`${described(picture)} is past this device's ${limit}px texture limit`);
 
     // The planes are copied out before the context is taken for the same reason: `copyTo` is
     // real work on a frame the run may close underneath it, and it rejects.
     let planes: GPUTexture[] = [];
     try {
       if (planar) planes = await planesOf(device, picture, drawnRegion, layout.chroma);
-    } catch {
-      return 'declined';
+    } catch (err) {
+      return this.decline(`copying the planes out of ${described(picture)} failed`, err);
     }
 
     // And the import for the same reason again, this being the last call that can fail on the
@@ -339,15 +344,15 @@ export class StagePainter {
         // written into a display-p3 canvas are read as display-p3, which is a picture too
         // saturated by exactly the difference between the two gamuts.
         imported = device.importExternalTexture({ source: picture, colorSpace: 'display-p3' });
-      } catch {
-        return 'declined';
+      } catch (err) {
+        return this.decline(`importing ${described(picture)} failed`, err);
       }
     }
 
     const context = canvas.getContext('webgpu');
     if (context == null) {
       for (const plane of planes) plane.destroy();
-      return 'declined';
+      return this.decline('the canvas gave no WebGPU context');
     }
     try {
       if (planar) {
@@ -407,8 +412,8 @@ export class StagePainter {
       pass.end();
       device.queue.submit([commands.finish()]);
       return 'drawn';
-    } catch {
-      this.declined = true;
+    } catch (err) {
+      this.giveUp(err);
       return 'lost';
     } finally {
       for (const plane of planes) plane.destroy();
@@ -428,10 +433,13 @@ export class StagePainter {
   private async paintMasked(canvas: OffscreenCanvas, ask: PaintMasked): Promise<Painted> {
     const { device } = this;
     const { base, layers } = ask;
-    if (this.declined || device == null) return 'declined';
-    if (planarLayout(base) == null) return 'declined';
+    if (this.declined) return 'declined';
+    if (device == null) return this.decline('there is no WebGPU device');
+    if (planarLayout(base) == null) return this.decline(`a composite's base (${described(base)}) is not planar PQ`);
     const limit = device.limits.maxTextureDimension2D;
-    if (Math.max(base.displayWidth, base.displayHeight) > limit) return 'declined';
+    if (Math.max(base.displayWidth, base.displayHeight) > limit) {
+      return this.decline(`${described(base)} is past this device's ${limit}px texture limit`);
+    }
 
     const drawn = pipelinesFor(device);
     const spent: GPUTexture[] = [];
@@ -492,9 +500,9 @@ export class StagePainter {
           const pass = await prepare(picture, mask, shift, gain);
           if (pass != null) passes.push(pass);
         }
-      } catch {
+      } catch (err) {
         // A frame closed under the copy, as leaving the page does: this paint, not the device.
-        return 'declined';
+        return this.decline('copying a composite layer out failed', err);
       }
 
       // After the copies, for the reason `paintExtended` spells out: a canvas holds one kind of
@@ -532,14 +540,46 @@ export class StagePainter {
       pass.end();
       device.queue.submit([commands.finish()]);
       return 'drawn';
-    } catch {
-      this.declined = true;
+    } catch (err) {
+      this.giveUp(err);
       return 'lost';
     } finally {
       for (const texture of spent) texture.destroy();
       for (const buffer of written) buffer.destroy();
     }
   }
+
+  /** A paint that goes to the 2D path, which tone maps an HDR frame to SDR. */
+  private decline(why: string, err?: unknown): 'declined' {
+    this.warn(`${why}, so this frame is drawn through a 2D canvas in SDR`, err);
+    return 'declined';
+  }
+
+  private giveUp(err: unknown): void {
+    this.declined = true;
+    console.error('stage: a WebGPU draw failed, so every later frame is drawn through a 2D canvas in SDR until a reload', err);
+  }
+
+  /** Once per message: the same refusal comes back on every paint, and each arrow key is one. */
+  private warn(message: string, err?: unknown): void {
+    const said = err instanceof Error ? `${message}: ${err.message}` : message;
+    if (this.said.has(said)) return;
+    this.said.add(said);
+    console.warn(`stage: ${message}`, ...(err == null ? [] : [err]));
+  }
+}
+
+function carriesHdr(frame: VideoFrame): boolean {
+  return String(frame.colorSpace.transfer) === 'pq' || /P1[02]/.test(String(frame.format));
+}
+
+function described(frame: VideoFrame): string {
+  const { format, colorSpace: space } = frame;
+  const range = space.fullRange === true ? 'full' : 'limited';
+  return (
+    `${String(format)} ${frame.codedWidth}x${frame.codedHeight} shown ${frame.displayWidth}x${frame.displayHeight}, ` +
+    `${String(space.primaries)}/${String(space.transfer)}/${String(space.matrix)} ${range} range`
+  );
 }
 
 /**

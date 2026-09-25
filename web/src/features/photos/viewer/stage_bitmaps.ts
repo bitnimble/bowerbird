@@ -160,6 +160,7 @@ async function decodePicture(
       // viewer ask for a rendition to be built that is already there. Fall through and let
       // the bitmap decode have it.
       if (signal.aborted) throw err;
+      console.warn(`stage: ImageDecoder refused a ${blob.type}, so it is decoded as a bitmap, which tone maps HDR to SDR`, err);
     }
   }
 
