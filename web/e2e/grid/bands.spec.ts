@@ -10,9 +10,7 @@ import {
   openLibrary,
   rowTiles,
   setViewMode,
-  scanLibrary,
   stackFrames,
-  waitForScanSettled,
 } from '../helpers';
 
 // A band's members are laid out from CSS the two engines read differently - an
@@ -26,9 +24,7 @@ const NAMES = ['DSC09001.ARW', 'DSC09002.ARW'];
 async function openBand(page: import('@playwright/test').Page, dir: string): Promise<void> {
   mkdirSync(dir, { recursive: true });
   for (const name of NAMES) copyFileSync(FIXTURE, path.join(dir, name));
-  await addLibrary(page, dir, { autoStack: true });
-  await scanLibrary(page, dir);
-  await waitForScanSettled(page, dir, NAMES.length);
+  await addLibrary(page, dir, { autoStack: true, photos: NAMES.length });
   await openLibrary(page, dir);
   await expect(stackFrames(page)).toBeVisible({ timeout: 60_000 });
   await frames(rowTiles(page)).click();

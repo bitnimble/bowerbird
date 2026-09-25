@@ -19,13 +19,11 @@ import {
   selectionBar,
   selectionCount,
   setViewMode,
-  scanLibrary,
   shownFrame,
   stackFrames,
   ticked,
   tiles,
   toggleExpandStacks,
-  waitForScanSettled,
 } from '../helpers';
 
 const FIXTURES = path.join(path.dirname(new URL(import.meta.url).pathname), '../../../test/fixtures');
@@ -73,34 +71,17 @@ test.describe.configure({ mode: 'serial' });
 test('identical frames collapse into one tile that says how many it stands for', async ({ page }) => {
   // The one library that keeps stacking on: its frames are the ones meant to be
   // found alike.
-  await addLibrary(page, STACK_PHOTOS_DIR, { autoStack: true });
-  await scanLibrary(page, STACK_PHOTOS_DIR);
   // Detection runs as part of settling, so the grid has to be opened after it
   // rather than during the import.
-  await waitForScanSettled(page, STACK_PHOTOS_DIR, STACK_PHOTO_NAMES.length);
+  await addLibrary(page, STACK_PHOTOS_DIR, { autoStack: true, photos: STACK_PHOTO_NAMES.length });
   await openLibrary(page, STACK_PHOTOS_DIR);
 
   await expect(tiles(page)).toHaveCount(1, { timeout: 45_000 });
   await expect(stackFrames(page)).toHaveAccessibleName(new RegExp(`stack of ${STACK_PHOTO_NAMES.length},`));
 });
 
-test('the tile opens a band of members below the row, and closes it again', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
-  await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
-  const tile = frames(rowTiles(page));
-
-  await tile.click();
-  await expect(bands(page)).toHaveCount(1);
-  await expect(members(page)).toHaveCount(STACK_PHOTO_NAMES.length);
-  // The stack's own tile stays where it is, now marked as what closes the band.
-  await expect(stackFrames(page)).toHaveAttribute('aria-expanded', 'true');
-
-  await tile.click();
-  await expect(bands(page)).toHaveCount(0);
-});
-
-test('every view opens the band, and none of them draws it over the grid', async ({ page }) => {
+// Where the members sit inside the band is `bands.spec.ts`.
+test('the tile opens a band below the row in every view, and closes it again', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, STACK_PHOTOS_DIR);
   const tile = frames(rowTiles(page));
@@ -111,22 +92,20 @@ test('every view opens the band, and none of them draws it over the grid', async
     // Masonry packs from each photo's shape rather than on a row model, and used
     // to offer no way into a stack at all.
     await expect(stackFrames(page)).toBeVisible();
+    const before = (await rowTiles(page).boundingBox())!;
 
     await tile.click();
-    const band = bands(page);
-    await expect(band).toHaveCount(1);
+    await expect(bands(page)).toHaveCount(1);
     await expect(members(page)).toHaveCount(STACK_PHOTO_NAMES.length);
+    // The stack's own tile stays where it is, now marked as what closes the band.
+    await expect(stackFrames(page)).toHaveAttribute('aria-expanded', 'true');
     // Joined to the tile that opened it in every view, masonry included - where the
     // tile's place on its line has to be measured before the edge can be cut.
     await expect.poll(() => fusedBands(page)).toBe(1);
-
-    // The members sit inside the outline rather than on it: the band pays for
-    // that padding out of its own cells, so its last row cannot hang through the
-    // bottom of it.
-    const box = (await band.boundingBox())!;
-    const last = (await members(page).last().boundingBox())!;
-    expect(last.y + last.height).toBeLessThanOrEqual(box.y + box.height);
-    expect(last.y).toBeGreaterThanOrEqual(box.y);
+    // The band is a full-width item after the line its tile sits on, so nothing on
+    // that line changes size: in masonry, a band that broke the line where the tile
+    // was handed it the width the band took, stretching the stack across the grid.
+    expect((await rowTiles(page).boundingBox())!.width).toBeCloseTo(before.width, 0);
 
     await tile.click();
     await expect(bands(page)).toHaveCount(0);
@@ -233,9 +212,7 @@ test.describe('a joined stack at a fractional device ratio', () => {
     ] as const) {
       copyFileSync(source, path.join(dir, name));
     }
-    await addLibrary(page, dir, { autoStack: true });
-    await scanLibrary(page, dir);
-    await waitForScanSettled(page, dir, 4);
+    await addLibrary(page, dir, { autoStack: true, photos: 4 });
     await openLibrary(page, dir);
     await expect(stackFrames(page).first()).toBeVisible({ timeout: 60_000 });
 
@@ -250,26 +227,6 @@ test.describe('a joined stack at a fractional device ratio', () => {
 
     await expectCleanSeam(page, WIDTHS);
   });
-});
-
-test('a masonry band leaves the line it broke at the size it was', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
-  await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
-  await setViewMode(page, 'Masonry');
-
-  const tile = rowTiles(page);
-  const before = (await tile.boundingBox())!;
-  await frames(tile).click();
-  await expect(bands(page)).toHaveCount(1);
-
-  // The band is a full-width item and goes after the line its tile sits on, so
-  // nothing on that line changes size: a band that broke the line where the tile
-  // was handed it the width the band took, stretching the stack across the grid.
-  expect((await tile.boundingBox())!.width).toBeCloseTo(before.width, 0);
-
-  await frames(tile).click();
-  await expect(bands(page)).toHaveCount(0);
 });
 
 test('a list row opens its stack from anywhere along it, not just the thumbnail', async ({ page }) => {
@@ -474,29 +431,9 @@ test('a member picked out of the band can be removed from the stack', async ({ p
   await expect(tiles(page)).toHaveCount(STACK_PHOTO_NAMES.length);
 });
 
-test('a stack made by hand can be unstacked again', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
-  await expect(tiles(page)).toHaveCount(STACK_PHOTO_NAMES.length, { timeout: 45_000 });
-
-  // Cmd-click, because a plain click on the first tile would open it (§18.3.1).
-  for (let index = 0; index < STACK_PHOTO_NAMES.length; index++) {
-    await frames(page).nth(index).click({ modifiers: ['ControlOrMeta'] });
-    await expect(selectedTiles(page)).toHaveCount(index + 1);
-  }
-  await bulkAction(page, 'Stack');
-  await expect(tiles(page)).toHaveCount(1);
-
-  // Cmd-click: a plain click on a stack's tile opens its band rather than selecting
-  // it, and Unstack is offered for a selection holding a stack (§19.6).
-  await frames(page).click({ modifiers: ['ControlOrMeta'] });
-  await bulkAction(page, 'Unstack');
-  await expect(tiles(page)).toHaveCount(STACK_PHOTO_NAMES.length);
-});
-
-// A selection can hold both, and then both are offered: the stack comes apart and
-// the loose frames are left alone.
-test('Unstack takes apart every stack in the selection, beside a photo that is not one', async ({ page }) => {
+// A stack made by hand, in a selection beside a loose frame: the stack comes apart
+// and the loose frame is left alone.
+test('a stack made by hand is taken apart by Unstack, beside a photo that is not one', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, STACK_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(STACK_PHOTO_NAMES.length, { timeout: 45_000 });

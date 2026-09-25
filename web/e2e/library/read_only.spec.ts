@@ -8,9 +8,7 @@ import {
   openLibrary,
   sidebarSection,
   selectPhoto,
-  scanLibrary,
   tiles,
-  waitForScanSettled,
 } from '../helpers';
 
 // A read-only library, through the app the way a photographer reaches it: added
@@ -32,8 +30,6 @@ function tree(dir: string, prefix = ''): Record<string, string> {
 
 test('a read-only library bins and restores without touching the folder', async ({ page }) => {
   await addLibrary(page, ARCHIVE_PHOTOS_DIR, { readOnly: true });
-  await scanLibrary(page, ARCHIVE_PHOTOS_DIR);
-  await waitForScanSettled(page, ARCHIVE_PHOTOS_DIR, PHOTO_NAMES.length);
 
   // Recorded after the import, which is the last thing allowed to have written
   // anything - and it wrote nothing under the root either.

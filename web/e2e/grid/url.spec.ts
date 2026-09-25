@@ -3,7 +3,7 @@
 import { expect, test } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTO_NAMES, URL_OTHER_PHOTOS_DIR, URL_PHOTOS_DIR, URL_PHOTO_NAMES } from '../fixture_library';
-import { addLibrary, gallery, openLibrary, scanLibrary, tiles, waitForScanSettled } from '../helpers';
+import { addLibrary, gallery, openLibrary, tiles } from '../helpers';
 
 test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage();
@@ -11,9 +11,7 @@ test.beforeAll(async ({ browser }) => {
     [URL_PHOTOS_DIR, URL_PHOTO_NAMES],
     [URL_OTHER_PHOTOS_DIR, PHOTO_NAMES],
   ] as const) {
-    await addLibrary(page, root);
-    await scanLibrary(page, root);
-    await waitForScanSettled(page, root, names.length);
+    await addLibrary(page, root, { photos: names.length });
   }
   await page.close();
 });
@@ -42,7 +40,7 @@ test('a reload comes back to the photograph the window started on', async ({ pag
   await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(was - row);
 });
 
-test('a search survives a reload of the tab and no more than that', async ({ page }) => {
+test('a search survives a reload of the tab, and is not carried into another library or a fresh visit', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, URL_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(URL_PHOTO_NAMES.length);
@@ -56,28 +54,16 @@ test('a search survives a reload of the tab and no more than that', async ({ pag
   await page.reload();
   await expect(tiles(page)).toHaveCount(1);
 
-  // The question belonged to the tab, not to the library: opening it afresh asks
-  // nothing. A filter that outlived the visit is one the next reader has to work
-  // out they are looking through before they can trust what they are seeing.
-  await page.goto(library);
-  await expect(tiles(page)).toHaveCount(URL_PHOTO_NAMES.length);
-});
-
-test('a question asked of one library is not carried into the next', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, URL_PHOTOS_DIR);
-  await expect(tiles(page)).toHaveCount(URL_PHOTO_NAMES.length);
-
-  await page.getByRole('button', { name: /^Filters/ }).click();
-  await page.getByLabel('Find by filename').fill('beta');
-  await expect(tiles(page)).toHaveCount(1);
-  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('beta');
-  await page.keyboard.press('Escape');
-
   // The sidebar, so the grid is never unmounted between the two libraries - which is
   // the whole of what this is about: the second library holds a beta.arw of its
   // own, so a search carried over would show one frame of the two.
   await openLibrary(page, URL_OTHER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   expect(new URL(page.url()).searchParams.get('q')).toBeNull();
+
+  // The question belonged to the tab, not to the library: opening it afresh asks
+  // nothing. A filter that outlived the visit is one the next reader has to work
+  // out they are looking through before they can trust what they are seeing.
+  await page.goto(library);
+  await expect(tiles(page)).toHaveCount(URL_PHOTO_NAMES.length);
 });

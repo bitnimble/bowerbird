@@ -1,7 +1,7 @@
 import { type Locator, type Page, expect, test } from '@playwright/test';
 import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { EDIT_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
+import { EDIT_PHOTOS_DIR } from '../fixture_library';
 import {
   addLibrary,
   editDiagnosticSize,
@@ -16,10 +16,9 @@ import {
   photoAction,
   photoStage,
   savedRev,
-  scanLibrary,
   softProof,
   waitForEditorLive,
-  waitForScanSettled,
+  watchForComplaints,
 } from '../helpers';
 
 type Point = { x: number; y: number };
@@ -51,8 +50,6 @@ let photoId = '';
 test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage();
   await addLibrary(page, EDIT_PHOTOS_DIR);
-  await scanLibrary(page, EDIT_PHOTOS_DIR);
-  await waitForScanSettled(page, EDIT_PHOTOS_DIR, PHOTO_NAMES.length);
   await openLibrary(page, EDIT_PHOTOS_DIR);
   await openPhoto(page);
   photoId = openPhotoId(page);
@@ -71,8 +68,17 @@ test.beforeAll(async ({ browser }) => {
  * `adjusted` returns early there without ever sampling `detail.slang`'s blur - so a texture never
  * allocated, never dispatched into, or bound at the wrong entry leaves every fixture green. What
  * the *value* does is `raw_edit_presenter.test.ts`; that the passes run at all needs a device.
+ *
+ * The open is the tab's own: there is nothing on the server to prepare a frame any more, so the
+ * request it did not get is what would catch a transport creeping back in, and the console is what
+ * says the frame that went live was not half-written by a refused dispatch.
  */
-test('grades on the GPU, into a stage sized for the viewport', async ({ page }) => {
+test('opens in the tab and grades on the GPU, into a stage sized for the viewport', async ({ page }) => {
+  const askedTheServer: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith(route(PathSegment.prepared()))) askedTheServer.push(request.url());
+  });
+  const declined = watchForComplaints(page);
   // Stored rather than dragged: what a value *does* is answered without a browser, so the only
   // reason to set one here is to make the passes run. In a `finally`, because leaking a clarity
   // of 100 into the specs below would be a photograph none of them meant to open.
@@ -82,6 +88,8 @@ test('grades on the GPU, into a stage sized for the viewport', async ({ page }) 
   } finally {
     await setClarity(page, 0);
   }
+  expect(askedTheServer).toEqual([]);
+  expect(declined).toEqual([]);
 });
 
 async function setClarity(page: Page, clarity: number): Promise<void> {
@@ -128,23 +136,20 @@ async function gradesOnTheGpu(page: Page): Promise<void> {
   expect(stageHeight).toBeLessThanOrEqual(height);
   // And it keeps the frame's shape, or `object-fit: contain` would show it stretched.
   expect(stageWidth / stageHeight).toBeCloseTo(width / height, 1);
-}
 
-/**
- * The camera match has to reach the client, and no other check can see that it did:
- * without it the grade takes its neutral arm and still produces a plausible HDR frame at
- * the right size, just flatter and less saturated than the rendition of the same file.
- *
- * It has been wrong twice before, both times numerically rather than structurally, and
- * both times silently (DESIGN 21.1). The fit runs natively now, so what this guards is the
- * hand-off: the curves, the matrix and the chroma lattice crossing as arrays a shader can
- * index, rather than being dropped somewhere in the header.
- */
-test('grades through the camera match, as the renditions do', async ({ page }) => {
-  await open(page);
-
+  // The camera match has to reach the client, and no other check can see that it did:
+  // without it the grade takes its neutral arm and still produces a plausible HDR frame at
+  // the right size, just flatter and less saturated than the rendition of the same file.
+  // It has been wrong twice before, both times numerically and silently (DESIGN 21.1), so what
+  // this guards is the hand-off: the curves, the matrix and the chroma lattice crossing as arrays
+  // a shader can index, rather than being dropped somewhere in the header.
   await expect(editDiagnostics(page)).toHaveAttribute('data-matched', 'true');
-});
+
+  // The camera neutral reaches the client too: what the sliders *do* with it is
+  // `raw_edit_presenter.test.ts`, and a header without it leaves the pair absent entirely.
+  await expect(page.getByRole('group', { name: 'White balance' }).getByRole('textbox', { name: 'Temperature value' }))
+    .toHaveValue(/^[\d.]+ K$/);
+}
 
 /**
  * The soft proof names its target and its rendering intent as bare strings, and this is the only
@@ -200,18 +205,6 @@ test('says why an id it cannot open failed', async ({ page }) => {
   await expect(failure).toBeVisible();
   await expect(failure).toContainText(missing);
   await expect(failure).not.toContainText('[object Object]');
-});
-
-/**
- * The camera neutral reaches the client, which is the one thing about the white balance no
- * headless test can see: what the sliders *do* with it is `raw_edit_presenter.test.ts`, and
- * what cannot be checked there is that the frame arrived carrying one at all. A header without
- * it leaves the pair absent entirely, so the locator failing is the report.
- */
-test('the frame arrives carrying the illuminant the camera metered', async ({ page }) => {
-  await open(page);
-  await expect(page.getByRole('group', { name: 'White balance' }).getByRole('textbox', { name: 'Temperature value' }))
-    .toHaveValue(/^[\d.]+ K$/);
 });
 
 function undo(page: Page): Locator {
@@ -288,16 +281,6 @@ test('the crop rectangle takes a drag, and the drag reaches the document', async
 });
 
 /**
- * A loop drawn with a real pointer on the stage as the reader has it - zoomed - is searched by the
- * real module, and a fill kept reaches the document.
- *
- * What the search finds is `repair_solve`'s to test, over a field whose answer is known, and what
- * the presenter does with an offer is `raw_edit_presenter.test.ts`. What is left is the gesture on
- * a real overlay, the wheel still zooming under it, and the search on the page's own device through
- * the worker - where a wasm signature out of step with the page is a rejected promise and nothing
- * else.
- */
-/**
  * Every colour sample of a thumbnail added up, once it shows: it is copied off a canvas the worker
  * drew on, and one copied too late is a blank image rather than an error.
  */
@@ -324,6 +307,16 @@ async function bitDepth(thumbnail: Locator): Promise<number> {
   });
 }
 
+/**
+ * A loop drawn with a real pointer on the stage as the reader has it - zoomed - is searched by the
+ * real module, and a fill kept reaches the document.
+ *
+ * What the search finds is `repair_solve`'s to test, over a field whose answer is known, and what
+ * the presenter does with an offer is `raw_edit_presenter.test.ts`. What is left is the gesture on
+ * a real overlay, the wheel still zooming under it, and the search on the page's own device through
+ * the worker - where a wasm signature out of step with the page is a rejected promise and nothing
+ * else.
+ */
 test('a loop drawn around something is offered fills, and one is kept', async ({ page }) => {
   await open(page);
   const wasAt = await savedRev(page, photoId);
@@ -627,11 +620,22 @@ async function open(page: Page): Promise<void> {
 /**
  * The loupe, which is the part of it that needs a browser.
  *
- * Which pixels it magnifies is arithmetic and lives in `raw_edit_presenter.test.ts`. What only a
- * real one can say is that a pointer moving over a real element puts a second WebGPU canvas on
- * the page, and that a wheel over it reaches the magnification rather than the page's scroll.
+ * Which pixels it magnifies is arithmetic and lives in `raw_edit_presenter.test.ts`, and what the
+ * tile it sharpens from *is* is `tile.rs`. What only a real one can say is that a pointer moving
+ * over a real element puts a second WebGPU canvas on the page, that a wheel over it reaches the
+ * magnification rather than the page's scroll, and that the tile is built in the tab.
+ *
+ * Two assertions about the tile and neither is redundant. **The route was never asked** says the
+ * tile was built here rather than fetched; **the glass says it is holding one** says a tile was
+ * built at all, since a magnifier showing the tick's own render for ever would ask for nothing
+ * either. A tile denoised by nothing still produces a picture, so the console is watched too.
  */
-test('the loupe follows a real pointer and takes a real wheel', async ({ page }) => {
+test('the loupe follows a real pointer, takes a real wheel, and sharpens from a tile built in the tab', async ({ page }) => {
+  const askedTheServer: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith(route(PathSegment.tile()))) askedTheServer.push(request.url());
+  });
+  const declined = watchForComplaints(page);
   await open(page);
 
   await tool(page, 'Loupe').click();
@@ -642,11 +646,29 @@ test('the loupe follows a real pointer and takes a real wheel', async ({ page })
   // Nothing to magnify until the pointer is over the picture.
   await expect(loupe).toHaveCSS('visibility', 'hidden');
 
+  // Watched for rather than polled: a tile takes tens of milliseconds, so the spinner can come and
+  // go between two of Playwright's polls.
+  await page.evaluate(() => {
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('[role="status"][aria-label="Rendering"]') == null) return;
+      document.documentElement.dataset.sawRendering = 'true';
+      observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
   const centre = middleOf(await stageBox(page));
+  // Held still: nothing is asked for while the pointer moves, and a tile is what a reader who
+  // has stopped somewhere gets.
   await page.mouse.move(centre.x, centre.y);
 
   await expect(loupe).toBeVisible();
   await expect(scale).toHaveText('2.0×');
+  // The glass says the export's pixels are on their way while it shows the tick's own, and stops
+  // once it holds them.
+  await expect(page.locator('html')).toHaveAttribute('data-saw-rendering', 'true', { timeout: 60_000 });
+  await expect(photoStage(page).getByRole('status', { name: 'Rendering' })).toHaveCount(0, { timeout: 60_000 });
+  expect(askedTheServer).toEqual([]);
+  expect(declined).toEqual([]);
 
   // It rides the pointer: the box is centred on wherever the cursor is.
   const before = await loupe.boundingBox();

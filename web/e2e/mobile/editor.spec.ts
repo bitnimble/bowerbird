@@ -134,18 +134,15 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await expect.poll(() => slider.getAttribute('aria-valuenow')).not.toBe(value);
   await expect(isolated).toBeVisible();
   await expect(panel).toHaveCSS('opacity', '0');
-  await page.screenshot({ path: '/tmp/bowerbird-mobile-slider-drag.png' });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect(isolated).toHaveCount(0);
   await expect(panel).toHaveCSS('opacity', '1');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
   expect(await photoStage(page).evaluate((stage) => Reflect.get(stage, 'panelGestureEvents'))).toEqual([]);
-  await page.screenshot({ path: '/tmp/bowerbird-mobile-panel-open.png' });
   await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
   await expect(panel).not.toBeVisible();
   await expect(page.getByRole('tabpanel', { name: 'Light', exact: true, includeHidden: true })).toHaveCSS('visibility', 'hidden');
   expect(await photoStage(page).boundingBox()).toEqual(initial);
-  await page.screenshot({ path: '/tmp/bowerbird-mobile-footer.png' });
   await cdp.detach();
 });
 

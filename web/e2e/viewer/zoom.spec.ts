@@ -30,11 +30,20 @@ test.beforeAll(async ({ browser }) => {
 // The stage draws this into a slot inside a popup that exists only while the menu is
 // open, which is the part no unit test can stand in for: the track's ends and what Fit
 // does are `zoom_slider.test.tsx`, and Base UI's slider takes no drag headlessly anyway.
-test('the zoom range is in the viewer menu, bound to the stage it drives', async ({ page }) => {
+test('the photo fits the stage, clicks step fit, double, own pixels, and the menu range follows', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, ZOOM_PHOTOS_DIR);
   await openPhoto(page);
-  await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
+  await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
+
+  // Regression: as a grid item the image grew the row to its own height, so
+  // `height: 100%` resolved against that and tall frames were cropped.
+  const fits = await shownFrame(page).evaluate((frame) => {
+    const vp = frame.closest('[role="region"]');
+    if (vp == null) return false;
+    return frame.getBoundingClientRect().height <= vp.clientHeight + 1;
+  });
+  expect(fits).toBe(true);
 
   const open = (): Promise<void> => page.getByRole('button', { name: 'More' }).click();
   const track = page.getByRole('slider', { name: 'Zoom' });
@@ -58,6 +67,20 @@ test('the zoom range is in the viewer menu, bound to the stage it drives', async
 
   await page.getByRole('button', { name: 'Fit' }).click();
   await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
+  await page.keyboard.press('Escape');
+
+  // Against the frame's own pixels: a 24MP render fitted to a stage a few hundred
+  // pixels tall is nowhere near 1:1.
+  await expect(readout(page)).not.toHaveText('100%');
+
+  // Twice fitted, then the frame's own pixels - which has to be reachable however
+  // large the render is, that being the magnification a cull judges one at.
+  await stepZoom(page);
+  await stepZoom(page);
+  await expect(readout(page)).toHaveText('100%');
+
+  await stepZoom(page);
+  await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
 });
 
 function photoControls(page: Page): Locator {
@@ -68,22 +91,6 @@ function photoControls(page: Page): Locator {
 function readout(page: Page): Locator {
   return photoControls(page).getByText(/^\d+%$/);
 }
-
-test('the photo fits the stage instead of overflowing it', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, ZOOM_PHOTOS_DIR);
-  await openPhoto(page);
-  await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
-
-  // Regression: as a grid item the image grew the row to its own height, so
-  // `height: 100%` resolved against that and tall frames were cropped.
-  const fits = await shownFrame(page).evaluate((frame) => {
-    const vp = frame.closest('[role="region"]');
-    if (vp == null) return false;
-    return frame.getBoundingClientRect().height <= vp.clientHeight + 1;
-  });
-  expect(fits).toBe(true);
-});
 
 test('clicking zooms into the point clicked, not the centre', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
@@ -180,27 +187,6 @@ test('zoom resets on a step to the next photo, which is a different photograph',
   await page.getByRole('button', { name: 'Next photo' }).click();
   const next = PHOTO_NAMES.find((name) => name !== opened);
   await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${next}, `), { timeout: 60_000 });
-  await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
-});
-
-test('the zoom control steps fit, double, then the frame at its own pixels', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, ZOOM_PHOTOS_DIR);
-  await openPhoto(page);
-  await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
-
-  // In the bar with the rest of the controls rather than over the corner of the
-  // photograph, and against the frame's own pixels: a 24MP render fitted to a
-  // stage a few hundred pixels tall is nowhere near 1:1.
-  await expect(readout(page)).not.toHaveText('100%');
-
-  // Twice fitted, then the frame's own pixels - which has to be reachable however
-  // large the render is, that being the magnification a cull judges one at.
-  await stepZoom(page);
-  await stepZoom(page);
-  await expect(readout(page)).toHaveText('100%');
-
-  await stepZoom(page);
   await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
 });
 

@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext, type Browser, type Locator, type Page } from '@playwright/test';
 import { z } from 'zod';
-import { LibrariesSchema } from '../../src/schemas/libraries';
+import { LibrariesSchema, LibraryScanStatusSchema, type Library } from '../../src/schemas/libraries';
 import { EditStateSchema } from '../../src/schemas/photo_edits';
 import { PathSegment, route } from '../../src/schemas/route';
 import { PHOTO_NAMES } from './fixture_library';
@@ -23,10 +23,11 @@ export function libraryRow(page: Page, rootPath: string) {
   return page.getByRole('list', { name: 'Libraries' }).getByRole('listitem').filter({ hasText: rootPath });
 }
 
+/** Adds a library through the dialog, and returns once its import has settled at `photos`. */
 export async function addLibrary(
   page: Page,
   rootPath: string,
-  options: { autoStack?: boolean; readOnly?: boolean; includeNonRaw?: boolean } = {},
+  options: { autoStack?: boolean; readOnly?: boolean; includeNonRaw?: boolean; photos?: number } = {},
 ): Promise<void> {
   await forgetLibrary(page, rootPath);
   await page.goto(route(PathSegment.settings()));
@@ -74,26 +75,50 @@ export async function addLibrary(
   await expect(libraryRow(page, rootPath)).toBeVisible({ timeout: 30_000 });
   // Waited out rather than stopped: with the settings above answered in the dialog
   // the import is building exactly what the spec asked for, and only the grid
-  // tiles - a tenth of a second for the whole library. Stopping it was worth it
-  // while it was minutes of renders nobody wanted, but a stop landing before the
+  // tiles - a tenth of a second for the whole library. A stop landing before the
   // batch starts leaves the library with no descriptors, and stack detection runs
   // on the settle of the import that *added* the photographs and never again.
-  await waitForIdle(page, rootPath);
+  await waitForImport(page, rootPath, options.photos ?? PHOTO_NAMES.length);
+}
+
+/**
+ * Asked of the API rather than read off the Settings row: nothing on the page watches an import
+ * that creating a library started, so the row's Stop never shows for one. The count is part of
+ * the answer because a status read before the import has registered is idle too.
+ */
+async function waitForImport(page: Page, rootPath: string, photos: number): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const library = await libraryAt(page, rootPath);
+        if (library == null) return 'not listed';
+        const response = await page.request.get(
+          route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.sync(), PathSegment.status()),
+        );
+        const { status } = LibraryScanStatusSchema.parse(await response.json());
+        return `${status}, ${library.photo_count} photos`;
+      },
+      { message: `the import of ${rootPath}`, timeout: 60_000 },
+    )
+    .toBe(`idle, ${photos} photos`);
+}
+
+async function libraryAt(page: Page, rootPath: string): Promise<Library | undefined> {
+  const listed = await page.request.get(route(PathSegment.api(), PathSegment.libraries()));
+  expect(listed.ok()).toBe(true);
+  return LibrariesSchema.parse(await listed.json()).find((library) => library.root_path === rootPath);
 }
 
 /** Removes the library an earlier pass of the same spec added, so `--repeat-each` starts each pass fresh. */
 async function forgetLibrary(page: Page, rootPath: string): Promise<void> {
-  const libraries = route(PathSegment.api(), PathSegment.libraries());
-  const listed = await page.request.get(libraries);
-  expect(listed.ok()).toBe(true);
-  const held = LibrariesSchema.parse(await listed.json()).find((library) => library.root_path === rootPath);
+  const held = await libraryAt(page, rootPath);
   if (held == null) return;
-  const deleted = await page.request.delete(`${libraries}/${held.id}`);
+  const deleted = await page.request.delete(route(PathSegment.api(), PathSegment.libraries(), held.id));
   expect(deleted.ok()).toBe(true);
 }
 
 /**
- * The library a spec owns, added and scanned before its first test.
+ * The library a spec owns, added and imported before its first test.
  *
  * **One root per spec file** (`fixture_library.ts`). The run shares one catalogue
  * and one API, so a spec that rates a photo, bins one, or re-points its library
@@ -111,11 +136,9 @@ export async function useLibrary(
   options: { viewerRendition?: string; hideSidebarInViewer?: boolean; photos?: number; includeNonRaw?: boolean } = {},
 ): Promise<void> {
   const page = await browser.newPage();
-  await addLibrary(page, rootPath, { includeNonRaw: options.includeNonRaw });
-  await scanLibrary(page, rootPath);
   // `photos` for a root with a list of its own (`fixture_library.ts`): waiting for
   // the wrong count reads as a library that never arrived.
-  await waitForScanSettled(page, rootPath, options.photos ?? PHOTO_NAMES.length);
+  await addLibrary(page, rootPath, { includeNonRaw: options.includeNonRaw, photos: options.photos });
   // The viewer's own settings are what a root of its own does not isolate: they are
   // global, and the rendition's default - "last used" - is whatever the file before
   // this one happened to choose. A spec that reads what the viewer is showing, or
@@ -185,40 +208,6 @@ export async function setOnboardingComplete(request: APIRequestContext, done: bo
     data: { onboarding_complete: done },
   });
   expect(response.ok()).toBe(true);
-}
-
-export async function scanLibrary(page: Page, rootPath: string): Promise<void> {
-  await page.goto(route(PathSegment.settings()));
-  await libraryRow(page, rootPath).getByRole('button', { name: 'Scan library' }).click({ timeout: 60_000 });
-}
-
-// Returns once the row has taken a run up and settled again, which it says by
-// offering Scan library again. Stop and Scan library share a slot, so a spec that selected
-// Scan library while a run was going would hit Stop instead.
-//
-// The run is waited for from its *start*, not from its result: a photo count, a
-// tile or a row all appear while the scan is still going, so anything that reads
-// one of those as "finished" is reading a signal the run wrote on its way past.
-async function waitForIdle(page: Page, rootPath: string): Promise<void> {
-  // The status is reported from the poll rather than from the request's answer, so
-  // the button takes a tick to appear. Not an assertion: a run short enough to be
-  // over before the first poll has nothing left to wait for.
-  await libraryRow(page, rootPath)
-    .getByRole('button', { name: 'Stop' })
-    .waitFor({ state: 'visible', timeout: 5_000 })
-    .catch(() => {});
-  await expect(libraryRow(page, rootPath).getByRole('button', { name: 'Scan library' })).toBeVisible({ timeout: 60_000 });
-}
-
-// Waits on the Settings page until the run has finished and the catalogue has
-// been re-read. A spec that navigates away before then takes the grid it happens
-// to catch mid-run: fine when it is only waiting for tiles, which arrive by
-// announcement, and not fine when it is waiting on something that changes the
-// shape of the collection (§19.4.1) - a re-read landing after the grid was opened
-// drops whatever was unfolded in it.
-export async function waitForScanSettled(page: Page, rootPath: string, photos: number): Promise<void> {
-  await waitForIdle(page, rootPath);
-  await expect(libraryRow(page, rootPath)).toContainText(`${photos} photo`, { timeout: 60_000 });
 }
 
 // From the library's Shoots page. Where the shoot goes is the row its + menu was
@@ -487,26 +476,6 @@ export async function showMetadata(page: Page): Promise<void> {
   if (await show.isVisible()) await show.click();
 }
 
-// Opens the first photo and swaps the rendition for the full-resolution render,
-// which the server builds on first request.
-export async function viewMaxQuality(page: Page, rootPath: string): Promise<void> {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, rootPath);
-  await openPhoto(page);
-  // The full-size rendition is built by the background queue after a sync, so a
-  // freshly synced library can wait on a real decode here.
-  await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
-
-  await photoAction(page, 'Rendition', 'Rendered RAW (max quality)');
-  await showMetadata(page);
-  await expect(renditionDetails(page).getByText('Rendered RAW (max quality)')).toBeVisible({
-    timeout: 180_000,
-  });
-  // The stage holds the previous frame until the new one has decoded, so the
-  // panel naming the rendition is not yet the image carrying it.
-  await expect(shownFrame(page)).toHaveAccessibleName(/Rendered RAW \(max quality\)$/, { timeout: 60_000 });
-}
-
 // Split triage mounts two; everywhere else there is one. Exact, or 'Photo details' matches too.
 export function photoStage(page: Page): Locator {
   return page.getByRole('region', { name: 'Photo', exact: true });
@@ -548,6 +517,33 @@ export async function editDiagnosticSize(page: Page, name: 'data-size' | 'data-s
 // The tool picker is the editor's own, so it is there exactly while the editor is.
 export function editTools(page: Page): Locator {
   return page.getByRole('radiogroup', { name: 'Tool' });
+}
+
+/**
+ * Everything the module says on the console that means the picture is not the one it should be.
+ *
+ * **A frame arrives either way, which is why this is watched at all.** A dispatch the browser
+ * refused writes nothing and the stages after it filter whatever the one before left, so what comes
+ * back is a photograph rather than a failure - `gpu.rs`'s uncaptured-error handler is the only thing
+ * in a tab that says so. A decode with no noise fit is a frame that was never denoised.
+ *
+ * Matched on the exact prefixes rather than on `rawshim`, because the module also logs which adapter
+ * it opened, and a filter that swept those up would fail every run.
+ */
+const COMPLAINTS = [
+  'rawshim gpu: the browser refused a command',
+  'rawshim: no noise fit was measured',
+  "rawshim: PMRID's weights have not been handed over",
+];
+
+/** Collects those, for a test that asserts none of them arrived. */
+export function watchForComplaints(page: Page): string[] {
+  const seen: string[] = [];
+  page.on('console', (message) => {
+    const text = message.text();
+    if (COMPLAINTS.some((prefix) => text.startsWith(prefix))) seen.push(text);
+  });
+  return seen;
 }
 
 /** Why the editor has no picture, over the stage where it would be. */

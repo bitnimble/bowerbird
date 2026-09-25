@@ -20,31 +20,14 @@ import {
 } from '../helpers';
 
 // In order: the last of these re-points the library at a render, which is what
-// the first two are asserting the absence of.
+// the first is asserting the absence of.
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, THUMBNAIL_PHOTOS_DIR, { viewerRendition: 'Embedded JPEG' });
 });
 
-test("a selection's grid tiles can be rebuilt from the bulk bar", async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, THUMBNAIL_PHOTOS_DIR);
-  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
-
-  await selectPhoto(page);
-  await bulkAction(page, 'Rebuild thumbnails');
-  // The toast reports the rebuild once it is done, so this waits on a decode.
-  await expect(page.getByText(/Queued 1 thumbnail to rebuild/)).toBeVisible(FIRST_FRAME);
-
-  // What the viewer is served is recorded per photo and a tile rebuild says
-  // nothing about it, so the detail view reads the same afterwards.
-  await openPhoto(page);
-  await showMetadata(page);
-  await expect(renditionDetails(page).getByText('Embedded JPEG')).toBeVisible({ timeout: 30_000 });
-});
-
-test('a rebuilt rendition is pushed to the tile that changed, and to no other', async ({ page }) => {
+test("a selection's grid tiles are rebuilt from the bulk bar, and pushed to the tile that changed alone", async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, THUMBNAIL_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
@@ -53,11 +36,19 @@ test('a rebuilt rendition is pushed to the tile that changed, and to no other', 
 
   await selectPhoto(page);
   await bulkAction(page, 'Rebuild thumbnails');
+  // The toast reports the rebuild once it is done, so this waits on a decode.
+  await expect(page.getByText(/Queued 1 thumbnail to rebuild/)).toBeVisible(FIRST_FRAME);
 
   // The server names the photo it just wrote and the tile asks again for that one
   // alone. Nothing here polls, and no version lands on a photo that did not move.
   await expect.poll(() => src(0), { timeout: 60_000 }).not.toBe(rebuilt);
   expect(await src(1)).toBe(untouched);
+
+  // What the viewer is served is recorded per photo and a tile rebuild says
+  // nothing about it, so the detail view reads the same afterwards.
+  await openPhoto(page);
+  await showMetadata(page);
+  await expect(renditionDetails(page).getByText('Embedded JPEG')).toBeVisible({ timeout: 30_000 });
 });
 
 // The two halves of an import are tracked apart all the way to the browser's

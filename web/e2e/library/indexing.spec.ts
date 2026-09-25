@@ -3,20 +3,19 @@
 import { expect, test } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { INDEX_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
-import { addLibrary, gallery, openLibrary, scanLibrary, tiles } from '../helpers';
+import { addLibrary, gallery, libraryRow, openLibrary, tiles } from '../helpers';
 
 // In order: the first test is what puts the library here, and the second reads it.
 test.describe.configure({ mode: 'serial' });
 
-test('indexes a library and shows a rendition for every RAW file', async ({ page }) => {
+test('indexes a library, scans it again, and shows a rendition for every RAW file', async ({ page }) => {
   await addLibrary(page, INDEX_PHOTOS_DIR);
-  await scanLibrary(page, INDEX_PHOTOS_DIR);
+  // The one spec that asks for a scan the way a reader does; every other root is imported by
+  // being added.
+  await page.goto(route(PathSegment.settings()));
+  await libraryRow(page, INDEX_PHOTOS_DIR).getByRole('button', { name: 'Scan library' }).click();
   await openLibrary(page, INDEX_PHOTOS_DIR);
-
-  // Longer than the configured 15s default: unlike the other assertions, this one
-  // waits on a real scan (LibRaw opens every new file), so it scales with the
-  // fixture and the machine rather than with the UI.
-  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length, { timeout: 45_000 });
+  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   // Regression: renditions are requested before processing has written them, so
   // the first request 404s, and the tile has nothing to do but wait for the

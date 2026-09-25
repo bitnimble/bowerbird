@@ -1,6 +1,7 @@
 // The print mockup as the viewer offers it: a soft proof that replaces the stage with the
-// editor's print renderer and leaves the photograph untouched. What the renderer draws is
-// `editor/raw_editing.spec.ts`; this is only the way in and the way back out.
+// editor's print renderer and leaves the photograph untouched. What the renderer draws, and how
+// it turns under a pointer, is `editor/raw_editing.spec.ts`; this is the way in, what it is drawn
+// from, and the way back out.
 import { expect, test } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PRINT_PHOTOS_DIR } from '../fixture_library';
@@ -27,13 +28,17 @@ test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, PRINT_PHOTOS_DIR, { viewerRendition: 'Embedded JPEG' });
 });
 
-test('the viewer shows a print mockup and comes back to the photograph unedited', async ({ page }) => {
+// The max rendition holds every edit at the sensor's own size: the RAW never crosses, and this
+// browser decodes the rendition itself.
+test('the viewer shows a print mockup from the max rendition, and comes back to the photograph unedited', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, PRINT_PHOTOS_DIR);
   await openPhoto(page);
   const photoId = openPhotoId(page);
   const photoPath = new URL(page.url()).pathname;
   const revision = await savedRev(page, photoId);
+  const requested: URL[] = [];
+  page.on('request', (request) => requested.push(new URL(request.url())));
 
   // The camera's JPEG is what this library shows, so its own gamut is the proof in force.
   await expect(page.getByRole('button', { name: 'Soft proof: SDR' })).toBeVisible();
@@ -44,6 +49,13 @@ test('the viewer shows a print mockup and comes back to the photograph unedited'
   // The mockup is a way of looking at the photograph, not a grade: no toolbar, and
   // nothing of the editor's saved onto it.
   await expect(editTools(page)).toHaveCount(0);
+
+  const max = route(PathSegment.renditions(), 'max');
+  expect(requested.some((url) => url.pathname.endsWith(max))).toBe(true);
+  expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.prepare())))).toEqual([]);
+  expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.download(), 'original')))).toEqual([]);
+  // Still more than the sheet can show at any angle.
+  expect(Math.max(...(await editDiagnosticSize(page, 'data-size')))).toBeGreaterThan(2500);
 
   await softProof(page, 'SDR (sRGB)');
   await expect(page.getByRole('img', { name: 'Edit preview' })).toHaveCount(0);
@@ -67,7 +79,7 @@ test('the flat print and the sheet are one open, and the flat one has no light t
   expect(await editDiagnosticSize(page, 'data-size')).toEqual(opened);
 });
 
-test('the mockup opens on its own address', async ({ page }) => {
+test('the mockup opens on its own address, and escape leaves it', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, PRINT_PHOTOS_DIR);
   await openPhoto(page);
@@ -75,49 +87,10 @@ test('the mockup opens on its own address', async ({ page }) => {
   await page.goto(`${photoPath}${route(PathSegment.mockup())}`);
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
   await expect(page.getByRole('group', { name: 'Paper', exact: true })).toBeVisible();
-});
 
-// The max rendition holds every edit at the sensor's own size: the RAW never crosses, and this
-// browser decodes the rendition itself.
-test('the mockup is drawn from the max rendition rather than the RAW', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PRINT_PHOTOS_DIR);
-  await openPhoto(page);
-  const requested: URL[] = [];
-  page.on('request', (request) => requested.push(new URL(request.url())));
-
-  await softProof(page, 'Printed media (3D)');
-  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
-  const max = route(PathSegment.renditions(), 'max');
-  expect(requested.some((url) => url.pathname.endsWith(max))).toBe(true);
-  expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.prepare())))).toEqual([]);
-  expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.download(), 'original')))).toEqual([]);
-  // Still more than the sheet can show at any angle.
-  expect(Math.max(...(await editDiagnosticSize(page, 'data-size')))).toBeGreaterThan(2500);
-});
-
-test('the mockup turns under a real pointer and the keyboard', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PRINT_PHOTOS_DIR);
-  await openPhoto(page);
-  await softProof(page, 'Printed media (3D)');
-  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
-  const print = page.getByRole('region', { name: 'Rotate print' });
-  const yaw = page.getByRole('slider', { name: 'Horizontal rotation', exact: true });
-  await expect(yaw).toHaveAttribute('aria-valuenow', '-12');
-
-  const box = await print.boundingBox();
-  if (box == null) throw new Error('The print stage has no layout box');
-  const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x + 100, y + 30, { steps: 8 });
-  await page.mouse.up();
-  await expect(yaw).not.toHaveAttribute('aria-valuenow', '-12');
-  await print.press('Home');
-  await expect(yaw).toHaveAttribute('aria-valuenow', '-12');
-  await print.press('ArrowRight');
-  await expect(yaw).toHaveAttribute('aria-valuenow', '-7');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('img', { name: 'Edit preview' })).toHaveCount(0);
+  expect(new URL(page.url()).pathname).toBe(photoPath);
 });
 
 // A stage that outgrows the rendition is served tiles of it from the server, and the frame drawn
@@ -155,16 +128,4 @@ test('a rendition opened in the browser draws from the tiles it is served', asyn
     }
   }, openPhotoId(page));
   expect(shown).toBe('{"missing":null}');
-});
-
-test('escape leaves the print mockup', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PRINT_PHOTOS_DIR);
-  await openPhoto(page);
-  const photoPath = new URL(page.url()).pathname;
-  await softProof(page, 'Printed media (3D)');
-  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('img', { name: 'Edit preview' })).toHaveCount(0);
-  expect(new URL(page.url()).pathname).toBe(photoPath);
 });

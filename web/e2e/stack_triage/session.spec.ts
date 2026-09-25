@@ -8,10 +8,8 @@ import {
   openLibrary,
   openPhotoId,
   photoStage,
-  scanLibrary,
   shownFrame,
   stackFrames,
-  waitForScanSettled,
 } from '../helpers';
 
 // Stack triage, driven through the real screen (DESIGN §20).
@@ -100,9 +98,7 @@ async function enterTriage(page: Page): Promise<void> {
 }
 
 test('a stack of identical frames is set up to be triaged', async ({ page }) => {
-  await addLibrary(page, TRIAGE_DIR, { autoStack: true });
-  await scanLibrary(page, TRIAGE_DIR);
-  await waitForScanSettled(page, TRIAGE_DIR, TRIAGE_PHOTO_NAMES.length);
+  await addLibrary(page, TRIAGE_DIR, { autoStack: true, photos: TRIAGE_PHOTO_NAMES.length });
   await openLibrary(page, TRIAGE_DIR);
   await expect(stackFrames(page)).toHaveAccessibleName(new RegExp(`stack of ${TRIAGE_PHOTO_NAMES.length}, `), { timeout: 45_000 });
 });
@@ -124,21 +120,6 @@ test('the viewer offers the way in for any member of a stack, not just its repre
     await frames(bands(page)).nth(index).click();
     await expect(page.getByRole('button', { name: 'Triage stack' })).toBeVisible();
   }
-});
-
-test('a decisive verdict rejects the loser and holds the winner over', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await enterTriage(page);
-
-  const pool = TRIAGE_PHOTO_NAMES.length;
-  await expect(queueButton(page)).toContainText(`(${pool})`);
-  await page.getByRole('button', { name: 'Pick A' }).click();
-
-  await expect(queueButton(page)).toContainText(`(${pool - 1})`);
-  // Still a round to judge, rather than a session that has ended.
-  await expect(page.getByRole('button', { name: 'Pick A' })).toBeVisible();
-  // And the loser is rejected in the catalogue, not merely gone from the count.
-  await expect.poll(() => countOf(page, stackIdOf(page), 'rejected'), { timeout: 20_000 }).toBe(1);
 });
 
 // Split can lay the pair out top and bottom, where `←` and `→` point at nothing,
@@ -172,15 +153,19 @@ test('either arrow of either axis casts, and Pick both is Space alone', async ({
   await expect.poll(() => countOf(page, stackIdOf(page), 'rejected'), { timeout: 20_000 }).toBe(1);
 });
 
-test('the queue reaches a completed round, and re-judging it discards what came after', async ({ page }) => {
+test('a decisive verdict holds the winner over, and re-judging it from the queue discards what came after', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await enterTriage(page);
 
   const pool = TRIAGE_PHOTO_NAMES.length;
+  await expect(queueButton(page)).toContainText(`(${pool})`);
   await page.getByRole('button', { name: 'Pick A' }).click();
   await expect(queueButton(page)).toContainText(`(${pool - 1})`);
-  // The write has to have landed, or the Queue row below is clicked while the
-  // session is still busy and the rewind is silently dropped.
+  // Still a round to judge, rather than a session that has ended.
+  await expect(page.getByRole('button', { name: 'Pick A' })).toBeVisible();
+  // And the loser is rejected in the catalogue, not merely gone from the count. The write
+  // has to have landed, or the Queue row below is clicked while the session is still busy
+  // and the rewind is silently dropped.
   await expect.poll(() => countOf(page, stackIdOf(page), 'rejected'), { timeout: 20_000 }).toBe(1);
 
   await page.getByRole('button', { name: 'Queue' }).click();
@@ -200,7 +185,9 @@ test('the queue reaches a completed round, and re-judging it discards what came 
   await expect(completed).toHaveCount(0);
 });
 
-test('flip shows one frame at a time and keeps both decoded', async ({ page }) => {
+// Flipped in three kinds of round: the first; one whose *both* frames are new to the
+// stage; and one holding a winner carried over from the round before.
+test('flip shows one frame at a time and keeps both reachable, round after round, and split draws both', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await enterTriage(page);
 
@@ -209,64 +196,47 @@ test('flip shows one frame at a time and keeps both decoded', async ({ page }) =
   const mounted = photoStage(page).locator('canvas[role="img"]');
   await expect(mounted).toHaveCount(2);
   await expect(shownFrame(page)).toHaveCount(1);
-
+  const first = await shown(page);
   await page.getByRole('button', { name: 'Show B' }).click();
+  await expect.poll(() => shown(page), { timeout: 10_000 }).not.toBe(first);
   await expect(shownFrame(page)).toHaveCount(1);
   // Still two mounted: the one flipped away from keeps its raster rather than
   // being unmounted and decoded again on the way back.
   await expect(mounted).toHaveCount(2);
-});
-
-// A decisive verdict holds the winner over, so the next round mounts one source
-// the stage already had and one it did not. The frame that carried over must
-// still be reachable: it is half of every round after the first.
-test('flip still shows both frames in a round after the first', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await enterTriage(page);
-
-  await page.getByRole('button', { name: 'Pick A' }).click();
-  await expect(queueButton(page)).toContainText(`(${TRIAGE_PHOTO_NAMES.length - 1})`);
-  await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
-
-  const onA = await shown(page);
-
-  await page.getByRole('button', { name: 'Show B' }).click();
-  await expect.poll(() => shown(page), { timeout: 10_000 }).not.toBe(onA);
-
   await page.getByRole('button', { name: 'Show A' }).click();
-  await expect.poll(() => shown(page), { timeout: 10_000 }).toBe(onA);
-});
+  await expect.poll(() => shown(page), { timeout: 10_000 }).toBe(first);
 
-// A round whose *both* frames are new to the stage, both already fetched, so both
-// decode in one batch. Only a draw produces one - a decisive verdict always
-// carries its winner over - and only with four members, since with three the round
-// after a draw still holds a frame the stage had. A promotion that reads its
-// previous state from anything but the updater loses one of the two here, and the
-// slot it lost is unreachable for the rest of the round with nothing in any count
-// to say so.
-test('both slots stay reachable when a round arrives with two new frames', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await enterTriage(page);
+  const flipsBothWays = async (): Promise<void> => {
+    const onA = await shown(page);
+    await page.getByRole('button', { name: 'Show B' }).click();
+    await expect.poll(() => shown(page), { timeout: 10_000 }).not.toBe(onA);
+    await page.getByRole('button', { name: 'Show A' }).click();
+    await expect.poll(() => shown(page), { timeout: 10_000 }).toBe(onA);
+  };
 
-  const before = await shown(page);
-
+  // A round whose both frames are new to the stage, both already fetched, so both
+  // decode in one batch. Only a draw produces one - a decisive verdict always
+  // carries its winner over - and only with four members, since with three the round
+  // after a draw still holds a frame the stage had. A promotion that reads its
+  // previous state from anything but the updater loses one of the two here, and the
+  // slot it lost is unreachable for the rest of the round with nothing in any count
+  // to say so.
   await page.getByRole('button', { name: 'Pick both' }).click();
   await expect(queueButton(page)).toContainText(`(${TRIAGE_PHOTO_NAMES.length})`);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   // The drawn pair went to the back, so neither frame of this round has been on
   // the stage before.
-  await expect.poll(() => shown(page), { timeout: 10_000 }).not.toBe(before);
+  await expect.poll(() => shown(page), { timeout: 10_000 }).not.toBe(first);
+  await flipsBothWays();
 
-  const onA = await shown(page);
-  await page.getByRole('button', { name: 'Show B' }).click();
-  await expect.poll(() => shown(page), { timeout: 10_000 }).not.toBe(onA);
-  await page.getByRole('button', { name: 'Show A' }).click();
-  await expect.poll(() => shown(page), { timeout: 10_000 }).toBe(onA);
-});
-
-test('split draws both photos at once, at the same area', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await enterTriage(page);
+  // A decisive verdict holds the winner over, so the next round mounts one source
+  // the stage already had and one it did not. The frame that carried over must
+  // still be reachable: it is half of every round after the first.
+  await expect(page.getByRole('button', { name: 'Pick A' })).toBeEnabled({ timeout: 60_000 });
+  await page.getByRole('button', { name: 'Pick A' }).click();
+  await expect(queueButton(page)).toContainText(`(${TRIAGE_PHOTO_NAMES.length - 1})`);
+  await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
+  await flipsBothWays();
 
   await page.getByRole('button', { name: 'Split' }).click();
   await expect(photoStage(page)).toHaveCount(2);
@@ -286,21 +256,27 @@ test('split draws both photos at once, at the same area', async ({ page }) => {
   await expect(page.getByRole('group', { name: 'Which photo to show' })).toBeVisible();
 });
 
-test('a session runs to its end and writes the verdicts it made', async ({ page }) => {
+// The session ends on the survivor rather than on a screen about the session,
+// and the culling pass carries on from there. Not on the photo it was entered
+// from: a decisive session usually rejects it, and a rejected photo has left the
+// gallery's filter, so the viewer could say nothing about what came before or
+// after it and both arrows were dead.
+test('a session runs to its end, writes its verdicts, and ends on a live photo in the collection it was entered from', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await enterTriage(page);
+  const entry = page.url();
   // Off the route while the session is still on it: the screen leaves for the
   // viewer as it ends, and the stack is not in the address it lands at.
   const stackId = stackIdOf(page);
 
   // The winner is held over and meets each of the others in turn, so a run of
-  // decisive verdicts settles the stack in N-1 rounds.
+  // decisive verdicts settles the stack in N-1 rounds. Always B, so the frame the
+  // session was entered from is rejected.
   const pool = TRIAGE_PHOTO_NAMES.length;
   for (let left = pool; left > 1; left--) {
     await expect(queueButton(page)).toContainText(`(${left})`);
-    await page.getByRole('button', { name: 'Pick A' }).click();
+    await page.getByRole('button', { name: /^Pick B / }).click();
   }
-
   await expect(page).toHaveURL(new RegExp(`${route(PathSegment.photos())}/`), { timeout: 30_000 });
 
   // The verdicts are the photographs' own now, not just the screen's. Polled on
@@ -309,25 +285,6 @@ test('a session runs to its end and writes the verdicts it made', async ({ page 
   // closing write still in flight.
   await expect.poll(() => countOf(page, stackId, 'picked'), { timeout: 20_000 }).toBe(1);
   expect(await countOf(page, stackId, 'rejected')).toBe(pool - 1);
-});
-
-// The session ends on the survivor rather than on a screen about the session,
-// and the culling pass carries on from there. Not on the photo it was entered
-// from: a decisive session usually rejects it, and a rejected photo has left the
-// gallery's filter, so the viewer could say nothing about what came before or
-// after it and both arrows were dead.
-test('the session ends on a live photo, in the collection it was entered from', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await enterTriage(page);
-  const entry = page.url();
-  const stackId = stackIdOf(page);
-
-  // Always prefer B, so the frame the session was entered from is rejected.
-  for (let left = TRIAGE_PHOTO_NAMES.length; left > 1; left--) {
-    await page.getByRole('button', { name: /^Pick B / }).click();
-  }
-  await expect(page).toHaveURL(new RegExp(`${route(PathSegment.photos())}/`), { timeout: 30_000 });
-  await expect.poll(() => countOf(page, stackId, 'picked'), { timeout: 20_000 }).toBe(1);
   expect(page.url()).not.toBe(entry);
 
   const landed = openPhotoId(page);

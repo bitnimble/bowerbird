@@ -8,11 +8,9 @@ import {
   frames,
   gallery,
   openLibrary,
-  scanLibrary,
   setHideSidebarInViewer,
   shownFrame,
   stackFrames,
-  waitForScanSettled,
 } from '../helpers';
 
 // A stack in the viewer's filmstrip, which is the one place its cells are laid out
@@ -31,9 +29,7 @@ test.describe.configure({ timeout: 180_000 });
 test('an open stack is a spine, and the photograph on the stage is ringed inside its band', async ({ page }) => {
   mkdirSync(ROOT, { recursive: true });
   for (const name of NAMES) copyFileSync(FIXTURE, path.join(ROOT, name));
-  await addLibrary(page, ROOT, { autoStack: true });
-  await scanLibrary(page, ROOT);
-  await waitForScanSettled(page, ROOT, NAMES.length);
+  await addLibrary(page, ROOT, { autoStack: true, photos: NAMES.length });
   // The sidebar stays, because the edge the strip takes is decided by the shape of the
   // stage: without it this window is wide enough that the photograph is bound by its
   // height, and the strip stands on its end instead.

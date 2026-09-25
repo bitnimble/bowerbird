@@ -25,7 +25,6 @@ import {
   stepZoom,
   tiles,
   useLibrary,
-  viewMaxQuality,
 } from '../helpers';
 
 // In order, and the order is the point: these walk one library from serving the
@@ -260,20 +259,6 @@ test('i and o switch between the camera JPEG and the render, and the cache can b
     .not.toEqual([]);
 });
 
-// AVIF decodes natively in every browser, which is why it replaced the JXL that needed a wasm
-// module and a PNG transcode first (§10.5).
-test('the max-quality rendition is served as a full-resolution AVIF', async ({ page }) => {
-  test.setTimeout(240_000);
-  await viewMaxQuality(page, RENDITION_PHOTOS_DIR);
-
-  const shown = shownFrame(page);
-  await expect(shown).toHaveAccessibleName(/Rendered RAW \(max quality\)$/);
-  // Past 3840, which is the rendition this replaced: the canvas is the decode, capped at
-  // `DECODE_CAP`, so a native-resolution file lands at 4096 along its long edge where a
-  // 3840-edge one lands at exactly 3840.
-  expect(await shown.evaluate((frame: HTMLCanvasElement) => Math.max(frame.width, frame.height))).toBeGreaterThan(3840);
-});
-
 // Regression: which rendition the viewer shows came from the photo's detail, so
 // a reader set to the camera's JPEG in a library that renders got the render
 // first - fetched, decoded and painted with its lens distortion still in - and
@@ -368,7 +353,12 @@ test('viewer rotation turns embedded display and tags full AVIF without moving c
   expect(Math.abs(shown - before[1]! / before[0]!)).toBeLessThan(0.01);
 
   await photoAction(page, 'Rendition', 'Rendered RAW (max quality)', { exact: true });
-  await expect(photoStage(page).getByRole('img', { name: /\(max quality\)$/ })).toBeVisible({ timeout: 90_000 });
+  const max = photoStage(page).getByRole('img', { name: /\(max quality\)$/ });
+  await expect(max).toBeVisible({ timeout: 90_000 });
+  // A full-resolution AVIF, past 3840, which is the rendition this replaced: the canvas is the
+  // decode, capped at `DECODE_CAP`, so a native-resolution file lands at 4096 along its long edge
+  // where a 3840-edge one lands at exactly 3840.
+  expect(await max.evaluate((frame: HTMLCanvasElement) => Math.max(frame.width, frame.height))).toBeGreaterThan(3840);
   const unzoomed = (await contexts()).length;
   await stepZoom(page);
   await stepZoom(page);

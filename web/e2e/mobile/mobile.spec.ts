@@ -10,11 +10,9 @@ import {
   openPhoto,
   openPhotoId,
   photoStage,
-  scanLibrary,
   shownFrame,
   tiles,
   waitForEditorLive,
-  waitForScanSettled,
 } from '../helpers';
 
 // A phone: no keyboard to step with and no room for a column beside the photo,
@@ -90,8 +88,6 @@ const PANELS = /^(Notes|Edits|Camera|Rendition details|Original)$/;
 
 test('the phone library is indexed', async ({ page }) => {
   await addLibrary(page, PHONE_PHOTOS_DIR);
-  await scanLibrary(page, PHONE_PHOTOS_DIR);
-  await waitForScanSettled(page, PHONE_PHOTOS_DIR, PHOTO_NAMES.length);
   await openLibraryFromDrawer(page);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length, { timeout: 45_000 });
 });
@@ -187,14 +183,6 @@ test('swiping the frame steps to the next photo and back', async ({ page }) => {
   await page.mouse.up();
   await expect(page).not.toHaveURL(first);
   await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
-});
-
-test('the viewer opens the sidebar from the button in its bar', async ({ page }) => {
-  await openFirstPhoto(page);
-  await expect(drawer(page)).not.toBeVisible();
-
-  await photoControls(page).getByRole('button', { name: 'Show sidebar' }).tap();
-  await expect(drawer(page)).toBeVisible();
 });
 
 // The system back gesture is history.back, so a run of swipes would otherwise be
@@ -323,32 +311,10 @@ function pictureAlone(page: Page): Promise<Buffer> {
   return editPreview(page).screenshot({ style: PICTURE_ONLY });
 }
 
-// Every control a gesture replaces: the frame is dragged aside to step, tapped to
-// step the zoom and pinched for the scales between.
-test('the controls a finger makes redundant are not in the bar', async ({ page }) => {
-  await openFirstPhoto(page);
-
-  const nav = photoControls(page);
-  await expect(nav.getByRole('button', { name: 'Next photo' })).toHaveCount(0);
-  await expect(nav.getByRole('button', { name: 'Previous photo' })).toHaveCount(0);
-  // The readout stays: it is the only thing that says whether this is 1:1.
-  await expect(nav.getByText(/^\d+%$/)).toBeVisible();
-
-  const box = await photoStage(page).boundingBox();
-  if (box == null) throw new Error('the stage has no box');
-  const middle = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-
-  await pinch(page, middle, 80, 320);
-  await expect(shownFrame(page)).toHaveCSS('cursor', 'grab');
-  // And a pinch is not a swipe: the photograph on screen is the one that was
-  // pinched, however far the two fingers travelled.
-  const url = page.url();
-  await pinch(page, middle, 320, 80);
-  await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
-  expect(page.url()).toBe(url);
-});
-
-test('the header keeps to one line, its menus folded into an overflow button', async ({ page }) => {
+// Every control a gesture replaces is out of the bar: the frame is dragged aside to
+// step, tapped to step the zoom and pinched for the scales between. What is left keeps
+// to one line, its menus folded into an overflow button.
+test('the bar keeps to one line, without the controls a finger makes redundant', async ({ page }) => {
   await openFirstPhoto(page);
 
   const nav = photoControls(page);
@@ -366,6 +332,31 @@ test('the header keeps to one line, its menus folded into an overflow button', a
   // Out of the middle of a long popup: the one item that destroys something sits
   // at the foot of it, not a row above the next section's ordinary actions.
   await expect(page.getByRole('menuitem').last()).toHaveText('Move to Bin');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menuitem')).toHaveCount(0);
+
+  await expect(nav.getByRole('button', { name: 'Next photo' })).toHaveCount(0);
+  await expect(nav.getByRole('button', { name: 'Previous photo' })).toHaveCount(0);
+  // The readout stays: it is the only thing that says whether this is 1:1.
+  await expect(nav.getByText(/^\d+%$/)).toBeVisible();
+
+  const box = await photoStage(page).boundingBox();
+  if (box == null) throw new Error('the stage has no box');
+  const middle = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+
+  await pinch(page, middle, 80, 320);
+  await expect(shownFrame(page)).toHaveCSS('cursor', 'grab');
+  // And a pinch is not a swipe: the photograph on screen is the one that was
+  // pinched, however far the two fingers travelled.
+  const url = page.url();
+  await pinch(page, middle, 320, 80);
+  await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
+  expect(page.url()).toBe(url);
+
+  // And the sidebar, which a swipe reaches anywhere else, has a button in the bar too.
+  await expect(drawer(page)).not.toBeVisible();
+  await nav.getByRole('button', { name: 'Show sidebar' }).tap();
+  await expect(drawer(page)).toBeVisible();
 });
 
 test('the verdict is on a bar at the foot of the window, with the rest under it', async ({ page }) => {

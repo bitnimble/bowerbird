@@ -15,9 +15,7 @@ import {
   useLibrary,
 } from '../helpers';
 
-// In order, and each counts the library it is handed: the first two put back what
-// they binned, and the last one does not - so anything added below it starts a
-// photograph short.
+// In order, and each counts the library it is handed.
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
@@ -44,7 +42,7 @@ test('Delete bins the focused photo and the toast undoes it', async ({ page }) =
   await expect(gallery(page).getByText(binned, { exact: true })).toBeVisible();
 });
 
-test('restoring from the Bin returns the photo to the library', async ({ page }) => {
+test('the Bin holds only the binned photo, and restoring returns it to the library', async ({ page }) => {
   await page.goto(route(PathSegment.settings()));
   await openLibrary(page, BIN_PHOTOS_DIR);
 
@@ -52,8 +50,11 @@ test('restoring from the Bin returns the photo to the library', async ({ page })
   await bulkAction(page, 'Move to Bin');
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length - 1);
 
+  // Regression: include_deleted alone returns live + deleted, so the Bin showed
+  // the whole library. It needs the is_deleted filter to mean "only the Bin".
   await sidebarSection(page, BIN_PHOTOS_DIR, 'Bin').click();
   await expect(tiles(page)).toHaveCount(1);
+  await expect(tiles(page).getByText('in Bin', { exact: true })).toHaveCount(1);
   // Regression: the Bin used to hold rendition-less grey boxes because
   // soft-delete removed the WebPs, making it impossible to find anything.
   await expect(gallery(page).locator('[role="listitem"][aria-busy="true"]')).toHaveCount(0);
@@ -70,20 +71,4 @@ test('restoring from the Bin returns the photo to the library', async ({ page })
 
   await sidebarSection(page, BIN_PHOTOS_DIR, 'Photos').click();
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
-});
-
-test('the bin shows only soft-deleted photos, and the library hides them', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, BIN_PHOTOS_DIR);
-  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
-
-  await selectPhoto(page);
-  await bulkAction(page, 'Move to Bin');
-  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length - 1);
-
-  // Regression: include_deleted alone returns live + deleted, so the Bin showed
-  // the whole library. It needs the is_deleted filter to mean "only the Bin".
-  await sidebarSection(page, BIN_PHOTOS_DIR, 'Bin').click();
-  await expect(tiles(page)).toHaveCount(1);
-  await expect(tiles(page).getByText('in Bin', { exact: true })).toHaveCount(1);
 });
