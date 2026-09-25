@@ -409,14 +409,6 @@ bool print_internal_edge(PrintHit hit, float2 footprint)
         || print_near_frame_edge(rim_point, aperture, footprint);
 }
 
-float3 print_scene_sample(float2 pos, float2 shape, float2 dx, float2 dy, float2 footprint,
-    float exposure, float3 background)
-{
-    let hit = paper_hit(pos, edit.canvas_size, shape);
-    if (!hit.hit) { return background; }
-    return print_hit_reflected(hit, hit.uv * shape, dx, dy, footprint) * exposure;
-}
-
 Colour<DisplayNits> print_nits(float2 pos)
 {
     let scene = print_scene_nits(pos);
@@ -454,24 +446,37 @@ Colour<DisplayNits> print_scene_nits(float2 pos)
         dx = paper_dx * shape;
         dy = paper_dy * shape;
     }
-    let footprint = 2.0 * (abs(paper_dx) + abs(paper_dy)) * shape / max(shape.x, shape.y);
+    var footprint = 2.0 * (abs(paper_dx) + abs(paper_dy)) * shape / max(shape.x, shape.y);
     let exposure = print_exposure().g;
-    if (print.framing.x > 0.5 && print.illumination.w < 0.5 && hit.coverage == 1.0 && print_internal_edge(hit, footprint)) {
+    let edge = print.framing.x > 0.5 && print.illumination.w < 0.5 && hit.coverage == 1.0 && print_internal_edge(hit, footprint);
+    if (edge) {
         var photo_plane = hit;
         photo_plane.normal = float3(0.0, 0.0, 1.0);
         photo_plane.position.z = 0.0;
         let center_uv = paper_uv(pos, edit.canvas_size, shape, photo_plane);
-        let sample_dx = (paper_uv(pos + float2(1.0, 0.0), edit.canvas_size, shape, photo_plane) - center_uv) * shape;
-        let sample_dy = (paper_uv(pos + float2(0.0, 1.0), edit.canvas_size, shape, photo_plane) - center_uv) * shape;
-        let sample_footprint = 2.0 * (abs(sample_dx) + abs(sample_dy)) / max(shape.x, shape.y);
-        let first = print_scene_sample(pos + float2(-0.25, -0.25), shape, sample_dx, sample_dy, sample_footprint, exposure, background);
-        let second = print_scene_sample(pos + float2(0.25, -0.25), shape, sample_dx, sample_dy, sample_footprint, exposure, background);
-        let third = print_scene_sample(pos + float2(-0.25, 0.25), shape, sample_dx, sample_dy, sample_footprint, exposure, background);
-        let fourth = print_scene_sample(pos + float2(0.25, 0.25), shape, sample_dx, sample_dy, sample_footprint, exposure, background);
-        return measured<DisplayNits>((first + second + third + fourth) * 0.25);
+        dx = (paper_uv(pos + float2(1.0, 0.0), edit.canvas_size, shape, photo_plane) - center_uv) * shape;
+        dy = (paper_uv(pos + float2(0.0, 1.0), edit.canvas_size, shape, photo_plane) - center_uv) * shape;
+        footprint = 2.0 * (abs(dx) + abs(dy)) / max(shape.x, shape.y);
     }
-    let reflected = print_hit_reflected(hit, pixel, dx, dy, footprint);
-    return measured<DisplayNits>(lerp(background, reflected * exposure, hit.coverage));
+    // A count the compiler cannot know, so the grade and the room are one inlined copy: D3D12 compiles
+    // each copy, and a fixed four, unrolled, is a 20 second first draw.
+    let count = edge ? 4u : 1u;
+    var sum = float3(0.0);
+    for (uint i = 0; i < count; i += 1) {
+        var sample = hit;
+        var at = pixel;
+        if (edge) {
+            sample = paper_hit(pos + float2(float(i & 1u), float(i >> 1u)) * 0.5 - 0.25, edit.canvas_size, shape);
+            if (!sample.hit) {
+                sum += background;
+                continue;
+            }
+            at = sample.uv * shape;
+        }
+        let reflected = print_hit_reflected(sample, at, dx, dy, footprint) * exposure;
+        sum += edge ? reflected : lerp(background, reflected, hit.coverage);
+    }
+    return measured<DisplayNits>(edge ? sum * 0.25 : sum);
 }
 
 [shader("fragment")]

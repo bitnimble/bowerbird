@@ -22,12 +22,19 @@ import { AnswerSchema, MessageSchema, ProgressSchema, type Message } from './gpu
 
 const worker = self as unknown as DedicatedWorkerGlobalScope;
 
-new PipelineWarmth(cachedRecipes()).install(worker);
+const warmth = new PipelineWarmth(cachedRecipes());
+warmth.install(worker);
 
 const device: Promise<GPUDevice | null> = openDevice();
 const painter: Promise<StagePainter> = device.then((opened) => new StagePainter(opened));
 const opens = new Map<number, Open>();
 let weights: Promise<void> | null = null;
+let lost: string | null = null;
+void device.then((opened) =>
+  opened?.lost.then((info) => {
+    lost = info.message;
+  }),
+);
 
 const IdSchema = z.object({ id: z.number() });
 
@@ -60,6 +67,8 @@ type Report = (stage: string) => void;
 
 async function answer(message: Message, report: Report): Promise<{ value: unknown; transfer?: Transferable[] }> {
   await device;
+  // wgpu unwraps what a lost device refuses, so past this point every call would panic as `unreachable`.
+  if (lost != null && message.to !== 'close') throw new Error(`the GPU was reset (${lost}); reload the page`);
   switch (message.to) {
     case 'stage':
       return { value: await (await painter).answer(message.ask) };
@@ -68,6 +77,9 @@ async function answer(message: Message, report: Report): Promise<{ value: unknow
       opens.delete(message.session);
       return { value: null };
     case 'open': {
+      // A draw reaching a pipeline still warming would compile it again, synchronously, and freeze
+      // every page while it did.
+      await warmth.settled();
       let open = opens.get(message.session);
       if (open == null) {
         open = new Open();
@@ -230,7 +242,8 @@ class Open {
   }
 
   private release(): void {
-    this.held?.held.free();
+    // Freeing into a lost device panics like any other call; the reload reclaims it instead.
+    if (lost == null) this.held?.held.free();
     this.held = null;
   }
 

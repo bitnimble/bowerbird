@@ -481,7 +481,8 @@ export const OpenStatus = observer(function OpenStatus({ stage }: { stage: Stage
       </div>
     );
   }
-  if (stage.live) return null;
+  // Until a frame lands, not until the open does: the first draw can wait seconds on a shader compile.
+  if (stage.live && stage.renderedMode != null) return null;
   return (
     <div {...stylex.props(stageStyles.busy)} role="status">
       <Spinner />

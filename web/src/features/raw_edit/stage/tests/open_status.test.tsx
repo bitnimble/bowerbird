@@ -29,6 +29,9 @@ test('names each step of the open as it is reached', () => {
   expect(screen.getByRole('status').textContent).toBe('Matching colour and lens distortion…');
 
   act(() => runInAction(() => (stage.status = 'live')));
+  expect(screen.getByRole('status').textContent).toBe('Matching colour and lens distortion…');
+
+  act(() => runInAction(() => (stage.renderedMode = 'print')));
   expect(screen.queryByRole('status')).toBeNull();
 });
 
