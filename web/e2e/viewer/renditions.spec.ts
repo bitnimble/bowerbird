@@ -290,10 +290,13 @@ test('a photo reopens at the rendition it was last read in, without the library 
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 
   // Read it in the camera's JPEG, which this library does not default to.
+  // The row learns the choice from the write's answer, after the frame is already showing it.
+  const saved = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().includes(photoId));
   await page.keyboard.press('i');
   await showMetadata(page);
   const renditionPanel = renditionDetails(page);
   await expect(renditionPanel.getByText('Embedded JPEG')).toBeVisible({ timeout: 60_000 });
+  await saved;
 
   await page.keyboard.press('Escape');
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
