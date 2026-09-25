@@ -7,6 +7,7 @@ import { ICON } from './icon';
 import { MenuItems } from './menu_items';
 import { menuStyles } from './menu_styles';
 import type { Option } from './option';
+import { Section } from './section';
 
 // A menu of one-shot actions, as opposed to CheckMenu's independent toggles.
 export function ActionMenu<T extends string>({
@@ -16,6 +17,7 @@ export function ActionMenu<T extends string>({
   onSelect,
   disabled = false,
   iconOnly = false,
+  heading,
 }: {
   trigger: ReactNode;
   /** Required when the trigger is an icon, which carries no accessible name. */
@@ -25,7 +27,9 @@ export function ActionMenu<T extends string>({
   disabled?: boolean;
   /** Icon trigger with no caret: row overflow (⋮), not a labelled dropdown. */
   iconOnly?: boolean;
+  heading?: string;
 }): JSX.Element {
+  const items = <MenuItems options={options} onSelect={onSelect} />;
   return (
     <Menu.Root>
       <Menu.Trigger {...buttonProps('default', iconOnly)} aria-label={label} disabled={disabled}>
@@ -35,7 +39,7 @@ export function ActionMenu<T extends string>({
       <Menu.Portal>
         <Menu.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="end">
           <Menu.Popup {...stylex.props(menuStyles.popup)}>
-            <MenuItems options={options} onSelect={onSelect} />
+            {heading == null ? items : <Section label={heading}>{items}</Section>}
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>

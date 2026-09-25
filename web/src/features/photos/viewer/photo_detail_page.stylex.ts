@@ -43,7 +43,7 @@ export const styles = stylex.create({
   pathMenu: {
     display: 'block',
     maxWidth: '70vw',
-    paddingBlock: 0,
+    paddingBlock: '6px',
     paddingInline: '9px',
     overflowWrap: 'anywhere',
   },

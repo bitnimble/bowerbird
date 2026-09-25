@@ -304,11 +304,9 @@ export const DetailNav = observer(function DetailNav({
     : [];
 
   const sections = [
-    ...crowded,
     ...(mobile && !previewing && path !== ''
       ? [
           menuSection({
-            label: PhotoDetailStrings.path(),
             content: (
               <Text variant="mono" style={styles.pathMenu}>
                 {path}
@@ -317,6 +315,7 @@ export const DetailNav = observer(function DetailNav({
           }),
         ]
       : []),
+    ...crowded,
     menuSection({
       label: PhotoDetailStrings.sectionView(),
       content: <div ref={zoomRef} />,

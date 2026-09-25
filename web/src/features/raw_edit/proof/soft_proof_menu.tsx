@@ -46,6 +46,7 @@ export function SoftProofMenu({
     <ActionMenu
       trigger={shown}
       label={strings.softProofAs(shown)}
+      heading={strings.softProof()}
       options={softProofOptions(value, hdrOffered)}
       onSelect={onChange}
     />
