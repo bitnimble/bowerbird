@@ -556,7 +556,13 @@ async function buildDust(): Promise<void> {
 }
 
 /** One 8-bit picture at the shipped settings, which is what the landing site's demos show. */
-function renderSrgb(raw: string, outputPath: string, colourProfile: 'matched' | 'none', exposure = 0, size = LONG_EDGE): void {
+function renderSrgb(
+  raw: string,
+  outputPath: string,
+  colourProfile: 'matched' | 'none',
+  exposure = 0,
+  size = LONG_EDGE,
+): void {
   runJob({
     rawFilePath: raw,
     cameraMatch: SETTINGS.match_embedded_jpeg ? 'lensAndColour' : 'none',

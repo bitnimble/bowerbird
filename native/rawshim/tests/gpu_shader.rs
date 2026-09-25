@@ -100,7 +100,7 @@ fn uniform(colour: &HdrColour, peak_samples: u32, surround: f32) -> Vec<u8> {
     // left to the padding below, which happens to be zero today and is not a promise.
     words.push(0);
     // The geometry, at its identity: `geometry_at` returns its argument untouched on these.
-    for value in [0.0, 0.0, 1.0, 1.0, 0.0] {
+    for value in [0.0, 0.0, 1.0, 1.0, 1.0, 0.0] {
         f_push(&mut words, value);
     }
     words.push(0); // rotate
@@ -134,6 +134,15 @@ fn uniform(colour: &HdrColour, peak_samples: u32, surround: f32) -> Vec<u8> {
     words.push(0); // has_smoothed
     words.push(1); // chroma_shrink: unread with the smoothing off, and never zero
     f_push(&mut words, colour.anchor as f32);
+    f_push(&mut words, 0.0); // black_floor
+    f_push(&mut words, 0.0); // print_blur
+    words.extend([2, 2, 1]);
+    for _ in 0..2 {
+        for point in [[0.0, 0.0, 1.0, 0.0], [1.0, 1.0, 1.0, 0.0]] {
+            for value in point { f_push(&mut words, value); }
+        }
+        words.resize(words.len() + 14 * 4, 0);
+    }
     // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
     // exactly the fields is rejected as too small. Same rule as `gpu::uniform`.
     while words.len() % 4 != 0 {

@@ -180,7 +180,7 @@ impl SurroundThumb {
 
 /// `PartialEq` because [`crate::gpu::Uploaded`] owns a copy and refuses a grade describing a
 /// different one; the fields are plain numbers, so the derive is the whole comparison.
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub struct HdrColour {
     /// Per-channel, `BINS` samples spanning render values 0 to `ceiling`.
     pub curves: [Vec<f64>; 3],
@@ -250,18 +250,22 @@ pub struct HdrColour {
     /// than chooses, and it remains one number over a whole frame - so a render is what says
     /// a render is right.
     pub delta_e: f64,
+    pub curve: Vec<[f64; 2]>,
+    pub curve_error: f64,
 }
 
-/// A fitted colour and what the render was already worth without it.
-///
-/// Beside the colour rather than on it: `HdrColour` is compared by value against a match
-/// decoded from a record (`gpu::Uploaded`), so a number that does not round-trip through
-/// that record would make every fresh fit compare unequal to its own stored copy.
-pub struct Fitted {
-    pub colour: HdrColour,
-    /// The same measure over the same held-out pairs with nothing applied, which is what
-    /// `colour.delta_e` has to beat to be worth applying.
-    pub baseline_delta_e: f64,
+impl PartialEq for HdrColour {
+    fn eq(&self, other: &Self) -> bool {
+        self.curves == other.curves
+            && self.ceiling == other.ceiling
+            && self.anchor == other.anchor
+            && self.matrix == other.matrix
+            && self.saturation == other.saturation
+            && self.chroma == other.chroma
+            && self.surround == other.surround
+            && self.delta_e == other.delta_e
+            && self.curve == other.curve
+    }
 }
 
 /// Nodes across each chroma axis and up the level axis.
@@ -1375,6 +1379,8 @@ impl HdrColour {
             chroma: None,
             surround: SurroundThumb::none(),
             delta_e: 0.0,
+            curve: vec![[0.0, 0.0], [1.0, 1.0]],
+            curve_error: 0.0,
         }
     }
 }
@@ -2105,18 +2111,6 @@ async fn measure(
     let samples = gathered(gpu, render, &pairs.indices, count, Some(surround));
     let below = evaluate_over(gpu, colour, &samples, count, Stage::Full);
     scored_as_is(&scoring_over(gpu, pairs, below.buffer)).await
-}
-
-async fn untransformed(
-    gpu: &'static crate::gpu::Gpu,
-    render: &Source,
-    pairs: &Pairs,
-) -> Option<(f64, f64)> {
-    let count = pairs.at.len();
-    // The gather's own layout is what `fit_score.slang` reads a `below` plane as - a colour and
-    // the luma a saturation blend rotates about, which this probe does not use.
-    let below = gathered(gpu, render, &pairs.indices, count, None);
-    scored_as_is(&scoring_over(gpu, pairs, below)).await
 }
 
 /// The held colours scored as they are: the neutral probe, which the shader short-circuits.
@@ -4798,7 +4792,7 @@ async fn fit_colour(
     planes: &Corresponded,
     sharp: &Sharp,
     wide: &Wide,
-) -> Option<Fitted> {
+) -> Option<HdrColour> {
     let (width, height) = (planes.width, planes.height);
     let mut lap = crate::clock::laps("  colour ");
     let selected =
@@ -5038,9 +5032,8 @@ async fn fit_colour(
     }
 
     colour.delta_e = scored.0;
-    let baseline_delta_e = untransformed(gpu, &source, &held).await?.0;
-    lap("thumb, baseline");
-    Some(Fitted { colour, baseline_delta_e })
+    lap("thumb");
+    Some(colour)
 }
 
 /// How much better the chroma map has to measure than the scalar it replaces.
@@ -5082,6 +5075,8 @@ async fn fit_model(
         chroma: None,
         surround: SurroundThumb::none(),
         delta_e: f64::INFINITY,
+        curve: vec![[0.0, 0.0], [1.0, 1.0]],
+        curve_error: 0.0,
     };
     lap("curves");
 
@@ -5133,19 +5128,19 @@ async fn fit_model(
 /// Fits the camera's colour treatment in the HDR grade's own domain, through a lens the
 /// geometry search already resolved.
 ///
-/// `anchor` is diffuse white as a raw 16-bit level, which the grade measures the same
-/// way (10.7.1); the fit is done in multiples of it so the curve means the same thing
-/// whatever the exposure. None when there are too few usable pairs to fit from, in
-/// which case the caller grades untransformed.
+/// `levels` are the frame's, measured the way the grade measures them (10.7.1); the fit is done
+/// in multiples of diffuse white so the curve means the same thing whatever the exposure. None
+/// when there are too few usable pairs to fit from, in which case the caller grades
+/// untransformed.
 pub async fn fit(
     gpu: &'static crate::gpu::Gpu,
     plane: &Source,
-    anchor: crate::light::Light<crate::light::Level>,
+    levels: crate::tone::Levels,
     preview: &crate::rgb::Rgb,
     lens: crate::fit::Lens,
 ) -> Option<HdrMatch> {
     let (wide_jpeg, _) = preview_planes(gpu, preview).await?;
-    fit_linearised(gpu, plane, anchor, wide_jpeg, lens).await
+    fit_linearised(gpu, plane, levels, wide_jpeg, lens).await
 }
 
 /// The preview at the fit's size twice over: linearised into Rec.2020 for the colour fit, and
@@ -5219,18 +5214,89 @@ pub async fn preview_planes(
 pub async fn fit_linearised(
     gpu: &'static crate::gpu::Gpu,
     plane: &Source,
-    anchor: crate::light::Light<crate::light::Level>,
+    levels: crate::tone::Levels,
     wide_jpeg: Source,
     lens: crate::fit::Lens,
 ) -> Option<HdrMatch> {
-    if !(anchor > crate::light::Light::ZERO) {
+    if !(levels.white > crate::light::Light::ZERO) {
         return None;
     }
     // The normalisation is the only per-fit thing about the plane, and it rides the warp that
     // reads it: a pass of its own would be the whole plane back to the host and up again, between
     // two passes that both already have it.
-    let fitted = fit_model_planes(gpu, plane, 1.0 / anchor.raw(), wide_jpeg, &lens).await?;
-    Some(HdrMatch { lens, colour: Some(fitted.colour) })
+    let mut colour =
+        fit_model_planes(gpu, plane, 1.0 / levels.white.raw(), wide_jpeg, &lens).await?;
+    (colour.curve, colour.curve_error) = camera_curve(gpu, &colour, levels.floor_share()).await?;
+    Some(HdrMatch { lens, colour: Some(colour) })
+}
+
+const CAMERA_CURVE_MAX_POINTS: usize = 6;
+const CAMERA_CURVE_SAMPLES: usize = 257;
+const CAMERA_CURVE_MAX_ERROR: f64 = 0.005;
+
+async fn camera_curve(
+    gpu: &'static crate::gpu::Gpu,
+    colour: &HdrColour,
+    floor: f64,
+) -> Option<(Vec<[f64; 2]>, f64)> {
+    let first = crate::light::CurveCode::of_white_ratio(floor.max(2.0f64.powi(-12)))
+        .raw()
+        .clamp(1e-4, 0.5);
+    let dense: Vec<f64> = (0..CAMERA_CURVE_SAMPLES)
+        .map(|i| {
+            if i == CAMERA_CURVE_SAMPLES - 1 {
+                1.0
+            } else {
+                first + (1.0 - first) * i as f64 / (CAMERA_CURVE_SAMPLES - 1) as f64
+            }
+        })
+        .collect();
+    let levels: Vec<[f32; 4]> = dense
+        .iter()
+        .map(|&x| {
+            let level = crate::light::CurveCode::from_raw(x).white_ratio() as f32;
+            [level, level, level, level]
+        })
+        .collect();
+    let white = evaluated(gpu, colour, &[[1.0; 4]], Stage::ToneMatrix).await?[0][3].max(1e-9);
+    let responses = evaluated(gpu, colour, &levels, Stage::Full).await?;
+    let target: Vec<[f64; 2]> = dense
+        .into_iter()
+        .zip(responses)
+        .map(|(x, output)| {
+            let y = crate::light::CurveCode::of_white_ratio(f64::from(output[3].max(0.0) / white))
+                .raw()
+                .clamp(0.0, 1.0);
+            [x, y]
+        })
+        .collect();
+    Some(fitted_camera_curve(&target))
+}
+
+fn fitted_camera_curve(target: &[[f64; 2]]) -> (Vec<[f64; 2]>, f64) {
+    let mut monotone = Vec::with_capacity(target.len());
+    let mut last = 0.0f64;
+    for &[x, y] in target {
+        last = last.max(y);
+        monotone.push([x, last]);
+    }
+    let mut curve = vec![[0.0, monotone[0][1]], [1.0, last]];
+    loop {
+        let tangents = crate::light::curve_tangents(&curve);
+        let mut worst = (0usize, 0.0f64);
+        for (index, &[x, y]) in monotone.iter().enumerate() {
+            let error = (crate::light::curve_at(&curve, &tangents, x) - y).abs();
+            if error > worst.1 {
+                worst = (index, error);
+            }
+        }
+        if worst.1 < CAMERA_CURVE_MAX_ERROR || curve.len() == CAMERA_CURVE_MAX_POINTS {
+            return (curve, worst.1);
+        }
+        let point = monotone[worst.0];
+        let at = curve.partition_point(|existing| existing[0] < point[0]);
+        curve.insert(at, point);
+    }
 }
 
 /// Everything `prepared_planes` built, in the place the stage after it reads it.
@@ -5359,7 +5425,7 @@ async fn fit_model_planes(
     scale: f64,
     wide_jpeg: Source,
     lens: &crate::fit::Lens,
-) -> Option<Fitted> {
+) -> Option<HdrColour> {
     let mut lap = crate::clock::laps("  colour ");
     let planes = prepared_planes(gpu, source, scale, wide_jpeg, lens).await?;
     lap("prepared planes");
@@ -6556,16 +6622,7 @@ mod tests {
         let (render, jpeg) = ramped_planes([0.4, 0.4, 0.4]);
         let ramp: Vec<f64> = (0..BINS).map(|i| i as f64 / (BINS - 1) as f64).collect();
         let pairs = Pairs::over(searching(), &render, &jpeg);
-        let colour = HdrColour {
-            curves: [ramp.clone(), ramp.clone(), ramp],
-            ceiling: TRUST_CEILING,
-            anchor: TRUST_CEILING,
-            matrix: IDENTITY,
-            saturation: 1.0,
-            chroma: None,
-            surround: SurroundThumb::none(),
-            delta_e: 0.0,
-        };
+        let colour = HdrColour { curves: [ramp.clone(), ramp.clone(), ramp], ..HdrColour::identity() };
         let source = source_of(searching(), &render);
         let found = pollster::block_on(fitted_saturation(searching(), &colour, &source, &pairs))
             .expect("the device scores");
@@ -6629,9 +6686,7 @@ mod tests {
                 anchor: TRUST_CEILING,
                 matrix: IDENTITY,
                 saturation: want,
-                chroma: None,
-                surround: SurroundThumb::none(),
-                delta_e: 0.0,
+                ..HdrColour::identity()
             };
             let all: Vec<usize> = (0..render.width * render.height).collect();
             let pushed = through(&applied, Stage::Full, &samples_of_f64(&render, &all))
@@ -6664,7 +6719,7 @@ mod tests {
             pollster::block_on(fit(
                 searching(),
                 &source_of(searching(), &plane),
-                crate::light::Light::measured(1.0),
+                unit_levels(),
                 &preview,
                 crate::fit::Lens::none(),
             ))
@@ -6687,7 +6742,7 @@ mod tests {
             pollster::block_on(fit(
                 searching(),
                 &source_of(searching(), &plane),
-                crate::light::Light::measured(1.0),
+                unit_levels(),
                 &preview,
                 crate::fit::Lens::none(),
             ))
@@ -6719,6 +6774,15 @@ mod tests {
     const CAMERA_GAIN: [f64; 3] = [1.0, 1.06, 0.94];
     fn camera(channel: usize, level: f64) -> f64 {
         CAMERA_GAIN[channel] * 1.172 * level.max(0.0).powf(0.533)
+    }
+
+    /// A plane already in multiples of its white, with a floor nobody measured.
+    fn unit_levels() -> crate::tone::Levels {
+        crate::tone::Levels {
+            white: crate::light::Light::measured(1.0),
+            peak: crate::light::Light::measured(1.0),
+            floor: None,
+        }
     }
 
     /// A patch chart and the camera's rendering of it, shaped like the frame that
@@ -6797,7 +6861,7 @@ mod tests {
             pollster::block_on(fit(
                 searching(),
                 &source_of(searching(), &plane),
-                crate::light::Light::measured(1.0),
+                unit_levels(),
                 &preview,
                 crate::fit::Lens::none(),
             ))

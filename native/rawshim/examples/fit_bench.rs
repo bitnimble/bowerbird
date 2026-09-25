@@ -9,9 +9,8 @@
 //! attacking; and it decides the colour of every photograph, so a faster one that fits differently
 //! is not the same feature. Timing alone would hide that, and `deltaE` alone would hide the point.
 //!
-//! `deltaE` is the fit's own: the mean over pairs it was not fitted from, against the baseline of
-//! applying nothing, which is what it has to beat to be applied at all. `matched` says whether it
-//! was. The colour figures below are the fitted transform itself, printed so that two runs can be
+//! `deltaE` is the fit's own: the mean over pairs it was not fitted from. `matched` says whether a
+//! colour was fitted at all. The colour figures below are the fitted transform itself, printed so that two runs can be
 //! held against each other exactly rather than through a rendered picture.
 //!
 //! The decode is done once and the match repeated, because it is the match being measured.

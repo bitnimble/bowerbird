@@ -84,11 +84,21 @@ public float srgb_eotf(float level)
     return level <= 0.04045 ? level / 12.92 : pow((level + 0.055) / 1.055, 2.4);
 }
 
-/// ITU-R BT.2390-8 5.4.1 with black at zero. **The only implementation of the roll-off.**
+/// How far under diffuse white, or a lower target peak, a roll-off may begin.
 ///
-/// There was a second one in Rust, tabulated over 4096 bins because it paid per sample in
-/// scalar code. A shader does not, so this is evaluated - and that one is deleted, which is
-/// what makes a rendition and a tick the same picture rather than two kept in agreement.
+/// **Diffuse white and below is the picture; a target's headroom decides only what happens above
+/// it** (BT.2408). BT.2390's own knee follows the ratio of the scene's peak to the target's, so
+/// into an SDR white it falls to a third of white on a frame with a specular sun in it and bends
+/// the camera's own shoulder a second time: a matched render that reads as the JPEG in HDR reads
+/// duller and flatter than it in SDR.
+public static const Stops KNEE_UNDER_WHITE = { -0.32 };
+
+/// The roll-off: BT.2390-8 5.4.1's knee with black at zero, held no lower than
+/// `KNEE_UNDER_WHITE`, and a rational shoulder above it. **The only implementation of it.**
+///
+/// Not BT.2390's Hermite above the knee, because its `ks = 1.5 max_lum - 0.5` is exactly the
+/// highest knee that spline stays monotone from; any knee above that one overshoots the target
+/// and comes back down.
 ///
 /// Split so the knee is found once and applied three times: `pq(source_peak)` and `pq(peak)`
 /// are constant over the whole dispatch, coming from the frame and the display rather than
@@ -102,14 +112,16 @@ public struct Rolloff {
     public bool fits;
 };
 
-public Rolloff rolloff(Light<DisplayNits> source_peak, Light<DisplayNits> peak)
+/// `white` is the target's diffuse white; a lower peak bounds the knee instead.
+public Rolloff rolloff(Light<DisplayNits> source_peak, Light<DisplayNits> peak, Light<DisplayNits> white)
 {
     let lw = pq(source_peak).v;
     let max_lum = pq(peak).v / lw;
+    let floor = pq(measured<DisplayNits>(min(white.v, peak.v) * gain_of(KNEE_UNDER_WHITE).g)).v / lw;
     Rolloff knee;
     knee.lw = lw;
     knee.max_lum = max_lum;
-    knee.ks = max(1.5 * max_lum - 0.5, 0.0);
+    knee.ks = max(1.5 * max_lum - 0.5, floor);
     knee.fits = max_lum >= 1.0;
     return knee;
 }
@@ -119,12 +131,11 @@ public Light<DisplayNits> roll(Light<DisplayNits> nits, Rolloff knee)
     if (knee.fits) { return nits; }
     let e1 = pq(nits).v / knee.lw;
     if (e1 < knee.ks) { return nits; }
-    let t = (e1 - knee.ks) / (1.0 - knee.ks);
-    let t2 = t * t;
-    let t3 = t2 * t;
-    let e2 = (2.0 * t3 - 3.0 * t2 + 1.0) * knee.ks
-        + (t3 - 2.0 * t2 + t) * (1.0 - knee.ks)
-        + (-2.0 * t3 + 3.0 * t2) * knee.max_lum;
+    let reach = knee.max_lum - knee.ks;
+    // Slope 1 at the knee, and the source peak landing on the target's exactly.
+    let past = e1 - knee.ks;
+    let bend = 1.0 / reach - 1.0 / (1.0 - knee.ks);
+    let e2 = knee.ks + past / (1.0 + bend * past);
     return pq_inv<DisplayNits>(measured<Pq>(e2 * knee.lw));
 }
 

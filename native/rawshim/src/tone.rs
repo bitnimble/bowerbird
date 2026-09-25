@@ -207,6 +207,18 @@ pub struct Levels {
     pub floor: Option<Light<Level>>,
 }
 
+/// [`Levels::floor_share`], for a caller holding the two apart.
+pub fn floor_share(floor: Option<Light<Level>>, white: Light<Level>) -> f64 {
+    match floor {
+        Some(floor) if white.raw() > 0.0 => floor.raw() / white.raw(),
+        // The `white > 0` half of that guard is the load-bearing one. Zero here is the unmeasured
+        // reading and gives the pair a full photograph's span; dividing by a white of zero would
+        // send an infinity instead, which floors the span at a sixteenth of a stop - the opposite
+        // answer, on the darkest frame there is.
+        _ => 0.0,
+    }
+}
+
 impl Levels {
     /// Whether these are levels to be handed rather than ones to refuse and measure again.
     ///
@@ -223,6 +235,12 @@ impl Levels {
             && self.white >= Light::COUNT
             && self.peak >= self.white
             && self.floor.is_some_and(|floor| floor.is_finite() && floor <= self.white)
+    }
+
+    /// The floor as a share of white, which is what `adjust.slang` places the low pair against
+    /// (`edit.black_floor`).
+    pub fn floor_share(&self) -> f64 {
+        floor_share(self.floor, self.white)
     }
 
     /// These levels with diffuse white where the file says it is, for a picture shown as it was
@@ -328,14 +346,17 @@ impl<'a> SceneGrade<'a> {
         adjust: crate::gpu::Adjust,
         as_shot: Option<crate::white_balance::AsShot>,
     ) -> Self {
-        assert!(exposure.raw().is_finite(), "an exposure is a number of stops: {exposure:?}");
+        assert!(
+            exposure.raw().is_finite(),
+            "an exposure is a number of stops: {exposure:?}"
+        );
         SceneGrade {
             levels: *levels,
             reference,
             exposure,
+            matched: adjust.colour(colour),
             adjust,
             as_shot,
-            matched: adjust.colour(colour),
         }
     }
 
@@ -357,7 +378,7 @@ impl<'a> SceneGrade<'a> {
         crate::gpu::Grade {
             colour: self.matched,
             exposure: self.exposure,
-            adjust: self.adjust,
+            adjust: self.adjust.clone(),
             as_shot: self.as_shot,
             output,
             ..crate::gpu::Grade::new(width, height, self.levels, self.reference, peak_nits)

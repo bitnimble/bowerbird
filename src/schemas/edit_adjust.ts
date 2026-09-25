@@ -8,6 +8,7 @@ export function adjustOf(doc: EditDoc): JobAdjust {
     shadows: doc.shadows,
     whites: doc.whites,
     blacks: doc.blacks,
+    toneCurve: doc.toneCurve,
     vibrance: doc.vibrance,
     saturation: doc.saturation,
     texture: doc.texture,

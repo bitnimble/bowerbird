@@ -6,7 +6,7 @@
 // the first tick: a black stage and a `failed` panel. `tests/module_json.test.ts` is the pin.
 
 import { z } from 'zod';
-import type { ColourProfile } from '../../../../src/schemas/photo_edits';
+import type { ColourProfile, ToneCurve } from '../../../../src/schemas/photo_edits';
 import { RenderingIntentSchema } from '../../../../src/schemas/rendering_intent';
 
 /** The window on the output a tick draws, in output pixels: what pan and zoom move. */
@@ -20,8 +20,8 @@ export interface Region {
 /**
  * Every slider, on Camera Raw's own scales, as the document holds them - `gpu::Adjust`.
  *
- * Nulls included: what a missing half of the white balance pair means is `white_balance.slang`'s
- * to say, so this carries the absence rather than a stand-in.
+ * A null white balance half is resolved by `white_balance.slang`. A null tone curve uses the
+ * camera match's curve.
  */
 export interface EditAdjust {
   contrast: number;
@@ -29,6 +29,7 @@ export interface EditAdjust {
   shadows: number;
   whites: number;
   blacks: number;
+  toneCurve: ToneCurve | null;
   vibrance: number;
   saturation: number;
   texture: number;

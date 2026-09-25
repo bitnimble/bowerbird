@@ -38,12 +38,14 @@ export function editRows(doc: EditDoc, frame: Size | null): Row[] {
     if (typeof value !== 'number') return;
     // A slider the photograph answers for itself has no default to compare against: null is
     // untouched, and any number at all is the reader having overridden a measurement.
-    if (spec.measured == null && value === (spec.neutral ?? 0)) return;
+    if (spec.measured !== true && value === (spec.neutral ?? 0)) return;
     const label = EDIT_LABELS[spec.key]?.() ?? spec.label;
     rows.push([label, RawEditPanelStrings.valueWithUnit(reading(value, spec), spec.unit ?? '')]);
   };
 
   EDIT_SLIDERS.forEach(slider);
+
+  if (doc.toneCurve != null) rows.push([PhotoDetailStrings.toneCurve(), PhotoDetailStrings.edited()]);
 
   // Only with the Kelvins that carry it: a sidecar names the camera's own mode ("Daylight")
   // beside no temperature at all, and the render then uses the as-shot multipliers - so the

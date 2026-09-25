@@ -196,23 +196,6 @@ public Colour<Rendered> curves_at(Colour<SceneNits> nits, Gain scale)
     return measured<Rendered>(ratios * (top + (peak - edit.trust_ceiling) * at_white));
 }
 
-/// What the exposure amounts to at this pixel: the exposed colour's luma over the base's.
-///
-/// A scalar rather than the exposed colour, so the ratios carried forward are the base's,
-/// which is what keeps hue still as the slider moves.
-///
-/// Also why the peak cannot be precomputed as a curve: the exposure arrives as a gain that
-/// depends on the pixel's own luma, not as a global one.
-Gain exposure_gain(Colour<SceneNits> nits, Colour<Rendered> base)
-{
-    if (edit.exposure == 0.0) { return gain(1.0); }
-    let base_luma = luma_of(base).v;
-    // Black has no ratios to hold and no luma to divide by, and nothing above it is additive,
-    // so it stays where it is however far the slider goes.
-    if (base_luma <= 0.0) { return gain(1.0); }
-    return gain(luma_of(curves_at(nits, gain_of(stops(edit.exposure)))).v / base_luma);
-}
-
 /// `ChromaMap::axis`, as a texture coordinate: the node index, at its texel centre.
 float axis(float value, uint nodes, float low, float scale)
 {
@@ -430,22 +413,6 @@ Light<Rendered> matched_white()
         max(luma_of(apply_matrix(curves_at(lit_by_reader(white), gain(1.0)))).v, 1e-6));
 }
 
-/// Middle grey after the same rendering, as a fraction of the white above.
-///
-/// **A camera's tone curve is mostly this number**, so it cannot be assumed: lifting the midtones
-/// against diffuse white is what makes a rendering look like a photograph rather than like a
-/// light meter, and it moves middle grey by upwards of a stop. What needs it is the contrast,
-/// which turns the value it is handed about the middle of the picture - hand it `PIVOT` and a
-/// rendered frame turns about a point well below its own midtones, darkening as it steepens.
-/// Through `lit_by_reader` for the same reason white is: a grey is only middle grey under the
-/// light the picture is being graded under.
-Light<Graded> matched_pivot(Light<Rendered> white)
-{
-    let grey = measured<SceneNits>(float3(edit.reference * PIVOT.v));
-    let rendered = luma_of(apply_matrix(curves_at(lit_by_reader(grey), gain(1.0)))).v;
-    return measured<Graded>(clamp(rendered / white.v, 0.02, 0.9));
-}
-
 /// The frame's own luma at a pixel, scene-relative, before the match and before the exposure.
 ///
 /// What `detail` blurred, and so the only value a difference against that blur is
@@ -489,14 +456,16 @@ public Colour<DisplayNits> matched_nits(Colour<SceneNits> nits, float2 at)
                           float3(-CHROMA_MOVES_BY), float3(CHROMA_MOVES_BY));
         matched = pow(max(luma + mine + moved, float3(0.0)), float3(CHROMA_GAMMA));
     }
-    let base = curves_at(nits, gain(1.0));
-    matched *= exposure_gain(nits, base).g;
-
     // Into `Graded` on the way in and back out on the way out, which is the whole of why the
     // sliders read the same on a frame the fit landed on and one it declined.
     let white = matched_white();
-    let graded = adjusted(
-        measured<Graded>(matched / white.v), base_luma(nits), at, matched_pivot(white));
+    Colour<Graded> graded;
+    if (edit.curve_is_camera != 0 && edit.exposure == 0.0 && sliders_at_rest()) {
+        graded = measured<Graded>(matched / white.v);
+    } else {
+        let untoned = camera_undone(measured<Graded>(matched / white.v));
+        graded = adjusted(times(untoned, gain_of(stops(edit.exposure))), base_luma(nits), at);
+    }
     // Last, on the colour a still will code: the matrix and the lattice are free to send a colour
     // past the floor, and this is the one place it is brought back before anything quantises it.
     return in_gamut(measured<DisplayNits>(graded.v * white.v * edit.reference));
@@ -574,7 +543,8 @@ public Colour<Rendered> matched_scene(Colour<SceneNits> nits, float2 at)
 public Colour<DisplayNits> neutral_nits(Colour<SceneNits> nits, float2 at)
 {
     // The floor last, as the matched arm takes it: the sliders can send a channel under it.
-    return in_gamut(rolled(neutral_unrolled(nits, at), rolloff(neutral_peak(), measured<DisplayNits>(edit.peak))));
+    let knee = rolloff(neutral_peak(), measured<DisplayNits>(edit.peak), measured<DisplayNits>(edit.reference));
+    return in_gamut(rolled(neutral_unrolled(nits, at), knee));
 }
 
 /// The neutral arm's top end: how far over its own diffuse white the frame's top end sits.
@@ -596,7 +566,7 @@ public Colour<DisplayNits> neutral_unrolled(Colour<SceneNits> nits, float2 at)
     // catches that is `display_nits`' clamp - the top of the range rather than a curve into
     // it. Worth knowing before reaching for a big lift on a frame whose fit declined.
     let exposed = lit_by_reader(nits).v * gain_of(stops(edit.exposure)).g / edit.reference;
-    let scene = adjusted(measured<Scene>(exposed), base_luma(nits), at, PIVOT);
+    let scene = adjusted(measured<Scene>(exposed), base_luma(nits), at);
     // **Scene nits taken as display nits, which is what having no tone curve means.** This arm's
     // whole rendering is `neutral_nits`' roll-off, so the reference is multiplied back in and the
     // result is handed to a display without a camera's own answer in between.

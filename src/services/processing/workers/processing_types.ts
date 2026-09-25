@@ -85,18 +85,9 @@ export interface Developed {
   repairs: Repair[];
   sharpen: number;
   defringe: number;
-  /**
-   * The photographer's own exposure, as a gain on the scene rather than in stops.
-   *
-   * A gain because that is what the shader's uniform carries, and the conversion from the
-   * stored document's EV happens once on the way in rather than in two places that could
-   * disagree about the base. 1 is the scene as metered, which is what an unedited photo gets.
-   */
+  /** The photographer's exposure in stops, as the document stores it. */
   exposure: number;
-  /**
-   * The rest of the reader's sliders, on Camera Raw's -100..100 scales. All zero is the
-   * picture as the camera rendered it.
-   */
+  /** The rest of the reader's sliders, on Camera Raw's -100..100 scales (`JobAdjustSchema`). */
   adjust: JobAdjust;
   /** The reader's crop, straighten and quarter turn. */
   geometry: JobGeometry;

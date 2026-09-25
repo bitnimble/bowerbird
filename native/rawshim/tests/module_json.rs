@@ -43,8 +43,10 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     assert_eq!(adjust.contrast, 11.0);
     assert_eq!(adjust.highlights, -22.0);
     assert_eq!(adjust.shadows, 33.0);
+    // The camera match's own, which a stand-in number would override.
     assert_eq!(adjust.whites, -44.0);
     assert_eq!(adjust.blacks, 55.0);
+    assert_eq!(adjust.tone_curve, Some(vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]]));
     assert_eq!(adjust.vibrance, -66.0);
     assert_eq!(adjust.saturation, 77.0);
     assert_eq!(adjust.texture, -88.0);

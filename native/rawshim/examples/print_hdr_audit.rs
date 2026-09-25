@@ -69,7 +69,7 @@ fn main() -> Result<(), String> {
                     key_lux: Light::exactly(scene.key_lux.raw() * 2.0),
                     fill_lux: Light::exactly(scene.fill_lux.raw() * 2.0), ..scene
                 };
-                let proof = Grade { output: Output::Srgb, peak_nits: Light::exactly(203.0), ..grade };
+                let proof = Grade { output: Output::Srgb, peak_nits: Light::exactly(203.0), ..grade.clone() };
                 for (index, grade, scene) in [(0, &grade, &scene), (1, &grade, &scene), (2, &grade, &doubled), (3, &proof, &scene)] {
                     let mut recording = gpu.record();
                     uploaded.draw_into(&mut recording, grade, &pyramid, &views[index], Some(scene), index == 1);

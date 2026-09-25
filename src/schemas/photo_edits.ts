@@ -35,6 +35,13 @@ export type ColourProfile = z.infer<typeof ColourProfileSchema>;
 export const DenoiserSchema = z.enum(['galosh', 'pmrid']);
 export type Denoiser = z.infer<typeof DenoiserSchema>;
 
+export const ToneCurveSchema = z.array(z.tuple([
+  z.number().min(0).max(1),
+  z.number().min(0).max(1),
+])).min(2).max(16).refine((points) => points.every((point, index) =>
+  index === 0 || (point[0] > points[index - 1]![0] && point[1] >= points[index - 1]![1])));
+export type ToneCurve = z.infer<typeof ToneCurveSchema>;
+
 // The document is one replicated cell re-parsed on every write, so a repair is bounded: the most
 // repairs times the most vertices, twice, is `MOST_VERTICES` of an assembly's recipe, which lives in
 // the same kind of cell.
@@ -84,12 +91,14 @@ export const EditDocSchema = z
 
     // Tone. `exposure` is EV and is the only one here with a physical unit; the
     // rest are slider positions whose mapping to anything is ours to decide.
+    //
     exposure: z.number().min(-5).max(5).default(0),
     contrast: z.number().int().min(-100).max(100).default(0),
     highlights: z.number().int().min(-100).max(100).default(0),
     shadows: z.number().int().min(-100).max(100).default(0),
     whites: z.number().int().min(-100).max(100).default(0),
     blacks: z.number().int().min(-100).max(100).default(0),
+    toneCurve: ToneCurveSchema.nullable().default(null),
 
     // Presence. `dehaze` is a real where its neighbours are integers, which is
     // Camera Raw's own inconsistency and not worth correcting away from.

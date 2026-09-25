@@ -60,7 +60,7 @@ Colour<DisplayNits> rolled_off(Colour<SceneNits> nits, float2 at)
     // 0..scene_peak and reads the top bin for anything past it. Without the clamp the
     // brightest pixels get a curve the CPU never evaluates.
     let coloured = within(matched_nits(nits, at), scene_peak);
-    return rolled(coloured, rolloff(scene_peak, measured<DisplayNits>(edit.peak)));
+    return rolled(coloured, rolloff(scene_peak, measured<DisplayNits>(edit.peak), measured<DisplayNits>(edit.reference)));
 }
 
 Colour<DisplayNits> display_nits(Colour<SceneNits> nits, float2 at)

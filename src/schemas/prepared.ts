@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { JobGradeSchema, NoiseFitSchema } from './jobs';
 import { CameraMatchSchema } from './render_stages';
+import { ToneCurveSchema } from './photo_edits';
 
 const PairSchema = z.tuple([z.number(), z.number()]);
 
@@ -41,6 +42,8 @@ export const PreparedHeaderSchema = z.object({
    * used it reports it rather than the page deriving a second copy that would drift.
    */
   detail: PairSchema,
+  /** The camera match's curve, or null where nothing was matched. */
+  cameraCurve: ToneCurveSchema.nullable(),
   /**
    * The mosaic's noise, as the open fitted it.
    *

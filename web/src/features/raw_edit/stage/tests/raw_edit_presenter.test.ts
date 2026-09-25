@@ -72,6 +72,16 @@ describe('a slider reaching the picture', () => {
     expect(decoder.exposure).toBeCloseTo(1.25, 6);
   });
 
+  test('hands the module numeric neutral tone', async () => {
+    presenter.settle({ exposure: 1.25, contrast: 20 });
+    await drawn();
+
+    presenter.settle({ exposure: 0, contrast: 0 });
+    await drawn();
+    expect(decoder.exposure).toBe(0);
+    expect(decoder.adjust).toMatchObject({ contrast: 0, whites: 0, blacks: 0, toneCurve: null });
+  });
+
   test('puts each tone and presence slider under its own name', async () => {
     // All at once and all different, because the failure being guarded against is two of them
     // swapped - which no single-slider check can see.
@@ -95,6 +105,7 @@ describe('a slider reaching the picture', () => {
       shadows: 33,
       whites: -44,
       blacks: 55,
+      toneCurve: null,
       texture: -66,
       clarity: 77,
       dehaze: -88.5,
@@ -643,6 +654,22 @@ describe('a picture prepared on the server', () => {
     expect(stage.levels).toBeNull();
   });
 
+  test("holds the camera match's curve off the header", () => {
+    const header = { width: 4000, height: 3000, detail: [24, 76], defocus: [0, 0] } as unknown as PreparedHeader;
+    const headed = (cameraCurve: PreparedHeader['cameraCurve']): void =>
+      (presenter as unknown as { describe(header: PreparedHeader, elsewhere: boolean): void }).describe(
+        { ...header, cameraCurve },
+        false,
+      );
+
+    headed([[0, 0.1], [0.5, 0.55], [1, 1]]);
+    expect(stage.cameraCurve).toEqual([[0, 0.1], [0.5, 0.55], [1, 1]]);
+    expect(edit.doc?.toneCurve).toBeNull();
+
+    headed(null);
+    expect(stage.cameraCurve).toBeNull();
+  });
+
   test('the grade still ticks without asking the server for anything', async () => {
     opened({ local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true } });
     stage.preparedElsewhere = true;
@@ -726,6 +753,7 @@ describe('the level a zoom is served at', () => {
         mosaic: false,
         asShot: null,
         detail: [0, 0],
+        cameraCurve: null,
         defocus: [0, 0],
       });
       const text = new TextEncoder().encode(header);
@@ -1067,6 +1095,27 @@ describe('leaving the editor', () => {
     photoEditsApi.finish = finishEdits;
   });
 
+  test('previews a curve in the next tick, settles once, and resets to the camera curve', async () => {
+    const saved: (EditState['doc']['toneCurve'])[] = [];
+    photoEditsApi.save = (_photoId, doc): Promise<EditState> => {
+      saved.push(doc.toneCurve);
+      return Promise.resolve({ doc, rev: ++edit.rev, canUndo: true, canRedo: false });
+    };
+    const points: NonNullable<EditState['doc']['toneCurve']> = [[0, 0.1], [0.5, 0.6], [1, 1]];
+    presenter.previewToneCurve(points);
+    await drawn();
+    expect(decoder.adjust?.toneCurve).toEqual(points);
+    expect(saved).toEqual([]);
+
+    presenter.settleToneCurve(points);
+    await Bun.sleep(0);
+    expect(saved).toEqual([points]);
+
+    presenter.settleToneCurve(null);
+    await Bun.sleep(0);
+    expect(saved).toEqual([points, null]);
+  });
+
   test('asks for the render the reader ended up with', async () => {
     presenter.settleExposure(1.25);
     await Bun.sleep(0);
@@ -1149,7 +1198,7 @@ describe('leaving the editor', () => {
 
   test('a cancel waits for the save in flight, and drops the one queued behind it', async () => {
     let land!: () => void;
-    const saved: number[] = [];
+    const saved: (number | null)[] = [];
     photoEditsApi.save = (_photoId, doc): Promise<EditState> => {
       saved.push(doc.exposure);
       return new Promise((resolve) => {

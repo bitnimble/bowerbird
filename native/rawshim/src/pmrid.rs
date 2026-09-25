@@ -1832,7 +1832,7 @@ mod tests {
             let run = |network: &super::Pmrid| {
                 let mut frame = mosaic.duplicate(gpu);
                 gpu.block_until_done();
-                let started = std::time::Instant::now();
+                let started = crate::clock::Mark::now();
                 super::denoise(gpu, network, &mut frame, &cfa, gains, detail, fit);
                 gpu.block_until_done();
                 (started.elapsed(), frame)

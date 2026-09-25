@@ -72,8 +72,8 @@ async function render(
     dust: { enabled: false, sensitivity: 0.5, intensity: 1 },
     denoiser: 'galosh',
     repairs: [],
-    // As metered: this measures what the camera match does, so a gain would be a second
-    // variable in it.
+    // Unedited: this measures what the camera match does, so a
+    // reader's would be a second variable in it.
     exposure: 0,
     adjust: adjustOf(neutralEdits()),
     geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },

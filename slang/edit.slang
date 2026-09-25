@@ -234,6 +234,12 @@ public struct Edit {
     /// grade whole is graded a band at a time.
     public uint band_top;
     public uint band_rows;
+
+    public uint reader_curve_count;
+    public uint camera_curve_count;
+    public uint curve_is_camera;
+    public float4 reader_curve[16];
+    public float4 camera_curve[16];
 };
 
 [vk::binding(0, 0)] public ConstantBuffer<Edit> edit;

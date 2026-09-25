@@ -5,7 +5,7 @@ import type { PrepareDevelop } from '../../../schemas/prepare_develop';
 import type { Developed } from '../workers/processing_types';
 
 /**
- * No exposure, no adjustment, whole frame: the picture as the camera made it.
+ * The camera's own tone, no adjustment, whole frame: the picture as the camera made it.
  *
  * The empty document through the same mapping every stored one takes, so a default that moves in
  * `EditDocSchema` moves here too. "As metered" is about the *grade*: a photo nobody has edited is

@@ -119,7 +119,7 @@ pub struct HeldRaw {
     tick: std::cell::Cell<u64>,
     /// What a tick that named no region draws, and what the reader's crop moves.
     geometry: std::cell::Cell<crate::image::Geometry>,
-    adjust: std::cell::Cell<crate::gpu::Adjust>,
+    adjust: std::cell::RefCell<crate::gpu::Adjust>,
     /// Which output the reader is proofing against, which the draw grades and clips for.
     proof: std::cell::Cell<crate::gpu::Output>,
     /// How an sRGB proof is brought inside its file's gamut.
@@ -357,7 +357,7 @@ impl HeldRaw {
             searched: std::cell::RefCell::new(None),
             tick: std::cell::Cell::new(0),
             geometry: std::cell::Cell::new(crate::image::Geometry::none()),
-            adjust: std::cell::Cell::new(crate::gpu::Adjust::none()),
+            adjust: std::cell::RefCell::new(crate::gpu::Adjust::none()),
             proof: std::cell::Cell::new(crate::gpu::Output::Pq),
             proof_intent: std::cell::Cell::new(crate::gpu::Intent::Perceptual),
             display_hdr: std::cell::Cell::new(true),
@@ -1781,7 +1781,7 @@ impl HeldRaw {
     pub fn set_adjust(&self, adjust: &str) -> Result<(), JsValue> {
         let next: crate::gpu::Adjust = serde_json::from_str(adjust)
             .map_err(|e| JsValue::from_str(&format!("rawshim: this adjust is malformed: {e}")))?;
-        self.adjust.set(next);
+        *self.adjust.borrow_mut() = next;
         Ok(())
     }
 
@@ -1902,7 +1902,7 @@ impl HeldRaw {
 
         let (uploaded, width, height, window) = match reading {
             Reading::Tile(tiled) => {
-                let scene = tiled.window.scene(ev, self.adjust.get());
+                let scene = tiled.window.scene(ev, self.adjust.borrow().clone());
                 let grade = crate::gpu::Grade {
                     intent: proofed_intent,
                     ..tiled.window.grade(&scene, proofed(tiled.peak_nits), proof).onto(shown)
@@ -1924,7 +1924,7 @@ impl HeldRaw {
             } => (uploaded, width, height, Some(window)),
         };
         let (picture_w, picture_h) = drawing.picture();
-        let adjust = self.adjust.get();
+        let adjust = self.adjust.borrow().clone();
         let print = if std::ptr::eq(onto, &self.stage) { self.print.get() } else { None };
         let grade = crate::gpu::Grade {
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),

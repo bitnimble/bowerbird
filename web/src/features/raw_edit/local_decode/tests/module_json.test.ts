@@ -46,6 +46,7 @@ describe('what a tick carries', () => {
       shadows: 33,
       whites: -44,
       blacks: 55,
+      toneCurve: [[0, 0.04], [0.35, 0.3], [0.7, 0.78], [1, 1]],
       vibrance: -66,
       saturation: 77,
       texture: -88,

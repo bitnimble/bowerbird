@@ -687,7 +687,7 @@ mod tests {
         }.lit_from(0.0, 0.0, 4.0);
         let first = uploaded.draw_print(&grade, &pyramid, &scene);
         assert!(first[center] > 1.0, "specular reflection must reach HDR");
-        let hdr_grade = Grade { peak_nits: Light::exactly(1000.0), ..grade };
+        let hdr_grade = Grade { peak_nits: Light::exactly(1000.0), ..grade.clone() };
         assert_eq!(first, uploaded.draw_print(&hdr_grade, &pyramid, &scene));
         scene.key_lux = Light::exactly(2000.0);
         let twice = uploaded.draw_print(&grade, &pyramid, &scene);

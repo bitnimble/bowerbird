@@ -112,7 +112,7 @@ pub async fn fit_match_from(
     }
     let quantile = crate::tone::body_white_quantile(preview.as_ref()).unwrap_or(quantile);
     let prepared = crate::fit_source::prepared(gpu, frame, tw, quantile).await?;
-    let matched = hdr_fit::fit(gpu, &prepared.plane, prepared.levels.white, preview, lens).await?;
+    let matched = hdr_fit::fit(gpu, &prepared.plane, prepared.levels, preview, lens).await?;
     Some((matched, prepared.levels))
 }
 
@@ -215,7 +215,7 @@ pub async fn fit_all_from_preview(
         let matched = HdrMatch { lens: profile.lens(), colour: None };
         return Some((profile, matched, levels));
     }
-    let matched = hdr_fit::fit_linearised(gpu, &plane, levels.white, wide_jpeg, profile.lens())
+    let matched = hdr_fit::fit_linearised(gpu, &plane, levels, wide_jpeg, profile.lens())
         .await
         .unwrap_or_else(|| HdrMatch { lens: profile.lens(), colour: None });
     lap("colour");
@@ -362,6 +362,17 @@ pub fn graded_as(
     matched: Option<&HdrMatch>,
     output: crate::gpu::Output,
 ) -> (Vec<u16>, usize, usize) {
+    graded_under(source, options, matched, output, crate::gpu::Intent::default())
+}
+
+/// [`graded_as`] brought inside an sRGB file's range by `intent`.
+pub fn graded_under(
+    source: &Source<'_>,
+    options: &EncodeOptions,
+    matched: Option<&HdrMatch>,
+    output: crate::gpu::Output,
+    intent: crate::gpu::Intent,
+) -> (Vec<u16>, usize, usize) {
     let gpu = crate::gpu::device().expect(
         "no Vulkan adapter answered, not even a software one. The grade runs on the GPU so \
          that the editor and a rendition cannot drift apart, and there is no CPU copy to \
@@ -390,7 +401,7 @@ pub fn graded_as(
     let graded = encode_cut(
         gpu,
         &cut,
-        &scene.gpu_grade(cut.width, cut.height, options.grade.peak_nits, output),
+        &crate::gpu::Grade { intent, ..scene.gpu_grade(cut.width, cut.height, options.grade.peak_nits, output) },
     );
     cut.release();
     (graded, cut.width, cut.height)
@@ -417,9 +428,9 @@ pub fn encode_cut(
 
 /// The scene as the camera rendered it: the photo's colour and levels, and nobody's edit.
 ///
-/// What both one-shot entry points grade through. No exposure and no as-shot illuminant, because
-/// these serve the pins and the debug paths, which measure the grade itself - and with the
-/// illuminant pair unset there is nothing to balance away from.
+/// What both one-shot entry points grade through. Every slider at the camera's own and no as-shot
+/// illuminant, because these serve the pins and the debug paths, which measure the grade itself -
+/// and with the illuminant pair unset there is nothing to balance away from.
 fn neutral_scene<'a>(
     levels: tone::Anchored,
     options: &EncodeOptions,
@@ -429,8 +440,6 @@ fn neutral_scene<'a>(
         matched.and_then(|m| m.colour.as_ref()),
         levels,
         options.grade.reference_white_nits,
-        // Neutral is zero stops: a one here renders every pin and every debug harness a stop over
-        // the picture they exist to measure.
         crate::light::Stops::ZERO,
         crate::gpu::Adjust::none(),
         None,

@@ -48,7 +48,7 @@ fn grazing_print_preserves_detail_across_its_short_pixel_axis() {
             Scene { yaw_degrees: 0.0, pitch_degrees: 80.0, ..scene },
         ),
     ] {
-        let grade = Grade { geometry, ..grade };
+        let grade = Grade { geometry, ..grade.clone() };
         let peak = gpu.scene_peak();
         let mut draws = Vec::new();
         for pattern in 0..3 {

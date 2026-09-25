@@ -197,6 +197,77 @@ pub struct Gain(f64);
 #[serde(transparent)]
 pub struct Stops(f64);
 
+pub const CURVE_TOP: Stops = Stops::exactly(3.0);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CurveCode(f64);
+
+impl CurveCode {
+    pub fn from_raw(code: f64) -> Self {
+        Self(code)
+    }
+
+    pub fn of_white_ratio(ratio: f64) -> Self {
+        Self(ratio.max(0.0).cbrt() / CURVE_TOP.raw().exp2().cbrt())
+    }
+
+    pub fn white_ratio(self) -> f64 {
+        (self.0 * CURVE_TOP.raw().exp2().cbrt()).powi(3)
+    }
+
+    pub fn raw(self) -> f64 {
+        self.0
+    }
+}
+
+/// 2 to 16 finite points inside the unit square, rising in x and never falling in y.
+pub fn curve_is_valid(points: &[[f64; 2]]) -> bool {
+    (2..=16).contains(&points.len())
+        && points.iter().all(|p| p.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)))
+        && points.windows(2).all(|p| p[0][0] < p[1][0] && p[0][1] <= p[1][1])
+}
+
+pub fn curve_tangents(points: &[[f64; 2]]) -> Vec<f64> {
+    let secants: Vec<f64> = points
+        .windows(2)
+        .map(|p| (p[1][1] - p[0][1]) / (p[1][0] - p[0][0]))
+        .collect();
+    let mut tangents = vec![0.0; points.len()];
+    tangents[0] = secants[0];
+    tangents[points.len() - 1] = secants[secants.len() - 1];
+    for i in 1..points.len() - 1 {
+        let before = secants[i - 1];
+        let after = secants[i];
+        if before * after <= 0.0 {
+            continue;
+        }
+        let left = points[i][0] - points[i - 1][0];
+        let right = points[i + 1][0] - points[i][0];
+        let w1 = 2.0 * right + left;
+        let w2 = right + 2.0 * left;
+        tangents[i] = (w1 + w2) / (w1 / before + w2 / after);
+    }
+    tangents
+}
+
+pub fn curve_at(points: &[[f64; 2]], tangents: &[f64], x: f64) -> f64 {
+    if x <= points[0][0] {
+        return points[0][1];
+    }
+    let last = points.len() - 1;
+    if x >= points[last][0] {
+        return points[last][1] + (x - points[last][0]) * tangents[last];
+    }
+    let i = points.partition_point(|point| point[0] < x) - 1;
+    let width = points[i + 1][0] - points[i][0];
+    let t = (x - points[i][0]) / width;
+    let a = (2.0 * t.powi(3) - 3.0 * t.powi(2) + 1.0) * points[i][1];
+    let b = (t.powi(3) - 2.0 * t.powi(2) + t) * width * tangents[i];
+    let c = (-2.0 * t.powi(3) + 3.0 * t.powi(2)) * points[i + 1][1];
+    let d = (t.powi(3) - t.powi(2)) * width * tangents[i + 1];
+    a + b + c + d
+}
+
 impl Gain {
     pub const ONE: Gain = Gain(1.0);
 
@@ -439,6 +510,90 @@ impl Light<DisplayNits> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct CurveCase {
+        name: String,
+        points: Vec<[f64; 2]>,
+        tangents: Vec<f64>,
+        samples: Vec<[f64; 2]>,
+    }
+
+    #[test]
+    fn tone_curve_table_matches_the_editor() {
+        let examples = [
+            ("identity", vec![[0.0, 0.0], [1.0, 1.0]]),
+            ("s-curve", vec![[0.0, 0.0], [0.2, 0.1], [0.5, 0.5], [0.8, 0.9], [1.0, 1.0]]),
+            ("crushed black", vec![[0.1, 0.0], [0.35, 0.25], [1.0, 1.0]]),
+            ("lifted black and pulled white", vec![[0.0, 0.08], [0.3, 0.38], [0.7, 0.72], [1.0, 0.9]]),
+            ("flat segment", vec![[0.0, 0.0], [0.25, 0.2], [0.5, 0.2], [0.75, 0.65], [1.0, 1.0]]),
+            (
+                "Sony DSC06597 camera",
+                vec![
+                    [0.0, 0.0899774882813756],
+                    [0.14249426855959219, 0.0899774882813756],
+                    [0.2329343261724477, 0.20955503567478162],
+                    [0.42051370492503687, 0.4476790758148771],
+                    [0.5411004484088442, 0.5396001907623454],
+                    [1.0, 0.9987467523543998],
+                ],
+            ),
+        ];
+        let axes = std::iter::once(-0.1)
+            .chain((0..=32).map(|step| step as f64 / 32.0))
+            .chain(std::iter::once(1.1));
+        let axes: Vec<f64> = axes.collect();
+        let built: Vec<CurveCase> = examples
+            .into_iter()
+            .map(|(name, points)| {
+                let tangents = curve_tangents(&points);
+                let samples = axes.iter().map(|&x| [x, curve_at(&points, &tangents, x)]).collect();
+                CurveCase { name: name.to_string(), points, tangents, samples }
+            })
+            .collect();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/fixtures/tables/tone-curve.json");
+        if std::env::var("BOWERBIRD_WRITE_FIXTURES").is_ok_and(|value| value == "1") {
+            std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&built).unwrap()))
+                .expect("tone curve table writes");
+            return;
+        }
+        let stored: Vec<CurveCase> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(stored.len(), built.len());
+        for (actual, expected) in stored.iter().zip(&built) {
+            assert_eq!(actual.name, expected.name);
+            assert_eq!(actual.points.len(), expected.points.len());
+            assert_eq!(actual.tangents.len(), expected.tangents.len());
+            assert_eq!(actual.samples.len(), expected.samples.len());
+            for (left, right) in actual.points.iter().zip(&expected.points) {
+                assert!(left.iter().zip(right).all(|(a, b)| (a - b).abs() <= 1e-9), "{} points", actual.name);
+            }
+            for (left, right) in actual.tangents.iter().zip(&expected.tangents) {
+                assert!((left - right).abs() <= 1e-9, "{} tangents", actual.name);
+            }
+            for (left, right) in actual.samples.iter().zip(&expected.samples) {
+                assert!(left.iter().zip(right).all(|(a, b)| (a - b).abs() <= 1e-9), "{} samples", actual.name);
+            }
+        }
+    }
+
+    #[test]
+    fn curve_code_and_monotone_tangents_match_the_shader_contract() {
+        assert!(include_str!("../../../slang/light.slang")
+            .contains("public static const Stops CURVE_TOP = { 3.0 };"));
+        assert_eq!(CURVE_TOP, Stops::exactly(3.0));
+        assert_eq!(CurveCode::of_white_ratio(1.0).raw(), 0.5);
+        assert_eq!(CurveCode::of_white_ratio(8.0).raw(), 1.0);
+        assert_eq!(CurveCode::from_raw(1.0).white_ratio(), 8.0);
+        let points = [[0.0, 0.1], [0.3, 0.1], [0.6, 0.8], [1.0, 1.0]];
+        let tangents = curve_tangents(&points);
+        assert_eq!(tangents[1], 0.0);
+        let values: Vec<f64> =
+            (0..=100).map(|i| curve_at(&points, &tangents, i as f64 / 100.0)).collect();
+        assert!(values.windows(2).all(|pair| pair[0] <= pair[1] + 1e-12));
+        assert_eq!(curve_at(&points, &tangents, -1.0), 0.1);
+        assert!(curve_at(&points, &tangents, 1.2) > 1.0);
+    }
 
     /// The algebra a bare `f64` had nothing to say about.
     #[test]

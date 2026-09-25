@@ -40,7 +40,7 @@ public struct SrgbCube : IGamut
 /// colorimetric, which clips at the gamut instead. `scene_peak` is the brightest `graded` reaches.
 public float3 toned(Colour<DisplayNits> graded, Light<DisplayNits> scene_peak, Light<DisplayNits> white, uint intent)
 {
-    if (intent == INTENT_PERCEPTUAL) { return within(rolled(graded, rolloff(scene_peak, white)), white).v / white.v; }
+    if (intent == INTENT_PERCEPTUAL) { return within(rolled(graded, rolloff(scene_peak, white, white)), white).v / white.v; }
     return max(graded.v, float3(0.0)) / white.v;
 }
 

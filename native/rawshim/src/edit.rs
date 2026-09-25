@@ -130,6 +130,8 @@ pub struct PreparedHeader {
     /// it on the page would be a copy that drifts - so the decode that used it reports it, and the
     /// page reads a number rather than deriving one.
     pub detail: (f64, f64),
+    /// The camera match's tone curve. None where no colour match applies.
+    pub camera_curve: Option<Vec<[f64; 2]>>,
     /// The mosaic's noise, handed back on every loupe tile and every band of a re-prepare - so a
     /// crop is denoised at the strength its own export would use rather than at whatever its few
     /// hundred thousand photosites happen to imply.
@@ -665,6 +667,7 @@ async fn payload(
         mosaic,
         as_shot,
         detail: request.detail().resolved(noise_fit),
+        camera_curve: matched.as_ref().and_then(|m| m.colour.as_ref()).map(|c| c.curve.clone()),
         noise_fit,
         defocus,
         photo_analysis,

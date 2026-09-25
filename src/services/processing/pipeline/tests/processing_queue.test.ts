@@ -159,6 +159,7 @@ describe('ProcessingService.processUnprocessed', () => {
       shadows: 15,
       whites: 8,
       blacks: -12,
+      toneCurve: null,
       vibrance: 30,
       saturation: -5,
       texture: 25,

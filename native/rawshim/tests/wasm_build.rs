@@ -157,7 +157,9 @@ fn the_page_imports_the_entry_points_this_declares() {
     assert_eq!(
         exported,
         [
+            "pageDevice",
             "holdRaw",
+            "holdPlanes",
             "holdPicture",
             "renderRendition",
             "finishDraw",
@@ -189,6 +191,7 @@ fn the_page_imports_the_entry_points_this_declares() {
             "drawOptionThumbnail",
             "setAdjust",
             "setProof",
+            "setPrinterProfile",
             "setPrint",
             "setGeometry",
             "analysis",

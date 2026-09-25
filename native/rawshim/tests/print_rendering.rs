@@ -328,7 +328,7 @@ fn a_colorimetric_intent_leaves_what_the_paper_holds() {
 #[test]
 fn the_intents_differ_under_a_blown_highlight() {
     let colour = HdrColour::identity();
-    let blown = |column: usize| if column < 6 { [4.0; 3] } else { [0.8; 3] };
+    let blown = |column: usize| if column < 6 { [4.0; 3] } else { [1.3; 3] };
     let [perceptual, relative] = [Intent::Perceptual, Intent::RelativeColorimetric]
         .map(|intent| luminance(sample_as(&blown, lit_evenly(intent), [16, 16], Some(&colour))).raw());
     assert!(relative / perceptual > 1.05, "the intents drew the same picture: {perceptual} against {relative} nits");
@@ -383,7 +383,7 @@ fn ideal_printer(white: f64) -> Vec<u8> {
 /// The intents the print offers are the sRGB proof's too, against the file's white.
 #[test]
 fn an_srgb_proof_reaches_its_gamut_by_the_intent_chosen() {
-    let blown = |column: usize| if column < 6 { [4.0; 3] } else { [0.8; 3] };
+    let blown = |column: usize| if column < 6 { [4.0; 3] } else { [1.3; 3] };
     let read = |intent| linear(drawn_as(&blown, Shown::Srgb(intent), 32, 4.0, None)[(16 * 32 + 16) * 4 + 1]);
     let [perceptual, relative] = [Intent::Perceptual, Intent::RelativeColorimetric].map(read);
     assert!(relative / perceptual > 1.05, "relative proofed as perceptual: {relative} against {perceptual}");

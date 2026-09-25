@@ -11,7 +11,7 @@ import { CropPanel, GeometryControls } from './crop/crop_panel';
 import { EditControl, SelectControl } from './edit_control';
 import type { CropStore } from './crop/crop_store';
 import type { EditStore } from './edit/edit_store';
-import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, reading, type SliderSpec } from './edit_sliders';
+import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, onStep, reading, type SliderSpec } from './edit_sliders';
 import type { RawEditPresenter } from './stage/raw_edit_presenter';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
 import { TEMPERATURE_KELVIN, TINT, type ColourProfile, type Denoiser } from '../../../../src/schemas/photo_edits';
@@ -25,6 +25,7 @@ import type { PrintStore } from './print/print_store';
 import { proofPanels } from './print/print_controls';
 import { EditToolsStrings } from './edit_tools.strings';
 import { MobileEditPanels, type MobileEditPanel } from './mobile_edit_panels';
+import { ToneCurveEditor } from './tone_curve/tone_curve_editor';
 
 
 const COLOUR_PROFILES: Option<ColourProfile>[] = [
@@ -119,16 +120,17 @@ const EditSlider = observer(function EditSlider({
   disabled?: boolean;
 }): JSX.Element {
   const stored = edit.doc?.[spec.key];
+  const followsPhoto = spec.measured === true;
   // Where the photograph answers for itself, "untouched" is the document holding nothing rather
   // than the document holding a particular number - so the reset arrow goes back to null and the
   // row goes on following the frame.
-  const measured = spec.measured == null ? null : (stage.detail?.[spec.measured] ?? null);
-  const neutral = measured ?? spec.neutral ?? 0;
+  const measured = followsPhoto ? stage.measured?.[spec.key] : undefined;
+  const neutral = measured == null ? (spec.neutral ?? 0) : onStep(measured, spec);
   const value = Number(stored ?? neutral);
-  const untouched = spec.measured == null ? value === neutral : stored == null;
+  const untouched = followsPhoto ? stored == null : value === neutral;
   // Blank until the header lands: the measurement comes off it, and a number in its place would
-  // state a denoise the module has not resolved - which is exactly what this row is here to stop.
-  const unknown = spec.measured != null && stored == null && measured == null;
+  // state a value the module has not resolved - which is exactly what this row is here to stop.
+  const unknown = followsPhoto && stored == null && measured == null;
   const shut = disabled === true || !stage.editable;
   const format = (at: number): string => RawEditPanelStrings.valueWithUnit(reading(at, spec), spec.unit ?? '');
 
@@ -139,7 +141,7 @@ const EditSlider = observer(function EditSlider({
       reset={
         shut || untouched
           ? null
-          : () => presenter.settle({ [spec.key]: spec.measured == null ? neutral : null })
+          : () => presenter.settle({ [spec.key]: followsPhoto ? null : neutral })
       }
       typing={shut ? null : { ...spec, set: (typed) => presenter.settle({ [spec.key]: typed }) }}
     >
@@ -384,7 +386,10 @@ export const RawEditPanel = observer(function RawEditPanel({ edit, stage, crop, 
     const sliders = (specs: readonly SliderSpec[]): React.ReactNode => specs.map((spec) =>
       <EditSlider key={spec.key} edit={edit} stage={stage} presenter={presenter} spec={spec} />);
     panels = [
-      panelGroup('light', RawEditPanelStrings.groupLight(), sliders(LIGHT)),
+      panelGroup('light', RawEditPanelStrings.groupLight(), <>
+        {sliders(LIGHT)}
+        <ToneCurveEditor edit={edit} stage={stage} presenter={presenter} />
+      </>),
       panelGroup('white-balance', RawEditPanelStrings.groupWhiteBalance(), <WhiteBalance edit={edit} stage={stage} presenter={presenter} />),
       panelGroup('colour', RawEditPanelStrings.groupColour(), <>
         <ColourProfileChoice edit={edit} presenter={presenter} />{sliders(COLOUR)}

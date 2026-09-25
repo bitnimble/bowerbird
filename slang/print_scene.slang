@@ -135,8 +135,13 @@ public Gain print_exposure()
     let facing = print.illumination.x * max(print.light.z, 0.0);
     let received = measured<Illuminance>(surround.v + facing);
     let minimum = exactly<Illuminance>(50.0);
-    let white = exactly<DisplayNits>(203.0);
-    return gain(PRINT_PI * white.v / max(received.v, minimum.v));
+    return gain(PRINT_PI * print_white().v / max(received.v, minimum.v));
+}
+
+/// The diffuse white the print's view is exposed to.
+Light<DisplayNits> print_white()
+{
+    return exactly<DisplayNits>(203.0);
 }
 
 /// The scene's light onto the display the grade assumes, rolled as the grade rolls a frame.
@@ -144,7 +149,7 @@ public Colour<DisplayNits> print_displayed(Colour<DisplayNits> nits)
 {
     // A sheet turned to the lamp gathers past any display's peak, and a compositor left to clip it
     // clips each channel apart, which moves the hue.
-    return rolled(nits, rolloff(exactly<DisplayNits>(PQ_MAX_NITS), measured<DisplayNits>(print.view.w)));
+    return rolled(nits, rolloff(exactly<DisplayNits>(PQ_MAX_NITS), measured<DisplayNits>(print.view.w), print_white()));
 }
 
 /// The ambient the reader set, and what the lamp returns off the room's own surfaces.

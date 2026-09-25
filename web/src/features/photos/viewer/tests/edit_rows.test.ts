@@ -32,6 +32,11 @@ describe('every slider is judged against the neutral the editor resets it to', (
   }
 });
 
+test('zero tone sliders are neutral, while a stored curve is an edit', () => {
+  expect(labels({ exposure: 0, contrast: 0 })).toEqual([]);
+  expect(rowsOf(doc({ toneCurve: [[0, 0.1], [1, 1]] }))).toContainEqual(['Tone curve', 'Edited']);
+});
+
 test('a crop is listed as what it kept, and a full frame is not a crop', () => {
   expect(labels()).not.toContain('Crop');
   // A rectangle fitted out of a straighten comes back a hair under the full frame, which is

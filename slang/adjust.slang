@@ -17,9 +17,8 @@
 // into a third of the room and land on top of each other. The scene's stops are the same axis on
 // every photograph, which is what makes one set of constants right for all of them.
 //
-// **Tone acts on luma, carried onto the colour's ratios.** The same trick `exposure_gain` uses for
-// the exposure, and for the same reason: scaling the three channels by a curve of each
-// channel turns a saturated red into a different hue as it brightens. One curve, evaluated
+// **Tone acts on luma, carried onto the colour's ratios.** Scaling the three channels by a curve of
+// each channel turns a saturated red into a different hue as it brightens. One curve, evaluated
 // on luma, applied as a ratio, holds hue exactly.
 //
 // **The three presence sliders read a neighbourhood, and it arrives as a texture.** Texture,
@@ -513,27 +512,106 @@ public Stops stops_around(Light<Scene> base_luma, float2 at)
     return stops(blur.g * stops_below_white(base_luma).s + blur.b);
 }
 
+float4 curve_point(uint index, bool camera)
+{
+    return camera ? edit.camera_curve[index] : edit.reader_curve[index];
+}
+
+float curve_segment(float code, float4 left, float4 right)
+{
+    let width = right.x - left.x;
+    let t = (code - left.x) / width;
+    let t2 = t * t;
+    let t3 = t2 * t;
+    return (2.0 * t3 - 3.0 * t2 + 1.0) * left.y
+         + (t3 - 2.0 * t2 + t) * width * left.z
+         + (-2.0 * t3 + 3.0 * t2) * right.y
+         + (t3 - t2) * width * right.z;
+}
+
+uint curve_count(bool camera)
+{
+    return camera ? edit.camera_curve_count : edit.reader_curve_count;
+}
+
+float curve_evaluated(float code, bool camera)
+{
+    let count = curve_count(camera);
+    let first = curve_point(0, camera);
+    if (code <= first.x) { return first.y; }
+    let last = curve_point(count - 1, camera);
+    if (code >= last.x) { return last.y + (code - last.x) * last.z; }
+    for (uint i = 0; i < 15; i++) {
+        if (i + 1 >= count) { break; }
+        let left = curve_point(i, camera);
+        let right = curve_point(i + 1, camera);
+        if (code > right.x) { continue; }
+        return curve_segment(code, left, right);
+    }
+    return last.y;
+}
+
+float camera_curve_inverse(float code)
+{
+    let first = curve_point(0, true);
+    if (code <= first.y) { return first.x; }
+    let last = curve_point(curve_count(true) - 1, true);
+    if (code >= last.y && last.z > 0.0) { return last.x + (code - last.y) / last.z; }
+    if (code >= last.y) { return last.x; }
+    for (uint i = 0; i < 15; i++) {
+        if (i + 1 >= curve_count(true)) { break; }
+        let left = curve_point(i, true);
+        let right = curve_point(i + 1, true);
+        if (code > right.y) { continue; }
+        var low = left.x;
+        var high = right.x;
+        for (uint step = 0; step < 24; step++) {
+            let middle = (low + high) * 0.5;
+            if (curve_segment(middle, left, right) < code) { low = middle; }
+            else { high = middle; }
+        }
+        return (low + high) * 0.5;
+    }
+    return last.x;
+}
+
+public Colour<D> camera_undone<D : IWhiteAtOne>(Colour<D> colour)
+{
+    let luma = dot(LUMA, colour.v);
+    if (luma <= 0.0) { return colour; }
+    let code = curve_code(luma);
+    let untoned = curve_light(CurveCode(camera_curve_inverse(code.v)));
+    return measured<D>(colour.v * (untoned / luma));
+}
+
+public bool sliders_at_rest()
+{
+    return edit.contrast == 0.0 && edit.highlights == 0.0 && edit.shadows == 0.0
+        && edit.whites == 0.0 && edit.blacks == 0.0 && edit.vibrance == 0.0
+        && edit.sat_adjust == 0.0 && edit.texture_adjust == 0.0
+        && edit.clarity == 0.0 && edit.dehaze == 0.0;
+}
+
 /// Every adjustment, on a scene-relative colour where 1.0 is diffuse white.
 ///
 /// `base_luma` is the *frame's* own luma at this pixel, in the same units, before the match and
 /// before the exposure - the domain `detail` blurred, and the axis every zone is placed on. `at`
-/// is where in the frame the colour came from, in the frame's own pixels. `pivot` is middle grey **as this
-/// caller's own domain renders it**, which only the contrast reads: `PIVOT` from a scene, and the
-/// camera's rendering of `PIVOT` from an arm that has already run one.
+/// is where in the frame the colour came from, in the frame's own pixels. `colour` is the scene
+/// exposed, or the camera match with its own tone taken back off (`colour::matched_nits`), which
+/// is why one pivot serves both.
 ///
-/// Returns the colour untouched where nothing is set, which is the common case: an unedited
-/// photo, and every photo in a library nobody has opened the editor on.
-public Colour<D> adjusted<D : IWhiteAtOne>(
-    Colour<D> colour, Light<Scene> base_luma, float2 at, Light<D> pivot)
+/// Returns the colour untouched where nothing is set, which is the common case: a photo with no
+/// camera match, nobody's edits on it, and nothing in a library nobody has opened the editor on.
+public Colour<D> adjusted<D : IWhiteAtOne>(Colour<D> colour, Light<Scene> base_luma, float2 at)
 {
     // The neighbourhood is read for the middle pair of the tone group as well now, not only for
     // the presence three: `tone_adjusted` weights highlights and shadows by how bright the region
     // is rather than the pixel.
     let local = edit.texture_adjust != 0.0 || edit.clarity != 0.0 || edit.dehaze != 0.0
         || edit.highlights != 0.0 || edit.shadows != 0.0;
-    if (!local && edit.contrast == 0.0 && edit.highlights == 0.0
-        && edit.shadows == 0.0 && edit.whites == 0.0 && edit.blacks == 0.0
-        && edit.vibrance == 0.0 && edit.sat_adjust == 0.0) {
+    if (sliders_at_rest() && edit.reader_curve_count == 2 && edit.reader_curve[0].x == 0.0
+        && edit.reader_curve[0].y == 0.0 && edit.reader_curve[1].x == 1.0
+        && edit.reader_curve[1].y == 1.0) {
         return colour;
     }
 
@@ -591,9 +669,10 @@ public Colour<D> adjusted<D : IWhiteAtOne>(
     }
 
     let luma = dot(LUMA, out);
-    // Black has no ratios to carry and no luma to divide by. Nothing left can lift it off zero
-    // either - every control below is a gain - so it is already the answer.
-    if (luma <= 0.0) { return measured<D>(out); }
+    if (luma <= 0.0) {
+        let lifted = curve_light(CurveCode(curve_evaluated(0.0, false)));
+        return measured<D>(float3(lifted));
+    }
 
     // Texture and clarity with the dehaze, ahead of the light group rather than after it.
     //
@@ -622,10 +701,11 @@ public Colour<D> adjusted<D : IWhiteAtOne>(
     // apart as the slider moves.
     let scene_around = zone_around + edit.exposure;
 
-    let toned_luma = tone_adjusted(lit, scene_at, scene_around, pivot.v);
+    let toned_luma = tone_adjusted(lit, scene_at, scene_around, PIVOT.v);
+    let curved_luma = curve_light(CurveCode(curve_evaluated(curve_code(toned_luma).v, false)));
     // Against the luma this pixel arrived with, not the lit one: the ratio has to carry the whole
     // of what the two groups did, and dividing by `lit` would hand the colour the light group's
     // work alone and drop the detail back out of it.
-    let held = out * (toned_luma / luma);
-    return measured<D>(chroma_adjusted(held, toned_luma));
+    let held = out * (curved_luma / luma);
+    return measured<D>(chroma_adjusted(held, curved_luma));
 }

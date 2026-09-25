@@ -197,8 +197,6 @@ pub struct Job {
     /// silently because both answers are plausible exposures. `colour.slang` raises it once, for
     /// both.
     ///
-    /// Defaults to 0 - no change - so a photo nobody has edited grades exactly as it did, and a
-    /// caller that knows nothing about edits can leave the field out entirely.
     #[serde(default)]
     pub exposure: Stops,
     /// The reader's tonal and colour sliders, on Camera Raw's -100..100 scales.
@@ -1037,7 +1035,7 @@ impl Base {
                 denoise_colour: job.denoise_colour,
                 denoiser: job.denoiser,
                 dust: job.dust,
-                adjust: job.adjust,
+                adjust: job.adjust.clone(),
                 levels: Some(levels),
                 noise_fit: stored.from_raw.noise,
                 capture_sigma: stored.from_raw.capture_sigma,
@@ -1116,7 +1114,7 @@ pub fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
         &tile_request(job, asked),
     )
     .ok()?;
-    let scene = window.scene(job.exposure, job.adjust);
+    let scene = window.scene(job.exposure, job.adjust.clone());
     let gpu = crate::gpu::device()?;
     let grade = window.grade(&scene, job.grade.peak_nits, crate::gpu::Output::Pq);
     let width = window.width;
@@ -1157,7 +1155,7 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
         denoise_colour: job.denoise_colour,
         denoiser: job.denoiser,
         dust: job.dust,
-        adjust: job.adjust,
+        adjust: job.adjust.clone(),
         levels: job.levels,
         noise_fit: job.noise_fit,
         capture_sigma: job.stored().from_raw.capture_sigma,
@@ -1707,17 +1705,14 @@ pub(crate) async fn render(
     // dark picture, it is a caller that sent stops where a multiplier belongs, and grading
     // every photo in the library black is a worse answer than saying so.
     if !job.exposure.raw().is_finite() {
-        return Err(format!(
-            "an exposure is a number of stops: {}",
-            job.exposure.raw()
-        ));
+        return Err(format!("an exposure is a number of stops: {}", job.exposure.raw()));
     }
     let scene = tone::SceneGrade::new(
         matched.as_ref().and_then(|m| m.colour.as_ref()),
         levels,
         job.grade.reference_white_nits,
         job.exposure,
-        job.adjust,
+        job.adjust.clone(),
         as_shot,
     );
 

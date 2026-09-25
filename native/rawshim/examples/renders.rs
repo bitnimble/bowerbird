@@ -70,7 +70,7 @@ struct Stages<'a> {
     /// The reader's own sliders, for asking what is left once a grade has done all it can.
     ///
     /// The low pair are here because where they *land* depends on the photo,
-    /// so what they do can only be asked of a real frame.
+    /// so what they do can only be asked of a real frame. None is the camera match's own.
     contrast: f64,
     saturation_adjust: f64,
     blacks: f64,
@@ -83,7 +83,7 @@ struct Stages<'a> {
     curve_gain: f64,
     /// The focus difference to correct, where the caller would rather say than have it measured.
     defocus: Option<(f32, f32)>,
-    /// The reader's exposure, in stops.
+    /// The reader's exposure, in stops, or None for the camera match's own.
     ev: Stops,
     /// Which domain the crop is written in.
     ///

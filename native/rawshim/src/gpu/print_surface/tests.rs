@@ -205,7 +205,7 @@ fn print_peak_cache_observes_other_uploads_sharing_the_measurement() {
     let comparison = Comparison::new();
     let colour = crate::hdr_fit::HdrColour::identity();
     let grade = Grade { colour: Some(&colour), ..comparison.grade };
-    let raised = Grade { exposure: Stops::measured(1.0), ..grade };
+    let raised = Grade { exposure: Stops::measured(1.0), ..grade.clone() };
     let code = (crate::tone::pq(Light::<SceneNits>::exactly(80.0)).raw() * 65535.0).round() as u16;
     let frame = vec![code; grade.width * grade.height * 3];
     let peak = comparison.gpu.scene_peak();

@@ -97,7 +97,7 @@ impl Uploaded<'_> {
             // which is also what keys the pigment cache, so choosing another one redraws it.
             intent: scene.rendering_intent,
             print_blur: scene.ink_blur(grade.output().long()),
-            ..*grade
+            ..grade.clone()
         };
         let shown = grade.canvas.expect("print surface canvas");
         let size = shown.size;

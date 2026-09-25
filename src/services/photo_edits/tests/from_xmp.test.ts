@@ -196,9 +196,15 @@ describe('editsFromXmp', () => {
   it('leaves everything it does not set at neutral', () => {
     const { doc } = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="2.0"`));
 
-    const { exposure, ...rest } = doc!;
-    const { exposure: _neutralExposure, ...neutralRest } = neutralEdits();
-    expect(exposure).toBe(2.0);
-    expect(rest).toEqual(neutralRest);
+    expect(doc).toEqual({ ...neutralEdits(), exposure: 2.0 });
+  });
+
+  it('declines a sidecar whose tone sits at Camera Raw zeros and states nothing else', () => {
+    const { doc, reasons } = editsFromXmp(
+      parse('crs:Exposure2012="0" crs:Contrast2012="0" crs:Whites2012="0" crs:Blacks2012="0"'),
+    );
+
+    expect(doc).toBeNull();
+    expect(reasons).toEqual(['this sidecar carries no develop settings']);
   });
 });

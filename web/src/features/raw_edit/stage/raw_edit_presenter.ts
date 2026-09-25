@@ -1,5 +1,5 @@
 import { action } from 'mobx';
-import { type EditDoc, type EditState } from '../../../../../src/schemas/photo_edits';
+import { type EditDoc, type EditState, type ToneCurve } from '../../../../../src/schemas/photo_edits';
 import { adapterName } from '../../../adapter_name';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { photosApi, type PreparedFrom } from '../../../api/photos';
@@ -114,8 +114,8 @@ export class RawEditPresenter {
   /** The last CSS box the observer reported, so a density change can re-fit against it. */
   private box: { width: number; height: number } | null = null;
 
-  /** The frame the slider is asking for while one is already in flight. */
-  private pending: number | null = null;
+  /** Whether the stage wants a frame while one is already in flight. */
+  private pending = false;
   private frame = 0;
   private closed = false;
   private remembersProof = false;
@@ -233,7 +233,7 @@ export class RawEditPresenter {
       const box = entries[entries.length - 1]?.contentRect;
       if (box != null) {
         this.box = { width: box.width, height: box.height };
-        this.request(this.editStore.exposureEv);
+        this.request();
       }
     });
     this.viewport.observe(canvas);
@@ -262,7 +262,7 @@ export class RawEditPresenter {
   private onDensity(): void {
     if (this.closed) return;
     this.watchPixelRatio();
-    this.request(this.editStore.exposureEv);
+    this.request();
   }
 
   get displaySize(): { width: number; height: number } {
@@ -336,7 +336,7 @@ export class RawEditPresenter {
       return;
     }
     this.stage.region = next;
-    this.request(this.editStore.exposureEv);
+    this.request();
     this.wantWindow();
   }
 
@@ -444,12 +444,20 @@ export class RawEditPresenter {
     this.edit.preview(patch);
   }
 
+  previewToneCurve(points: ToneCurve | null): void {
+    this.preview({ toneCurve: points });
+  }
+
+  settleToneCurve(points: ToneCurve | null): void {
+    this.settle({ toneCurve: points });
+  }
+
   private write(patch: Partial<EditDoc>): EditDoc | null {
     return this.edit.write(patch);
   }
 
   drawEdit(next: EditDoc): void {
-    // Everything but the exposure, which the tick carries as a gain. Kept here and sent with the
+    // Everything but the exposure, which the tick carries in stops. Kept here and sent with the
     // tick rather than pushed per move: a pointer emits far more positions than a display shows,
     // and only the one the next frame reads has to have arrived.
     this.adjust = adjustOf(next);
@@ -466,7 +474,7 @@ export class RawEditPresenter {
   }
 
   draw(): void {
-    this.request(this.editStore.exposureEv);
+    this.request();
   }
 
   isClosed(): boolean {
@@ -626,7 +634,7 @@ export class RawEditPresenter {
   @action.bound
   private showGeometry(): void {
     this.followGeometry();
-    this.request(this.editStore.exposureEv);
+    this.request();
   }
 
   setGuides(guides: readonly KeystoneGuide[], settle: boolean): void {
@@ -806,7 +814,7 @@ export class RawEditPresenter {
         if (!mine()) return;
         this.took(kept);
       }
-      this.request(this.editStore.exposureEv);
+      this.request();
     } catch (error) {
       // A window the reader has already moved past is not a failure to report: the abort above is
       // this presenter's own doing, and the picture it was going to replace is still on screen.
@@ -928,9 +936,9 @@ export class RawEditPresenter {
    * Everything that changes what is on screen ends here, the stage's own size included, so
    * the whole state a frame is drawn from is read in one breath immediately before drawing it.
    */
-  private request(ev: number): void {
+  private request(): void {
     if (this.closed || !this.drawable) return;
-    this.pending = ev;
+    this.pending = true;
     this.pump();
   }
 
@@ -950,13 +958,13 @@ export class RawEditPresenter {
 
   private pump(): void {
     if (this.closed || this.frame !== 0 || this.drawing) return;
-    if (this.pending == null && this.pendingLoupe == null) return;
+    if (!this.pending && this.pendingLoupe == null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
-      const next = this.pending;
+      const drawStage = this.pending;
       const loupe = this.pendingLoupe;
       const print = this.printStore.open ? this.printStore.scene : null;
-      this.pending = null;
+      this.pending = false;
       this.pendingLoupe = null;
       const local = this.local;
       if (this.closed || local == null || !this.drawable) return;
@@ -972,7 +980,7 @@ export class RawEditPresenter {
         // and hands it back on the next tick (`gpu::refusal`); this is what puts it on screen.
         if (error != null) this.fail(describe(error));
         else {
-          if (next != null) this.drew(print == null ? 'photo' : 'print');
+          if (drawStage) this.drew(print == null ? 'photo' : 'print');
           const framed = print?.presentation === 'surface' && print.framed;
           if (framed !== this.framedSurface) {
             this.framedSurface = framed;
@@ -988,8 +996,8 @@ export class RawEditPresenter {
       // here would leave the flag set and every later frame waiting on a tick that never lands.
       void local.decoder
         .tick({
-          ev: next ?? this.editStore.exposureEv,
-          drawStage: next != null,
+          ev: this.editStore.exposureEv,
+          drawStage,
           region: this.stage.region == null ? null : this.atTheLevel(this.stage.region),
           loupe,
           adjust: this.adjust,
@@ -1001,7 +1009,7 @@ export class RawEditPresenter {
           },
           print,
           ...(profileChanged ? { printerProfile: profile?.bytes ?? null } : {}),
-          stage: next == null ? null : this.stageSize(),
+          stage: drawStage ? this.stageSize() : null,
         })
         .then(() => landed(), landed);
     });
@@ -1063,6 +1071,7 @@ export class RawEditPresenter {
     this.stage.mosaic = true;
     this.stage.noiseFit = null;
     this.stage.detail = null;
+    this.stage.cameraCurve = null;
     this.stage.defocus = null;
     this.stage.levels = null;
   }
@@ -1101,6 +1110,7 @@ export class RawEditPresenter {
     this.edit.setAsShot(header.asShot);
     this.stage.noiseFit = header.noiseFit ?? null;
     this.stage.detail = header.detail;
+    this.stage.cameraCurve = header.cameraCurve;
     this.stage.defocus = header.defocus;
     // All three or none: a tile handed a white and a peak without a floor is refused whole
     // (`tone::Levels::usable`), so there is nothing to hold.

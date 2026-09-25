@@ -1,6 +1,7 @@
 import { type Locator, type Page, expect } from '@playwright/test';
 import { test } from '../fixtures';
 import { z } from 'zod';
+import { EditStateSchema } from '../../../src/schemas/photo_edits';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { EDIT_PHOTOS_DIR } from '../fixture_library';
 import {
@@ -90,11 +91,12 @@ test('opens in the tab and grades on the GPU, into a stage sized for the viewpor
 });
 
 async function setClarity(page: Page, clarity: number): Promise<void> {
-  const was = await page.request.get(route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits()));
-  const { rev } = (await was.json()) as { rev: number };
-  await page.request.put(route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits()), {
-    data: { doc: { version: 1, clarity }, rev },
+  const editsUrl = route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits());
+  const was = EditStateSchema.parse(await (await page.request.get(editsUrl)).json());
+  const saved = await page.request.put(editsUrl, {
+    data: { doc: { ...was.doc, clarity }, rev: was.rev, session: 'rawEditingSpec' },
   });
+  expect(saved.ok()).toBe(true);
 }
 
 async function gradesOnTheGpu(page: Page): Promise<void> {
@@ -275,6 +277,59 @@ test('the crop rectangle takes a drag, and the drag reaches the document', async
   // rendition rebuild in the middle of the suite.
   await undo(page).click();
   await expect.poll(async () => savedRev(page, photoId), { timeout: 30_000 }).not.toBe(cropped);
+});
+
+test('tone curve points drag and drag off the plot', async ({ page }) => {
+  const editsUrl = route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits());
+  const state = async () => EditStateSchema.parse(await (await page.request.get(editsUrl)).json());
+  const original = await state();
+  const seeded = await page.request.put(editsUrl, {
+    data: { doc: { ...original.doc, toneCurve: [[0, 0], [0.5, 0.5], [1, 1]] }, rev: original.rev, session: 'rawEditingSpec' },
+  });
+  expect(seeded.ok()).toBe(true);
+
+  try {
+    await open(page);
+    const plot = page.getByRole('group', { name: 'Tone curve' });
+    const point = plot.getByRole('button', { name: /^Curve point 1,/ });
+    await expect(point).toBeVisible();
+    const originalName = await point.getAttribute('aria-label');
+    const before = await savedRev(page, photoId);
+    const plotBox = await plot.boundingBox();
+    const pointBox = await point.boundingBox();
+    if (plotBox == null || pointBox == null) throw new Error('tone curve has no plot or point');
+
+    const x = pointBox.x + pointBox.width / 2;
+    const y = pointBox.y + pointBox.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + plotBox.width * 0.1, y - plotBox.height * 0.1, { steps: 6 });
+    await page.mouse.up();
+
+    await expect(point).not.toHaveAttribute('aria-label', originalName ?? '');
+    await expect.poll(async () => (await state()).doc.toneCurve?.[1]?.[0] ?? 0, { timeout: 30_000 })
+      .toBeGreaterThan(0.55);
+    expect((await state()).doc.toneCurve?.[1]?.[1]).toBeGreaterThan(0.55);
+    const moved = await savedRev(page, photoId);
+    expect(moved).toBeGreaterThan(before);
+
+    const movedBox = await point.boundingBox();
+    if (movedBox == null) throw new Error('tone curve point disappeared before removal');
+    await page.mouse.move(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(plotBox.x + plotBox.width * 1.3, plotBox.y + plotBox.height / 2, { steps: 8 });
+    await page.mouse.up();
+
+    await expect(plot.getByRole('button', { name: /^Curve point/ })).toHaveCount(0);
+    await expect.poll(async () => (await state()).doc.toneCurve?.length, { timeout: 30_000 }).toBe(2);
+    expect(await savedRev(page, photoId)).toBeGreaterThan(moved);
+  } finally {
+    const current = await state();
+    const restored = await page.request.put(editsUrl, {
+      data: { doc: original.doc, rev: current.rev, session: 'rawEditingSpec' },
+    });
+    expect(restored.ok()).toBe(true);
+  }
 });
 
 /**

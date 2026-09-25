@@ -208,6 +208,7 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('tick'),
+    /** Stops. */
     ev: z.number(),
     /** Whether the stage is drawn at all: a pointer move over the glass draws only the loupe. */
     drawStage: z.boolean(),

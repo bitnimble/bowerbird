@@ -3,7 +3,7 @@ import { AssemblyRecipeSchema } from './assembly';
 import { CaptureSequenceSchema } from './capture_sequence';
 import { RenditionSchema, RenditionSourceSchema } from './common';
 import type { DustSettings } from './dust_settings';
-import { ColourProfileSchema, DenoiserSchema, RepairSchema } from './photo_edits';
+import { ColourProfileSchema, DenoiserSchema, RepairSchema, ToneCurveSchema } from './photo_edits';
 import { CameraMatchSchema } from './render_stages';
 import { RenderingIntentSchema } from './rendering_intent';
 
@@ -64,6 +64,7 @@ export const JobAdjustSchema = z.object({
   shadows: z.number(),
   whites: z.number(),
   blacks: z.number(),
+  toneCurve: ToneCurveSchema.nullable(),
   vibrance: z.number(),
   saturation: z.number(),
   texture: z.number(),
@@ -202,14 +203,14 @@ export const JobSchema = z.object({
   sharpen: z.number(),
   defringe: z.number(),
   /**
-   * The photographer's exposure **in stops**, exactly as `EditDoc` stores it. 0 is as metered.
+   * The photographer's exposure **in stops**, exactly as `EditDoc` stores it.
    *
    * The document's own unit, carried to the shader untouched: `colour.slang` raises it.
    */
   exposure: z.number(),
   /**
    * Every slider but the exposure, on Camera Raw's -100..100 scales, as `adjust.slang` reads
-   * them. All zero is the picture as the camera rendered it.
+   * them.
    *
    * Separate from `exposure` because that one is a gain the tone anchor moves against, where
    * these are terms in the grade itself - including the presence three, whose neighbourhood

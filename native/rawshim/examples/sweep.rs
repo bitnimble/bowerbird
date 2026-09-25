@@ -13,6 +13,7 @@
 //! that reads as a tint. Averaging its magnitude instead would let a green cast on one frame
 //! and a warm one on the next cancel into a clean-looking set.
 
+use rawshim::gpu::Intent;
 use rawshim::hdr::{self, Grade, Source};
 use rawshim::hdr_args::{Chroma, EncodeOptions};
 use rawshim::image::Strengths;
@@ -44,20 +45,24 @@ fn main() {
     paths.truncate(limit);
 
     println!(
-        "{:<18} {:>7} {:>8} {:>4} {:>8} {:>9} {:>9}",
-        "frame", "deltaE", "rendered", "map", "neutrals", "drift g-r", "drift b-r"
+        "{:<18} {:>7} {:>8} {:>8} {:>4} {:>8} {:>9} {:>9}  camera curve (max u error)",
+        "frame", "deltaE", "percept", "relative", "map", "neutrals", "drift g-r", "drift b-r"
     );
     let mut worst: Vec<(f64, String)> = Vec::new();
     let mut rendered: Vec<f64> = Vec::new();
+    let mut rendered_relative: Vec<f64> = Vec::new();
+    let mut curve_errors: Vec<f64> = Vec::new();
     for path in &paths {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
         match measure(path.to_str().expect("a utf-8 path")) {
-            None => println!("{name:<18} {:>7} {:>8} {:>4}", "declined", "-", "-"),
+            None => println!("{name:<18} {:>7} {:>8} {:>8} {:>4}", "declined", "-", "-", "-"),
             Some(r) => {
                 println!(
-                    "{name:<18} {:>7.3} {:>8.3} {:>4} {:>8} {:>+9.1} {:>+9.1}",
+                    "{name:<18} {:>7.3} {:>8.3} {:>8.3} {:>4} {:>8} {:>+9.1} {:>+9.1}  \
+                     {:?} ({:.6})",
                     r.delta_e,
                     r.rendered,
+                    r.rendered_relative,
                     match r.map {
                         true => "yes",
                         false => "no",
@@ -65,19 +70,25 @@ fn main() {
                     r.neutrals,
                     r.drift_gr,
                     r.drift_br,
+                    r.curve,
+                    r.curve_error,
                 );
                 worst.push((r.drift_gr.hypot(r.drift_br), name));
                 rendered.push(r.rendered);
+                rendered_relative.push(r.rendered_relative);
+                curve_errors.push(r.curve_error);
             }
         }
     }
 
     let scored = rendered.len().max(1) as f64;
     println!(
-        "\nrendered against the camera, mean over set: {:.4} over {} frames",
+        "\nrendered against the camera, mean over set: perceptual {:.4}, relative colorimetric {:.4}, over {} frames",
         rendered.iter().sum::<f64>() / scored,
+        rendered_relative.iter().sum::<f64>() / scored,
         rendered.len(),
     );
+    println!("camera curve max u error over set: {:.6}", curve_errors.into_iter().fold(0.0f64, f64::max));
 
     worst.sort_by(|a, b| b.0.total_cmp(&a.0));
     println!("\nworst neutral drift:");
@@ -94,10 +105,13 @@ struct Report {
     /// lattice size is actually making. `delta_e` beside it is the fit scoring itself on its own
     /// pairs.
     rendered: f64,
+    rendered_relative: f64,
     map: bool,
     neutrals: usize,
     drift_gr: f64,
     drift_br: f64,
+    curve: Vec<[f64; 2]>,
+    curve_error: f64,
 }
 
 fn measure(path: &str) -> Option<Report> {
@@ -123,12 +137,41 @@ fn measure(path: &str) -> Option<Report> {
         sharpen_sigma: None,
         max_edge: 100_000.0,
     };
+    let camera = rawshim::decode_embedded_rgb(path, 0)?;
+    let relative = against_camera(gpu, &source, &options, &matched, &camera, Intent::RelativeColorimetric)?;
+    let perceptual = against_camera(gpu, &source, &options, &matched, &camera, Intent::Perceptual)?;
+    Some(Report {
+        delta_e: matched.colour.as_ref()?.delta_e,
+        rendered: perceptual.rendered,
+        rendered_relative: relative.rendered,
+        map: matched.colour.as_ref()?.chroma.is_some(),
+        neutrals: perceptual.neutrals,
+        drift_gr: perceptual.drift_gr,
+        drift_br: perceptual.drift_br,
+        curve: matched.colour.as_ref()?.curve.clone(),
+        curve_error: matched.colour.as_ref()?.curve_error,
+    })
+}
+
+struct Rendered {
+    rendered: f64,
+    neutrals: usize,
+    drift_gr: f64,
+    drift_br: f64,
+}
+
+fn against_camera(
+    gpu: &'static rawshim::gpu::Gpu,
+    source: &Source,
+    options: &EncodeOptions,
+    matched: &rawshim::hdr_fit::HdrMatch,
+    camera: &rawshim::rgb::Rgb,
+    intent: Intent,
+) -> Option<Rendered> {
     // sRGB out of the same dispatch that grades, rather than a second implementation of the
     // primaries and the transfer on this side.
-    let (coded, width, height) =
-        hdr::graded_as(&source, &options, Some(&matched), rawshim::gpu::Output::Srgb);
+    let (coded, width, height) = hdr::graded_under(source, options, Some(matched), rawshim::gpu::Output::Srgb, intent);
     let ours: Vec<u8> = coded.iter().map(|v| *v as u8).collect();
-    let camera = rawshim::decode_embedded_rgb(path, 0)?;
 
     // Sampled on a stride rather than every pixel: a 24MP frame has millions of neutrals and
     // the mean of a hundred thousand of them is the same number.
@@ -192,12 +235,5 @@ fn measure(path: &str) -> Option<Report> {
     let rendered = blocks.iter().map(|b| b.flat).sum::<f64>() / shown.max(1) as f64;
 
     let n = count.max(1) as f64;
-    Some(Report {
-        delta_e: matched.colour.as_ref()?.delta_e,
-        rendered,
-        map: matched.colour.as_ref()?.chroma.is_some(),
-        neutrals: count,
-        drift_gr: gr / n,
-        drift_br: br / n,
-    })
+    Some(Rendered { rendered, neutrals: count, drift_gr: gr / n, drift_br: br / n })
 }

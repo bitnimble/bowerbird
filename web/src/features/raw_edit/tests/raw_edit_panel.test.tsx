@@ -86,6 +86,8 @@ function open(
   // show where the document holds nothing. Distinct and off every fixed number the panel could
   // have fallen back to, so a row reading one of those fails here.
   stage.detail = [24, 76];
+  // The same for the camera match's own tone, fitted rather than chosen, so off every step too.
+  stage.cameraCurve = [[0, 0.1], [1, 1]];
   stage.noiseFit = noiseFit;
   const { presenter, calls } = recording();
   render(
@@ -168,10 +170,41 @@ describe('the edit panel', () => {
   // The reader gets back to neutral without hunting for the number: the sliders cannot be
   // driven here (see the note at the top), so what is asserted is the button beside them.
   test('puts a moved parameter back where it started', () => {
-    const { calls } = open({ contrast: 40 });
+    const { calls } = open({ highlights: 40 });
 
+    screen.getByLabelText('Reset Highlights').click();
+    expect(calls).toEqual([{ name: 'settle', value: { highlights: 0 } }]);
+  });
+
+  test('shows numeric neutral tone sliders', () => {
+    const { calls } = open();
+
+    const light = within(screen.getByRole('group', { name: 'Light' }));
+    expect((light.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe('0.00 EV');
+    expect(screen.getByRole('slider', { name: 'Contrast' }).getAttribute('aria-valuenow')).toBe('0');
+    expect(screen.getByRole('slider', { name: 'Whites' }).getAttribute('aria-valuenow')).toBe('0');
+    expect(screen.getByRole('slider', { name: 'Blacks' }).getAttribute('aria-valuenow')).toBe('0');
     screen.getByLabelText('Reset Contrast').click();
-    expect(calls).toEqual([{ name: 'settle', value: { contrast: 0 } }]);
+    expect(calls).toEqual([]);
+  });
+
+  test('reads the tone at zero with the colour profile off, as the picture is', () => {
+    open({ colourProfile: 'none' });
+    expect(screen.getByRole('slider', { name: 'Contrast' }).getAttribute('aria-valuenow')).toBe('0');
+    expect(
+      (screen.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value,
+    ).toBe('0.00 EV');
+  });
+
+  test('resets a moved tone slider to zero', () => {
+    const { calls } = open({ exposure: 1.5, contrast: 40 });
+
+    screen.getByLabelText('Reset Exposure').click();
+    screen.getByLabelText('Reset Contrast').click();
+    expect(calls).toEqual([
+      { name: 'settle', value: { exposure: 0 } },
+      { name: 'settle', value: { contrast: 0 } },
+    ]);
   });
 
   test('offers nothing to reset on a parameter nobody has moved', () => {

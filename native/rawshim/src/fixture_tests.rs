@@ -250,7 +250,7 @@ fn rendition(
         base.levels,
         job.grade.reference_white_nits,
         job.exposure,
-        job.adjust,
+        job.adjust.clone(),
         base.as_shot,
     );
     let size = crate::hdr_args::Size { width: base.width as u32, height: base.height as u32 };
@@ -1519,20 +1519,23 @@ mod loupe_tile {
     /// photograph's.
     #[test]
     fn a_tile_is_graded_as_the_rendition_is() {
-        for path in [sony(), canon()] {
-            a_tile_is_the_rendition(path.to_str().unwrap());
+        // Each frame's brightest block, for the roll-off: a crop of shadow reaches nowhere near
+        // the photograph's top end, and a crop of highlight reaches most of the way to it.
+        for (path, bright) in [
+            (sony(), crate::Tile { left: 1536, top: 2048, width: 512, height: 512 }),
+            (canon(), crate::Tile { left: 3072, top: 5120, width: 512, height: 512 }),
+        ] {
+            a_tile_is_the_rendition(path.to_str().unwrap(), bright);
         }
     }
 
-    fn a_tile_is_the_rendition(path: &str) {
+    fn a_tile_is_the_rendition(path: &str, bright: crate::Tile) {
         let mut fitted = tile_job(path, None, None);
         fitted.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
         let base = crate::job::Base::build(&fitted, 0).expect("the frame");
         let levels = *base.levels;
         let kept = crate::photo_analysis::encode(&base.analysis);
-        // The brightest block there is, for the roll-off: a crop of shadow reaches nowhere near
-        // the photograph's top end, and a crop of highlight reaches most of the way to it.
-        let bright = brightest(base);
+        drop(base);
 
         let edits: [(&str, fn(&mut crate::job::Job)); 5] = [
             // The grade alone, which is the levels and nothing else.
@@ -1724,7 +1727,7 @@ mod loupe_tile {
                 base.levels,
                 job.grade.reference_white_nits,
                 job.exposure,
-                job.adjust,
+                job.adjust.clone(),
                 base.as_shot,
             );
             let gpu = crate::gpu::device().expect("an adapter");
@@ -2029,31 +2032,6 @@ mod loupe_tile {
                 / (width * height * 3) as f64;
             assert!(mean > 100.0, "the crop's own {what} graded it {mean:.1} counts away");
         }
-    }
-
-    /// The brightest tile-sized block of the frame.
-    fn brightest(base: crate::job::Base) -> crate::Tile {
-        let (width, height) = (base.width, base.height);
-        let samples = base.frame.host();
-        let mean = |left: usize, top: usize| {
-            let mut total = 0f64;
-            for row in (0..DARK.height).step_by(8) {
-                for col in (0..DARK.width).step_by(8) {
-                    total += f64::from(samples[((top + row) * width + left + col) * 3 + 1]);
-                }
-            }
-            total / ((DARK.height / 8) * (DARK.width / 8)) as f64
-        };
-        let mut best = (crate::Tile { left: 0, top: 0, width: DARK.width, height: DARK.height }, 0.0);
-        for top in (0..height - DARK.height).step_by(512) {
-            for left in (0..width - DARK.width).step_by(512) {
-                let found = mean(left, top);
-                if found > best.1 {
-                    best = (crate::Tile { left, top, ..DARK }, found);
-                }
-            }
-        }
-        best.0
     }
 
     /// Levels that describe no photograph are refused, and the tile measures its own.
@@ -3948,12 +3926,12 @@ mod tone_domain {
         -(1.0 + percent / 100.0).log2() / stops
     }
 
-    /// Mean change in graded counts, indexed by depth under the frame's own diffuse white.
+    /// Mean change in graded counts, indexed by scene depth.
     ///
-    /// Binned off the source rather than off either grade, so a slider is measured against the
-    /// picture it was handed rather than the one it just changed. Every band at once because the
-    /// decode and the match either side of it are seconds, and both tests read two.
-    fn response(path: &PathBuf, adjust: crate::gpu::Adjust) -> Vec<f64> {
+    /// Binned off the source rather than either grade, so a slider is measured
+    /// against the picture it was handed. Every band at once because the decode and the match
+    /// either side of it are seconds, and both tests read two.
+    fn response(path: &PathBuf, mut adjust: crate::gpu::Adjust) -> Vec<f64> {
         let gpu = crate::gpu::device().expect("a Vulkan adapter, since the grade is a shader");
         let frame = decode(path, 0);
         let samples = frame.samples16().expect("16-bit").to_vec();
@@ -3965,7 +3943,9 @@ mod tone_domain {
         let colour = matched.as_ref().and_then(|m| m.colour.as_ref());
         let levels = crate::hdr::levels_of(gpu, &samples, frame.width, frame.height, QUANTILE)
             .expect("levels");
-        let flat = graded(gpu, &samples, &frame, colour, levels, crate::gpu::Adjust::none());
+        let curve = Some(vec![[0.0, 0.0], [1.0, 1.0]]);
+        let flat = graded(gpu, &samples, &frame, colour, levels, crate::gpu::Adjust { tone_curve: curve.clone(), ..crate::gpu::Adjust::none() });
+        adjust.tone_curve = curve;
         let moved = graded(gpu, &samples, &frame, colour, levels, adjust);
 
         let mut total = vec![0.0f64; BANDS];
@@ -4067,8 +4047,8 @@ mod tone_domain {
             let outer = |band: usize, by: Vec<f64>| openness(by[band], end);
 
             let highlights =
-                inner(2, response(&path, crate::gpu::Adjust { highlights: -100.0, ..none }));
-            let whites = outer(2, response(&path, crate::gpu::Adjust { whites: -100.0, ..none }));
+                inner(2, response(&path, crate::gpu::Adjust { highlights: -100.0, ..none.clone() }));
+            let whites = outer(2, response(&path, crate::gpu::Adjust { whites: -100.0, ..none.clone() }));
             assert!(
                 highlights > whites * APART,
                 "two stops under white, highlights is {:.0}% open and whites {:.0}% on {}: the \
@@ -4079,7 +4059,7 @@ mod tone_domain {
             );
 
             let shadows =
-                inner(3, response(&path, crate::gpu::Adjust { shadows: -100.0, ..none }));
+                inner(3, response(&path, crate::gpu::Adjust { shadows: -100.0, ..none.clone() }));
             let blacks = outer(3, response(&path, crate::gpu::Adjust { blacks: -100.0, ..none }));
             assert!(
                 shadows > blacks * APART,

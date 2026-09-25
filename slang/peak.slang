@@ -7,7 +7,7 @@
 // scan writes the peak into a buffer the draw reads next.
 //
 // Per tick rather than at open because it is not a property of the sensor: it measures
-// *after* the colour transform and after the exposure, and `exposure_gain` reads the slider. Move
+// *after* the colour transform and after the exposure, which `matched_nits` reads off the slider. Move
 // it to the open and raising exposure pushes highlights past a knee placed for a frame
 // that was never exposed, which is a clip. Everything upstream of the slider - `white`,
 // `source_level`, the curves, the chroma map - is at the open already.

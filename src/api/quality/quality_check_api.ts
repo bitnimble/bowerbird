@@ -4,8 +4,6 @@ import path from 'node:path';
 import { Hono } from 'hono';
 import { AppError } from '../../errors';
 import { dustSettings } from '../../schemas/dust_settings';
-import { adjustOf } from '../../schemas/edit_adjust';
-import { neutralEdits } from '../../schemas/photo_edits';
 import { PathSegment, route } from '../../schemas/route';
 import type { Originals } from '../../services/blobs/originals';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
@@ -93,12 +91,8 @@ export class QualityCheckApi {
           dust: dustSettings(undefined),
           sharpen: AS_METERED.sharpen,
           defringe: settings.raw_defringe,
-          // The scene as metered, deliberately. This page compares encoder settings
-          // against each other, so a photographer's own exposure on whichever photo
-          // happens to be chosen would be a variable in a measurement that is about
-          // quantizers.
-          exposure: 0,
-          adjust: adjustOf(neutralEdits()),
+          exposure: AS_METERED.exposure,
+          adjust: AS_METERED.adjust,
           geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },
           grade: {
             peakNits: settings.hdr_peak_nits,

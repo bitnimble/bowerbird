@@ -23,6 +23,8 @@ section the index in `DESIGN.md` maps §N to.
 
 A Lightroom exposure slider, in the photo viewer, in HDR. Actions → Edit replaces the metadata strip with the exposure panel and the stage with the live grade; Done (or Escape) discards everything and returns to the stored rendition. There is no save yet - sidecars come later. One RAW is decoded once and then graded per slider tick, entirely client side: `rawshim` compiled to `wasm32-unknown-unknown` runs LibRaw, the embedded preview's JPEG decode, the camera match and the grade. There is no server in the loop below the fetch, and the browser contributes nothing to the picture.
 
+The Light panel has exposure, contrast, highlights, shadows, whites, blacks, and a tone curve. The basic sliders act first. The curve then maps luma through a monotone cubic, carrying the change to colour as a ratio so hue stays fixed. Its horizontal axis puts diffuse white at the middle and 3 stops above white at the right edge. An untouched curve follows the camera match; with no match, it is straight.
+
 **The point of the exercise was to find out whether the grade could stay exact.** It can, so nothing here approximates tone or colour: a drag grades the *same* transform the renditions do, under the same library settings, and spends resolution instead - 960px on its long edge while the pointer moves, full size once it stops. Resolution is the disposable part of a preview; a cheaper curve is not, because a cheap curve is a different picture and the whole purpose is judging the real one.
 
 ### 21.1 One pipeline, two entry points
@@ -182,8 +184,9 @@ is graded to a bounded print reflectance before illumination.
 
 **One operator takes HDR or SDR into any smaller gamut, and the rendering intent is its only
 setting.** `gamut_map.slang` is handed the graded light before any roll into a display and does
-three things. Luminance: perceptual rolls the scene's peak into white along BT.2390's curve,
-relative colorimetric leaves it where it is, so a highlight past white clips. Gamut: at constant
+three things. Luminance: perceptual rolls the scene's peak into white along the grade's roll-off
+(§10.7.1), which leaves everything a third of a stop under white where it is; relative colorimetric
+leaves all of it, so a highlight past white clips. Gamut: at constant
 Rec.2020 luma, chroma past what the target holds at that luma and hue is compressed from 0.9 of the
 limit (perceptual) or cut at it (relative). Black: perceptual lifts the frame onto the target's
 black, relative does so with black point compensation and otherwise floors at it. The intents are

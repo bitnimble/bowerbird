@@ -191,10 +191,14 @@ fn filter_once(prepared: &mut Prepared, grade: &hdr::Grade, strengths: Strengths
 /// what a document says.
 #[test]
 fn the_editor_puts_each_slider_where_this_host_does() {
-    let colour = HdrColour::identity();
+    let colour = HdrColour {
+        curve: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
+        ..HdrColour::identity()
+    };
     let at = |exposure: Stops, adjust: rawshim::gpu::Adjust| {
         rawshim::gpu::uniform_words(
             &rawshim::gpu::Grade {
+                colour: Some(&colour),
                 exposure,
                 adjust,
                 as_shot: Some(rawshim::white_balance::AsShot {
@@ -224,6 +228,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         shadows: 33.0,
         whites: -44.0,
         blacks: 55.0,
+        tone_curve: Some(vec![[0.0, 0.0], [0.3, 0.25], [0.7, 0.75], [1.0, 1.0]]),
         vibrance: -66.0,
         saturation: 77.0,
         texture: -88.0,
@@ -237,14 +242,14 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         // As it arrives on a photo nobody has edited, which is also the state the frame's own
         // words are shipped in.
         ("rest", Stops::ZERO, rawshim::gpu::Adjust::none()),
-        ("moved", Stops::measured(1.75), moved),
+        ("moved", Stops::measured(1.75), moved.clone()),
         // Half a white balance pair, which is the case the two hosts disagreed about.
         (
             "half-balance",
             Stops::measured(-2.5),
             rawshim::gpu::Adjust {
                 tint: None,
-                ..moved
+                ..moved.clone()
             },
         ),
     ];
@@ -252,8 +257,8 @@ fn the_editor_puts_each_slider_where_this_host_does() {
     let rows: Vec<String> = cases
         .iter()
         .map(|(name, exposure, adjust)| {
-            let words: Vec<String> = at(*exposure, *adjust).iter().map(u32::to_string).collect();
-            let balance = |v: Option<f64>| match v {
+            let words: Vec<String> = at(*exposure, adjust.clone()).iter().map(u32::to_string).collect();
+            let or_null = |v: Option<f64>| match v {
                 Some(v) => v.to_string(),
                 None => "null".to_string(),
             };
@@ -270,8 +275,8 @@ fn the_editor_puts_each_slider_where_this_host_does() {
                 adjust.texture,
                 adjust.clarity,
                 adjust.dehaze,
-                balance(adjust.temperature),
-                balance(adjust.tint),
+                or_null(adjust.temperature),
+                or_null(adjust.tint),
                 words.join(","),
             )
         })
@@ -859,7 +864,7 @@ fn clarity_leaves_the_finest_band_to_texture() {
 
     let none = rawshim::gpu::Adjust::none();
     let graded = |adjust| graded_frame(gpu, frame.clone(), WIDE, TALL, adjust);
-    let flat = graded(none);
+    let flat = graded(none.clone());
     // The checker: neighbouring rows, which no texel of four can tell apart.
     let fine = |out: &[u16]| {
         let (mut total, mut count) = (0.0, 0u64);
@@ -875,11 +880,11 @@ fn clarity_leaves_the_finest_band_to_texture() {
 
     let lifted = fine(&graded(rawshim::gpu::Adjust {
         clarity: 100.0,
-        ..none
+        ..none.clone()
     }));
     let lowered = fine(&graded(rawshim::gpu::Adjust {
         clarity: -100.0,
-        ..none
+        ..none.clone()
     }));
     let was = fine(&flat);
     assert!(
@@ -947,7 +952,7 @@ fn shadows_lifts_a_region_without_stretching_the_texture_in_it() {
         return;
     };
     let none = rawshim::gpu::Adjust::none();
-    let flat = graded_frame(gpu, split_ground(), BANDED, BANDED, none);
+    let flat = graded_frame(gpu, split_ground(), BANDED, BANDED, none.clone());
     let lifted = graded_frame(
         gpu,
         split_ground(),
@@ -955,7 +960,7 @@ fn shadows_lifts_a_region_without_stretching_the_texture_in_it() {
         BANDED,
         rawshim::gpu::Adjust {
             shadows: 100.0,
-            ..none
+            ..none.clone()
         },
     );
 
@@ -1061,7 +1066,7 @@ fn highlights_reaches_furthest_into_what_is_most_blown() {
         return;
     };
     let none = rawshim::gpu::Adjust::none();
-    let flat = graded_frame(gpu, three_grounds(), BANDED, BANDED, none);
+    let flat = graded_frame(gpu, three_grounds(), BANDED, BANDED, none.clone());
     let pulled = graded_frame(
         gpu,
         three_grounds(),
@@ -1069,7 +1074,7 @@ fn highlights_reaches_furthest_into_what_is_most_blown() {
         BANDED,
         rawshim::gpu::Adjust {
             highlights: -100.0,
-            ..none
+            ..none.clone()
         },
     );
 
@@ -1156,14 +1161,14 @@ fn the_inner_pair_leave_middle_grey_to_the_exposure() {
     };
     let none = rawshim::gpu::Adjust::none();
     let graded = |adjust| graded_frame(gpu, four_grounds(), BANDED, BANDED, adjust);
-    let flat = graded(none);
+    let flat = graded(none.clone());
     let pulled = graded(rawshim::gpu::Adjust {
         highlights: -100.0,
-        ..none
+        ..none.clone()
     });
     let lifted = graded(rawshim::gpu::Adjust {
         shadows: 100.0,
-        ..none
+        ..none.clone()
     });
 
     let band_at = |frame: &[u16], row: usize| f64::from(frame[(row * BANDED) * 3]);
@@ -1265,10 +1270,10 @@ fn blacks_reaches_the_bottom_of_a_hazy_frame() {
     let pulled_over = |haze: f64| {
         let frame = hazed_grounds(haze);
         let graded = |adjust| graded_frame(gpu, frame.clone(), BANDED, BANDED, adjust);
-        let flat = graded(none);
+        let flat = graded(none.clone());
         let pulled = graded(rawshim::gpu::Adjust {
             blacks: -100.0,
-            ..none
+            ..none.clone()
         });
         // Rows well inside each band rather than at its edges, where the neighbourhood is mixed.
         move |row: usize| {
@@ -1389,7 +1394,7 @@ fn a_tone_control_leaves_no_band_along_an_edge() {
             hard_edge(0.0),
             rawshim::gpu::Adjust {
                 highlights: -100.0,
-                ..none
+                ..none.clone()
             },
             0.01,
         ),
@@ -1398,7 +1403,7 @@ fn a_tone_control_leaves_no_band_along_an_edge() {
             hard_edge(0.6),
             rawshim::gpu::Adjust {
                 shadows: 100.0,
-                ..none
+                ..none.clone()
             },
             0.02,
         ),
@@ -1481,7 +1486,7 @@ fn the_balance_moves_colour_in_the_named_direction_and_leaves_brightness_alone()
             rawshim::gpu::Adjust {
                 temperature,
                 tint,
-                ..none
+                ..none.clone()
             },
         )
     };
@@ -1575,7 +1580,7 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
     };
     let graded = |haze: f64, adjust: rawshim::gpu::Adjust| graded_banded(gpu, haze, adjust);
     let none = rawshim::gpu::Adjust::none();
-    let flat = graded(0.0, none);
+    let flat = graded(0.0, none.clone());
 
     for (name, apart, up, down) in [
         (
@@ -1583,11 +1588,11 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
             1usize,
             rawshim::gpu::Adjust {
                 texture: 100.0,
-                ..none
+                ..none.clone()
             },
             rawshim::gpu::Adjust {
                 texture: -100.0,
-                ..none
+                ..none.clone()
             },
         ),
         (
@@ -1595,11 +1600,11 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
             8,
             rawshim::gpu::Adjust {
                 clarity: 100.0,
-                ..none
+                ..none.clone()
             },
             rawshim::gpu::Adjust {
                 clarity: -100.0,
-                ..none
+                ..none.clone()
             },
         ),
     ] {
@@ -1623,7 +1628,7 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
             0.0,
             rawshim::gpu::Adjust {
                 texture: 100.0,
-                ..none
+                ..none.clone()
             },
         ),
         8,
@@ -1637,12 +1642,12 @@ fn the_presence_sliders_act_on_the_bands_they_name() {
 
     // Dehaze on a frame that has some: the model subtracts a neutral airlight and divides by
     // what is left, so the floor drops and everything above it spreads out.
-    let hazy = graded(0.45, none);
+    let hazy = graded(0.45, none.clone());
     let cleared = graded(
         0.45,
         rawshim::gpu::Adjust {
             dehaze: 100.0,
-            ..none
+            ..none.clone()
         },
     );
     let floor = |frame: &[u16]| *frame.iter().step_by(3).min().expect("a frame with pixels");
@@ -1699,7 +1704,7 @@ fn clearing_the_haze_changes_what_shadows_is_worth() {
                 rawshim::gpu::Adjust {
                     shadows,
                     dehaze,
-                    ..none
+                    ..none.clone()
                 },
             );
             f64::from(frame[(bottom * BANDED) * 3])
@@ -1758,7 +1763,7 @@ fn texture_is_worth_the_same_whatever_the_contrast() {
                     rawshim::gpu::Adjust {
                         texture,
                         contrast,
-                        ..none
+                        ..none.clone()
                     },
                 ),
                 1,

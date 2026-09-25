@@ -13,6 +13,19 @@ function doc(over: Partial<EditDoc> = {}): EditDoc {
   return { ...neutralEdits(), ...over };
 }
 
+describe('tone curve document', () => {
+  it('defaults tone sliders to zero and leaves the camera curve selected', () => {
+    expect(neutralEdits()).toMatchObject({ exposure: 0, contrast: 0, whites: 0, blacks: 0, toneCurve: null });
+  });
+
+  it('keeps ordered points within the curve axes', () => {
+    expect(EditDocSchema.safeParse({ toneCurve: [[0, 0], [0.5, 0.6], [1, 1]] }).success).toBe(true);
+    expect(EditDocSchema.safeParse({ toneCurve: [[0, 0], [0, 0.4]] }).success).toBe(false);
+    expect(EditDocSchema.safeParse({ toneCurve: [[0, 0.6], [1, 0.4]] }).success).toBe(false);
+    expect(EditDocSchema.safeParse({ toneCurve: [[0, 0], [0.5, 1.1]] }).success).toBe(false);
+  });
+});
+
 describe('displaySize', () => {
   it('leaves an uncropped photo at the file dimensions', () => {
     // Almost every photo in a library, so this is the case that has to be exact rather

@@ -1,5 +1,6 @@
 import { computed, observable } from 'mobx';
 import type { JobLevels, NoiseFit } from '../../../../../src/schemas/jobs';
+import type { EditDoc, ToneCurve } from '../../../../../src/schemas/photo_edits';
 import type { EditStore } from '../edit/edit_store';
 import type { Region } from '../edits';
 import type { OpenStage } from '../local_decode/local_open';
@@ -84,6 +85,22 @@ export class StageStore {
    * Null until a frame is open.
    */
   @observable accessor detail: [number, number] | null = null;
+
+  /** The camera match's curve. Null where nothing was matched or before a frame is open. */
+  @observable accessor cameraCurve: ToneCurve | null = null;
+
+  /**
+   * What each slider the photograph answers for shows where the document holds null
+   * (`SliderSpec.measured`). Null until a frame is open.
+   */
+  @computed get measured(): Partial<Record<keyof EditDoc, number>> | null {
+    const detail = this.detail;
+    if (detail == null) return null;
+    return {
+      luminanceNoise: detail[0],
+      colourNoise: detail[1],
+    };
+  }
 
   /**
    * Whether the Detail sliders can do anything to this photograph.

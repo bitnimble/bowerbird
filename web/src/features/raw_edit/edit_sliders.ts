@@ -24,14 +24,12 @@ export interface SliderSpec {
    */
   neutral?: number;
   /**
-   * Which half of the module's resolved Detail pair stands in where the document holds null.
+   * Whether the *photograph* answers where the document holds null, rather than a fixed default.
    *
-   * For a slider the *photograph* answers rather than a fixed default: the document stores
-   * nothing, the decode resolves a position off the frame's own noise fit and reports it
-   * (`StageStore.detail`), and the row shows that. Reset goes back to null rather than to a
-   * number, so the answer keeps following the photograph.
+   * The Detail pair comes off the frame's noise fit where the document stores null. Reset keeps
+   * that measured value following the photograph.
    */
-  measured?: 0 | 1;
+  measured?: boolean;
 }
 
 /**
@@ -95,8 +93,8 @@ export const EFFECTS: readonly SliderSpec[] = [
  * grain left in the frame is a thing it will invert as readily.
  */
 export const DETAIL: readonly SliderSpec[] = [
-  { key: 'luminanceNoise', label: RawEditPanelStrings.luminance(), min: 0, max: 100, step: 1, measured: 0 },
-  { key: 'colourNoise', label: RawEditPanelStrings.colour(), min: 0, max: 100, step: 1, measured: 1 },
+  { key: 'luminanceNoise', label: RawEditPanelStrings.luminance(), min: 0, max: 100, step: 1, measured: true },
+  { key: 'colourNoise', label: RawEditPanelStrings.colour(), min: 0, max: 100, step: 1, measured: true },
   { key: 'sharpening', label: RawEditPanelStrings.sharpening(), min: 0, max: 100, step: 1, neutral: 50 },
 ];
 
@@ -150,4 +148,8 @@ export function typedValue(text: string, { min, max, step, scale = 1 }: TypedRan
   const held = Math.min(Math.max(Number(Number(number[0]).toFixed(TYPED_PLACES)) / scale, min), max);
   // A whole step is a field `EditDoc` stores as an integer.
   return step >= 1 ? Math.round(held) : held;
+}
+
+export function onStep(value: number, { step }: Pick<SliderSpec, 'step'>): number {
+  return Number((Math.round(value / step) * step).toFixed(TYPED_PLACES));
 }

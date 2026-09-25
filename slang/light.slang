@@ -140,6 +140,24 @@ public struct Stops {
     public float s;
 }
 
+public static const Stops CURVE_TOP = { 3.0 };
+
+public struct CurveCode {
+    public float v;
+}
+
+public CurveCode curve_code(float white_ratio)
+{
+    CurveCode code;
+    code.v = pow(max(white_ratio, 0.0), 1.0 / 3.0) / exp2(CURVE_TOP.s / 3.0);
+    return code;
+}
+
+public float curve_light(CurveCode code)
+{
+    return pow(code.v * exp2(CURVE_TOP.s / 3.0), 3.0);
+}
+
 /// A number entering a domain a standard fixes the unit of.
 public Light<D> exactly<D : IStandard>(float v)
 {

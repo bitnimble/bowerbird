@@ -739,7 +739,7 @@ fn union_match(
     let matched = pollster::block_on(crate::hdr_fit::fit_linearised(
         gpu,
         &prepared.plane,
-        prepared.levels.white,
+        prepared.levels,
         wide_jpeg,
         crate::fit::Lens::none(),
     ))?;
