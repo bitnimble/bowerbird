@@ -167,7 +167,7 @@ export class MarksStore {
    * a stack, and a reader that forgets to ask gets the wrong answer quietly.
    *
    * `stackMembers` is what makes it possible, and a stack missing from it expands to nothing rather
-   * than to its row - the count then falls short of `selectedEntries` and every caller's own
+   * than to its row - the count then falls short of `selectionCount` and every caller's own
    * "is the whole selection loaded" guard refuses, which is the same sample rule as above.
    */
   @computed get selectedLoadedPhotos(): PhotoSummary[] {
@@ -199,7 +199,7 @@ export class MarksStore {
    */
   @computed get selectedMarks(): { triage: Triage | null; rating: number | null } {
     const photos = this.selectedLoadedPhotos;
-    if (photos.length !== this.selectedEntries) return { triage: null, rating: null };
+    if (photos.length !== this.selectionCount) return { triage: null, rating: null };
     const first = photos[0];
     if (first == null) return { triage: null, rating: null };
     let triage: Triage | null = first.triage;
@@ -209,6 +209,14 @@ export class MarksStore {
       if (photo.rating !== rating) rating = null;
     }
     return { triage, rating };
+  }
+
+  /** Null unless the loaded rows are the whole selection. */
+  @computed get selectedHiding(): { hidden: number; shown: number } | null {
+    const photos = this.selectedLoadedPhotos;
+    if (photos.length !== this.selectionCount) return null;
+    const hidden = photos.filter((photo) => photo.is_hidden).length;
+    return { hidden, shown: photos.length - hidden };
   }
 
   /**
@@ -326,7 +334,7 @@ export class MarksStore {
     const source = this.listing.source;
     if (source?.kind !== 'shoot') return false;
     const photos = this.selectedLoadedPhotos;
-    if (photos.length !== this.selectedEntries) return false;
+    if (photos.length !== this.selectionCount) return false;
     return !photos.some((photo) => photo.shoot_id === source.shootId);
   }
 
@@ -356,7 +364,7 @@ export class MarksStore {
    */
   @computed get selectionShootId(): string | null {
     const photos = this.selectedLoadedPhotos;
-    if (photos.length === 0 || photos.length !== this.selectedEntries) return null;
+    if (photos.length === 0 || photos.length !== this.selectionCount) return null;
     const shootId = photos[0]?.shoot_id ?? null;
     if (shootId == null) return null;
     return photos.every((photo) => photo.shoot_id === shootId) ? shootId : null;

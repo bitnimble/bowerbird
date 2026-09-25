@@ -13,6 +13,8 @@ export const BulkBarStrings = {
   /** Hiding keeps every file and every edit, so it says nothing about deleting. */
   hide: () => 'Hide',
   unhide: () => 'Unhide',
+  hideCount: (count: number) => `Hide ${count} ${count === 1 ? 'photo' : 'photos'}`,
+  unhideCount: (count: number) => `Unhide ${count} ${count === 1 ? 'photo' : 'photos'}`,
 
   selection: () => 'Selection',
   allSelected: () => 'all selected',

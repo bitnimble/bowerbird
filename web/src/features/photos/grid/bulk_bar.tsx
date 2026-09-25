@@ -183,19 +183,25 @@ const filingOptions = ({
 // the reader has to be sure of before they pick it and the only one they reach
 // from behind a menu, with the tiles it is about out of sight - and a stack row
 // stands for several, so the selection on screen does not say the number either.
-// Both directions, always, rather than one row pointing whichever way the grid is: Hidden is a chip
-// like any other (§12.4), so a grid can hold the put-away beside the live and a selection across it
-// is mixed. A row that guessed from the grid's filters would be the wrong one for half of it, and
-// the selection can reach rows this client has never held, so there is nothing to guess from either.
-const photoOptions = (bin: string, revealable: boolean): Option<PhotoAction>[] => [
+const photoOptions = ({
+  bin,
+  revealable,
+  hide,
+  unhide,
+}: {
+  bin: string;
+  revealable: boolean;
+  hide: string | null;
+  unhide: string | null;
+}): Option<PhotoAction>[] => [
   { value: 'export', label: BulkBarStrings.exportPhotos(), icon: <Download size={ICON} /> },
   ...(revealable ?
     [{ value: 'reveal' as const, label: PhotoDetailStrings.openContainingFolder(), icon: <FolderOpen size={ICON} /> }]
   : []),
   { value: 'thumbnails', label: BulkBarStrings.rebuildThumbnails(), icon: <Sparkles size={ICON} /> },
   { value: 'metadata', label: BulkBarStrings.refreshMetadata(), icon: <RotateCw size={ICON} /> },
-  { value: 'hide', label: BulkBarStrings.hide(), icon: <EyeOff size={ICON} /> },
-  { value: 'unhide', label: BulkBarStrings.unhide(), icon: <Eye size={ICON} /> },
+  ...(hide == null ? [] : [{ value: 'hide' as const, label: hide, icon: <EyeOff size={ICON} /> }]),
+  ...(unhide == null ? [] : [{ value: 'unhide' as const, label: unhide, icon: <Eye size={ICON} /> }]),
   { value: 'bin', label: bin, icon: <Trash2 size={ICON} />, destructive: true },
 ];
 
@@ -262,6 +268,12 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
     count < 2 ? BulkBarStrings.moveToBin()
     : store.allSelected ? BulkBarStrings.moveAllToBin()
     : BulkBarStrings.moveCountToBin(count);
+  // Null past the loaded rows, which offers both uncounted: the server settles what each one changes.
+  const hiding = store.selectedHiding;
+  const hidingLabel = (affected: number | undefined, plain: string, counted: (count: number) => string): string | null =>
+    affected === 0 ? null
+    : affected == null || count < 2 ? plain
+    : counted(affected);
   // Which library this collection belongs to, read off the collection rather
   // than off a row: rows are a sparse, evictable window, so a guard keyed on one
   // lapses when the reader scrolls past the block holding it. An album names no
@@ -471,7 +483,12 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
               }),
               menuSection({
                 content: <SendToFrameTv onSend={(tvId) => void frameTv.sendSelection(tvId)} />,
-                options: photoOptions(binLabel, revealId != null),
+                options: photoOptions({
+                  bin: binLabel,
+                  revealable: revealId != null,
+                  hide: hidingLabel(hiding?.shown, BulkBarStrings.hide(), BulkBarStrings.hideCount),
+                  unhide: hidingLabel(hiding?.hidden, BulkBarStrings.unhide(), BulkBarStrings.unhideCount),
+                }),
                 onSelect: (action) => {
                   if (action === 'export') openExport();
                   else if (action === 'reveal') void (revealId != null && photos.revealOriginal(revealId));

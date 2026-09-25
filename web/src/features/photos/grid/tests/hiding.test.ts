@@ -97,8 +97,8 @@ describe('putting a selection away and bringing it back', () => {
     photosApi.hide = stubbed.hidePhotos;
   });
 
-  // Both directions are offered at once, so both have to reach the server as asked - a mixed grid
-  // means a mixed selection and neither row may infer its direction from the other.
+  // A mixed selection is offered both directions at once, so both have to reach the server as
+  // asked - neither row may infer its direction from the other.
   test('sends the direction it was asked for, either way', async () => {
     const { presenter } = build({ kind: 'library', libraryId: 'lib' });
     serve();
