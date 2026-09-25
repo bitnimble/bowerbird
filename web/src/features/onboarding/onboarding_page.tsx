@@ -4,7 +4,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderPlus, Link2 } from 'lucide-react';
 import { route } from '../../../../src/schemas/route';
-import { useAppSettingsStore, useLibrariesStore, usePresenters } from '../../app/stores_context';
+import { useLibrariesStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { Heading } from '../../ui/heading';
 import { ICON } from '../../ui/icon';
@@ -46,7 +46,6 @@ type Step = 'library' | 'backup' | 'preferences';
 
 export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
   const store = useLibrariesStore();
-  const settings = useAppSettingsStore();
   const { libraries, backup } = usePresenters();
   const write = useSettingWriter();
   const navigate = useNavigate();
@@ -60,11 +59,12 @@ export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
   const none = store.libraries.length === 0;
   const steps: Step[] = none ? ['library', 'preferences'] : ['library', 'backup', 'preferences'];
   const index = steps.indexOf(step);
+  const previous = steps[index - 1];
+  const next = steps[index + 1];
   const skipping = step === 'library' && none;
 
   async function finish(): Promise<void> {
-    await write({ onboarding_complete: true });
-    if (settings.onboardingComplete === true) navigate(route(), { replace: true });
+    if (await write({ onboarding_complete: true })) navigate(route(), { replace: true });
   }
 
   return (
@@ -79,13 +79,13 @@ export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
         {step === 'preferences' && <PreferencesStep />}
 
         <Row style={styles.actions}>
-          {index > 0 && <Button onClick={() => setStep(steps[index - 1] ?? step)}>{AddReplicaStrings.back()}</Button>}
+          {previous != null && <Button onClick={() => setStep(previous)}>{AddReplicaStrings.back()}</Button>}
           <Spacer />
-          {index === steps.length - 1 ?
+          {next == null ?
             <Button variant="primary" onClick={() => void finish()}>
               {OnboardingStrings.finish()}
             </Button>
-          : <Button variant={skipping ? 'default' : 'primary'} onClick={() => setStep(steps[index + 1] ?? step)}>
+          : <Button variant={skipping ? 'default' : 'primary'} onClick={() => setStep(next)}>
               {skipping ? OnboardingStrings.skip() : AddReplicaStrings.next()}
             </Button>
           }

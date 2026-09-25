@@ -39,7 +39,8 @@ export class AppSettingsPresenter {
       // Non-fatal: the store's fallbacks are the shipped behaviour, and a photo
       // opening at its own rendition is better than not opening. Without the
       // defaults the settings page simply offers nothing to reset.
-      runInAction(() => (this.store.unavailable = true));
+    } finally {
+      runInAction(() => (this.store.loading = false));
     }
   }
 

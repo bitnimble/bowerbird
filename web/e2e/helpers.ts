@@ -1,4 +1,4 @@
-import { expect, type Browser, type Locator, type Page } from '@playwright/test';
+import { expect, type APIRequestContext, type Browser, type Locator, type Page } from '@playwright/test';
 import { LibrariesSchema } from '../../src/schemas/libraries';
 import { EditStateSchema } from '../../src/schemas/photo_edits';
 import { PathSegment, route } from '../../src/schemas/route';
@@ -177,6 +177,13 @@ export async function setHideSidebarInViewer(page: Page, hide: boolean): Promise
   // the server answered, so it is still holding the old value when the click returns.
   if ((await box.isChecked()) !== hide) await box.click();
   await expect(box).toBeChecked({ checked: hide });
+}
+
+export async function setOnboardingComplete(request: APIRequestContext, done: boolean): Promise<void> {
+  const response = await request.patch(route(PathSegment.api(), PathSegment.settings()), {
+    data: { onboarding_complete: done },
+  });
+  expect(response.ok()).toBe(true);
 }
 
 export async function scanLibrary(page: Page, rootPath: string): Promise<void> {

@@ -867,7 +867,7 @@ const MERGE_EDIT_ROUTE = route(PathSegment.photos(), PathSegment.param('photoId'
 const Home = observer(function Home(): JSX.Element | null {
   const libraries = useLibrariesStore();
   const settings = useAppSettingsStore();
-  if (libraries.loading || (settings.onboardingComplete == null && !settings.unavailable)) return null;
+  if (libraries.loading || settings.loading) return null;
   if (settings.onboardingComplete === false) return <Navigate to={route(PathSegment.welcome())} replace />;
   const first = libraries.libraries[0];
   return <Navigate to={first == null ? route(PathSegment.settings()) : route(PathSegment.libraries(), first.id)} replace />;

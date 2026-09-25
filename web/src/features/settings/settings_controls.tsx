@@ -124,13 +124,15 @@ export function GroupTitle({ children }: { children: ReactNode }): JSX.Element {
 
 export type SettingOf<T> = { [K in keyof Settings]: Settings[K] extends T ? K : never }[keyof Settings];
 
-export function useSettingWriter(): (patch: UpdateSettingsRequest) => Promise<void> {
+export function useSettingWriter(): (patch: UpdateSettingsRequest) => Promise<boolean> {
   const { appSettings, toasts } = usePresenters();
   return async (patch) => {
     try {
       await appSettings.update(patch);
+      return true;
     } catch (err) {
       toasts.showError(SettingsStrings.couldNotSaveSetting(), (err as Error).message);
+      return false;
     }
   };
 }

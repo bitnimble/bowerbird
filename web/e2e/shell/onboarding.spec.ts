@@ -1,17 +1,16 @@
 import { expect, test } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { API_URL } from '../fixture_library';
+import { setOnboardingComplete } from '../helpers';
 
-const SETTINGS = `${API_URL}${route(PathSegment.api(), PathSegment.settings())}`;
 const WELCOME = new RegExp(`${route(PathSegment.welcome())}$`);
 
 // Settings are global, so the rest of the run is handed back onboarded however this ends.
 test.afterAll(async ({ request }) => {
-  await request.patch(SETTINGS, { data: { onboarding_complete: true } });
+  await setOnboardingComplete(request, true);
 });
 
 test('the home page opens the welcome wizard until it is finished', async ({ page }) => {
-  await page.request.patch(SETTINGS, { data: { onboarding_complete: false } });
+  await setOnboardingComplete(page.request, false);
   await page.goto(route());
   await expect(page).toHaveURL(WELCOME);
   await expect(page.getByRole('heading', { name: 'Welcome to Bowerbird' })).toBeVisible();
