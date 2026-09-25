@@ -241,6 +241,7 @@ run('bun', [
   SERVER,
   '--entry-naming',
   '[name].[ext]',
+  '--splitting',
   '--external',
   '@parcel/watcher',
   '--external',

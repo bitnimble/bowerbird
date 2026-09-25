@@ -138,7 +138,9 @@ jpeg-encoder = { version = "0.7.1", features = ["simd"] }
 # it rather than two that must be held in agreement (DESIGN 21.1). That costs the server an
 # adapter; where there is no hardware one, `gpu::device` falls back to whatever software
 # Vulkan is installed - very slow, and a path a machine with an iGPU never takes.
-wgpu = "30.0"
+#
+# The backends are the ones `gpu::device` asks its instance for, and `webgpu` is the editor's.
+wgpu = { version = "30.0", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl", "webgpu"] }
 # Already in the tree under `wgpu-types`, so naming it here adds nothing to compile. It carries
 # the reinterprets a frame and a uniform block cross on - `Pod` proves the bit patterns and the
 # cast checks the alignment, where a `from_raw_parts` states both in a comment nobody rechecks.
