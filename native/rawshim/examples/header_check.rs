@@ -23,6 +23,10 @@ fn main() {
         );
         println!("   timestamp {}  gps {},{}", header.timestamp, header.latitude, header.longitude);
         println!(
+            "   sequence kind {}  group {}  shot {} of {}",
+            header.sequence_kind, header.sequence_group, header.sequence_index, header.sequence_count
+        );
+        println!(
             "   {} {} / {}",
             rawshim::header::name(&header.camera_make),
             rawshim::header::name(&header.camera_model),
