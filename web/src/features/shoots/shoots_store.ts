@@ -55,11 +55,10 @@ function ancestorsOf(folderPath: string): string[] {
 export const NO_SHOOT_PATH = '/no-shoot';
 
 export class ShootsStore extends CollectionListStore<FolderRow> {
+  /** Every shoot of the library, the hidden included whether or not they are shown. */
   @observable.shallow accessor shoots: Shoot[] = [];
   @observable accessor view: ShootView = 'tree';
-  // Whether the shoots the reader has put away are drawn, greyed, where they belong (§12.4). What it
-  // decides is the *request*: the server leaves them out unless asked, so turning this on is a
-  // re-read rather than a filter lifting (`ShootsPresenter.setShowHidden`).
+  /** Whether the shoots the reader has put away are drawn, greyed, where they belong (§12.4). */
   @observable accessor showHidden = false;
   /** Which library the rows are of, so a row knows where it opens. */
   @observable accessor libraryId = '';
@@ -70,10 +69,8 @@ export class ShootsStore extends CollectionListStore<FolderRow> {
   /** Every folder on disk, which is the only way to know of the ones holding no photographs. */
   @observable.shallow accessor folders: string[] = [];
 
-  // Shoots learned one at a time rather than off the listing, because the listing leaves the hidden
-  // out (§12.4) and a reader can still be standing on one - its own page, or a photograph that names
-  // it. Answering "which shoot is this" is not the same question as "which shoots am I working
-  // with", and only the second one hides.
+  // Shoots learned one at a time rather than off the listing, because a reader can be standing on a
+  // shoot of a library the listing is not of - its own page, or a photograph that names it.
   @observable.shallow accessor resolved = new Map<string, Shoot>();
 
   // The listing wins over what was resolved singly, being the fresher of the two.
@@ -85,6 +82,19 @@ export class ShootsStore extends CollectionListStore<FolderRow> {
     return new Map(this.shoots.map((s) => [s.folder_path, s]));
   }
 
+  @computed get shownShoots(): Shoot[] {
+    return this.showHidden ? this.shoots : this.shoots.filter((s) => !hiddenShoot(s));
+  }
+
+  // A hidden shoot's folders go with it, or Tree (full) draws them back as unclaimed rows offering
+  // to adopt the shoot already on them (§12.4).
+  @computed get shownFolders(): string[] {
+    if (this.showHidden) return this.folders;
+    const away = new Set(this.shoots.filter(hiddenShoot).map((s) => s.folder_path));
+    if (away.size === 0) return this.folders;
+    return this.folders.filter((folder) => !away.has(folder) && !ancestorsOf(folder).some((p) => away.has(p)));
+  }
+
   override get nests(): boolean {
     return this.view === 'tree_full';
   }
@@ -92,12 +102,9 @@ export class ShootsStore extends CollectionListStore<FolderRow> {
   // The library's folders, from disk and from the shoots' own paths. The two
   // agree about everything the scan looks at; a shoot in a folder the library
   // has since excluded is still a shoot, and still has to be shown.
-  //
-  // Neither source needs filtering for hiding: the server leaves a hidden shoot out of both unless
-  // the reading asked for it (§12.4), so what is here is already what the page draws.
   @computed get knownFolders(): Set<string> {
-    const folders = new Set<string>(this.folders);
-    for (const shoot of this.shoots) {
+    const folders = new Set<string>(this.shownFolders);
+    for (const shoot of this.shownShoots) {
       const segments = shoot.folder_path.split('/');
       for (let i = 1; i <= segments.length; i++) folders.add(segments.slice(0, i).join('/'));
     }
@@ -136,8 +143,8 @@ export class ShootsStore extends CollectionListStore<FolderRow> {
   // a few thousand of them.
   private get shootRows(): FolderRow[] {
     const flat = this.view === 'flat';
-    const paths = new Set(this.shoots.map((s) => s.folder_path));
-    return [...this.shoots]
+    const paths = new Set(this.shownShoots.map((s) => s.folder_path));
+    return [...this.shownShoots]
       .sort((a, b) => a.folder_path.localeCompare(b.folder_path))
       .map((shoot) => {
         const ancestors = flat ? [] : ancestorsOf(shoot.folder_path).filter((p) => paths.has(p));

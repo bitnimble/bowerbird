@@ -49,19 +49,18 @@ test('a library whose photographs are all at the root is not empty', () => {
   expect(store({}).isEmpty).toBe(true);
 });
 
-// Whether a hidden shoot is here at all is the server's answer (§12.4), so what the store has to get
-// right is how one is drawn once it has been asked for: in its own place, greyed, and saying so -
-// dimming alone is what an untracked folder and an empty shoot already look like.
+// A shown hidden shoot is drawn in its own place, greyed, and saying so - dimming alone is what an
+// untracked folder and an empty shoot already look like (§12.4).
 const HIDDEN: Shoot = { ...SHOOT, id: 'id:Wharf', folder_path: 'Wharf', name: 'Wharf', is_hidden: true };
 
 test('a hidden shoot is drawn in its own place and says it is hidden', () => {
-  const row = store({ shoots: [SHOOT, HIDDEN] }).rows.find((r) => r.key === 'Wharf');
+  const row = store({ shoots: [SHOOT, HIDDEN], showHidden: true }).rows.find((r) => r.key === 'Wharf');
   expect(row?.tone).toBe('hidden');
   expect(row?.meta).toBe('Hidden · 3 photos');
   expect(row?.href).toBe(route(PathSegment.shoots(), 'id:Wharf'));
 });
 
-// The listing leaves the hidden out, so a reader standing on one has to have got it some other way.
+// A reader can stand on a shoot of a library the listing is not of, got some other way.
 test('a shoot resolved by id is found even though no listing holds it', () => {
   const held = store({ shoots: [SHOOT], resolved: new Map([[HIDDEN.id, HIDDEN]]) });
   expect(held.byId.get(HIDDEN.id)).toBe(HIDDEN);

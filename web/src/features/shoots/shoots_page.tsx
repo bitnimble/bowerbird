@@ -64,7 +64,7 @@ const ShootsOverflow = observer(function ShootsOverflow(): JSX.Element {
               icon={<EyeOff size={ICON} />}
               label={ShootsPageStrings.showHiddenShoots()}
               checked={store.showHidden}
-              onCheckedChange={(on) => void shoots.setShowHidden(on)}
+              onCheckedChange={shoots.setShowHidden}
             />
           ),
         }),

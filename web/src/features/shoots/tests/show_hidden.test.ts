@@ -1,6 +1,5 @@
-// Whether the shoots put away are on the page is the server's answer, not a filter this client
-// lifts (§12.4) - so the toggle has to re-read, and it has to carry the same flag to both readings
-// or the tree keeps a hidden shoot's folders after the shoot has gone from it.
+// The page reads the hidden shoots with everything else, so showing them is a filter over rows in
+// hand (§12.4): the toggle is instant, and it drops a hidden shoot's folders along with the shoot.
 import { beforeEach, expect, test } from 'bun:test';
 import { type PhotoListResponse } from '../../../../../src/schemas/photos';
 import { type Shoot } from '../../../../../src/schemas/shoots';
@@ -41,68 +40,72 @@ function shoot(folderPath: string, isHidden: boolean): Shoot {
 const REEF = shoot('Reef', false);
 const WHARF = shoot('Wharf', true);
 
-/** What each reading was asked for, so the pair can be held against each other. */
-let asked: { shoots: boolean[]; folders: boolean[] };
+let requests = 0;
 
 function stubApi(): void {
-  asked = { shoots: [], folders: [] };
+  requests = 0;
   shootsApi.list = (_libraryId: string, includeHidden = false): Promise<Shoot[]> => {
-    asked.shoots.push(includeHidden);
+    requests++;
     return Promise.resolve(includeHidden ? [REEF, WHARF] : [REEF]);
   };
   librariesApi.folders = (_libraryId: string, includeHidden = false): Promise<string[]> => {
-    asked.folders.push(includeHidden);
-    return Promise.resolve(includeHidden ? ['Reef', 'Wharf'] : ['Reef']);
+    requests++;
+    return Promise.resolve(includeHidden ? ['Reef', 'Wharf', 'Wharf/Day one'] : ['Reef']);
   };
-  photosApi.listLibrary = (): Promise<PhotoListResponse> =>
-    Promise.resolve({ photos: [], offset: 0, limit: 1, ordering: 'taken_asc' });
+  photosApi.listLibrary = (): Promise<PhotoListResponse> => {
+    requests++;
+    return Promise.resolve({ photos: [], offset: 0, limit: 1, ordering: 'taken_asc' });
+  };
 }
 
-test('the toggle re-reads, and asks both readings the same thing', async () => {
-  stubApi();
-  const store = new ShootsStore();
-  const presenter = new ShootsPresenter(store, new SidebarPresenter(new SidebarStore(new AppSettingsStore())));
-
-  await presenter.load('lib');
-  expect([asked.shoots, asked.folders]).toEqual([[false], [false]]);
-  expect(store.shoots.map((s) => s.folder_path)).toEqual(['Reef']);
-
-  // Awaited, not given a few microtasks and hoped for: the toggle hands its re-read back, so this
-  // is the rows having actually landed rather than the test having waited long enough.
-  await presenter.setShowHidden(true);
-
-  expect([asked.shoots.at(-1), asked.folders.at(-1)]).toEqual([true, true]);
-  expect(store.shoots.map((s) => s.folder_path)).toEqual(['Reef', 'Wharf']);
-});
-
-// The page draws what it was served; nothing here filters, so a hidden shoot arriving is a hidden
-// shoot on screen.
-test('what the server sent is what the page draws', async () => {
-  stubApi();
-  const store = new ShootsStore();
-  const presenter = new ShootsPresenter(store, new SidebarPresenter(new SidebarStore(new AppSettingsStore())));
-  store.showHidden = true;
-
-  await presenter.load('lib');
-
-  expect(store.rows.map((r) => r.key)).toEqual(['Reef', 'Wharf']);
-  expect(store.rows.find((r) => r.key === 'Wharf')?.tone).toBe('hidden');
-});
-
-// The page hands its read to the sidebar so a rename reaches it without a second request. The Hidden
-// reading is the one it must keep: the sidebar offers no way to put a shoot back, so one arriving
-// there is a destination the reader cannot get rid of.
-test('the sidebar takes the page’s read, but never the Hidden one', async () => {
-  stubApi();
+function build(): { store: ShootsStore; presenter: ShootsPresenter; sidebar: SidebarStore } {
   const store = new ShootsStore();
   const sidebar = new SidebarStore(new AppSettingsStore());
-  const presenter = new ShootsPresenter(store, new SidebarPresenter(sidebar));
+  return { store, presenter: new ShootsPresenter(store, new SidebarPresenter(sidebar)), sidebar };
+}
+
+test('the toggle shows and hides the hidden shoots without asking the server again', async () => {
+  stubApi();
+  const { store, presenter } = build();
 
   await presenter.load('lib');
-  expect(sidebar.shootsByLibrary.get('lib')).toEqual([REEF]);
+  expect(store.rows.map((r) => r.key)).toEqual(['Reef']);
+  const loaded = requests;
 
-  await presenter.setShowHidden(true);
+  presenter.setShowHidden(true);
+  expect(store.rows.map((r) => r.key)).toEqual(['Reef', 'Wharf']);
+  expect(store.rows.find((r) => r.key === 'Wharf')?.tone).toBe('hidden');
 
-  expect(store.shoots.map((s) => s.folder_path)).toEqual(['Reef', 'Wharf']);
+  presenter.setShowHidden(false);
+  expect(store.rows.map((r) => r.key)).toEqual(['Reef']);
+  expect(requests).toBe(loaded);
+});
+
+test('a hidden shoot’s folders leave the full tree with it', async () => {
+  stubApi();
+  const { store, presenter } = build();
+  presenter.setView('tree_full');
+
+  await presenter.load('lib');
+  expect(store.rows.map((r) => r.key)).toEqual(['Reef']);
+
+  presenter.setShowHidden(true);
+  presenter.toggleExpanded('Wharf');
+  expect(store.rows.map((r) => r.key)).toEqual(['Reef', 'Wharf', 'Wharf/Day one']);
+
+  presenter.setShowHidden(false);
+  expect(store.rows.map((r) => r.key)).toEqual(['Reef']);
+});
+
+// The page hands its read to the sidebar so a rename reaches it without a second request, less the
+// hidden: the sidebar offers no way to put a shoot back, so one arriving there is a destination the
+// reader cannot get rid of.
+test('the sidebar takes the page’s read, but never a hidden shoot', async () => {
+  stubApi();
+  const { presenter, sidebar } = build();
+
+  await presenter.load('lib');
+  presenter.setShowHidden(true);
+
   expect(sidebar.shootsByLibrary.get('lib')).toEqual([REEF]);
 });
