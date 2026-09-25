@@ -67,6 +67,7 @@ import { color, derivedSize, font, size } from '../ui/tokens.stylex';
 import { AppStrings } from './app.strings';
 import { CollectionListStrings } from './collection_list.strings';
 import { drawer } from './drawer.stylex';
+import { HdrOutput } from './hdr_output';
 import { SidebarButton, SidebarIcon, SidebarLink, SidebarText, sidebarStyles } from './sidebar_link';
 import type { ShootNode } from './sidebar_store';
 import {
@@ -910,6 +911,7 @@ export const App = observer(function App(): JSX.Element {
         mobile && drawerOpen && drawerOut,
       )}
     >
+      <HdrOutput />
       <EnsureLibraries />
       <EnsureReplication />
       <ServerEvents />
