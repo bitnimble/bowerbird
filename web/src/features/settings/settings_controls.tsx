@@ -17,7 +17,7 @@ import { SettingsStrings } from './settings_page.strings';
 const styles = stylex.create({
   row: {
     display: 'grid',
-    gridTemplateColumns: '1fr auto',
+    gridTemplateColumns: 'minmax(40%, 1fr) minmax(0, auto)',
     alignItems: 'center',
     gap: '4px 12px',
     paddingBlock: '6px',
@@ -48,9 +48,13 @@ const styles = stylex.create({
 });
 
 export const settingStyles = stylex.create({
-  // A five-digit pixel edge plus its spinner, so a column of them reads as a column.
-  input: {
-    width: '10ch',
+  // One width with or without a unit, so a column of them reads as a column.
+  field: {
+    width: '14ch',
+  },
+  wide: {
+    width: '40ch',
+    flexShrink: 1,
   },
 });
 
@@ -189,7 +193,7 @@ export const NumberSetting = observer(function NumberSetting({
       onReset={resetTo(value, store.defaults?.[field], (v) => void write({ [field]: v } as UpdateSettingsRequest))}
     >
       <TextField
-        inputStyle={settingStyles.input}
+        style={settingStyles.field}
         type="number"
         min={min}
         max={max}
@@ -211,11 +215,13 @@ export const TextSetting = observer(function TextSetting({
   label,
   placeholder,
   hint,
+  wide = false,
 }: {
   field: SettingOf<string>;
   label: string;
   placeholder?: string;
   hint?: ReactNode;
+  wide?: boolean;
 }): JSX.Element {
   const store = useAppSettingsStore();
   const write = useSettingWriter();
@@ -236,7 +242,7 @@ export const TextSetting = observer(function TextSetting({
       onReset={resetTo(value, store.defaults?.[field], (v) => void write({ [field]: v } as UpdateSettingsRequest))}
     >
       <TextField
-        inputStyle={settingStyles.input}
+        style={wide ? settingStyles.wide : settingStyles.field}
         label={label}
         value={draft}
         placeholder={placeholder}

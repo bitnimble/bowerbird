@@ -375,7 +375,7 @@ const ServerAddress = observer(function ServerAddress(): JSX.Element | null {
         onReset={saved === draft ? undefined : () => setDraft(saved)}
       >
         <TextField
-          inputStyle={settingStyles.input}
+          style={settingStyles.field}
           label={SettingsStrings.serverAddress()}
           value={draft}
           placeholder={SettingsStrings.serverAddressPlaceholder()}
@@ -481,6 +481,7 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
               label={SettingsStrings.corsOrigins()}
               placeholder={SettingsStrings.corsOriginsPlaceholder()}
               hint={SettingsStrings.corsOriginsHint()}
+              wide
             />
             <Text variant="mono" as="p">
               {SettingsStrings.environmentNote()}

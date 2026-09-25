@@ -258,7 +258,7 @@ const BinNameField = observer(function BinNameField({
       disabledReason={locked ? SettingsStrings.binNameLocked() : undefined}
     >
       <TextField
-        inputStyle={settingStyles.input}
+        style={settingStyles.field}
         label={SettingsStrings.binFolderName()}
         value={draft}
         disabled={locked}
@@ -443,7 +443,7 @@ const LibraryNumberField = observer(function LibraryNumberField({
       onReset={resetTo(value, store.defaults?.[field], (v) => void onCommit(v))}
     >
       <TextField
-        inputStyle={settingStyles.input}
+        style={settingStyles.field}
         type="number"
         min={min}
         max={max}
