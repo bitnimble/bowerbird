@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useId, useMemo, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, type ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { buttonStyles } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { SliderIsolationContext } from '../../ui/slider_isolation';
@@ -113,6 +114,7 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({ panels, no
   const expanded = store.expanded && selected != null;
   const active = store.activeSlider;
   const tabbableId = selected?.id ?? panels[0]?.id;
+  useBackCloses(expanded, presenter.close);
   return (
     <SliderIsolationContext.Provider value={{ active, begin: presenter.begin, end: presenter.end }}>
       <div {...stylex.props(styles.root)} onKeyDown={(event) => {
@@ -179,3 +181,65 @@ const MobileEditPanelsView = observer(function MobileEditPanelsView({ panels, no
     </SliderIsolationContext.Provider>
   );
 });
+
+const SHEET_STATE = 'editSheet';
+
+const holdsSheet = (state: unknown): boolean => (state as Record<string, unknown> | null)?.[SHEET_STATE] === true;
+
+/**
+ * Replaces the current history entry, popping an open sheet's entry first. A plain replace would
+ * swap out the sheet's entry and leave the editor's own one behind it, so Back would reopen the editor.
+ */
+export function useReplacePastSheet(): (to: string) => void {
+  const navigate = useNavigate();
+  const held = holdsSheet(useLocation().state);
+  const pending = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (held || pending.current == null) return;
+    const to = pending.current;
+    pending.current = null;
+    navigate(to, { replace: true });
+  }, [held, navigate]);
+
+  return useCallback(
+    (to: string) => {
+      if (!held) {
+        navigate(to, { replace: true });
+        return;
+      }
+      pending.current = to;
+      navigate(-1);
+    },
+    [held, navigate],
+  );
+}
+
+/** Holds a history entry while the sheet is open, so the system back gesture closes it rather than the editor. */
+function useBackCloses(open: boolean, close: () => void): void {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const state = location.state as Record<string, unknown> | null;
+  const held = holdsSheet(state);
+  const latest = useRef({ location, state, held });
+  latest.current = { location, state, held };
+  const pushed = useRef(false);
+
+  useEffect(() => {
+    const { location, state, held } = latest.current;
+    if (open && !held) {
+      navigate(location, { state: { ...state, [SHEET_STATE]: true } });
+      pushed.current = true;
+    } else if (!open && held) {
+      // Only the entry this sheet pushed is popped: one left by a reload or by leaving with the
+      // sheet open is cleared in place, or back would take the reader out of the editor.
+      if (pushed.current) navigate(-1);
+      else navigate(location, { replace: true, state: { ...state, [SHEET_STATE]: undefined } });
+    }
+    if (!open) pushed.current = false;
+  }, [open, navigate]);
+
+  useEffect(() => {
+    if (!held) close();
+  }, [held, close]);
+}

@@ -210,7 +210,8 @@ test('says why an id it cannot open failed', async ({ page }) => {
  */
 test('the frame arrives carrying the illuminant the camera metered', async ({ page }) => {
   await open(page);
-  await expect(page.getByRole('group', { name: 'White balance' }).getByText(/^[\d.]+ K$/)).toBeVisible();
+  await expect(page.getByRole('group', { name: 'White balance' }).getByRole('textbox', { name: 'Temperature value' }))
+    .toHaveValue(/^[\d.]+ K$/);
 });
 
 function undo(page: Page): Locator {

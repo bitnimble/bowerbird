@@ -470,9 +470,10 @@ export async function recordCanvasContexts(page: Page): Promise<() => Promise<st
   };
 }
 
-/** Chooses a proof from the bar's soft proof menu, whichever one it is showing. */
+/** Chooses a proof from the bar's soft proof menu, or from its overflow menu on a phone. */
 export async function softProof(page: Page, proof: string): Promise<void> {
-  await page.getByRole('button', { name: /^Soft proof/ }).click();
+  const button = page.getByRole('button', { name: /^Soft proof/ });
+  await ((await button.count()) > 0 ? button : page.getByRole('button', { name: 'More', exact: true })).click();
   await page.getByRole('menuitem', { name: proof, exact: true }).click();
 }
 

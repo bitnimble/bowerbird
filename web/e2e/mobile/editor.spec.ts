@@ -114,6 +114,8 @@ test('footer panels overlay the photo and isolate a slider throughout a touch dr
   await tabs.getByRole('tab', { name: 'Light', exact: true }).click();
   const slider = panel.getByRole('slider', { name: 'Exposure', exact: true });
   await page.keyboard.press('Tab');
+  await expect(panel.getByRole('textbox', { name: 'Exposure value', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
   await expect(slider).toBeFocused();
   const value = await slider.getAttribute('aria-valuenow');
   const box = await slider.boundingBox();
@@ -181,8 +183,12 @@ for (const { device, viewport, hasTouch, isMobile } of [
   });
 }
 
-test.describe('zoom on a high density phone display', () => {
+test.describe('zoom on a high density phone display with small memory', () => {
   test.use({ deviceScaleFactor: 3 });
+  // Small memory is what sends a phone's open to the server, whose windows this zoom loads.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => Object.defineProperty(Navigator.prototype, 'deviceMemory', { get: () => 4 }));
+  });
 
   for (const { tool, panel, slider } of [
     { tool: 'Cursor', panel: 'Light', slider: 'Exposure' },

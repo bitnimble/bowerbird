@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { preparesOnTheBackend } from '../prepare_choice';
 import type { StoredRecipe } from '../../../../../../src/schemas/recipes';
 
-const A_TAB = { coarsePointer: false } as const;
+const A_TAB = {} as const;
 const FILE: StoredRecipe = { kind: 'file', path: 'a.arw' };
 
 function panorama(canvas: [number, number]): StoredRecipe {
@@ -52,12 +52,8 @@ describe('which device prepares the picture', () => {
     expect(preparesOnTheBackend(FILE, sized(10_000, 12_000), A_TAB)).toBe(true);
   });
 
-  test('a finger is a phone, whatever the picture', () => {
-    expect(preparesOnTheBackend(FILE, sized(6000, 4000), { coarsePointer: true })).toBe(true);
-  });
-
-  test('a small-memory device too, where the browser reports one', () => {
-    expect(preparesOnTheBackend(FILE, sized(6000, 4000), { coarsePointer: false, memoryGb: 4 })).toBe(true);
-    expect(preparesOnTheBackend(FILE, sized(6000, 4000), { coarsePointer: false, memoryGb: 8 })).toBe(false);
+  test('a small-memory device goes to the server, where the browser reports one', () => {
+    expect(preparesOnTheBackend(FILE, sized(6000, 4000), { memoryGb: 4 })).toBe(true);
+    expect(preparesOnTheBackend(FILE, sized(6000, 4000), { memoryGb: 8 })).toBe(false);
   });
 });

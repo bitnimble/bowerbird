@@ -381,8 +381,8 @@ impl HeldRaw {
 /// rather than split by the page, so the one place that knows the layout is the one that states
 /// it.
 ///
-/// There is no mosaic behind this and there cannot be, so the Detail and Dust panels have nothing
-/// to act on: a new amount is a new prepare, which is the caller's to ask for.
+/// The mosaic stayed where the picture was prepared, so a new Detail or dust amount is a new
+/// prepare, which is the caller's to ask for.
 #[wasm_bindgen(js_name = holdPicture)]
 pub async fn hold_picture(framed: &[u8], request: &str) -> Result<HeldRaw, JsValue> {
     needs_webgpu().await?;

@@ -52,7 +52,8 @@ import type { StageStore } from '../../raw_edit/stage/stage_store';
 import { bugReporter } from '../../feedback/report_bug';
 import { ReportBugStrings } from '../../feedback/report_bug_dialog.strings';
 import type { SoftProof } from '../../raw_edit/proof/soft_proof';
-import { SoftProofMenu } from '../../raw_edit/proof/soft_proof_menu';
+import { SoftProofMenu, softProofOptions } from '../../raw_edit/proof/soft_proof_menu';
+import { SoftProofMenuStrings } from '../../raw_edit/proof/soft_proof_menu.strings';
 import { BulkBarStrings } from '../grid/bulk_bar.strings';
 import { isComposite, mergeEditPath, triagePath } from '../photos_store';
 import { renditionLabel } from '../renditions';
@@ -271,7 +272,39 @@ export const DetailNav = observer(function DetailNav({
     }))),
   ];
 
+  const undoRedo: Option<'undo' | 'redo'>[] = [
+    {
+      value: 'undo',
+      label: PhotoDetailStrings.undo(),
+      icon: <Undo2 size={ICON} />,
+      disabled: edit == null || !edit.stage.editable || !edit.edit.canUndo,
+    },
+    {
+      value: 'redo',
+      label: PhotoDetailStrings.redo(),
+      icon: <Redo2 size={ICON} />,
+      disabled: edit == null || !edit.stage.editable || !edit.edit.canRedo,
+    },
+  ];
+
+  // A phone's bar has no width for these beside the tools, so they are the menu's first rows.
+  const crowded = mobile
+    ? [
+        ...(editing
+          ? [
+              menuSection({
+                label: PhotoDetailStrings.sectionEdit(),
+                options: undoRedo,
+                onSelect: (action) => void (action === 'undo' ? edit?.presenter.undo() : edit?.presenter.redo()),
+              }),
+            ]
+          : []),
+        menuSection({ label: SoftProofMenuStrings.softProof(), options: softProofOptions(proof, hdrOffered), onSelect: onProof }),
+      ]
+    : [];
+
   const sections = [
+    ...crowded,
     ...(mobile && !previewing && path !== ''
       ? [
           menuSection({
@@ -447,26 +480,16 @@ export const DetailNav = observer(function DetailNav({
             : tool === 'perspective' ? PhotoDetailStrings.finishPerspective()
             : PhotoDetailStrings.done()}
           </Button>
-          <Button
-            iconOnly={mobile}
-            aria-label={PhotoDetailStrings.undo()}
-            tooltip={PhotoDetailStrings.undo()}
-            disabled={edit == null || !edit.stage.editable || !edit.edit.canUndo}
-            onClick={() => void edit?.presenter.undo()}
-          >
-            <Undo2 size={ICON} />
-            {!mobile && PhotoDetailStrings.undo()}
-          </Button>
-          <Button
-            iconOnly={mobile}
-            aria-label={PhotoDetailStrings.redo()}
-            tooltip={PhotoDetailStrings.redo()}
-            disabled={edit == null || !edit.stage.editable || !edit.edit.canRedo}
-            onClick={() => void edit?.presenter.redo()}
-          >
-            <Redo2 size={ICON} />
-            {!mobile && PhotoDetailStrings.redo()}
-          </Button>
+          {!mobile && undoRedo.map((option) => (
+            <Button
+              key={option.value}
+              disabled={option.disabled}
+              onClick={() => void (option.value === 'undo' ? edit?.presenter.undo() : edit?.presenter.redo())}
+            >
+              {option.icon}
+              {option.label}
+            </Button>
+          ))}
         </>
       ) : (
         <>
@@ -537,7 +560,7 @@ export const DetailNav = observer(function DetailNav({
         </Button>
       )}
 
-      <SoftProofMenu value={proof} hdrOffered={hdrOffered} onChange={onProof} />
+      {!mobile && <SoftProofMenu value={proof} hdrOffered={hdrOffered} onChange={onProof} />}
 
       {stripOpen != null && (
         <Button

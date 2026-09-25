@@ -59,8 +59,7 @@ export class StageStore {
    *
    * **What it closes is the loupe.** A loupe claims to be the export's own pixels, and what a
    * backend open holds is the picture at a level - so the glass would magnify something the export
-   * is not. What closes the Detail and Dust panels is `mosaic`, which a prepare answers false for
-   * the same reason: the mosaic stayed on the other side.
+   * is not. The Detail and Dust panels stay open: a move there asks the server for a new prepare.
    *
    * False before anything is open, so the panel's shape does not flicker on the way in.
    */

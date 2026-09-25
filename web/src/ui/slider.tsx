@@ -119,8 +119,11 @@ const styles = stylex.create({
  * in the control's own units, is a guess about how wide the control will be laid out, and the
  * straighten is where that guess is unforgiving: ±45° across a 298px panel column is 0.3° of
  * angle per pixel of track, so any window under half a degree is one nobody can land in.
+ *
+ * **Wider under a finger**, which covers the anchor it is aiming for and rolls a few pixels as it
+ * lifts: at 3 a touch drag almost never lands.
  */
-const SNAP_PIXELS = 3;
+const SNAP_PIXELS = { mouse: 3, touch: 12 };
 
 export function Slider({
   value,
@@ -227,12 +230,13 @@ export function Slider({
     return () => observer.disconnect();
   }, []);
 
-  const held = (next: number, reason: string): number => {
+  const held = (next: number, { reason, event }: { reason: string; event: Event }): number => {
     if (reason !== 'drag' && reason !== 'track-press') return next;
     // Before the first observation there is no width to be a pixel of, and a snap window of
     // infinity would pin the control to its landmark.
     if (across.current === 0) return next;
-    const within = ((max - min) / across.current) * SNAP_PIXELS;
+    const finger = 'touches' in event || ('pointerType' in event && event.pointerType === 'touch');
+    const within = ((max - min) / across.current) * SNAP_PIXELS[finger ? 'touch' : 'mouse'];
     return snap?.find((at) => Math.abs(next - at) < within) ?? next;
   };
 
@@ -256,10 +260,10 @@ export function Slider({
         onPointerCancel={finishIsolation}
         onLostPointerCapture={finishIsolation}
         onValueChange={(next, details) => {
-          if (typeof next === 'number') onChange(held(next, details.reason));
+          if (typeof next === 'number') onChange(held(next, details));
         }}
         onValueCommitted={(next, details) => {
-          if (typeof next === 'number') onCommit?.(held(next, details.reason));
+          if (typeof next === 'number') onCommit?.(held(next, details));
         }}
       >
         <BaseSlider.Control {...stylex.props(styles.control)} ref={control}>

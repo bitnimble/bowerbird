@@ -90,8 +90,7 @@ export type LocalSource = {
  * The same open, from a picture the server prepared.
  *
  * **No RAW crosses.** That is the point for a composite - ten 61MP frames are 3.6GB before the
- * canvas they compose into - and for a phone, which cannot hold one photograph's samples let alone
- * a set of them.
+ * canvas they compose into - and for a device too small to hold one photograph's samples.
  */
 async function preparedThere(
   photoId: string,

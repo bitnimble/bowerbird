@@ -175,9 +175,9 @@ pub fn prepared(
             strengths: job.strengths(),
             camera_match: job.camera_match,
             matched: matched.is_some(),
-            // The mosaic stayed on this side whatever the picture was made of, so a new Detail
-            // amount is a new prepare rather than a filter the client drags.
-            mosaic: false,
+            // A client moving a Detail or dust setting asks for a new prepare at it, so a RAW's
+            // panels stay open though its mosaic stayed here. A composite's assembly takes no dust.
+            mosaic: job.composite.is_none() && !crate::decode_rendered::is_rendered(&job.raw_file_path),
             as_shot,
             detail: job.detail().resolved(noise_fit),
             noise_fit,

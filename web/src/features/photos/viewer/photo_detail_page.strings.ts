@@ -64,6 +64,7 @@ export const PhotoDetailStrings = {
   showMetadata: () => 'Show metadata',
   more: () => 'More',
 
+  sectionEdit: () => 'Edit',
   sectionView: () => 'View',
   sectionRendition: () => 'Rendition',
   sectionActions: () => 'Actions',

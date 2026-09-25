@@ -26,7 +26,7 @@ const ASPECTS: Option<AspectKey>[] = [
 
 const STRAIGHTEN = { min: -45, max: 45, step: 0.05 };
 
-function StraightenControl({
+const StraightenControl = observer(function StraightenControl({
   edit,
   stage,
   presenter,
@@ -62,7 +62,7 @@ function StraightenControl({
       />
     </EditControl>
   );
-}
+});
 
 /**
  * The straighten, and whether a change of geometry takes the crop with it.

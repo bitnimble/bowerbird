@@ -4,8 +4,9 @@ import { MobileEditPanelsPresenter } from '../mobile_edit_panels_presenter';
 import { MobileEditPanelsStore } from '../mobile_edit_panels_store';
 
 registerDom();
-const { cleanup, fireEvent, render, screen } = await import('@testing-library/react');
-const { MobileEditPanels } = await import('../mobile_edit_panels');
+const { act, cleanup, fireEvent, render: renderBare, screen } = await import('@testing-library/react');
+const { MemoryRouter, useLocation, useNavigate } = await import('react-router-dom');
+const { MobileEditPanels, useReplacePastSheet } = await import('../mobile_edit_panels');
 
 afterEach(cleanup);
 
@@ -13,6 +14,27 @@ const panels = [
   { id: 'light', title: 'Light', content: <input aria-label="Exposure" /> },
   { id: 'color', title: 'Colour', content: <input aria-label="Saturation" /> },
 ];
+
+let back: () => void = () => {};
+
+function Browser(): JSX.Element {
+  const navigate = useNavigate();
+  back = () => act(() => navigate(-1));
+  return <h1>{useLocation().pathname}</h1>;
+}
+
+function render(ui: JSX.Element): ReturnType<typeof renderBare> {
+  return renderBare(ui, {
+    wrapper: ({ children }) => (
+      <MemoryRouter initialEntries={['/grid', '/photo']} initialIndex={1}>
+        {children}
+        <Browser />
+      </MemoryRouter>
+    ),
+  });
+}
+
+const address = (): string | null => screen.getByRole('heading').textContent;
 
 describe('mobile edit panels', () => {
   test('starts collapsed and keeps selected controls mounted while collapsed', () => {
@@ -63,6 +85,59 @@ describe('mobile edit panels', () => {
     expect(screen.queryByRole('tabpanel')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Colour' }));
     expect(screen.getByRole('tabpanel', { name: 'Colour' }).contains(screen.getByRole('textbox', { name: 'Saturation' }))).toBe(true);
+  });
+
+  test('back closes an open panel and stays in the editor', () => {
+    render(<MobileEditPanels scope="photo" panels={panels} />);
+    const light = screen.getByRole('tab', { name: 'Light' });
+    fireEvent.click(light);
+    back();
+    expect(light.getAttribute('aria-expanded')).toBe('false');
+    expect(address()).toBe('/photo');
+    back();
+    expect(address()).toBe('/grid');
+  });
+
+  test('a panel closed by hand leaves no back step behind', () => {
+    render(<MobileEditPanels scope="photo" panels={panels} />);
+    const light = screen.getByRole('tab', { name: 'Light' });
+    fireEvent.click(light);
+    fireEvent.click(screen.getByRole('tab', { name: 'Colour' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close edit panel' }));
+    expect(address()).toBe('/photo');
+    back();
+    expect(address()).toBe('/grid');
+  });
+
+  test('leaving the editor with a panel open leaves no way back into it', () => {
+    function Done(): JSX.Element {
+      const replace = useReplacePastSheet();
+      return <button onClick={() => replace('/viewer')}>Done</button>;
+    }
+    render(
+      <>
+        <MobileEditPanels scope="photo" panels={panels} />
+        <Done />
+      </>,
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'Light' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(address()).toBe('/viewer');
+    back();
+    expect(address()).toBe('/grid');
+  });
+
+  test('a sheet entry left behind by a reload is cleared rather than stepped back through', () => {
+    renderBare(
+      <MemoryRouter initialEntries={['/grid', { pathname: '/photo', state: { editSheet: true } }]} initialIndex={1}>
+        <MobileEditPanels scope="photo" panels={panels} />
+        <Browser />
+      </MemoryRouter>,
+    );
+    expect(address()).toBe('/photo');
+    expect(screen.getByRole('tab', { name: 'Light' }).getAttribute('aria-expanded')).toBe('false');
+    back();
+    expect(address()).toBe('/grid');
   });
 
   test('a new photo or tool resets the footer to collapsed', () => {

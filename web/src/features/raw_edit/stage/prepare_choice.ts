@@ -12,10 +12,9 @@ const PREPARES_HERE_AT_MOST = 10_000 * 10_000;
 /**
  * A device whose memory makes a frame of this size a bad idea whatever its area says.
  *
- * `deviceMemory` is Chromium's and rounded to a power of two, so 4 means "4GB or less" - a phone
- * or a small tablet, where a hundred megapixels of samples plus the pyramid over them is most of
- * what the browser is allowed. Undefined elsewhere, and then the pointer is the signal: a coarse
- * one is a finger, which is a phone or a tablet in every case that matters here.
+ * `deviceMemory` is Chromium's and rounded to a power of two, so 4 means "4GB or less", where a
+ * 61MP open's 0.55GB of tab and 1GB of GPU memory is most of what the browser is allowed. Undefined
+ * elsewhere, and then the tab prepares for itself.
  */
 const SMALL_MEMORY_GB = 4;
 
@@ -28,7 +27,6 @@ declare global {
 
 /** What this build is running on, as far as the question below is concerned. */
 export interface Client {
-  coarsePointer: boolean;
   /** Chromium's, where it reports one. */
   memoryGb?: number;
 }
@@ -48,7 +46,6 @@ export function preparesOnTheBackend(
   // named in it either.
   if (recipe.kind !== 'file') return true;
   if (photo.width * photo.height > PREPARES_HERE_AT_MOST) return true;
-  if (client.coarsePointer) return true;
   if (client.memoryGb != null && client.memoryGb <= SMALL_MEMORY_GB) return true;
   // **The shell is not asked about**, though it could be: a prepare answers one level, and the
   // coarsest level of a 61MP photograph is softer at 100% than the full-sensor open the editor
@@ -57,10 +54,7 @@ export function preparesOnTheBackend(
   return false;
 }
 
-/** What this build is running in, read once: neither answer changes while a photograph is open. */
+/** What this build is running in, read once: the answer does not change while a photograph is open. */
 export function describeClient(): Client {
-  return {
-    coarsePointer: globalThis.matchMedia?.('(pointer: coarse)').matches ?? false,
-    memoryGb: globalThis.navigator?.deviceMemory,
-  };
+  return { memoryGb: globalThis.navigator?.deviceMemory };
 }

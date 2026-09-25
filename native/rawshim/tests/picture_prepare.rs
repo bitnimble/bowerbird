@@ -85,6 +85,7 @@ fn a_rendition_prepared_at_its_stated_white_grades_neutral_to_itself() {
     job.sharpen = 0.0;
     job.defringe = 0.0;
     let measured = rawshim::picture::prepared(&job, 0, None, &[]).expect("the picture prepares");
+    assert!(!measured.header.mosaic, "a finished picture has nothing to denoise");
     job.stated_white = true;
     let stated = rawshim::picture::prepared(&job, 0, None, &[]).expect("the rendition prepares");
     std::fs::remove_file(path).expect("fixture removed");
@@ -119,6 +120,7 @@ fn raw_photo_windows_keep_whole_photo_calibration() {
     let mut job = job(path.to_str().expect("fixture path"));
     let opened = rawshim::picture::prepared(&job, 2, None, &[]).expect("RAW prepares");
     assert!(opened.header.matched, "RAW carries its camera colour match");
+    assert!(opened.header.mosaic, "so a client prepared for keeps its Detail and Dust panels");
     job.photo_analysis = opened.header.photo_analysis;
     let picture = opened.header.picture.expect("whole photograph dimensions");
     let shape = rawshim::composite_job::level_shape(&[picture.0, picture.1], 1);

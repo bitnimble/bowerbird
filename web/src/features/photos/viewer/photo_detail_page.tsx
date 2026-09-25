@@ -23,6 +23,7 @@ import { Panel } from '../../../ui/panel';
 import { Row } from '../../../ui/row';
 import { Text } from '../../../ui/text';
 import { RawEditPanel } from '../../raw_edit/raw_edit_panel';
+import { useReplacePastSheet } from '../../raw_edit/mobile_edit_panels';
 import { CropStore } from '../../raw_edit/crop/crop_store';
 import { EditStore } from '../../raw_edit/edit/edit_store';
 import { KeystoneStore } from '../../raw_edit/keystone/keystone_store';
@@ -208,10 +209,8 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     () => navigate(`${photoPathname}?edit`, { replace: true }),
     [navigate, photoPathname],
   );
-  const stopPreview = useCallback(
-    () => navigate(photoPathname, { replace: true }),
-    [navigate, photoPathname],
-  );
+  const replacePastSheet = useReplacePastSheet();
+  const stopPreview = useCallback(() => replacePastSheet(photoPathname), [replacePastSheet, photoPathname]);
   const showsHdr = store.showsHdr(photoId);
   const proof: SoftProof = session != null ? session.stage.softProof : store.proofOf(photoId);
   const proofAs = (next: SoftProof): void => {
@@ -227,7 +226,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     photos.chooseProof(next === 'hdr' ? 'hdr' : 'srgb');
     // The operator is the one thing an sRGB proof of an HDR frame asks, and it is in the panels.
     if (next === 'srgb' && showsHdr && !panelsOpen && !mobile) togglePanels();
-    if (mode === 'print') navigate(photoPathname, { replace: true });
+    if (mode === 'print') stopPreview();
   };
 
   function togglePanels(): void {

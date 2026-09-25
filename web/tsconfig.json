@@ -19,14 +19,17 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     // Matches the Vite alias: the package is consumed as source in this repo, since its
     // published `dist` is a build artefact nothing here is required to have made.
     "paths": {
-      "avif-hdr-video": ["../packages/avif-hdr-video/src/index.ts"]
+      "avif-hdr-video": ["../packages/avif-hdr-video/src/index.ts"],
+      // The dev server's own URLs, which e2e specs import inside `page.evaluate`.
+      "/src/*": ["./src/*"]
     },
     // Standard (TC39) decorators, not experimentalDecorators: MobX 6.11+ wires
     // `@observable accessor x` up on its own, so no makeObservable call is needed.
     "useDefineForClassFields": true
   },
-  "include": ["src"]
+  "include": ["src", "e2e"]
 }
