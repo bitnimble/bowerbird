@@ -24,7 +24,7 @@ import { List, ListBody, ListName, ListRow, listStyles } from '../../ui/list';
 import { menuSection } from '../../ui/menu_section';
 import { MetaList, MetaTerm, MetaValue } from '../../ui/meta_list';
 import { OverflowMenu } from '../../ui/overflow_menu';
-import { Page, PageLead } from '../../ui/page';
+import { Page, PageHead } from '../../ui/page';
 import { PopoverButton } from '../../ui/popover_button';
 import { ProgressBar } from '../../ui/progress_bar';
 import { Text } from '../../ui/text';
@@ -150,10 +150,9 @@ export const ExportsPage = observer(function ExportsPage(): JSX.Element {
 
   return (
     <Page>
-      <Heading>
-        <PageLead />
-        {ExportsPageStrings.exports()}
-      </Heading>
+      <PageHead withSidebarButton>
+        <Heading>{ExportsPageStrings.exports()}</Heading>
+      </PageHead>
 
       {/* Headed only against each other: with nothing queued the history is the page, and a
           lone "History" under the page's own title names it twice. */}

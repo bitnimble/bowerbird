@@ -28,7 +28,7 @@ import { relativeTime } from '../../ui/format';
 import { Heading } from '../../ui/heading';
 import { ICON } from '../../ui/icon';
 import type { Option } from '../../ui/option';
-import { Page, PageHead, PageLead } from '../../ui/page';
+import { Page, PageHead } from '../../ui/page';
 import { Panel } from '../../ui/panel';
 import { Spacer } from '../../ui/row';
 import { Select } from '../../ui/select';
@@ -527,10 +527,9 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
 
   return (
     <Page>
-      <Heading>
-        <PageLead />
-        {SettingsStrings.settings()}
-      </Heading>
+      <PageHead withSidebarButton>
+        <Heading>{SettingsStrings.settings()}</Heading>
+      </PageHead>
 
       <div {...stylex.props(styles.tabs)}>
         <SegmentedControl

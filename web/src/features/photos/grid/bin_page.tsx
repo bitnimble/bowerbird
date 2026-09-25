@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { usePresenters } from '../../../app/stores_context';
 import { Heading } from '../../../ui/heading';
-import { Page, PageLead } from '../../../ui/page';
+import { Page, PageHead } from '../../../ui/page';
 import { BinPageStrings } from './bin_page.strings';
 import { BulkBar } from './bulk_bar';
 import { GridControls } from './grid_controls';
@@ -18,10 +18,9 @@ export const BinPage = observer(function BinPage(): JSX.Element {
 
   return (
     <Page fill>
-      <Heading>
-        <PageLead />
-        {BinPageStrings.bin()}
-      </Heading>
+      <PageHead withSidebarButton>
+        <Heading>{BinPageStrings.bin()}</Heading>
+      </PageHead>
 
       <GridControls />
       <BulkBar />

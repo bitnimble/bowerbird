@@ -25,7 +25,7 @@ export const LibraryPhotosPage = observer(function LibraryPhotosPage(): JSX.Elem
 
   return (
     <Page fill>
-      <GridControls lead />
+      <GridControls withSidebarButton />
       <BulkBar />
       <PhotoGrid emptyHint={LibraryPhotosPageStrings.emptyHint()} />
     </Page>

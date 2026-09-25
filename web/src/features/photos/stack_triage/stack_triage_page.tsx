@@ -11,7 +11,7 @@ import {
 } from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
 import { EmptyState } from '../../../ui/empty_state';
-import { Page, PageLead } from '../../../ui/page';
+import { Page, PageHead } from '../../../ui/page';
 import { Text } from '../../../ui/text';
 import { photoPath, sourceOfPath } from '../photos_store';
 import { pairKey } from './stack_triage';
@@ -128,10 +128,9 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   if (store.status === 'loading') {
     return (
       <Page>
-        <Text variant="muted">
-          <PageLead />
-          {StackTriageStrings.loadingTheStack()}
-        </Text>
+        <PageHead withSidebarButton>
+          <Text variant="muted">{StackTriageStrings.loadingTheStack()}</Text>
+        </PageHead>
       </Page>
     );
   }
@@ -139,6 +138,7 @@ export const StackTriagePage = observer(function StackTriagePage(): JSX.Element 
   if (store.status === 'error' || store.status === 'too-few') {
     return (
       <Page>
+        <PageHead withSidebarButton />
         <EmptyState
           title={store.status === 'error' ? StackTriageStrings.couldNotOpenTheStack() : StackTriageStrings.nothingToCompare()}
         >

@@ -18,7 +18,7 @@ import { useIsMobile, useIsTouch } from '../../../app/device';
 import { Button } from '../../../ui/button';
 import { EmptyState } from '../../../ui/empty_state';
 import { ICON } from '../../../ui/icon';
-import { Page } from '../../../ui/page';
+import { Page, PageHead } from '../../../ui/page';
 import { Panel } from '../../../ui/panel';
 import { Row } from '../../../ui/row';
 import { Text } from '../../../ui/text';
@@ -256,6 +256,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   if (open?.id === photoId && open.status === 'missing' && !previewing) {
     return (
       <Page>
+        <PageHead withSidebarButton />
         <EmptyState title={PhotoDetailStrings.photoUnavailable()}>
           <Text as="p" variant="muted">
             {open.error}

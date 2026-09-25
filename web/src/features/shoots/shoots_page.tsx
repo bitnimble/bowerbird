@@ -148,7 +148,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
 
   return (
     <Page fill>
-      <PageHead lead>
+      <PageHead withSidebarButton>
         <Heading>{ShootsPageStrings.shoots()}</Heading>
         <Spacer />
         <SegmentedControl

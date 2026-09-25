@@ -2,7 +2,6 @@ import * as stylex from '@stylexjs/stylex';
 import { useState } from 'react';
 import { focusRing } from './focus_ring';
 import { Heading } from './heading';
-import { PageLead } from './page';
 import { Text } from './text';
 import { TextField } from './text_field';
 import { color, size } from './tokens.stylex';
@@ -30,7 +29,6 @@ export function EditableHeading({
   refusal,
   validate,
   onRename,
-  lead = false,
 }: {
   value: string;
   /** What renaming this is called: the field has no visible label, and the button hints with it. */
@@ -41,15 +39,12 @@ export function EditableHeading({
   /** Why `draft` cannot be saved, or null. An empty or unchanged draft is refused here already. */
   validate?: (draft: string) => string | null;
   onRename: (name: string) => void;
-  /** The page's first row, which leaves room for the sidebar's show button. */
-  lead?: boolean;
 }): JSX.Element {
   const [draft, setDraft] = useState<string | null>(null);
 
   if (draft == null || !editable) {
     return (
       <Heading>
-        {lead && <PageLead />}
         {editable ?
           // Named by its text rather than by what it does: a heading takes its own
           // name from its content, so an aria-label here would leave a reader
@@ -80,7 +75,6 @@ export function EditableHeading({
 
   return (
     <Heading>
-      {lead && <PageLead />}
       <TextField
         grow
         autoFocus

@@ -38,7 +38,7 @@ export const ShootPhotosPage = observer(function ShootPhotosPage(): JSX.Element 
 
   return (
     <Page fill>
-      <PageHead lead>
+      <PageHead withSidebarButton>
         {shoot != null && (
           // A link rather than history: a deep link arrives here with nothing to go
           // back to, and a shoot names the library whose list it belongs to.

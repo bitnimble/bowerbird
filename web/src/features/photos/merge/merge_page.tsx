@@ -8,7 +8,7 @@ import { MOST_FEATHER } from '../../../../../src/schemas/assembly';
 import { Button } from '../../../ui/button';
 import { EmptyState } from '../../../ui/empty_state';
 import { ICON } from '../../../ui/icon';
-import { Page, PageLead } from '../../../ui/page';
+import { Page, PageHead, ShowSidebarButton } from '../../../ui/page';
 import { Row, Spacer } from '../../../ui/row';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
@@ -34,7 +34,7 @@ const NON_SCALING = 'non-scaling-stroke';
 
 const styles = stylex.create({
   status: {
-    height: '100%',
+    flexGrow: 1,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -187,17 +187,21 @@ export const MergePage = observer(function MergePage(): JSX.Element {
 
   if (store.status === 'loading' || store.status === 'analysing') {
     return (
-      <div {...stylex.props(styles.status)}>
-        <Spinner />
-        <Text variant="muted">{MergePageStrings.analysing(store.progress)}</Text>
-        <Button onClick={presenter.cancel}>{MergePageStrings.cancel()}</Button>
-      </div>
+      <Page fill>
+        <PageHead withSidebarButton />
+        <div {...stylex.props(styles.status)}>
+          <Spinner />
+          <Text variant="muted">{MergePageStrings.analysing(store.progress)}</Text>
+          <Button onClick={presenter.cancel}>{MergePageStrings.cancel()}</Button>
+        </div>
+      </Page>
     );
   }
 
   if (store.status === 'error') {
     return (
       <Page>
+        <PageHead withSidebarButton />
         <EmptyState>
           <Text as="p" variant="muted">
             {store.loadError ?? MergePageStrings.couldNotAnalyse()}
@@ -274,7 +278,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
       {/* The editor's bar, in the editor's order: the way out and the way to keep it first, then
           the history, then whatever this page has of its own. */}
       <Row style={styles.nav}>
-        <PageLead />
+        <ShowSidebarButton />
         <Button onClick={cancel}>{MergePageStrings.cancel()}</Button>
         <Button variant="primary" disabled={committing || store.readOnly} onClick={() => void save()}>
           {MergePageStrings.save()}

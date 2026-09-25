@@ -39,7 +39,7 @@ import { menuSection } from '../../../ui/menu_section';
 import { menuStyles } from '../../../ui/menu_styles';
 import type { Option } from '../../../ui/option';
 import { OverflowMenu } from '../../../ui/overflow_menu';
-import { PageLead } from '../../../ui/page';
+import { ShowSidebarButton } from '../../../ui/page';
 import { Row, Spacer } from '../../../ui/row';
 import { Text } from '../../../ui/text';
 import { SendToFrameTv } from '../../frame_tv/send_to_frame_tv';
@@ -454,7 +454,7 @@ export const DetailNav = observer(function DetailNav({
 
   return (
     <Row style={[styles.nav, editing && styles.navEditing]} role="group" aria-label={PhotoDetailStrings.controls()}>
-      <PageLead />
+      <ShowSidebarButton />
       {/* The way out and the way back through the grade take the same corner: leaving is
           what the reader reaches for in either mode, and stepping to another photograph
           mid-edit is not something to leave one press away. */}
@@ -546,7 +546,7 @@ export const DetailNav = observer(function DetailNav({
       {/* Judging lives in the bar so it survives hiding the metadata column: a cull
           with the panels away is the common case, and the verdict has to stay under
           the same fingers that step between frames. */}
-      {!mobile && !previewing && <PhotoTriage photoId={photoId} compact />}
+      {!mobile && !previewing && <PhotoTriage photoId={photoId} />}
 
       {stackPath != null && (
         <Button

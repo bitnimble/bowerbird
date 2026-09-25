@@ -4,7 +4,7 @@ import { PathSegment, route } from '../../../../src/schemas/route';
 import { displayIsHdr } from '../../app/device';
 import { focusRing } from '../../ui/focus_ring';
 import { Heading } from '../../ui/heading';
-import { Page, PageLead } from '../../ui/page';
+import { Page, PageHead } from '../../ui/page';
 import { Text } from '../../ui/text';
 import { color, font, size } from '../../ui/tokens.stylex';
 import { useHdrVideo } from '../photos/viewer/hdr_video';
@@ -18,8 +18,8 @@ const SPLIT = '@media (min-width: 1400px)';
 const styles = stylex.create({
   at: (left: string) => ({ left }),
 
-  // Left-aligned, not centred: `PageLead` reserves a control-wide gap before the heading only,
-  // and a centred column would indent the heading against the paragraph under it.
+  // Left-aligned, not centred: the sidebar button sits before the heading only, and a centred
+  // column would indent the heading against the paragraph under it.
   page: {
     maxWidth: '1480px',
     paddingBottom: '40px',
@@ -532,14 +532,10 @@ export function HdrPage(): JSX.Element {
   const high = displayIsHdr();
 
   return (
-    // The page itself carries the prose styles rather than a wrapper inside it: the collapsed
-    // sidebar's expand button floats over the page's first row, and only a heading there leaves
-    // room for it.
     <Page style={styles.page}>
-      <Heading level={1}>
-        <PageLead />
-        {HdrPageStrings.title()}
-      </Heading>
+      <PageHead withSidebarButton>
+        <Heading level={1}>{HdrPageStrings.title()}</Heading>
+      </PageHead>
 
       <div {...stylex.props(styles.text)}>
         <Text variant="muted" as="p" style={styles.p}>

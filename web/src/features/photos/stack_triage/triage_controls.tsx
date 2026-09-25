@@ -5,7 +5,7 @@ import { AppStrings } from '../../../app/app.strings';
 import { usePresenters, useStackTriageStore } from '../../../app/stores_context';
 import { Button, ButtonHint } from '../../../ui/button';
 import { ICON } from '../../../ui/icon';
-import { PageLead } from '../../../ui/page';
+import { ShowSidebarButton } from '../../../ui/page';
 import { Row } from '../../../ui/row';
 import { SegmentedControl } from '../../../ui/segmented_control';
 import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
@@ -113,7 +113,7 @@ export const Header = observer(function Header({ onLeave, ready }: { onLeave: ()
 
   return (
     <Row style={styles.bar}>
-      <PageLead />
+      <ShowSidebarButton />
       <Row style={styles.barEnd}>
         <Button onClick={onLeave}>
           <ArrowLeft size={ICON} />

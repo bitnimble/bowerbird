@@ -14,7 +14,7 @@ import { useIsMobile } from '../../../app/device';
 import { useListingStore, usePresenters } from '../../../app/stores_context';
 import { ICON } from '../../../ui/icon';
 import type { Option } from '../../../ui/option';
-import { PageLead } from '../../../ui/page';
+import { ShowSidebarButton } from '../../../ui/page';
 import { Row } from '../../../ui/row';
 import { SegmentedControl } from '../../../ui/segmented_control';
 import { Select } from '../../../ui/select';
@@ -74,10 +74,9 @@ function activeView(filters: PhotoFilters): ViewKey | null {
 }
 
 export const GridControls = observer(function GridControls({
-  lead = false,
+  withSidebarButton = false,
 }: {
-  /** The page's first row, which leaves room for the sidebar's show button. */
-  lead?: boolean;
+  withSidebarButton?: boolean;
 }): JSX.Element {
   const store = useListingStore();
   const { photos } = usePresenters();
@@ -85,7 +84,7 @@ export const GridControls = observer(function GridControls({
 
   return (
     <Row style={styles.controls}>
-      {lead && <PageLead />}
+      {withSidebarButton && <ShowSidebarButton />}
       {/* A phone gets the two a cull is actually made from. The other three are a
           press further into the panel beside them, which is where the reader who
           wants Rejects on a phone already is. */}

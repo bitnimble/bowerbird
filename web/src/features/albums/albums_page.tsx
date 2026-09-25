@@ -54,7 +54,7 @@ export const AlbumsPage = observer(function AlbumsPage(): JSX.Element {
 
   return (
     <Page fill>
-      <PageHead lead>
+      <PageHead withSidebarButton>
         <Heading>{AlbumsPageStrings.albums()}</Heading>
         <Spacer />
         <Button variant="primary" onClick={() => setCreating(true)}>

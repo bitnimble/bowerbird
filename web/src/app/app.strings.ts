@@ -8,7 +8,6 @@ export const AppStrings = {
   brand: () => 'Bowerbird',
   sidebar: () => 'Sidebar',
   hideSidebar: () => 'Hide sidebar',
-  showSidebar: () => 'Show sidebar',
   resizeSidebar: () => 'Resize sidebar',
   /** A sidebar row read aloud: its name, and how many photographs are behind it. */
   rowHolding: (name: string, photoCount: number) => `${name}, ${photoCount} ${photoCount === 1 ? 'photo' : 'photos'}`,

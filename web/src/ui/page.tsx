@@ -1,6 +1,10 @@
 import * as stylex from '@stylexjs/stylex';
+import { PanelLeftOpen } from 'lucide-react';
 import { createContext, useContext, type ReactNode } from 'react';
+import { Button } from './button';
 import { HeadingInRow } from './heading';
+import { ICON } from './icon';
+import { PageStrings } from './page.strings';
 import { Row } from './row';
 import { size } from './tokens.stylex';
 
@@ -19,17 +23,13 @@ const styles = stylex.create({
     // of window no photograph can reach.
     paddingBottom: 0,
   },
-  lead: {
-    display: 'inline-block',
-    width: `calc(${size.controlH} + 8px)`,
-  },
   head: {
     marginBottom: '8px',
   },
 });
 
-/** True while the sidebar's show button floats over the top-left corner of the page. */
-export const PageLeadRoom = createContext(false);
+/** Shows the sidebar, or null while it is already shown. */
+export const ShowSidebar = createContext<(() => void) | null>(null);
 
 export function Page({
   fill = false,
@@ -44,19 +44,28 @@ export function Page({
   return <div {...stylex.props(styles.page, fill && styles.fill, style)}>{children}</div>;
 }
 
-/**
- * Room for the sidebar's show button, as the first item of a page's first row: padding on the
- * page would keep a button-wide gutter beside everything under it too.
- */
-export function PageLead(): JSX.Element | null {
-  return useContext(PageLeadRoom) ? <span {...stylex.props(styles.lead)} aria-hidden="true" /> : null;
+/** The first item of a page's first row. */
+export function ShowSidebarButton(): JSX.Element | null {
+  const show = useContext(ShowSidebar);
+  if (show == null) return null;
+  return (
+    <Button iconOnly aria-label={PageStrings.showSidebar()} aria-expanded={false} onClick={show}>
+      <PanelLeftOpen size={ICON} />
+    </Button>
+  );
 }
 
 /** A page's title with the actions that belong to it on the same line. */
-export function PageHead({ lead = false, children }: { lead?: boolean; children: ReactNode }): JSX.Element {
+export function PageHead({
+  withSidebarButton = false,
+  children,
+}: {
+  withSidebarButton?: boolean;
+  children?: ReactNode;
+}): JSX.Element {
   return (
     <Row style={styles.head}>
-      {lead && <PageLead />}
+      {withSidebarButton && <ShowSidebarButton />}
       <HeadingInRow.Provider value>{children}</HeadingInRow.Provider>
     </Row>
   );

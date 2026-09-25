@@ -9,7 +9,7 @@ import { EmptyState } from '../../ui/empty_state';
 import { relativeTime } from '../../ui/format';
 import { Heading } from '../../ui/heading';
 import { List, ListBody, ListMeta, ListRow } from '../../ui/list';
-import { Page, PageLead } from '../../ui/page';
+import { Page, PageHead } from '../../ui/page';
 import { Text } from '../../ui/text';
 import { color } from '../../ui/tokens.stylex';
 import { ConflictsPageStrings } from './conflicts_page.strings';
@@ -58,10 +58,9 @@ export const ConflictsPage = observer(function ConflictsPage(): JSX.Element {
 
   return (
     <Page>
-      <Heading>
-        <PageLead />
-        {ConflictsPageStrings.heading()}
-      </Heading>
+      <PageHead withSidebarButton>
+        <Heading>{ConflictsPageStrings.heading()}</Heading>
+      </PageHead>
 
       {photos.length === 0 ? (
         <EmptyState title={ConflictsPageStrings.nothingToDecide()}>

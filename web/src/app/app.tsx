@@ -16,7 +16,6 @@ import {
   Layers,
   Library,
   PanelLeftClose,
-  PanelLeftOpen,
   PencilOff,
   Settings,
   Sun,
@@ -61,7 +60,7 @@ import { ICON } from '../ui/icon';
 import { Tooltip } from '../ui/tooltip';
 import { MetaList, MetaTerm, MetaValue } from '../ui/meta_list';
 import { Modal } from '../ui/modal';
-import { PageLeadRoom } from '../ui/page';
+import { ShowSidebar } from '../ui/page';
 import { ProgressBar } from '../ui/progress_bar';
 import { Text } from '../ui/text';
 import { color, derivedSize, font, size } from '../ui/tokens.stylex';
@@ -106,12 +105,6 @@ const styles = stylex.create({
   }),
   collapsed: {
     gridTemplateColumns: '1fr',
-  },
-  toggle: {
-    position: 'absolute',
-    left: size.padX,
-    top: '12px',
-    zIndex: 20,
   },
   scrim: {
     position: 'fixed',
@@ -932,19 +925,6 @@ export const App = observer(function App(): JSX.Element {
       )}
       {sidebarOpen && !mobile && !touch && <SidebarResizer />}
       <div {...stylex.props(styles.main)}>
-        {/* Only the expand button floats over the content; collapsing is done
-            from inside the sidebar, where there is a row to put it in. */}
-        {!sidebarOpen && (
-          <Button
-            style={styles.toggle}
-            iconOnly
-            aria-label={AppStrings.showSidebar()}
-            aria-expanded={false}
-            onClick={toggleSidebar}
-          >
-            <PanelLeftOpen size={ICON} />
-          </Button>
-        )}
         <Toasts />
         {/* Mounted at the root rather than beside the menu that opens it: the bulk bar's
             export is the same dialog over a selection, on a different screen. */}
@@ -955,7 +935,7 @@ export const App = observer(function App(): JSX.Element {
             a photograph, and the form is the same form either way. */}
         <ReportBugDialog />
         <main {...stylex.props(styles.content)}>
-          <PageLeadRoom.Provider value={!sidebarOpen}>
+          <ShowSidebar.Provider value={sidebarOpen ? null : toggleSidebar}>
             <Routes>
               <Route path={route()} element={<Home />} />
               <Route path={route(PathSegment.settings(), PathSegment.optionalParam('tab'))} element={<SettingsPage />} />
@@ -996,7 +976,7 @@ export const App = observer(function App(): JSX.Element {
               <Route path={MERGE_ROUTE} element={<MergePage />} />
               <Route path={MERGE_EDIT_ROUTE} element={<MergePage />} />
             </Routes>
-          </PageLeadRoom.Provider>
+          </ShowSidebar.Provider>
         </main>
       </div>
     </div>

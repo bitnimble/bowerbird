@@ -189,6 +189,14 @@ test('swiping the frame steps to the next photo and back', async ({ page }) => {
   await expect(shownFrame(page)).toHaveCSS('cursor', 'zoom-in');
 });
 
+test('the viewer opens the sidebar from the button in its bar', async ({ page }) => {
+  await openFirstPhoto(page);
+  await expect(drawer(page)).not.toBeVisible();
+
+  await photoControls(page).getByRole('button', { name: 'Show sidebar' }).tap();
+  await expect(drawer(page)).toBeVisible();
+});
+
 // The system back gesture is history.back, so a run of swipes would otherwise be
 // a run of presses to get out of. Two photographs is enough to ask it: with an
 // entry per swipe, Back lands on the first one rather than on the grid.

@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { usePresenters } from '../../app/stores_context';
 import { Heading } from '../../ui/heading';
-import { Page, PageLead } from '../../ui/page';
+import { Page, PageHead } from '../../ui/page';
 import { BulkBar } from '../photos/grid/bulk_bar';
 import { GridControls } from '../photos/grid/grid_controls';
 import { PhotoGrid } from '../photos/grid/photo_grid';
@@ -19,10 +19,9 @@ export const NoShootPhotosPage = observer(function NoShootPhotosPage(): JSX.Elem
 
   return (
     <Page fill>
-      <Heading>
-        <PageLead />
-        {NoShootPhotosStrings.notInAnyShoot()}
-      </Heading>
+      <PageHead withSidebarButton>
+        <Heading>{NoShootPhotosStrings.notInAnyShoot()}</Heading>
+      </PageHead>
 
       <GridControls />
       <BulkBar />
