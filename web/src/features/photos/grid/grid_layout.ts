@@ -117,6 +117,24 @@ export function tileWidthForColumns(width: number, columns: number): number {
   return (width + GRID_GAP) / columns - GRID_GAP - 1e-6;
 }
 
+export const ZOOM_STEPS = 100;
+
+/**
+ * The column count at a position on the zoom track, from `maxColumns` at 0 to 1 at `ZOOM_STEPS`.
+ *
+ * Even in the logarithm, so every stretch of track scales the tile by the same factor: even in
+ * columns, the dozens of small tiles would take most of the track and the few large ones its end.
+ */
+export function columnsAtZoom(zoom: number, maxColumns: number): number {
+  const columns = Math.round(maxColumns ** (1 - zoom / ZOOM_STEPS));
+  return Math.min(maxColumns, Math.max(1, columns));
+}
+
+/** Where on the zoom track a column count sits, inverting `columnsAtZoom`. */
+export function zoomOfColumns(columns: number, maxColumns: number): number {
+  return Math.round(ZOOM_STEPS * (1 - Math.log(columns) / Math.log(maxColumns)));
+}
+
 /** Row pitch: the cell's own height plus the gap beneath it. */
 export function gridRowHeight(width: number, columns: number): number {
   if (width <= 0) return LIST_ROW_H + GRID_GAP;

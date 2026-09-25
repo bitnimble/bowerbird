@@ -548,6 +548,12 @@ export class PhotosPresenter {
     this.listingPresenter.setZoom(zoom);
   }
 
+  // Laid out once the drag rests: every step re-packs and re-measures the mounted grid.
+  @action.bound
+  dragZoom(zoom: number): void {
+    this.listingPresenter.dragZoom(zoom);
+  }
+
   @action.bound
   setMode(mode: ViewMode): void {
     this.listingPresenter.setMode(mode);

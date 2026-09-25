@@ -4,6 +4,8 @@ export const gridVars = stylex.defineVars({
   /** An open stack's colour, worn by its tile and its band. */
   band: '#9d7ce8',
   rowH: '160px',
+  /** How wide a square photograph is laid out in masonry, before its line stretches it. */
+  tile: '240px',
   /** How far along the strip one of its cells runs. */
   cell: '150px',
   spine: '20px',

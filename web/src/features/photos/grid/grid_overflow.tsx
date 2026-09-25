@@ -11,6 +11,7 @@ import { SegmentedControl } from '../../../ui/segmented_control';
 import { Slider } from '../../../ui/slider';
 import type { ViewMode } from '../photos_store';
 import { GridControlsStrings } from './grid_controls.strings';
+import { ZOOM_STEPS } from './grid_layout';
 import { styles } from './grid_controls.stylex';
 import { onScreenSpan } from './photo_grid';
 
@@ -64,11 +65,12 @@ export const GridOverflow = observer(function GridOverflow(): JSX.Element {
             />
             <Slider
               label={GridControlsStrings.thumbnailSize()}
-              min={1}
-              max={listing.maxZoom}
+              min={0}
+              max={ZOOM_STEPS}
               step={1}
-              value={listing.zoom}
-              onChange={photos.setZoom}
+              value={listing.zoomDraft ?? listing.zoom}
+              onChange={photos.dragZoom}
+              onCommit={photos.setZoom}
               focusable={false}
               style={styles.panelSlider}
             />

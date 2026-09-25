@@ -6,7 +6,7 @@ import { type PhotoListParams, photosApi } from '../../../api/photos';
 import { shootsApi } from '../../../api/shoots';
 import type { ScrollRailPresenter } from './scroll_rail_presenter';
 import type { ListingStore } from './listing_store';
-import { BLOCK, tileWidthForColumns } from './grid_layout';
+import { BLOCK, columnsAtZoom, tileWidthForColumns } from './grid_layout';
 import { openingFilters, type ModelPair, type PhotoDay, type PhotoFilters } from './photo_filters';
 import type { PhotoSource, ViewMode } from '../photos_store';
 import { type IndexSample, SelectionRanges } from '../selection';
@@ -26,6 +26,8 @@ function message(error: unknown): string {
 // is far more than any viewport plus its overscan can hold, and small enough
 // that the whole cache is a few megabytes whatever the library's size.
 export const MAX_BLOCKS = 24;
+
+export const ZOOM_SETTLE_MS = 150;
 
 export class ListingPresenter {
   // Which blocks of the collection this client holds, and the request still out
@@ -52,6 +54,7 @@ export class ListingPresenter {
   // (`refresh`).
   private queuedRefresh: Promise<void> | null = null;
   private queuedRefreshActivity: RequestActivity = 'background';
+  private zoomSettle: ReturnType<typeof setTimeout> | undefined;
   // The photo the run in hand was asked for. Observable, because the reaction
   // above compares against it.
   @observable accessor neighboursFor: string | null = null;
@@ -119,11 +122,27 @@ export class ListingPresenter {
   }
 
   @action.bound
+  dragZoom(zoom: number): void {
+    this.listing.zoomDraft = zoom;
+    clearTimeout(this.zoomSettle);
+    this.zoomSettle = setTimeout(() => this.layOutZoom(zoom), ZOOM_SETTLE_MS);
+  }
+
+  @action.bound
   setZoom(zoom: number): void {
-    const columns = this.listing.maxZoom + 1 - zoom;
-    this.listing.tileSize = tileWidthForColumns(this.listing.viewportWidth, columns);
-    this.forgetMasonryLayout(); // a different zoom is a different masonry layout
+    clearTimeout(this.zoomSettle);
+    this.listing.zoomDraft = null;
+    this.layOutZoom(zoom);
     this.remember();
+  }
+
+  @action.bound
+  private layOutZoom(zoom: number): void {
+    const columns = columnsAtZoom(zoom, this.listing.maxColumns);
+    const tileSize = tileWidthForColumns(this.listing.viewportWidth, columns);
+    if (tileSize === this.listing.tileSize) return;
+    this.listing.tileSize = tileSize;
+    this.forgetMasonryLayout(); // a different zoom is a different masonry layout
   }
 
   @action.bound

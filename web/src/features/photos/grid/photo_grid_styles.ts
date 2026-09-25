@@ -199,6 +199,7 @@ export const cells = stylex.create({
   },
   columns: (columns: number) => ({ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }),
   rows: (height: number) => ({ [gridVars.rowH]: `${height}px` }),
+  tileWidth: (width: number) => ({ [gridVars.tile]: `${width}px` }),
   down: (top: number) => ({ transform: `translateY(${top}px)` }),
   along: (along: 'x' | 'y', at: number) => ({
     transform: along === 'x' ? `translateX(${at}px)` : `translateY(${at}px)`,
@@ -361,12 +362,13 @@ export const tile = stylex.create({
   },
   // content-box, so the shape is the photograph's: on the cell's box the pad comes off both
   // sides and the backdrop shows as a hairline down two edges.
-  masonry: (aspect: number, tileSize: number) => ({
+  // Off the block's variable, so a zoom restyles the block and re-renders none of its tiles.
+  masonry: (aspect: number) => ({
     boxSizing: 'content-box',
     aspectRatio: aspect,
     flexGrow: aspect,
     flexShrink: 1,
-    flexBasis: `${aspect * tileSize}px`,
+    flexBasis: `calc(${aspect} * ${gridVars.tile})`,
   }),
   capped: (aspect: number) => ({ maxWidth: `calc(${gridVars.bandCap} * ${aspect})` }),
   waiting: {

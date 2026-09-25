@@ -14,6 +14,7 @@ import {
   gridColumns,
   gridRowHeight,
   visibleBlocks,
+  zoomOfColumns,
 } from './grid_layout';
 import { activeFilters, dayDensities, distinctSorted, reachableModels, type ModelPair, type PhotoDay, type PhotoFilters } from './photo_filters';
 import { ScrollRailStore } from './scroll_rail_store';
@@ -219,16 +220,19 @@ export class ListingStore {
     return this.mode === 'list' ? 1 : gridColumns(this.viewportWidth, this.tileSize);
   }
 
-  /** The zoom as the slider offers it: 1 is as many tiles as the window holds, `maxZoom` one across. */
-  @computed get maxZoom(): number {
-    // Two, not one: a slider whose ends meet divides by zero working out where its thumb goes,
+  @computed get maxColumns(): number {
+    // Two, not one: a zoom track whose ends meet divides by zero working out where its thumb goes,
     // and the width is 0 until the scroller has been observed once.
     return Math.max(2, gridColumns(this.viewportWidth, MIN_TILE));
   }
 
+  /** The zoom as the slider offers it (`columnsAtZoom`): 0 is as many tiles as the window holds. */
   @computed get zoom(): number {
-    return this.maxZoom + 1 - Math.min(this.maxZoom, gridColumns(this.viewportWidth, this.tileSize));
+    return zoomOfColumns(Math.min(this.maxColumns, gridColumns(this.viewportWidth, this.tileSize)), this.maxColumns);
   }
+
+  /** Where the slider's thumb is while a drag has not yet been laid out. */
+  @observable accessor zoomDraft: number | null = null;
 
   // Whether a tile has the width to draw the rating and the verdict in its foot. A list row
   // is the width of the grid whatever the zoom, so only a tile can run out of it.

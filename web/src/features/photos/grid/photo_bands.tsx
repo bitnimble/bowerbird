@@ -69,7 +69,7 @@ export function tilesFor(
         <div
           key={index}
           {...stylex.props(
-            cellStyle(layout, TILE_ASPECT, listing.tileSize),
+            cellStyle(layout, TILE_ASPECT),
             tile.waiting,
             ringStyle(marks.selection.has(index), false, false, false),
           )}
@@ -284,7 +284,13 @@ export const MasonryBlock = observer(function MasonryBlock({
   return (
     <div
       ref={ref}
-      {...stylex.props(sectionStyle('masonry', store.columns), cells.block, !last && cells.continues, cells.top(top))}
+      {...stylex.props(
+        sectionStyle('masonry', store.columns),
+        cells.block,
+        !last && cells.continues,
+        cells.top(top),
+        cells.tileWidth(store.tileSize),
+      )}
       role="presentation"
     >
       {tilesFor(store, marks, stacks, from, end, 'masonry', last)}

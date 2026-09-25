@@ -86,19 +86,6 @@ export const PhotoTile = observer(function PhotoTile({
   const inStrip = useContext(InStrip);
   const layout = layoutOf(listing.mode, inStrip);
   const frame = useRef<HTMLDivElement>(null);
-  // Masonry packs its lines from each photo's own shape, so the store can only
-  // scroll the cursor's *block* into view (`focusContentTop`) - and a block is a
-  // hundred photos, so the cursor spent most of a cull off screen with the
-  // verdict keys still acting on it. The tile is the only thing that knows where
-  // the packing put it.
-  //
-  // On the two inputs that packing is a function of as well as on the cursor: a
-  // zoom or a resize moves the tile without moving the cursor, and the block it
-  // is in stays visible, so nothing upstream reports anything to correct.
-  useEffect(() => {
-    if (!isFocused || listing.mode !== 'masonry' || inStrip) return;
-    frame.current?.scrollIntoView({ block: 'nearest' });
-  }, [isFocused, listing.mode, listing.tileSize, listing.viewportWidth, inStrip]);
   // A rendition 404s while processing is still writing it, and the announcement
   // is what brings it back: the version is this row's own `date_reprocessed`,
   // which the announcement for this photo writes into it, so a new URL is one
@@ -136,6 +123,26 @@ export const PhotoTile = observer(function PhotoTile({
   // A spine is `STRIP_SPINE` across, which the chip's usual mark does not fit in.
   const chevron = spine ? 14 : 22;
 
+  // Read only by the tiles whose effects below re-run on the packing: read by every
+  // tile, a zoom re-renders every tile on screen.
+  const tracksPacking = listing.mode === 'masonry' && !inStrip && (isFocused || expanded);
+  const packedTileSize = tracksPacking ? listing.tileSize : 0;
+  const packedWidth = tracksPacking ? listing.viewportWidth : 0;
+
+  // Masonry packs its lines from each photo's own shape, so the store can only
+  // scroll the cursor's *block* into view (`focusContentTop`) - and a block is a
+  // hundred photos, so the cursor spent most of a cull off screen with the
+  // verdict keys still acting on it. The tile is the only thing that knows where
+  // the packing put it.
+  //
+  // On the two inputs that packing is a function of as well as on the cursor: a
+  // zoom or a resize moves the tile without moving the cursor, and the block it
+  // is in stays visible, so nothing upstream reports anything to correct.
+  useEffect(() => {
+    if (!isFocused || !tracksPacking) return;
+    frame.current?.scrollIntoView({ block: 'nearest' });
+  }, [isFocused, tracksPacking, packedTileSize, packedWidth]);
+
   // Where this tile ended up on its masonry line, reported for the band it opened
   // (`stackTileBoxes`): the offsets its top edge is cut to, and the height its rows
   // are capped against. The one thing about a band in masonry that cannot be
@@ -146,7 +153,7 @@ export const PhotoTile = observer(function PhotoTile({
   const stackId = photo.stack_id;
   useEffect(() => {
     const element = frame.current;
-    if (!expanded || listing.mode !== 'masonry' || inStrip || element == null || stackId == null) return;
+    if (!expanded || !tracksPacking || element == null || stackId == null) return;
     // Measured only from inside the callback, where layout has been flushed for
     // the frame already. The same three reads made eagerly here force one, and
     // `tileSize` is written on every pointer move of the zoom drag. Re-observing
@@ -156,7 +163,7 @@ export const PhotoTile = observer(function PhotoTile({
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [expanded, stackId, listing.mode, listing.tileSize, listing.viewportWidth, inStrip, photos]);
+  }, [expanded, stackId, tracksPacking, packedTileSize, packedWidth, photos]);
 
   // The frame is a link so a photograph can be opened in a tab of its own from
   // the context menu or a middle click, but its left click belongs to the grid -
@@ -226,7 +233,7 @@ export const PhotoTile = observer(function PhotoTile({
     <div
       ref={frame}
       {...stylex.props(
-        cellStyle(layout, aspectOf(photo), listing.tileSize, spine),
+        cellStyle(layout, aspectOf(photo), spine),
         tileMarker,
         ringStyle(selected, cursor, open, expanded),
         // Open, the tile is ringed in the colour of the band it opened, which is what pairs
@@ -475,7 +482,7 @@ export const BandMember = observer(function BandMember({ photo }: { photo: Photo
   return (
     <div
       {...stylex.props(
-        cellStyle(layout, aspectOf(photo), listing.tileSize),
+        cellStyle(layout, aspectOf(photo)),
         tileMarker,
         // Nothing bounds a masonry band's line - it is full width - so capping the width caps
         // the height through the ratio.
@@ -536,12 +543,12 @@ export function aspectOf(photo: PhotoSummary): number {
 
 // Masonry sizes a cell from the photo's own shape, off the stored dimensions, so no layout is
 // ever read back to lay the rows out.
-export function cellStyle(layout: Layout, aspect: number, tileSize: number, spine = false): stylex.StyleXStyles {
+export function cellStyle(layout: Layout, aspect: number, spine = false): stylex.StyleXStyles {
   switch (layout) {
     case 'grid':
       return [tile.tile, tile.grid];
     case 'masonry':
-      return [tile.tile, tile.masonry(aspect, tileSize)];
+      return [tile.tile, tile.masonry(aspect)];
     case 'list':
       return [tile.tile, tile.list];
     case 'x':
