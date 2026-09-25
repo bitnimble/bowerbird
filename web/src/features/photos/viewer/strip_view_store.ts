@@ -9,7 +9,7 @@ import { ScrollRailStore } from '../grid/scroll_rail_store';
 
 /** How thick the strip is across its cells, and so how big a cell is. The range its edge drags over. */
 export const STRIP_MIN_THICKNESS = 64;
-export const STRIP_MAX_THICKNESS = 260;
+export const STRIP_MAX_THICKNESS = 520;
 export const STRIP_DEFAULT_THICKNESS = 104;
 
 /**

@@ -8,11 +8,9 @@ import { useJudge } from './detail_navigation';
 // photo re-renders nothing but the one of these that changed.
 export const PhotoTriage = observer(function PhotoTriage({
   photoId,
-  compact = false,
   stretch = false,
 }: {
   photoId: string;
-  compact?: boolean;
   stretch?: boolean;
 }): JSX.Element {
   const store = useViewerStore();
@@ -20,7 +18,6 @@ export const PhotoTriage = observer(function PhotoTriage({
 
   return (
     <TriageControl
-      compact={compact}
       stretch={stretch}
       value={store.photoFor(photoId)?.triage ?? 'untriaged'}
       held={store.heldVerdict}

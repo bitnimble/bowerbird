@@ -16,16 +16,6 @@ const OPTIONS: Option<Triage>[] = [
   { value: 'picked', label: TriageControlStrings.pick(), icon: <ThumbsUp size={ICON} />, tone: 'pick', hint: 'C' },
 ];
 
-// Icon alone in the header: labels would push the path and the menus off a
-// single line. The foot bar still spells the three out for a thumb. Title keeps
-// the key so hover still teaches Z/X/C after the hint badge is gone.
-const COMPACT_OPTIONS: Option<Triage>[] = OPTIONS.map((option) => ({
-  ...option,
-  iconOnly: true,
-  hint: undefined,
-  label: option.hint == null ? option.label : TriageControlStrings.withHint(option.label, option.hint),
-}));
-
 const OPTIONS_WITHOUT_HINTS: Option<Triage>[] = OPTIONS.map((option) => ({ ...option, hint: undefined }));
 
 // Three states, not a checkbox: "not yet decided" is different from "decided
@@ -34,15 +24,12 @@ export function TriageControl({
   value,
   held = null,
   onChange,
-  compact = false,
   stretch = false,
 }: {
   value: Triage;
   /** Shown in place of `value` for a beat, where the viewer steps on as soon as a verdict lands. */
   held?: Triage | null;
   onChange: (next: Triage) => void;
-  /** Icons only: the detail header, where labelled buttons do not fit. */
-  compact?: boolean;
   /** Fill the row: a phone's foot bar. */
   stretch?: boolean;
 }): JSX.Element {
@@ -50,7 +37,7 @@ export function TriageControl({
     <SegmentedControl
       stretch={stretch}
       label={TriageControlStrings.triage()}
-      options={compact ? COMPACT_OPTIONS : stretch ? OPTIONS_WITHOUT_HINTS : OPTIONS}
+      options={stretch ? OPTIONS_WITHOUT_HINTS : OPTIONS}
       value={value}
       held={held}
       onChange={onChange}
