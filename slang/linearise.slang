@@ -8,6 +8,12 @@
 // transfer and somebody else's primaries, and undoing those is the whole of the decode. Everything
 // below is the same code the RAWs run.
 //
+// A linear DNG is the one picture here from a camera rather than a renderer: demosaiced before it
+// was written, so it has no mosaic either, but its codes are sensor counts. Its table is the
+// conditioning instead of a transfer - each channel's own black, saturation and white balance - and
+// its matrix is the camera's. One stored as floating point has no codes to tabulate, so its
+// conditioning is a scale and an offset a channel, and it keeps what it holds above white.
+//
 // **The transfer is a table for `condition.slang`'s reason**, and more so here: a code value has at
 // most 65536 distinct answers, `pow` is not free, and a shader spelling ST 2084 itself would
 // disagree with `transfer.rs` in the last bit over the frame every rendition is built from.
@@ -64,6 +70,11 @@ struct Params {
     float4 row0;
     float4 row1;
     float4 row2;
+    /// A floating-point sample's light is `sample * sample_scale + sample_offset`, `w` unused.
+    float4 sample_scale;
+    float4 sample_offset;
+    /// Nonzero where `codes` holds an `f32` a sample rather than two `u16` codes a word.
+    uint float_samples;
 };
 
 /// `linearise::Picture::gain_mode`'s numbering.
@@ -72,6 +83,7 @@ static const uint GAIN_APPLE = 1;
 
 [vk::binding(0, 0)] ConstantBuffer<Params> params;
 [vk::binding(1, 0)] StructuredBuffer<uint> codes;
+/// Indexed `code * 3 + channel`.
 [vk::binding(2, 0)] StructuredBuffer<float> table;
 [vk::binding(3, 0)] StructuredBuffer<uint> gain_map;
 [vk::binding(4, 0)] RWStructuredBuffer<uint> out_frame;
@@ -86,10 +98,16 @@ uint sample_at(StructuredBuffer<uint> from, uint at)
 float3 light_at(uint x, uint y)
 {
     let base = (min(y, params.src_height - 1) * params.src_width + min(x, params.src_width - 1)) * 3;
+    if (params.float_samples != 0) {
+        let stored = float3(asfloat(codes[base]), asfloat(codes[base + 1]), asfloat(codes[base + 2]));
+        // A NaN would reach the final `uint()` as one, which WGSL leaves undefined.
+        let sample = select(isfinite(stored), stored, float3(0.0));
+        return sample * params.sample_scale.xyz + params.sample_offset.xyz;
+    }
     return float3(
-        table[sample_at(codes, base)],
-        table[sample_at(codes, base + 1)],
-        table[sample_at(codes, base + 2)]);
+        table[sample_at(codes, base) * 3],
+        table[sample_at(codes, base + 1) * 3 + 1],
+        table[sample_at(codes, base + 2) * 3 + 2]);
 }
 
 /// The gain map at a point of the source, bilinear, as its three normalised recovery values.

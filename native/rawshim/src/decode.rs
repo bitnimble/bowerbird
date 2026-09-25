@@ -18,7 +18,7 @@ use crate::px::{Photograph, Rect, Size};
 pub enum Held {
     /// A RAW, at the conditioned mosaic.
     Mosaic(crate::decode_rawler::Held),
-    /// A finished picture, at its code values.
+    /// A finished picture, or a linear DNG, at its code values: neither has a mosaic.
     Rendered(crate::decode_rendered::Held),
 }
 
@@ -26,10 +26,7 @@ pub enum Held {
 pub async fn hold_bytes(bytes: &[u8]) -> Result<Held, String> {
     match crate::decode_rendered::is_rendered_bytes(bytes) {
         true => crate::decode_rendered::hold(bytes).map(Held::Rendered),
-        false => crate::decode_rawler::hold_bytes(bytes)
-            .await
-            .map(Held::Mosaic)
-            .ok_or_else(|| "no decoder read these bytes".to_string()),
+        false => crate::decode_rawler::open_bytes(bytes).await,
     }
 }
 
@@ -84,7 +81,7 @@ pub fn frame_from_path_unturned(path: &str, at_least_long_edge: u32) -> Option<c
 }
 
 /// A held finished picture as its whole self, halved where the caller's floor allows it.
-async fn whole(
+pub(crate) async fn whole(
     held: &crate::decode_rendered::Held,
     at_least_long_edge: u32,
 ) -> Option<crate::frame::Frame> {

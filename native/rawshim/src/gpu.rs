@@ -1417,9 +1417,13 @@ impl Gpu {
     /// what it must not do is dispatch and find out, since a binding over the limit is a
     /// validation error and `on_uncaptured_error` makes those fatal.
     pub fn fits(&self, pixels: usize) -> bool {
+        Self::binding_bytes(pixels) <= self.most_bound()
+    }
+
+    /// The largest buffer this device can both create and bind whole, in bytes.
+    pub fn most_bound(&self) -> u64 {
         let limits = self.device.limits();
-        let needed = Self::binding_bytes(pixels);
-        needed <= u64::from(limits.max_storage_buffer_binding_size) && needed <= limits.max_buffer_size
+        u64::from(limits.max_storage_buffer_binding_size).min(limits.max_buffer_size)
     }
 }
 

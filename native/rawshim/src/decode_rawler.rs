@@ -222,6 +222,11 @@ pub(crate) async fn decode_tile_source(
     // is in the sensor's, so the offset between them has to be known before anything is read. A
     // dummy decode skips the decompression, which is the whole cost.
     let shape = decoder.raw_image(&source, &params, true).ok()?;
+    // A DNG is read whole whatever `dummy` says, so a linear one is already here to window.
+    if is_linear(&shape) {
+        let held = linear(decoder.as_ref(), &shape, upright).await;
+        return held.map_err(|why| crate::warn(&format!("rawshim: {why}"))).ok()?.window(view.window, view.scale);
+    }
     let (frame_w, frame_h) = (shape.width, shape.height);
     let (origin, extent) = shape.crop_area.map_or(((0, 0), (frame_w, frame_h)), |area| {
         ((area.p.x, area.p.y), (area.d.w, area.d.h))
@@ -554,21 +559,260 @@ pub struct Held {
 
 /// The decode as far as the mosaic, from bytes a caller is already holding.
 pub async fn hold_bytes(bytes: &[u8]) -> Option<Held> {
-    hold(&rawler::rawsource::RawSource::new_from_slice(bytes)).await
+    match open_bytes(bytes).await.ok()? {
+        crate::decode::Held::Mosaic(held) => Some(held),
+        crate::decode::Held::Rendered(_) => None,
+    }
 }
 
-/// The decode as far as the mosaic, which is as far as a Detail amount is irrelevant.
-async fn hold(source: &rawler::rawsource::RawSource) -> Option<Held> {
+/// The decode as far as a setting is irrelevant, from bytes a caller is already holding.
+pub async fn open_bytes(bytes: &[u8]) -> Result<crate::decode::Held, String> {
+    open(&rawler::rawsource::RawSource::new_from_slice(bytes)).await
+}
+
+/// The mosaic, or for a linear DNG the picture, which has no mosaic to stop at.
+async fn open(source: &rawler::rawsource::RawSource) -> Result<crate::decode::Held, String> {
     let mut lap = crate::clock::laps("  decode ");
 
-    let decoder = rawler::get_decoder(source).ok()?;
+    let decoder = rawler::get_decoder(source).map_err(|why| why.to_string())?;
     let params = rawler::decoders::RawDecodeParams::default();
 
     let upright = upright_of(decoder.as_ref(), source, &params);
 
     lap("open");
-    let image = decoder.raw_image(source, &params, false).ok()?;
+    let image = decoder.raw_image(source, &params, false).map_err(|why| why.to_string())?;
     lap("read");
+    if is_linear(&image) {
+        return linear(decoder.as_ref(), &image, upright).await.map(crate::decode::Held::Rendered);
+    }
+    hold(decoder.as_ref(), source, &params, image, upright)
+        .await
+        .map(crate::decode::Held::Mosaic)
+        .ok_or_else(|| "no decoder read these bytes".to_string())
+}
+
+/// Whether this file was demosaiced before it was written: a Lightroom merge, an Enhance, a DNG
+/// converter asked for linear output.
+fn is_linear(image: &rawler::RawImage) -> bool {
+    matches!(image.photometric, rawler::rawimage::RawPhotometricInterpretation::LinearRaw)
+}
+
+/// A linear DNG as a picture on the device, conditioned through `linearise.slang`'s table.
+///
+/// The mosaic's arithmetic, a channel at a time: each channel's own black, the saturation, the
+/// file's curve out of OpcodeList2, the white balance, and the camera's matrix, so a merge renders
+/// as the frames it was made from do. Not the denoise, the dust search or RCD, which read a CFA
+/// this file no longer has.
+async fn linear(
+    decoder: &dyn rawler::decoders::Decoder,
+    image: &rawler::RawImage,
+    upright: rawler::decoders::Orientation,
+) -> Result<crate::decode_rendered::Held, String> {
+    let gpu = crate::gpu::device()
+        .ok_or_else(|| crate::base::without_a_device("reading a linear DNG"))?;
+    let (width, height) = (image.width, image.height);
+    let values = width * height * 3;
+    let stored = match &image.data {
+        rawler::RawImageData::Integer(samples) => samples.len(),
+        rawler::RawImageData::Float(samples) => samples.len(),
+    };
+    if image.cpp != 3 {
+        return Err(format!("this linear DNG has {} samples a pixel where 3 were expected", image.cpp));
+    }
+    if stored < values {
+        return Err(format!("this linear DNG holds {stored} samples where {values} were expected"));
+    }
+    let matrix = camera_to_rec2020(image).ok_or("this DNG's camera matrix is singular")?;
+    let curves = plane_curves(decoder, width, height)?;
+    let crop = image.crop_area.map_or(crate::px::Rect::exact(0, 0, width, height), |area| {
+        crate::px::Rect::exact(area.p.x, area.p.y, area.d.w, area.d.h)
+    });
+    let coding =
+        crate::transfer::Coding { matrix, curve: crate::transfer::Curve::Linear, depth: 16 };
+
+    let (picture, ceiling) = match &image.data {
+        rawler::RawImageData::Integer(samples) => {
+            crate::linearise::check_fits(gpu, values * 2)?;
+            let table = linear_table(image, &curves);
+            let ceiling = std::array::from_fn(|channel| {
+                table.iter().skip(channel).step_by(3).copied().fold(0.0f32, f32::max)
+            });
+            let codes = crate::resident::Resident::upload(gpu, &samples[..values], width, height);
+            (crate::linearise::Picture::camera(gpu, codes, crop, coding, &table, upright), ceiling)
+        }
+        rawler::RawImageData::Float(samples) => {
+            crate::linearise::check_fits(gpu, values * 4)?;
+            let affine = float_affine(decoder, image, &curves)?;
+            let picture = crate::linearise::Picture::camera_float(
+                gpu, samples, width, height, crop, coding, affine, upright,
+            );
+            // Nothing saturates short of the container: past white is what the file kept.
+            (picture, [1.0; 3])
+        }
+    };
+    let camera = crate::decode_rendered::Camera { as_shot: as_shot_of(gpu, image).await, ceiling };
+    Ok(crate::decode_rendered::Held::camera(picture, camera))
+}
+
+/// [`linear_table`]'s arithmetic for a DNG stored as floating point, whose samples are not codes.
+///
+/// The white level is 1.0 where the file states none, which is the DNG specification's default for
+/// floating point and not rawler's, whose default is the bit depth's full scale. No curve: one
+/// cannot be folded into a scale, and applying it in the kernel would be a second spelling of the
+/// polynomial [`linear_table`] evaluates.
+fn float_affine(
+    decoder: &dyn rawler::decoders::Decoder,
+    image: &rawler::RawImage,
+    curves: &[Vec<f64>; 3],
+) -> Result<crate::linearise::Affine, String> {
+    if curves.iter().any(|curve| curve.as_slice() != [0.0, 1.0]) {
+        return Err("this DNG maps its floating-point samples through a curve, which this build does not apply".into());
+    }
+    let stated = decoder
+        .ifd(rawler::decoders::WellKnownIFD::Raw)
+        .ok()
+        .flatten()
+        .and_then(|ifd| ifd.get_entry(rawler::tags::TiffCommonTag::WhiteLevel).cloned())
+        .filter(|entry| entry.count() > 0);
+    let white = |channel: usize| match &stated {
+        Some(entry) => entry.force_f32(channel.min(entry.count() as usize - 1)),
+        None => 1.0,
+    };
+    let black = &image.blacklevel.levels;
+    let gains = white_balance_gains(image);
+    let mut affine = crate::linearise::Affine { scale: [0.0; 3], offset: [0.0; 3] };
+    for channel in 0..3 {
+        let floor = black.get(channel).or(black.first()).map_or(0.0, |level| level.as_f32());
+        let scale = gains[channel] / (white(channel) - floor).max(f32::MIN_POSITIVE);
+        affine.scale[channel] = scale;
+        affine.offset[channel] = -floor * scale;
+    }
+    Ok(affine)
+}
+
+/// Every sample a linear DNG can hold as the light it stands for, `code * 3 + channel`.
+///
+/// **Scaled so the brightest channel's ceiling is 1**, which [`white_balance_gains`] does for a
+/// RAW: a file whose curve tops out at a sixth of full scale would otherwise leave the frame's `u16`
+/// two and a half bits short in the shadows.
+fn linear_table(image: &rawler::RawImage, curves: &[Vec<f64>; 3]) -> Vec<f32> {
+    let black = &image.blacklevel.levels;
+    let gains = white_balance_gains(image);
+    // The file's own figure, not `saturation_of`'s: rounding a Canon level up to its converter's
+    // width is a fact about the sensor, and a merge's curve was fitted to the level it states.
+    let white = &image.whitelevel.0;
+    let levels: [Coefficients; 3] = std::array::from_fn(|channel| {
+        let floor = black.get(channel).or(black.first()).map_or(0.0, |level| level.as_f32());
+        let white = white.get(channel).or(white.first()).map_or(65535.0, |level| *level as f32);
+        Coefficients { floor, range: (white - floor).max(1.0), gain: gains[channel] }
+    });
+    table_of(levels, curves)
+}
+
+/// [`linear_table`] off the levels alone: the curve goes between the fill and the white balance,
+/// which is where the DNG specification puts OpcodeList2.
+fn table_of(levels: [Coefficients; 3], curves: &[Vec<f64>; 3]) -> Vec<f32> {
+    let mut table: Vec<f32> = (0..=u16::MAX)
+        .flat_map(|sample| {
+            std::array::from_fn::<f32, 3, _>(|channel| {
+                let level = levels[channel];
+                let x = f64::from(conditioned(sample, Coefficients { gain: 1.0, ..level }));
+                let y = curves[channel].iter().rev().fold(0.0, |sum, c| sum * x + c).min(1.0);
+                y as f32 * level.gain
+            })
+        })
+        .collect();
+    let top = table.iter().copied().fold(0.0f32, f32::max);
+    if top > 0.0 {
+        table.iter_mut().for_each(|value| *value /= top);
+    }
+    table
+}
+
+/// Each plane's curve out of the DNG's OpcodeList2, as polynomial coefficients from the constant
+/// up: `[0, 1]`, the identity, where it states none.
+///
+/// **Lightroom's merges store their samples white balanced and through a curve**, and write the
+/// `MapPolynomial` per plane that takes them back to camera counts. Skipping it balances the
+/// picture twice and renders it magenta.
+///
+/// Only a polynomial over the whole picture, a sample at a time, which folds into
+/// [`linear_table`]; any other opcode the file does not mark optional is refused by name, since
+/// rendering without it is a different picture.
+fn plane_curves(
+    decoder: &dyn rawler::decoders::Decoder,
+    width: usize,
+    height: usize,
+) -> Result<[Vec<f64>; 3], String> {
+    let list = decoder
+        .ifd(rawler::decoders::WellKnownIFD::Raw)
+        .ok()
+        .flatten()
+        .and_then(|ifd| ifd.get_entry(rawler::tags::DngTag::OpcodeList2).map(|entry| entry.value.clone()));
+    match list {
+        Some(rawler::formats::tiff::Value::Undefined(bytes)) => opcode_curves(&bytes, width, height),
+        _ => Ok(identity_curves()),
+    }
+}
+
+fn identity_curves() -> [Vec<f64>; 3] {
+    std::array::from_fn(|_| vec![0.0, 1.0])
+}
+
+/// [`plane_curves`] off the opcode list's own bytes, which DNG writes big-endian whatever the file's
+/// byte order.
+fn opcode_curves(bytes: &[u8], width: usize, height: usize) -> Result<[Vec<f64>; 3], String> {
+    const MAP_POLYNOMIAL: u32 = 8;
+    const OPTIONAL: u32 = 1;
+    let mut curves = identity_curves();
+    let truncated = || "this DNG's OpcodeList2 is truncated".to_string();
+    let word = |at: usize| -> Result<u32, String> {
+        Ok(u32::from_be_bytes(bytes.get(at..at + 4).ok_or_else(truncated)?.try_into().unwrap()))
+    };
+    let float = |at: usize| -> Result<f64, String> {
+        Ok(f64::from_be_bytes(bytes.get(at..at + 8).ok_or_else(truncated)?.try_into().unwrap()))
+    };
+    let mut at = 4;
+    for _ in 0..word(0)? {
+        let (id, flags, size) = (word(at)?, word(at + 8)?, word(at + 12)? as usize);
+        let body = at + 16;
+        at = body.saturating_add(size);
+        if id != MAP_POLYNOMIAL {
+            match flags & OPTIONAL {
+                0 => return Err(format!("this DNG asks for opcode {id}, which this build does not apply")),
+                _ => continue,
+            }
+        }
+        let [top, left, bottom, right, plane, planes, row_pitch, column_pitch, degree] =
+            std::array::from_fn(|k| word(body + k * 4));
+        let whole = top? == 0
+            && left? == 0
+            && bottom? as usize >= height
+            && right? as usize >= width
+            && row_pitch? == 1
+            && column_pitch? == 1;
+        if !whole {
+            return Err("this DNG maps only part of its picture through a polynomial".into());
+        }
+        let coefficients =
+            (0..=degree? as usize).map(|k| float(body + 36 + k * 8)).collect::<Result<Vec<_>, _>>()?;
+        let plane = plane? as usize;
+        for curve in curves.iter_mut().skip(plane).take(planes? as usize) {
+            *curve = coefficients.clone();
+        }
+    }
+    Ok(curves)
+}
+
+/// The decode as far as the mosaic, which is as far as a Detail amount is irrelevant.
+async fn hold(
+    decoder: &dyn rawler::decoders::Decoder,
+    source: &rawler::rawsource::RawSource,
+    params: &rawler::decoders::RawDecodeParams,
+    image: rawler::RawImage,
+    upright: rawler::decoders::Orientation,
+) -> Option<Held> {
+    let mut lap = crate::clock::laps("  decode ");
     let (width, height) = (image.width, image.height);
 
     let cfa = cfa_of(&image)?;
@@ -595,7 +839,7 @@ async fn hold(source: &rawler::rawsource::RawSource) -> Option<Held> {
         .unwrap_or((0, 0, width, height));
     let crop = (crop.0, crop.1, whole_sites(crop.2), whole_sites(crop.3));
 
-    let (aperture, width_mm) = optics_of(decoder.as_ref(), source, &params);
+    let (aperture, width_mm) = optics_of(decoder, source, params);
 
     Some(Held {
         mosaic,
@@ -672,10 +916,14 @@ async fn decode_source(
     fit: crate::galosh::Fit,
     dust: crate::dust::Wanted<'_>,
 ) -> Option<Frame> {
-    hold(source)
-        .await?
-        .into_frame(detail, at_least_long_edge, force_half, fit, dust, &crate::open_stage::quiet)
-        .await
+    let opened = open(source).await.map_err(|why| crate::warn(&format!("rawshim: {why}")));
+    match opened.ok()? {
+        crate::decode::Held::Mosaic(held) => {
+            held.into_frame(detail, at_least_long_edge, force_half, fit, dust, &crate::open_stage::quiet)
+                .await
+        }
+        crate::decode::Held::Rendered(held) => crate::decode::whole(&held, at_least_long_edge).await,
+    }
 }
 
 impl Held {
@@ -1849,6 +2097,171 @@ mod tests {
         }
 
         std::fs::remove_file(&path).ok();
+    }
+
+    /// One opcode as DNG writes it: id, version, flags, then its parameters' length and bytes.
+    fn opcode(id: u32, flags: u32, body: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for word in [id, 0x0103_0000, flags, body.len() as u32] {
+            out.extend_from_slice(&word.to_be_bytes());
+        }
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn map_polynomial(plane: u32, rect: [u32; 4], coefficients: &[f64]) -> Vec<u8> {
+        let mut body = Vec::new();
+        let words = [rect[0], rect[1], rect[2], rect[3], plane, 1, 1, 1, coefficients.len() as u32 - 1];
+        for word in words {
+            body.extend_from_slice(&word.to_be_bytes());
+        }
+        for coefficient in coefficients {
+            body.extend_from_slice(&coefficient.to_be_bytes());
+        }
+        opcode(8, 0, &body)
+    }
+
+    fn list(opcodes: &[Vec<u8>]) -> Vec<u8> {
+        let mut out = (opcodes.len() as u32).to_be_bytes().to_vec();
+        opcodes.iter().for_each(|it| out.extend_from_slice(it));
+        out
+    }
+
+    /// A Lightroom merge's curve reaches the plane it names, and an optional opcode this cannot
+    /// apply is passed over rather than refusing the file.
+    #[test]
+    fn a_polynomial_opcode_is_its_planes_curve() {
+        let bytes = list(&[
+            opcode(9, 1, &[0; 12]),
+            map_polynomial(1, [0, 0, 20, 30], &[0.25, 0.0, 0.0, 0.5]),
+        ]);
+        let curves = super::opcode_curves(&bytes, 30, 20).expect("the list is read");
+        assert_eq!(curves[0], vec![0.0, 1.0]);
+        assert_eq!(curves[1], vec![0.25, 0.0, 0.0, 0.5]);
+        assert_eq!(curves[2], vec![0.0, 1.0]);
+    }
+
+    /// What would render a different picture if skipped is refused rather than skipped.
+    #[test]
+    fn an_opcode_that_cannot_be_folded_is_refused() {
+        let required = list(&[opcode(9, 0, &[0; 12])]);
+        assert!(super::opcode_curves(&required, 30, 20).is_err());
+        let partial = list(&[map_polynomial(0, [0, 0, 10, 30], &[0.0, 1.0])]);
+        assert!(super::opcode_curves(&partial, 30, 20).is_err());
+        let truncated = list(&[map_polynomial(0, [0, 0, 20, 30], &[0.0, 1.0])]);
+        assert!(super::opcode_curves(&truncated[..truncated.len() - 1], 30, 20).is_err());
+    }
+
+    /// A little-endian DNG of one row of floating-point RGB pixels with no WhiteLevel, which is
+    /// what a Lightroom HDR merge stores, down to the tags rawler needs to read one.
+    fn float_dng(pixels: &[[f32; 3]]) -> Vec<u8> {
+        const SHORT: u16 = 3;
+        const LONG: u16 = 4;
+        let rational = |n: i32, d: u32| [n.to_le_bytes(), d.to_le_bytes()].concat();
+        let shorts = |values: &[u16]| values.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+        let long = |value: u32| value.to_le_bytes().to_vec();
+        // Rec.709's own XYZ matrix, so the camera is sRGB and a neutral stays one.
+        let matrix = [3.2406, -1.5372, -0.4986, -0.9689, 1.8758, 0.0415, 0.0557, -0.2040, 1.0570];
+        let strip: Vec<u8> = pixels.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
+        let mut entries: Vec<(u16, u16, u32, Vec<u8>)> = vec![
+            (254, LONG, 1, long(0)),
+            (256, LONG, 1, long(pixels.len() as u32)),
+            (257, LONG, 1, long(1)),
+            (258, SHORT, 3, shorts(&[32, 32, 32])),
+            (259, SHORT, 1, shorts(&[1])),
+            (262, SHORT, 1, shorts(&[34892])),
+            (271, 2, 5, b"Test\0".to_vec()),
+            (272, 2, 6, b"Float\0".to_vec()),
+            (273, LONG, 1, Vec::new()),
+            (277, SHORT, 1, shorts(&[3])),
+            (278, LONG, 1, long(1)),
+            (279, LONG, 1, long(strip.len() as u32)),
+            (284, SHORT, 1, shorts(&[1])),
+            (339, SHORT, 3, shorts(&[3, 3, 3])),
+            (50706, 1, 4, vec![1, 4, 0, 0]),
+            (50721, 10, 9, matrix.iter().flat_map(|v| rational((v * 10000.0) as i32, 10000)).collect()),
+            (50728, 5, 3, [rational(1, 1), rational(1, 1), rational(1, 1)].concat()),
+        ];
+        let ifd_bytes = 2 + entries.len() * 12 + 4;
+        let mut spill = Vec::new();
+        let spill_at = 8 + ifd_bytes;
+        let strip_at = spill_at + entries.iter().filter(|e| e.3.len() > 4).map(|e| e.3.len()).sum::<usize>();
+        entries.iter_mut().find(|e| e.0 == 273).unwrap().3 = long(strip_at as u32);
+
+        let mut out = b"II*\0".to_vec();
+        out.extend_from_slice(&8u32.to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        for (tag, kind, count, value) in &entries {
+            out.extend_from_slice(&tag.to_le_bytes());
+            out.extend_from_slice(&kind.to_le_bytes());
+            out.extend_from_slice(&count.to_le_bytes());
+            match value.len() > 4 {
+                true => {
+                    out.extend_from_slice(&((spill_at + spill.len()) as u32).to_le_bytes());
+                    spill.extend_from_slice(value);
+                }
+                false => {
+                    let mut inline = value.clone();
+                    inline.resize(4, 0);
+                    out.extend_from_slice(&inline);
+                }
+            }
+        }
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&spill);
+        out.extend_from_slice(&strip);
+        out
+    }
+
+    /// Black off, filled, through the plane's curve, then balanced, and the whole table scaled so
+    /// its brightest entry is 1.
+    #[test]
+    fn a_linear_dngs_table_puts_the_curve_between_the_fill_and_the_balance() {
+        let level = |floor: f32, gain: f32| super::Coefficients { floor, range: 1000.0 - floor, gain };
+        let levels = [level(100.0, 1.0), level(0.0, 0.5), level(0.0, 1.0)];
+        let squared = vec![0.0, 0.0, 1.0];
+        let table = super::table_of(levels, &[squared, vec![0.0, 1.0], vec![0.0, 0.5]]);
+        let at = |sample: usize, channel: usize| table[sample * 3 + channel];
+
+        // Red is the brightest ceiling, so it is what the table was divided by.
+        assert!((at(1000, 0) - 1.0).abs() < 1e-6);
+        // Half filled past its own black, then squared.
+        assert!((at(550, 0) - 0.25).abs() < 1e-6, "red at 550: {}", at(550, 0));
+        // Green's balance applies after its curve, and its ceiling is half red's.
+        assert!((at(500, 1) - 0.25).abs() < 1e-6, "green at 500: {}", at(500, 1));
+        assert!((at(2000, 1) - 0.5).abs() < 1e-6, "green past white: {}", at(2000, 1));
+        assert!((at(1000, 2) - 0.5).abs() < 1e-6, "blue's curve tops out at half");
+    }
+
+    /// A floating-point DNG decodes, reads 1.0 as its white, and keeps a sample two stops past
+    /// it where a count past white would have clipped. A NaN reads as black rather than as noise.
+    #[test]
+    fn a_floating_point_dng_keeps_what_it_holds_above_white() {
+        if crate::gpu::device().is_none() {
+            eprintln!("SKIPPED: no adapter answered, so the float DNG was not decoded.");
+            return;
+        }
+        let bytes = float_dng(&[[0.25; 3], [1.0; 3], [4.0; 3], [f32::NAN; 3]]);
+        let held = match pollster::block_on(super::open_bytes(&bytes)).expect("the DNG opens") {
+            crate::decode::Held::Rendered(held) => held,
+            crate::decode::Held::Mosaic(_) => panic!("a linear DNG was read as a mosaic"),
+        };
+        let window = crate::px::Rect { at: crate::px::At::ORIGIN, size: held.size() };
+        let frame = held.window(window, crate::view::Scale::Full).expect("the window is drawn");
+        assert_eq!(frame.stated_white, None, "a camera's white is measured, as a RAW's is");
+        let crate::frame::Pixels::Resident(resident) = frame.pixels else { panic!("not on the device") };
+        let samples = pollster::block_on(resident.into_host()).expect("the frame reads back");
+
+        let white = 65535.0 / crate::transfer::HDR_HEADROOM;
+        for (at, sample) in samples.iter().enumerate() {
+            let want = [0.25, 1.0, 4.0, 0.0][at / 3] * white;
+            assert!(
+                (f64::from(*sample) - want).abs() <= 0.01 * white,
+                "pixel {} channel {}: {sample} against {want}",
+                at / 3,
+                at % 3,
+            );
+        }
     }
 
     /// Each of the four photosites has its own black level removed, the two greens included.

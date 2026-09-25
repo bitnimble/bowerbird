@@ -68,7 +68,7 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
     for (at, sample) in samples.iter().enumerate() {
         let pixel = at / 3;
         let colour: [f64; 3] = std::array::from_fn(|channel| {
-            f64::from(table[usize::from(codes[pixel * 3 + channel])]) * white
+            f64::from(table[usize::from(codes[pixel * 3 + channel]) * 3 + channel]) * white
         });
         let want = rawshim::hdr_fit::in_gamut(colour)[at % 3].clamp(0.0, 65535.0);
         assert!(

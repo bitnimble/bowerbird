@@ -10,7 +10,7 @@
 //! re-prepares a photograph a band at a time, a loupe asks for tile after tile of one open, and a
 //! rendition job asks for every size in turn. Each of those is this pass over a rectangle.
 
-use crate::px::{Photograph, Rect, Size};
+use crate::px::{At, Photograph, Rect, Size};
 
 
 pub struct Linearise {
@@ -142,22 +142,72 @@ impl GainMap {
 /// **Held rather than linearised once**, because a window of it is this pass over a rectangle and
 /// the editor asks for many. The codes are `u16` whatever the file's depth is, packed two to a word
 /// exactly as [`crate::resident::Resident`] packs samples - which is what lets `Resident::upload`
-/// be the one uploader.
+/// be the one uploader. A floating-point DNG's are the exception, an `f32` a sample.
 ///
 /// ponytail: an 8-bit picture holds two bytes a sample here where one would do. Pack four to a word
 /// and give the kernel a second fetch if a phone-sized library ever makes the plane the thing that
 /// does not fit.
 pub struct Picture {
-    codes: crate::resident::Resident,
+    samples: Samples,
     table: crate::gpu::Buffer,
     gain: crate::gpu::Buffer,
     gain_size: (usize, usize),
     terms: Option<GainMap>,
-    /// The picture as its bytes are laid out, before the turn.
+    /// The picture as its bytes are laid out, before the turn: the whole raster, or the part of it
+    /// a DNG's default crop keeps.
     pub stored: Size<Photograph>,
+    /// Where `stored` starts in the raster.
+    origin: At<Photograph>,
     /// What the file says the picture's top-left is, in `rawler`'s numbering.
     pub upright: rawler::decoders::Orientation,
     pub coding: crate::transfer::Coding,
+}
+
+/// A picture's samples as the kernel reads them.
+enum Samples {
+    /// Two `u16` codes a word, through the table.
+    Codes(crate::resident::Resident),
+    /// An `f32` a word, conditioned by [`Affine`].
+    Float { buffer: crate::gpu::Buffer, width: usize, height: usize, affine: Affine },
+}
+
+impl Samples {
+    fn buffer(&self) -> &crate::gpu::Buffer {
+        match self {
+            Samples::Codes(codes) => codes.buffer(),
+            Samples::Float { buffer, .. } => buffer,
+        }
+    }
+
+    fn size(&self) -> (usize, usize) {
+        match self {
+            Samples::Codes(codes) => codes.size(),
+            Samples::Float { width, height, .. } => (*width, *height),
+        }
+    }
+}
+
+/// A floating-point sample's light, a channel at a time: `sample * scale + offset`.
+#[derive(Clone, Copy, Debug)]
+pub struct Affine {
+    pub scale: [f32; 3],
+    pub offset: [f32; 3],
+}
+
+/// Refuses a picture whose samples the kernel could not bind whole, which it has to.
+///
+/// Asked before the upload rather than found out after: a buffer past the device's limit is a
+/// validation error, and `on_uncaptured_error` makes those fatal.
+pub fn check_fits(gpu: &crate::gpu::Gpu, bytes: usize) -> Result<(), String> {
+    let most = gpu.most_bound();
+    match bytes as u64 <= most {
+        true => Ok(()),
+        false => Err(format!(
+            "this picture's samples are {} MiB, and this GPU binds at most {} MiB",
+            bytes >> 20,
+            most >> 20
+        )),
+    }
 }
 
 impl Picture {
@@ -190,21 +240,71 @@ impl Picture {
         gain: Option<GainMap>,
     ) -> Picture {
         let (width, height) = codes.size();
+        let whole = Rect::exact(0, 0, width, height);
+        Picture::built(gpu, Samples::Codes(codes), whole, coding, &coding.table(), upright, gain)
+    }
+
+    /// A linear DNG's counts, already on the device: `crop` of the raster, read through a table
+    /// the caller conditioned rather than through the coding's transfer.
+    pub fn camera(
+        gpu: &'static crate::gpu::Gpu,
+        codes: crate::resident::Resident,
+        crop: Rect<Photograph>,
+        coding: crate::transfer::Coding,
+        table: &[f32],
+        upright: rawler::decoders::Orientation,
+    ) -> Picture {
+        Picture::built(gpu, Samples::Codes(codes), crop, coding, table, upright, None)
+    }
+
+    /// A linear DNG stored as floating point: `samples` interleaved RGB, `crop` of a `width` by
+    /// `height` raster.
+    ///
+    /// Lifted, so white sits `HDR_HEADROOM` below the top: a float sample past the white level is
+    /// highlight the file kept, where a count past it is a clipped photosite.
+    pub fn camera_float(
+        gpu: &'static crate::gpu::Gpu,
+        samples: &[f32],
+        width: usize,
+        height: usize,
+        crop: Rect<Photograph>,
+        coding: crate::transfer::Coding,
+        affine: Affine,
+        upright: rawler::decoders::Orientation,
+    ) -> Picture {
+        let buffer = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("linearise float samples"),
+            contents: bytemuck::cast_slice(&samples[..width * height * 3]),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let samples = Samples::Float { buffer, width, height, affine };
+        Picture::built(gpu, samples, crop, coding, &[], upright, None)
+    }
+
+    fn built(
+        gpu: &'static crate::gpu::Gpu,
+        samples: Samples,
+        crop: Rect<Photograph>,
+        coding: crate::transfer::Coding,
+        table: &[f32],
+        upright: rawler::decoders::Orientation,
+        gain: Option<GainMap>,
+    ) -> Picture {
         let terms = gain.filter(GainMap::does_anything);
-        let table = float_storage(gpu, &coding.table());
         // One word either way, because a binding may not be empty and the kernel's `gain_width`
         // is what says whether it is read at all.
-        let (gain_size, samples) = match &terms {
+        let (gain_size, map) = match &terms {
             Some(map) => ((map.width, map.height), map.samples.as_slice()),
             None => ((0, 0), [0u16, 0].as_slice()),
         };
         Picture {
-            codes,
-            table,
-            gain: packed_storage(gpu, samples),
+            samples,
+            table: float_storage(gpu, table),
+            gain: packed_storage(gpu, map),
             gain_size,
             terms,
-            stored: Size::exact(width, height),
+            stored: crop.size,
+            origin: crop.at,
             upright,
             coding,
         }
@@ -216,7 +316,8 @@ impl Picture {
     /// difference between grading one and grading the other: the transfer says where white is, and
     /// the gain map says whether the container had to make room above it.
     pub fn white_level(&self) -> crate::light::Light<crate::light::Level> {
-        crate::light::Light::measured(self.coding.white_level(self.terms.is_some()))
+        let lifted = self.terms.is_some() || matches!(self.samples, Samples::Float { .. });
+        crate::light::Light::measured(self.coding.white_level(lifted))
     }
 
     /// The picture's size the way a reader sees it, which is the stored size with a quarter turn
@@ -277,7 +378,7 @@ impl Picture {
         // `destroy`, not a refcount release, and both callers hand this a `Picture` they drop as
         // soon as the window is out - while the dispatch is submitted and not yet complete.
         recording.holding(out.buffer());
-        recording.holding(self.codes.buffer());
+        recording.holding(self.samples.buffer());
         recording.holding(&self.table);
         recording.holding(&self.gain);
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
@@ -290,7 +391,7 @@ impl Picture {
             layout: &kernels.layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.codes.buffer().as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.samples.buffer().as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: self.table.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: self.gain.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: out.buffer().as_entire_binding() },
@@ -334,11 +435,13 @@ impl Picture {
         out: (usize, usize),
     ) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(BLOCK_BYTES);
+        let (raster_w, raster_h) = self.samples.size();
+        let (origin_x, origin_y) = self.origin.raw();
         for word in [
-            self.stored.width.raw() as u32,
-            self.stored.height.raw() as u32,
-            stored.left as u32,
-            stored.top as u32,
+            raster_w as u32,
+            raster_h as u32,
+            (origin_x + stored.left) as u32,
+            (origin_y + stored.top) as u32,
             step as u32,
             frame.0 as u32,
             frame.1 as u32,
@@ -372,17 +475,26 @@ impl Picture {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
-        for row in self.coding.matrix {
+        let (affine, float_samples) = match &self.samples {
+            Samples::Float { affine, .. } => (*affine, 1u32),
+            Samples::Codes(_) => (Affine { scale: [1.0; 3], offset: [0.0; 3] }, 0),
+        };
+        for row in self.coding.matrix.into_iter().chain([affine.scale, affine.offset]) {
             for value in [row[0], row[1], row[2], 0.0] {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
+        }
+        // The struct's size rounds up to its sixteen-byte alignment, so the flag carries three
+        // words of padding the shader never reads.
+        for word in [float_samples, 0, 0, 0] {
+            bytes.extend_from_slice(&word.to_le_bytes());
         }
         bytes
     }
 }
 
 /// What [`Picture::block`] writes, for `wgsl_layout` to hold against the shader's own struct.
-pub(crate) const BLOCK_BYTES: usize = 12 * 4 + 4 * 4 + 8 * 16;
+pub(crate) const BLOCK_BYTES: usize = 12 * 4 + 4 * 4 + 10 * 16 + 16;
 
 fn float_storage(gpu: &crate::gpu::Gpu, values: &[f32]) -> crate::gpu::Buffer {
     let mut bytes = Vec::with_capacity(values.len().max(1) * 4);
@@ -429,6 +541,69 @@ mod tests {
         blue: (0.131, 0.046),
         white: (0.3127, 0.3290),
     };
+
+    /// A linear DNG's picture reads each channel through its own run of the table, and only the
+    /// part of the raster its crop keeps.
+    #[test]
+    fn a_camera_picture_reads_its_crop_a_channel_at_a_time() {
+        let Some(gpu) = crate::gpu::device() else {
+            eprintln!("SKIPPED: no adapter answered, so the camera picture was not read.");
+            return;
+        };
+        // Six pixels, each carrying its own index in all three channels.
+        let codes: Vec<u16> = (0..6u16).flat_map(|pixel| [pixel; 3]).collect();
+        let table: Vec<f32> =
+            (0..6).flat_map(|code| (0..3).map(move |channel| 0.1 * code as f32 + 0.01 * channel as f32)).collect();
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let coding = Coding { matrix: identity, curve: Curve::Linear, depth: 16 };
+        let raster = crate::resident::Resident::upload(gpu, &codes, 3, 2);
+        let crop = Rect::exact(1, 1, 2, 1);
+        let picture = Picture::camera(gpu, raster, crop, coding, &table, rawler::decoders::Orientation::Normal);
+        let window = Rect { at: At::ORIGIN, size: picture.upright_size() };
+        let frame = picture
+            .window(gpu, device(gpu), window, crate::view::Scale::Full)
+            .expect("the pass runs");
+        let samples = pollster::block_on(frame.into_host()).expect("the frame reads back");
+
+        assert_eq!(samples.len(), 2 * 3, "the crop is two pixels");
+        for (at, sample) in samples.iter().enumerate() {
+            let (pixel, channel) = (4 + at / 3, at % 3);
+            let want = (0.1 * pixel as f64 + 0.01 * channel as f64) * 65535.0;
+            assert!((f64::from(*sample) - want).abs() <= 2.0, "pixel {pixel} channel {channel}: {sample} against {want}");
+        }
+    }
+
+    /// The crop's origin is the raster's, so a halved or turned window of it reads the pixels the
+    /// crop keeps rather than ones at the raster's own corner.
+    #[test]
+    fn a_crop_is_halved_and_turned_inside_itself() {
+        let Some(gpu) = crate::gpu::device() else {
+            eprintln!("SKIPPED: no adapter answered, so the cropped picture was not read.");
+            return;
+        };
+        // A 4x3 raster whose pixels carry their own index, read back as a twentieth each.
+        let codes: Vec<u16> = (0..12u16).flat_map(|pixel| [pixel; 3]).collect();
+        let table: Vec<f32> = (0..12).flat_map(|code| [code as f32 / 20.0; 3]).collect();
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let coding = Coding { matrix: identity, curve: Curve::Linear, depth: 16 };
+        let read = |upright, scale| -> Vec<f64> {
+            let raster = crate::resident::Resident::upload(gpu, &codes, 4, 3);
+            let picture = Picture::camera(gpu, raster, Rect::exact(1, 1, 2, 2), coding, &table, upright);
+            let window = Rect { at: At::ORIGIN, size: picture.upright_size() };
+            let frame = picture.window(gpu, device(gpu), window, scale).expect("the pass runs");
+            let samples = pollster::block_on(frame.into_host()).expect("the frame reads back");
+            samples.chunks(3).map(|pixel| f64::from(pixel[0]) / 65535.0 * 20.0).collect()
+        };
+
+        let halved = read(rawler::decoders::Orientation::Normal, crate::view::Scale::Half);
+        assert_eq!(halved.len(), 1);
+        assert!((halved[0] - 7.5).abs() < 0.01, "the crop's 2x2 averaged to {}", halved[0]);
+
+        let turned = read(rawler::decoders::Orientation::Rotate180, crate::view::Scale::Full);
+        for (got, want) in turned.iter().zip([10.0, 9.0, 6.0, 5.0]) {
+            assert!((got - want).abs() < 0.01, "turned {turned:?}");
+        }
+    }
 
     /// The pass pulls a colour Rec.2020 cannot make towards its own luma rather than clamping the
     /// channels that went negative.

@@ -11,6 +11,9 @@
 //! does run is everything below those: the coding, the defringe, the lens gather, the sharpen, the
 //! grade, the crop and the roll-off - which is most of the pipeline and all of the editor.
 //!
+//! A linear DNG is held here too, since a camera demosaiced it before it was written, and it is
+//! the one picture that keeps an as-shot illuminant ([`Camera`]).
+//!
 //! The codec for each container:
 //!
 //!   PNG   `png`, which reads `cICP`, `iCCP`, `cHRM`/`gAMA` and `eXIf` beside the pixels.
@@ -63,6 +66,22 @@ const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
 /// questions, and a caller above them asks without knowing which it has.
 pub struct Held {
     picture: crate::linearise::Picture,
+    /// Only a linear DNG's, which is a camera's counts rather than a rendering of them.
+    camera: Option<Camera>,
+}
+
+/// What a picture demosaiced before it was written still says about the sensor behind it.
+pub struct Camera {
+    pub as_shot: Option<crate::white_balance::AsShot>,
+    /// Where each channel saturates on the frame's scale, as `decode_rawler::channel_ceilings`
+    /// states a RAW's.
+    pub ceiling: [f32; 3],
+}
+
+impl Held {
+    pub fn camera(picture: crate::linearise::Picture, camera: Camera) -> Held {
+        Held { picture, camera: Some(camera) }
+    }
 }
 
 /// Opens a finished picture as far as the device, which is as far as any setting is irrelevant.
@@ -76,6 +95,7 @@ pub fn hold(bytes: &[u8]) -> Result<Held, String> {
 pub fn holding(read: Read) -> Result<Held, String> {
     let gpu = crate::gpu::device()
         .ok_or_else(|| crate::base::without_a_device("reading a finished picture"))?;
+    crate::linearise::check_fits(gpu, read.width * read.height * crate::resident::BYTES_PER_PIXEL)?;
     let picture = crate::linearise::Picture::upload(
         gpu,
         &read.codes,
@@ -86,7 +106,7 @@ pub fn holding(read: Read) -> Result<Held, String> {
         read.gain,
     )
     .ok_or("this picture decoded to nothing")?;
-    Ok(Held { picture })
+    Ok(Held { picture, camera: None })
 }
 
 /// An AVIF the page decoded itself: `avif` for what the container says around the pixels, and the
@@ -100,7 +120,7 @@ pub fn hold_planes(avif: &[u8], planes: &[u8], layout: &crate::planes::Layout) -
     let codes = crate::planes::codes(gpu, planes, layout)?;
     let picture =
         crate::linearise::Picture::on_device(gpu, codes, coding_of(&primary, 16), primary.turn, None);
-    Ok(Held { picture })
+    Ok(Held { picture, camera: None })
 }
 
 impl Held {
@@ -145,22 +165,25 @@ impl Held {
             // A finished picture has been white-balanced by whoever rendered it, and the samples
             // carry no trace of what was divided out. The panel says so rather than offering a
             // temperature to move away from a baseline nobody recorded.
-            as_shot: None,
+            as_shot: self.camera.as_ref().and_then(|camera| camera.as_shot),
             noise: None,
             dust: None,
-            // No demosaic ran, so there is no reconstruction matrix for the defringe to propagate
+            // RCD did not run, so there is no reconstruction matrix for the defringe to propagate
             // its channel correlations through; it falls back to its own estimate.
             matrix: None,
-            // One, which is what the field means for a frame that came from no sensor: the
-            // per-channel ceilings it exists to undo are the conditioning's, and a picture whose
-            // white balance was applied by somebody else's camera clips all three channels at
-            // full scale together.
-            neutral_ceiling: 1.0,
-            // Ones, for the same reason: whatever balance this picture carries was applied before
-            // it was written, so there is nothing here to undo and nothing to correct a noise model
-            // by - there being no fit either.
-            wb_gains: [1.0; 3],
-            stated_white: Some(self.white_level()),
+            // One, which is what the field means for a frame whose white balance was applied by
+            // somebody else's camera: all three channels clip at full scale together. A linear
+            // DNG's balance is the table's, so its channels keep a RAW's separate ceilings.
+            neutral_ceiling: self
+                .camera
+                .as_ref()
+                .map_or(1.0, |camera| camera.ceiling.iter().copied().fold(f32::INFINITY, f32::min)),
+            wb_gains: self.camera.as_ref().map_or([1.0; 3], |camera| camera.ceiling),
+            // A linear DNG's white is a quantile of its scene, as a RAW's is.
+            stated_white: match self.camera {
+                Some(_) => None,
+                None => Some(self.white_level()),
+            },
         })
     }
 }
