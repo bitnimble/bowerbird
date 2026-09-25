@@ -8,7 +8,8 @@
 //
 // Only a real browser can answer this: what a canvas does with no adapter is the browser's
 // behaviour, not the app's.
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { FALLBACK_PHOTOS_DIR } from '../fixture_library';
 import { gotoPhoto, shownFrame, useLibrary } from '../helpers';
 
@@ -22,7 +23,7 @@ test.use({
 });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, FALLBACK_PHOTOS_DIR, { viewerRendition: 'embedded' });
+  await useLibrary(browser, FALLBACK_PHOTOS_DIR);
 });
 
 test('a photograph is shown on a machine with no WebGPU adapter', async ({ page }) => {

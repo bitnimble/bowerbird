@@ -1,6 +1,7 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { API_URL, TRIAGE_PHOTO_NAMES, TRIAGE_PHOTOS_DIR, stackPhotosUrl } from '../fixture_library';
+import { TRIAGE_PHOTO_NAMES, TRIAGE_PHOTOS_DIR, stackPhotosUrl } from '../fixture_library';
 import {
   addLibrary,
   bands,
@@ -50,19 +51,19 @@ function stackIdOf(page: Page): string {
 // giving each test its own library, and it keeps them independent of each other's
 // verdict order.
 async function clearVerdicts(page: Page): Promise<void> {
-  const libraries = await page.request.get(`${API_URL}${route(PathSegment.api(), PathSegment.libraries())}`);
+  const libraries = await page.request.get(`${route(PathSegment.api(), PathSegment.libraries())}`);
   const list = (await libraries.json()) as { id: string; root_path: string }[];
   const library = list.find((entry) => entry.root_path === TRIAGE_DIR);
   if (library == null) return;
   const rows = await page.request.get(
-    `${API_URL}${route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.photos())}?limit=200&include_deleted=true`,
+    `${route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.photos())}?limit=200&include_deleted=true`,
   );
   const { photos } = (await rows.json()) as { photos: { id: string; stack_id: string | null }[] };
   const stackId = photos.find((photo) => photo.stack_id != null)?.stack_id;
   if (stackId == null) return;
   const members = (await (await page.request.get(stackPhotosUrl(stackId))).json()) as { id: string }[];
   for (const member of members) {
-    await page.request.patch(`${API_URL}${route(PathSegment.api(), PathSegment.photos(), member.id)}`, {
+    await page.request.patch(`${route(PathSegment.api(), PathSegment.photos(), member.id)}`, {
       data: { triage: 'untriaged' },
     });
   }
@@ -295,13 +296,13 @@ test('a session runs to its end, writes its verdicts, and ends on a live photo i
   // but the stack: collapsed, it is one row, so there is genuinely nothing after
   // it to step to.
   const libraries = (await (
-    await page.request.get(`${API_URL}${route(PathSegment.api(), PathSegment.libraries())}`)
+    await page.request.get(`${route(PathSegment.api(), PathSegment.libraries())}`)
   ).json()) as { id: string; root_path: string }[];
   const library = libraries.find((entry) => entry.root_path === TRIAGE_DIR);
   if (library == null) throw new Error('the triage library is not listed');
   const listing = (await (
     await page.request.get(
-      `${API_URL}${route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.photos())}?limit=50`,
+      `${route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.photos())}?limit=50`,
     )
   ).json()) as { photos: { id: string }[] };
   expect(listing.photos.map((photo) => photo.id)).toContain(landed);

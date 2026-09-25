@@ -1,10 +1,12 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { setOnboardingComplete } from '../helpers';
 
 const WELCOME = new RegExp(`${route(PathSegment.welcome())}$`);
 
-// Settings are global, so the rest of the run is handed back onboarded however this ends.
+// Settings are the worker's, so the files after this one on it are handed back onboarded
+// however this ends.
 test.afterAll(async ({ request }) => {
   await setOnboardingComplete(request, true);
 });

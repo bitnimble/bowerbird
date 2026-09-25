@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { XTRANS_PHOTOS_DIR, XTRANS_PHOTO_NAMES } from '../fixture_library';
 import {

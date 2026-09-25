@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { ARCHIVE_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';

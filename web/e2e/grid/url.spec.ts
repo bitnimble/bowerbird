@@ -1,6 +1,7 @@
 // What the address bar carries for a grid, and what it must not carry into the
 // next one. Here because only a browser can answer a reload.
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { PHOTO_NAMES, URL_OTHER_PHOTOS_DIR, URL_PHOTOS_DIR, URL_PHOTO_NAMES } from '../fixture_library';
 import { addLibrary, gallery, gotoLibrary, openLibrary, tiles } from '../helpers';
 

@@ -6,7 +6,8 @@
 // the base, what undo takes back, when a seed is dropped again - is pinned against
 // `MergePresenter` in `bun test`, in milliseconds. A screenshot of the canvas could say something
 // changed and never that the value was right, which is the failure that actually happens.
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { MERGE_PHOTOS_DIR, MERGE_PHOTO_NAMES } from '../fixture_library';
 import { gotoLibrary, photoStage, selectPhoto, selectedTiles, tiles, useLibrary } from '../helpers';
 

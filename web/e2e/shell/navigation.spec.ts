@@ -1,7 +1,8 @@
 // The app around the photographs: where the home page lands, what a settings tab
 // is as a URL, and what the sidebar becomes on a screen too narrow to keep it beside
 // the content.
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTO_NAMES, SHELL_PHOTOS_DIR } from '../fixture_library';
 import { gallery, openLibrary, setViewMode, tiles, useLibrary } from '../helpers';

@@ -2,7 +2,8 @@
 // and the keyboard each do, and when a click opens a photo instead (§18.3.1).
 // Nothing here writes to the catalogue, so the tests are independent of one
 // another.
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { SELECT_PHOTOS_DIR, SELECT_PHOTO_NAMES } from '../fixture_library';
 import {

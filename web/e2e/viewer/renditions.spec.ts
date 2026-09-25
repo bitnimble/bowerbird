@@ -3,10 +3,11 @@
 // `frames.spec.ts`; this is about the files behind them.
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { type APIRequestContext, expect, test } from '@playwright/test';
+import { type APIRequestContext, expect } from '@playwright/test';
 import { orientationOfAvif } from 'avif-hdr-video';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { API_URL, PHOTO_NAMES, RENDITION_PHOTOS_DIR, libraryDataDir } from '../fixture_library';
+import { PHOTO_NAMES, RENDITION_PHOTOS_DIR } from '../fixture_library';
+import { libraryDataDir, test } from '../fixtures';
 import {
   bulkAction,
   gotoPhoto,
@@ -33,7 +34,7 @@ import {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, RENDITION_PHOTOS_DIR, { viewerRendition: 'embedded' });
+  await useLibrary(browser, RENDITION_PHOTOS_DIR);
 });
 
 // Where this library's renditions land. Generated files live outside every
@@ -42,7 +43,7 @@ test.beforeAll(async ({ browser }) => {
 // The large renditions are filed under `<rendition>-hdr` when the library builds
 // them in HDR, so the directory is read off the library rather than assumed.
 async function renditionPath(request: APIRequestContext, rendition: string, photoId: string): Promise<string> {
-  const libraries = (await (await request.get(`${API_URL}${route(PathSegment.api(), PathSegment.libraries())}`)).json()) as {
+  const libraries = (await (await request.get(`${route(PathSegment.api(), PathSegment.libraries())}`)).json()) as {
     id: string;
     root_path: string;
     rendition_hdr: boolean;

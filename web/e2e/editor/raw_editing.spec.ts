@@ -1,4 +1,5 @@
-import { type Locator, type Page, expect, test } from '@playwright/test';
+import { type Locator, type Page, expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { EDIT_PHOTOS_DIR } from '../fixture_library';

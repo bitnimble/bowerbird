@@ -2,7 +2,8 @@
 // moving photographs in and out, and where the viewer goes back to when a photo
 // was opened from one.
 import { readdirSync } from 'node:fs';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import {

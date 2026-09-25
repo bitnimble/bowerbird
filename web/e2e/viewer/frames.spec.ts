@@ -3,9 +3,10 @@
 // step arrives with. Everything here is about the moment of a swap, which is why so much
 // of it samples every animation frame rather than reading the DOM once.
 import path from 'node:path';
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { API_URL, FRAME_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
+import { FRAME_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import {
   FIRST_FRAME,
   gotoPhoto,
@@ -26,7 +27,7 @@ import {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, FRAME_PHOTOS_DIR, { viewerRendition: 'embedded' });
+  await useLibrary(browser, FRAME_PHOTOS_DIR);
 });
 
 interface Sample {
@@ -372,7 +373,7 @@ test('a neighbour rebuilt while it was held is painted at the URL it was held at
   // Built before it is held, or the neighbour's frame 404s and the stage drops it as
   // failed - there being nothing at that URL to rebuild. This library renders on request.
   await page.request.post(
-    `${API_URL}${route(PathSegment.api(), PathSegment.photos(), secondId, PathSegment.renditions(), 'full')}`,
+    `${route(PathSegment.api(), PathSegment.photos(), secondId, PathSegment.renditions(), 'full')}`,
     { timeout: 180_000 },
   );
 
@@ -389,7 +390,7 @@ test('a neighbour rebuilt while it was held is painted at the URL it was held at
   // Rebuilt from under the reader while they are still on its neighbour. The request does
   // not answer until the render has, so it carries its own budget rather than the default.
   await page.request.post(
-    `${API_URL}${route(PathSegment.api(), PathSegment.photos(), secondId, PathSegment.renditions(), 'full')}?force=true`,
+    `${route(PathSegment.api(), PathSegment.photos(), secondId, PathSegment.renditions(), 'full')}?force=true`,
     { timeout: 180_000 },
   );
   await expect.poll(() => fetched.at(-1), { timeout: 60_000 }).not.toBe(before);

@@ -14,9 +14,9 @@ const E2E_DIR = path.dirname(new URL(import.meta.url).pathname);
 // of one checkout so the copies are overwritten rather than piling up in /tmp.
 const CHECKOUT_KEY = createHash('sha1').update(path.resolve(E2E_DIR, '../..')).digest('hex').slice(0, 8);
 export const E2E_ROOT = path.join(tmpdir(), `bowerbird-e2e-${CHECKOUT_KEY}`);
-// One library root per spec file. The whole run shares a single API and DB, so
-// specs that mutate a catalogue (binning, moving into shoots) would otherwise
-// see each other's changes and depend on file order.
+// One library root per spec file. Each worker has a catalogue of its own, but the
+// roots on disk are the run's, so specs that move files (binning, moving into
+// shoots) would otherwise move them under each other and depend on file order.
 export const PHOTOS_DIR = path.join(E2E_ROOT, 'photos');
 export const STACK_PHOTOS_DIR = path.join(E2E_ROOT, 'stack-photos');
 // The grid's own, one per spec: verdicts, a selection, a filter and a bin all
@@ -54,7 +54,7 @@ export const PHONE_PHOTOS_DIR = path.join(E2E_ROOT, 'phone-photos');
 // its own rather than leaving the stacks spec's frames triaged behind it.
 export const TRIAGE_PHOTOS_DIR = path.join(E2E_ROOT, 'triage-photos');
 // The editor writes an exposure, a crop and a turn onto the photo it opens, and a
-// root can only be added once against the shared DB - so it gets its own rather
+// root can only be added once to a catalogue - so it gets its own rather
 // than leaving another spec's frames edited behind it.
 export const EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'edit-photos');
 export const MOBILE_EDIT_PHOTOS_DIR = path.join(E2E_ROOT, 'mobile-edit-photos');
@@ -65,8 +65,8 @@ export const PRINT_PHOTOS_DIR = path.join(E2E_ROOT, 'print-photos');
 // does that over is untouched afterwards - which another spec's frames moving
 // around in it would make unassertable.
 export const ARCHIVE_PHOTOS_DIR = path.join(E2E_ROOT, 'archive-photos');
-// The wasm decode only reads, but a root can only be added once against the shared
-// DB - so sharing the editor's would make whichever spec ran second fail to add it.
+// The wasm decode only reads, but a root can only be added once to a catalogue - so
+// sharing the editor's would make whichever spec ran second take it from the first.
 export const DECODE_PHOTOS_DIR = path.join(E2E_ROOT, 'decode-photos');
 export const DECODE_PHOTO_NAMES = ['alpha.arw'];
 // Viewing without WebGPU, which runs in a browser launched without it, so it cannot share a
@@ -93,38 +93,12 @@ export const PANORAMA_PHOTO_NAMES = PANORAMA_VIEW_NAMES;
 // moving camera.
 export const MERGE_PHOTOS_DIR = path.join(E2E_ROOT, 'merge-photos');
 export const MERGE_PHOTO_NAMES = ['frame-0.dng', 'frame-1.dng', 'frame-2.dng'];
-export const DB_PATH = path.join(E2E_ROOT, 'e2e.db');
-// Every generated file, outside every library root (§3). Under the fixture rather
-// than left to default: `./data` is relative to the API's cwd, which is the
-// checkout, so an unset DATA_DIR fills the working tree with the run's renditions
-// and leaves them there.
-export const DATA_DIR = path.join(E2E_ROOT, 'data');
-
-/** Where a library's renditions land, which is keyed by its id rather than by its root. */
-export function libraryDataDir(libraryId: string): string {
-  return path.join(DATA_DIR, libraryId);
-}
-// Playwright has to know both URLs before it launches anything, so these can't
-// be port 0 - pick one and publish it. The config process picks first and the
-// worker processes it forks inherit the choice through the environment, which is
-// what keeps the API_URL the specs call on the one the API was started on.
-function runPort(name: string): number {
-  const published = process.env[name];
-  if (published != null && published !== '') return Number(published);
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  process.env[name] = String(port);
-  return port;
-}
-
-export const API_PORT = runPort('E2E_API_PORT');
-export const WEB_PORT = runPort('E2E_WEB_PORT');
-export const API_URL = `http://127.0.0.1:${API_PORT}`;
 
 // A stack's members. The sort is required rather than defaulted, so that a caller
 // cannot get back an order nothing else in the app uses (§19.5.3); these fixtures
 // only ever count and filter, so the libraries' own default answers.
 export function stackPhotosUrl(stackId: string): string {
-  return `${API_URL}${route(PathSegment.api(), PathSegment.stacks(), stackId, PathSegment.photos())}?ordering=taken_asc`;
+  return `${route(PathSegment.api(), PathSegment.stacks(), stackId, PathSegment.photos())}?ordering=taken_asc`;
 }
 
 const FIXTURE = path.join(E2E_DIR, '../../test/fixtures/DSC02981.ARW');
@@ -225,7 +199,7 @@ export const URL_PHOTO_NAMES = ['alpha.arw', 'beta.arw', 'gamma.arw', 'delta.arw
 export function prepareFixture(): void {
   if (process.env.E2E_FIXTURE_READY === '1') return;
   process.env.E2E_FIXTURE_READY = '1';
-  console.log(`E2E API on ${API_URL}, web on http://127.0.0.1:${WEB_PORT}, fixture in ${E2E_ROOT}`);
+  console.log(`E2E fixture in ${E2E_ROOT}`);
   rmSync(E2E_ROOT, { recursive: true, force: true });
   // The stacks library gets the same copies as the others. Every frame being
   // byte-identical is what makes it a stack: detection has nothing to tell them

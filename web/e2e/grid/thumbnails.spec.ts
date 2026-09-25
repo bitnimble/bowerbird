@@ -1,8 +1,9 @@
 // The grid tile as a file of its own: rebuilding one from the bulk bar, and the
 // two stamps that keep a tile and the viewer's rendition from moving each other.
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { API_URL, PHOTO_NAMES, THUMBNAIL_PHOTOS_DIR } from '../fixture_library';
+import { PHOTO_NAMES, THUMBNAIL_PHOTOS_DIR } from '../fixture_library';
 import {
   FIRST_FRAME,
   bulkAction,
@@ -24,7 +25,7 @@ import {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, THUMBNAIL_PHOTOS_DIR, { viewerRendition: 'embedded' });
+  await useLibrary(browser, THUMBNAIL_PHOTOS_DIR);
 });
 
 test("a selection's grid tiles are rebuilt from the bulk bar, and pushed to the tile that changed alone", async ({ page }) => {
@@ -69,7 +70,7 @@ test('rebuilding a photo rendition leaves its grid tile where it is', async ({ p
   // A render of the viewer's copy, which writes no tile. Shared one stamp, this
   // moved every tile URL on the page and re-downloaded bytes that had not changed.
   await page.request.post(
-    `${API_URL}${route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.renditions(), 'full')}?force=true`,
+    `${route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.renditions(), 'full')}?force=true`,
     { timeout: 180_000 },
   );
   // Long enough for the announcement to have arrived and been applied.

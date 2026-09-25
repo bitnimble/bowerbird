@@ -178,9 +178,9 @@ Two things about the emitted WGSL a reader will meet:
 
 ## Running the suites
 
-The e2e suite takes about nine minutes, `test:bench` about five with a release build under it,
+The e2e suite takes about four minutes, `test:bench` about five with a release build under it,
 and the tests that decode real RAWs (`--features fixtures`) about a minute; `test:native`, `test`,
-`typecheck` and `lint` take seconds. A whole e2e run far past nine minutes is broken, not slow:
+`typecheck` and `lint` take seconds. A whole e2e run far past four minutes is broken, not slow:
 every test waiting out its timeout on a page that never loads looks exactly like a long run. Start a long run in the background and then **do something
 else or wait for the completion notification**.
 
@@ -195,7 +195,7 @@ scored search to the answers the C library gives (DESIGN §10.8), so a change to
 covered by nothing `test:native` runs.
 
 **Run e2e once, at the end.** It is the final check before handing work back, not a step between
-edits: nine minutes an iteration is most of an afternoon spent watching a browser start. The fast
+edits: four minutes an iteration is most of an afternoon spent watching a browser start. The fast
 suites - `bun run test:native <name>`, `bun run test`, `bun run --cwd web test`, `bun run typecheck`,
 `bun run lint` - answer
 almost everything and answer it in seconds, so iterate against those and let e2e confirm the
@@ -343,27 +343,34 @@ usually costs a millisecond one layer down.
 `stack_triage/`, `mobile/`, `decode/`, `shell/` - and a new claim goes in the file that already
 owns its subject rather than at the end of the longest one.
 
-**No two spec files share a library root.** The whole run shares one API and one DB, so a file
-that rates a photo, bins one, or re-points its library at a different rendition source writes
-state the next file would read - and which file that is depends only on the order Playwright
-walks them in. A root of its own is what lets a file be run alone
-(`bun run --cwd web test:e2e -- viewer/zoom`) and lets a failure stay where it happened.
+**Every worker is its own server.** `web/e2e/fixtures.ts` starts an API, a catalogue and a Vite
+per Playwright worker, and the files and their tests are spread across the workers
+(`fullyParallel`). A file whose tests read what the one before left says `mode: 'serial'`, and
+runs on one worker in order. Every spec imports `test` from `../fixtures`, never from
+`@playwright/test`, or it gets no server.
+
+**No two spec files share a library root.** The catalogues are per worker, but the roots on disk
+are the run's, so a file that bins a photo or files one into a shoot moves it under any other file
+using that root. A file that is not serial can have its tests on both workers, each adding the
+root to its own catalogue, so such a file must not move anything on disk. A root of its own is
+also what lets a file be run alone (`bun run --cwd web test:e2e -- viewer/zoom`).
 
 `useLibrary` in a `beforeAll` is how a file gets one, against a root declared in
 `fixture_library.ts`. A file whose subject *is* the arrival of a library does the add inside the
 test instead - `library/indexing.spec.ts` is watching the scan, and `library/add_library.spec.ts`
 never submits the dialog at all.
 
-Anything a spec reads out of the shell rather than out of its own library is not covered by any
-of this: the home page opens the first library by root path, which is whichever spec's root sorts
-first, so a spec that measures photographs opens its own before measuring.
+**A test goes straight to the page it is about**: `gotoLibrary`, `gotoShoot` and `gotoPhoto` open
+the page by its address, and setup is through the API (`addLibrary`, `setRenditionSource`,
+`setViewerRendition`). Settings is opened only by the specs whose subject is Settings.
 
-What a root does not isolate is **the viewer's own settings**, which are global. Which rendition
-it opens at follows whatever was last chosen anywhere, and it hides the sidebar while a photo is
-open - so the stage is the window less its margins rather than less the sidebar, which moves where
-the filmstrip sits and whether a magnified frame overhangs at all. A spec that reads what the
-viewer is showing passes `viewerRendition` to `useLibrary`; one that measures the shape it is
-shown in passes `hideSidebarInViewer: false`, or calls `setHideSidebarInViewer` in the test.
+What a root does not isolate is **the viewer's own settings**, which are the worker's catalogue's
+and so shared by every test that runs on it. `freshViewer` in `fixtures.ts` puts them back to their
+defaults before every test: the viewer opens at whatever the library serves, and hides the sidebar
+while a photo is open - so the stage is the window less its margins rather than less the sidebar,
+which moves where the filmstrip sits and whether a magnified frame overhangs at all. A test that
+needs anything else sets it with `setViewerRendition` or `setHideSidebarInViewer`, in the test or
+its file's `beforeEach` - never `beforeAll`, which the reset would undo.
 
 ### Looking at a picture never needs a browser
 

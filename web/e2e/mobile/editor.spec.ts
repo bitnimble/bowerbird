@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { MOBILE_EDIT_PHOTOS_DIR } from '../fixture_library';

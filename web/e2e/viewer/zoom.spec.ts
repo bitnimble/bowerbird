@@ -1,12 +1,14 @@
 // Magnifying a photograph: the stops a click walks, the slider in the menu, the
 // pan limits, and what survives a rendition change or a stage that changed shape.
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTO_NAMES, ZOOM_PHOTOS_DIR } from '../fixture_library';
 import {
   FIRST_FRAME,
   gotoPhoto,
   photoStage,
+  setHideSidebarInViewer,
   setRenditionSource,
   setViewerRendition,
   shownFilename,
@@ -20,10 +22,14 @@ import {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
+  await useLibrary(browser, ZOOM_PHOTOS_DIR);
+});
+
+test.beforeEach(async ({ request }) => {
   // The sidebar stays: a portrait frame at its own pixels overhangs sideways in a stage
   // the window less 208px wide, and not in one with the sidebar's width back, which
   // leaves the pan limit below at zero and nothing to clamp.
-  await useLibrary(browser, ZOOM_PHOTOS_DIR, { viewerRendition: 'embedded', hideSidebarInViewer: false });
+  await setHideSidebarInViewer(request, false);
 });
 
 // The stage draws this into a slot inside a popup that exists only while the menu is

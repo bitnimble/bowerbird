@@ -1,8 +1,9 @@
 import { copyFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { API_URL, E2E_ROOT, STACK_PHOTO_NAMES, STACK_PHOTOS_DIR, stackPhotosUrl } from '../fixture_library';
+import { E2E_ROOT, STACK_PHOTO_NAMES, STACK_PHOTOS_DIR, stackPhotosUrl } from '../fixture_library';
 import {
   FIRST_FRAME,
   addLibrary,
@@ -33,13 +34,13 @@ const SEAM_CR3 = path.join(FIXTURES, 'IMG_5360.CR3');
 /** The one stack in this spec's library, found through the collapsed listing. */
 async function stackIdOfLibrary(page: Page): Promise<string> {
   const libraries = (await (
-    await page.request.get(`${API_URL}${route(PathSegment.api(), PathSegment.libraries())}`)
+    await page.request.get(`${route(PathSegment.api(), PathSegment.libraries())}`)
   ).json()) as { id: string; root_path: string }[];
   const library = libraries.find((entry) => entry.root_path === STACK_PHOTOS_DIR);
   if (library == null) throw new Error('the stack library is not listed');
   const rows = (await (
     await page.request.get(
-      `${API_URL}${route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.photos())}?limit=50`,
+      `${route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.photos())}?limit=50`,
     )
   ).json()) as {
     photos: { stack_id: string | null }[];

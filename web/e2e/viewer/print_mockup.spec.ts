@@ -2,7 +2,8 @@
 // editor's print renderer and leaves the photograph untouched. What the renderer draws, and how
 // it turns under a pointer, is `editor/raw_editing.spec.ts`; this is the way in, what it is drawn
 // from, and the way back out.
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PRINT_PHOTOS_DIR } from '../fixture_library';
 import {
@@ -23,7 +24,7 @@ const DRAWN = { timeout: 170_000 };
 test.describe.configure({ timeout: 180_000, mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, PRINT_PHOTOS_DIR, { viewerRendition: 'embedded' });
+  await useLibrary(browser, PRINT_PHOTOS_DIR);
 });
 
 // The max rendition holds every edit at the sensor's own size: the RAW never crosses, and this

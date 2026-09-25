@@ -1,6 +1,7 @@
 // Soft delete and what comes back from it: the keystroke, the toast that undoes
 // it, and the Bin's own restore.
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { BIN_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import {
   bulkAction,

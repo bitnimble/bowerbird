@@ -1,6 +1,7 @@
 // A library arriving: the scan that finds the RAWs, the tiles that follow it, and
 // the collection settings that outlive the browser they were set in.
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { INDEX_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import { forgetLibrary, gallery, gotoLibrary, openLibrary, tiles } from '../helpers';

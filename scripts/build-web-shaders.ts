@@ -10,7 +10,8 @@
 // Everything else about it is `build.rs`'s rule: the pinned compiler first, then `BOWERBIRD_SLANGC`,
 // then `PATH`, and a refusal naming both rather than a stage quietly left out.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,18 +47,31 @@ function slangc(): string {
 export function buildWebShaders(): void {
   const compiler = slangc();
   mkdirSync(OUT, { recursive: true });
-  for (const shader of SHADERS) {
-    const to = resolve(OUT, shader.replace('.slang', '.wgsl'));
-    const run = spawnSync(compiler, [shader, '-target', 'wgsl', '-o', to], {
-      cwd: SLANG,
-      encoding: 'utf8',
-    });
-    if (run.status !== 0) {
-      throw new Error(`${shader} did not compile:\n${run.stderr || run.stdout}`);
+  const scratch = mkdtempSync(join(tmpdir(), 'bowerbird-web-shaders-'));
+  try {
+    for (const shader of SHADERS) {
+      const name = shader.replace('.slang', '.wgsl');
+      const run = spawnSync(compiler, [shader, '-target', 'wgsl', '-o', join(scratch, name)], {
+        cwd: SLANG,
+        encoding: 'utf8',
+      });
+      if (run.status !== 0) {
+        throw new Error(`${shader} did not compile:\n${run.stderr || run.stdout}`);
+      }
+      writeIfChanged(resolve(OUT, name), readFileSync(join(scratch, name), 'utf8'));
     }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
   // Nothing generated is committed, which is the same rule `$OUT_DIR/wgsl` follows.
-  writeFileSync(resolve(OUT, '.gitignore'), '*\n');
+  writeIfChanged(resolve(OUT, '.gitignore'), '*\n');
+}
+
+// Every running dev server watches this directory, and a rewrite of the same bytes still reloads
+// every page they are serving: a second server starting mid-session would do that to the first's.
+function writeIfChanged(to: string, text: string): void {
+  if (existsSync(to) && readFileSync(to, 'utf8') === text) return;
+  writeFileSync(to, text);
 }
 
 if (import.meta.main) {

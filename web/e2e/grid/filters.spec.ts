@@ -1,6 +1,7 @@
 // Narrowing the grid: the verdict presets, and the panel behind them holding the
 // set they are named points in, the filename search and the range of days.
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { test } from '../fixtures';
 import { FILTER_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import { cursorTile, gallery, gotoLibrary, sidebarSection, tiles, useLibrary } from '../helpers';
 

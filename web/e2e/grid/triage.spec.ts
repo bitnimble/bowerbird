@@ -2,7 +2,8 @@
 // what the working set does when one is rejected. The whole point of these
 // controls is that a cull never has to go through the detail view, so nothing
 // here opens a photo.
-import { expect, test, type Locator } from '@playwright/test';
+import { expect, type Locator } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { GRID_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import { cursorTile, gotoLibrary, tiles, useLibrary } from '../helpers';

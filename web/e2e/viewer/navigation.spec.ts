@@ -3,7 +3,8 @@
 // late or not at all. What the picture itself does is `frames.spec.ts`, and how
 // it is magnified is `zoom.spec.ts`.
 import path from 'node:path';
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTO_NAMES, VIEWER_PHOTOS_DIR } from '../fixture_library';
 import {
@@ -20,9 +21,7 @@ import {
 } from '../helpers';
 
 test.beforeAll(async ({ browser }) => {
-  // This library serves the camera's JPEG, and the panels below say so, so the
-  // viewer has to be opening at it rather than at whatever was last chosen.
-  await useLibrary(browser, VIEWER_PHOTOS_DIR, { viewerRendition: 'embedded' });
+  await useLibrary(browser, VIEWER_PHOTOS_DIR);
 });
 
 test('the detail view shows shooting metadata, the triage control and steps between photos', async ({ page }) => {

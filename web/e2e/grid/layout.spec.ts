@@ -1,6 +1,7 @@
 // How the grid arranges what it is given: the masonry view's rows, and what a
 // list row paints over its frame. The band a stack opens is `bands.spec.ts`.
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { LAYOUT_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import { frames, gallery, gotoLibrary, setViewMode, tileName, tiles, useLibrary } from '../helpers';
 

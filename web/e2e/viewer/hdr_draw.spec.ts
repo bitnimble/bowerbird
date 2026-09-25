@@ -17,9 +17,10 @@
 // reference frame to compare against rather than a threshold.
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { type APIRequestContext, expect, test } from '@playwright/test';
+import { type APIRequestContext, expect } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
-import { API_URL, HDR_PHOTOS_DIR, libraryDataDir } from '../fixture_library';
+import { HDR_PHOTOS_DIR } from '../fixture_library';
+import { libraryDataDir, test } from '../fixtures';
 import {
   gotoPhoto,
   photoStage,
@@ -38,7 +39,7 @@ test.beforeAll(async ({ browser }) => {
 // read off the library rather than assumed - and a library that came back SDR would send this
 // spec looking in the right place for the wrong claim.
 async function hdrRendition(request: APIRequestContext, photoId: string): Promise<string> {
-  const libraries = (await (await request.get(`${API_URL}${route(PathSegment.api(), PathSegment.libraries())}`)).json()) as {
+  const libraries = (await (await request.get(`${route(PathSegment.api(), PathSegment.libraries())}`)).json()) as {
     id: string;
     root_path: string;
     rendition_hdr: boolean;

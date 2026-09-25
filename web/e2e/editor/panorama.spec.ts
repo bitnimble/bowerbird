@@ -1,4 +1,5 @@
-import { type Locator, type Page, expect, test } from '@playwright/test';
+import { type Locator, type Page, expect } from '@playwright/test';
+import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PANORAMA_PHOTOS_DIR, PANORAMA_PHOTO_NAMES } from '../fixture_library';
 import { editDiagnosticSize, editDiagnostics, editPreview, editTools, photoStage, savedRev, useLibrary, waitForEditorLive } from '../helpers';

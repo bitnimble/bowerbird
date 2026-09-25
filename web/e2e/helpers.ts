@@ -163,18 +163,12 @@ export async function libraryPhotos(page: Page, rootPath: string): Promise<Photo
 export async function useLibrary(
   browser: Browser,
   rootPath: string,
-  options: { viewerRendition?: ViewerRenditionMode; hideSidebarInViewer?: boolean; photos?: number; includeNonRaw?: boolean } = {},
+  options: { photos?: number; includeNonRaw?: boolean } = {},
 ): Promise<void> {
   const page = await browser.newPage();
   // `photos` for a root with a list of its own (`fixture_library.ts`): waiting for
   // the wrong count reads as a library that never arrived.
   await addLibrary(page, rootPath, { includeNonRaw: options.includeNonRaw, photos: options.photos });
-  // The viewer's own settings are what a root of its own does not isolate: they are
-  // global, and the rendition's default - "last used" - is whatever the file before
-  // this one happened to choose. A spec that reads what the viewer is showing, or
-  // measures the shape it shows it in, says what it needs.
-  if (options.viewerRendition != null) await setViewerRendition(page.request, options.viewerRendition);
-  if (options.hideSidebarInViewer != null) await setHideSidebarInViewer(page.request, options.hideSidebarInViewer);
   await page.close();
 }
 
@@ -200,6 +194,15 @@ export function setViewerRendition(request: APIRequestContext, mode: ViewerRendi
 // magnified frame overhangs - turns it off and keeps the sidebar's width in the sum.
 export function setHideSidebarInViewer(request: APIRequestContext, hide: boolean): Promise<void> {
   return patchSettings(request, { hide_sidebar_in_viewer: hide });
+}
+
+/** The viewer's settings back to a fresh install's. */
+export function resetViewerSettings(request: APIRequestContext): Promise<void> {
+  return patchSettings(request, {
+    viewer_rendition_mode: 'remember',
+    last_viewer_rendition: null,
+    hide_sidebar_in_viewer: true,
+  });
 }
 
 export function setOnboardingComplete(request: APIRequestContext, done: boolean): Promise<void> {
