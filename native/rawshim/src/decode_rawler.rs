@@ -2187,6 +2187,16 @@ pub fn camera_to_rec2020(image: &rawler::RawImage) -> Option<[[f32; 3]; 3]> {
     camera_to_rec2020_from(xyz_to_cam_of(image)?)
 }
 
+/// [`camera_to_rec2020`] off a file's tags, without decoding a photosite.
+pub fn camera_to_rec2020_at(path: &str) -> Option<[[f32; 3]; 3]> {
+    let source = rawler::rawsource::RawSource::new_lazy(std::path::Path::new(path)).ok()?;
+    let decoder = rawler::get_decoder(&source).ok()?;
+    let image = decoder
+        .raw_image(&source, &rawler::decoders::RawDecodeParams::default(), true)
+        .ok()?;
+    camera_to_rec2020(&image)
+}
+
 fn camera_to_rec2020_from(xyz_to_cam: [[f32; 3]; 4]) -> Option<[[f32; 3]; 3]> {
     // Camera from sRGB: how much of each camera channel an sRGB primary excites.
     let mut cam_from_srgb = [[0f64; 3]; 3];

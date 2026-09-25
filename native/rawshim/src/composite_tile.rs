@@ -1065,12 +1065,13 @@ async fn prepared_with(
         }
         let merit = match request.weight {
             Weight::Exposure => merit_of(
-                &spec.sources[i],
+                spec.sources[i].gain,
                 shortest,
                 taken.neutral_ceiling,
-                &taken.levels,
-                request.reference_white_nits,
+                taken.coded,
+                taken.wb_gains,
                 taken.noise,
+                request.reference_white_nits,
             ),
             Weight::Feather | Weight::Mask(_) | Weight::Sharpness => Merit::EVEN,
         };
@@ -1283,17 +1284,7 @@ async fn taken(
     }
     let anchored = levels.ok_or("the reference does not reach this window")?;
 
-    // **The gain lands here, in the coding.** Dividing the white a source is coded against by
-    // its gain is a multiplication of its light, which is what an exposure match is - and it
-    // costs nothing, where a multiply per sample downstream would be a pass over the window.
-    let mine = crate::tone::Levels {
-        white: crate::light::Light::measured(anchored.white.raw() / source.gain),
-        peak: crate::light::Light::measured(anchored.peak.raw() / source.gain),
-        floor: anchored
-            .floor
-            .map(|f| crate::light::Light::measured(f.raw() / source.gain)),
-    }
-    .anchored();
+    let mine = coded_as(anchored, source.gain);
     let (coded, took_off) = crate::base::prepare(
         gpu,
         base,
@@ -1374,35 +1365,50 @@ async fn taken(
     }))
 }
 
+/// The levels a source of `gain` is coded against, where the composite's are `anchored`.
+///
+/// **The gain lands here, in the coding.** Dividing the white a source is coded against by its gain
+/// is a multiplication of its light, which is what an exposure match is - and it costs nothing,
+/// where a multiply per sample downstream would be a pass over the window.
+pub(crate) fn coded_as(anchored: crate::tone::Anchored, gain: f64) -> crate::tone::Anchored {
+    crate::tone::Levels {
+        white: crate::light::Light::measured(anchored.white.raw() / gain),
+        peak: crate::light::Light::measured(anchored.peak.raw() / gain),
+        floor: anchored.floor.map(|f| crate::light::Light::measured(f.raw() / gain)),
+    }
+    .anchored()
+}
+
 /// What one source of an exposure bracket is worth in the blend (`Merit`).
 ///
-/// **The clip and the noise in the blend's own units**: the coding writes a sample `s` at
-/// `s / white * nits`, the white being the set's divided by this source's gain, and
-/// `Base::light_of_code` hands that back over PQ's own ceiling - so a sample lands at `s * k`, and a
-/// neutral clipping at `neutral_ceiling` at that times it. The noise GALOSH fitted, `alpha * s +
-/// sigma_sq`, is then `k * alpha * l + k^2 * sigma_sq` at light `l`: a short frame's gain is what
-/// makes its shadows the noisy ones. Fitted before the denoise, so it is what the frame could be at
-/// worst.
+/// **The clip and the noise in the blend's own units**, which are the coding's: `neutral_ceiling`
+/// and the noise GALOSH fitted are both in the mosaic's normalisation, and a full-scale sample of
+/// a source coded against `coded` lands at [`crate::base::full_scale_light`]. A short frame's gain
+/// is what makes its shadows the noisy ones. Fitted before the denoise, so it is what the frame
+/// could be at worst.
 fn merit_of(
-    source: &SourceSpec,
+    gain: f64,
     shortest: f64,
     neutral_ceiling: f32,
-    levels: &crate::tone::Anchored,
-    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
+    coded: crate::tone::Anchored,
+    wb_gains: [f32; 3],
     noise: Option<crate::galosh::NoiseFit>,
+    reference_white_nits: crate::light::Light<crate::light::SceneNits>,
 ) -> Merit {
-    let ceiling = crate::tone::pq_inv::<crate::light::SceneNits>(crate::light::Light::measured(1.0));
-    let k = source.gain * reference_white_nits.raw() / (levels.white.raw() * ceiling.raw());
+    let full = crate::base::full_scale_light(coded, reference_white_nits);
     Merit {
-        scale: (1.0 / source.gain) as f32,
-        clip: match source.gain >= shortest {
+        scale: (1.0 / gain) as f32,
+        clip: match gain >= shortest {
             true => 0.0,
-            false => (f64::from(neutral_ceiling) * k) as f32,
+            false => neutral_ceiling * full,
         },
         deghosts: true,
-        noise: noise.map_or(LightNoise::NONE, |fit| LightNoise {
-            slope: (k * f64::from(fit.alpha)) as f32,
-            floor: (k * k * f64::from(fit.sigma_sq)) as f32,
+        noise: noise.map_or(LightNoise::NONE, |fit| {
+            let [slope, floor] = crate::base::luma_noise_in_light(fit.model(), full, wb_gains);
+            LightNoise {
+                slope: slope as f32,
+                floor: floor as f32,
+            }
         }),
     }
 }
@@ -2145,6 +2151,38 @@ mod tests {
             (ends.0 - 200.0).abs() < 4.0 && (ends.1 - 800.0).abs() < 16.0,
             "{ends:?}"
         );
+    }
+
+    /// A bracket frame's neutral ceiling, coded as that frame is coded, reads back off the table as
+    /// exactly its clip. The ceiling is a share of the mosaic's full scale where the levels count
+    /// sixteen-bit samples, and a clip taken against the white alone lands 65535 times too low and
+    /// rolls off every frame but the shortest everywhere.
+    #[test]
+    fn a_bracket_frame_clips_where_its_neutral_ceiling_codes() {
+        use crate::light::{Light, SceneNits};
+        let reference = Light::<SceneNits>::measured(203.0);
+        let ceiling = crate::tone::pq_inv::<SceneNits>(Light::measured(1.0)).raw();
+        let anchored = crate::tone::Levels {
+            white: Light::measured(8191.875),
+            peak: Light::measured(8191.875),
+            floor: None,
+        }
+        .anchored();
+        let neutral_ceiling = 0.4;
+        for gain in [0.25, 1.0, 4.0] {
+            let coded = coded_as(anchored, gain);
+            let merit = merit_of(gain, 16.0, neutral_ceiling, coded, [2.0, 1.0, 1.5], None, reference);
+            let table = crate::base::coding_curve(coded, reference);
+            let sample = (f64::from(neutral_ceiling) * f64::from(u16::MAX)).round() as usize;
+            let code = u16::from_le_bytes([table[sample * 2], table[sample * 2 + 1]]);
+            let signal = Light::measured(f64::from(code) / f64::from(u16::MAX));
+            let light = crate::tone::pq_inv::<SceneNits>(signal).raw() / ceiling;
+            assert!(
+                (f64::from(merit.clip) - light).abs() < 1e-3 * light,
+                "at a gain of {gain} the ceiling codes to {light} and the clip is {}",
+                merit.clip,
+            );
+        }
     }
 
     /// An exposure bracket's frames after the reference go nearest it in exposure first, shorter

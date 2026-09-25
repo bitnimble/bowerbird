@@ -1140,7 +1140,19 @@ pub(crate) fn base(
         // frame's long edge is a fraction of a pan's, which pins `deconvolve_split`'s `k` at 1 and
         // deconvolves a reduced render as though it were native.
         sensor_long: spec.canvas[0].max(spec.canvas[1]),
-        sharpen_noise: crate::image::SharpenNoise::NONE,
+        // The reference's stored fit and tags rather than whichever decode reached this window, so
+        // every window of the canvas sharpens as the rendition does.
+        sharpen_noise: match from {
+            crate::composite_tile::From::Camera => crate::image::SharpenNoise::NONE,
+            crate::composite_tile::From::Original => crate::base::sharpen_noise(
+                crate::composite_tile::coded_as(anchored, spec.sources[spec.reference].gain),
+                job.grade.reference_white_nits,
+                reference.from_raw.noise,
+                crate::decode_rawler::camera_to_rec2020_at(files[spec.reference].path),
+                wb_gains.unwrap_or([1.0; 3]),
+                1,
+            ),
+        },
         // The camera arm measures the bodies' own pictures rather than this canvas, so nothing it
         // found is true of the photograph - the peak `run` is about to read included.
         describes_the_photograph: from == crate::composite_tile::From::Original,

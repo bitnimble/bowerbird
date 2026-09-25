@@ -1623,7 +1623,7 @@ pub async fn encode_base(
 /// ST 2084 per sample in `f32` instead disagrees with this `f64` by a count on about a fifth of a
 /// real frame. Neither answer is wrong, but only one of them can be the coding, and the accurate one
 /// costs nothing at this size.
-fn coding_curve(
+pub(crate) fn coding_curve(
     levels: crate::tone::Anchored,
     reference_white_nits: crate::light::Light<crate::light::SceneNits>,
 ) -> Vec<u8> {
@@ -1739,6 +1739,28 @@ pub fn noise_already_balanced(wb_gains: [f32; 3]) -> (f64, f64) {
         .sum::<f64>()
         / 4.0;
     (shot, read)
+}
+
+/// A mosaic's noise fit as the variance of a luma in coded light: `[slope, floor]`, the variance at
+/// light `l` being `slope * l + floor`, for a frame whose full-scale sample codes to
+/// [`full_scale_light`].
+///
+/// The fit describes a photosite reading a signal `s` in the mosaic's normalisation, and the luma
+/// holds `s * full_scale_light`. The two terms move differently: only the shot term is
+/// proportional to the signal, and the balance reaches a luma weighted by `w^2` where it reached
+/// the fit averaged over the CFA's four positions.
+pub fn luma_noise_in_light(
+    noise: crate::galosh::NoiseModel,
+    full_scale_light: f32,
+    wb_gains: [f32; 3],
+) -> [f64; 2] {
+    let full = f64::from(full_scale_light).max(f64::MIN_POSITIVE);
+    let (shot, read) = noise_through_balance(crate::hdr_fit::LUMA, wb_gains);
+    let (fitted_shot, fitted_read) = noise_already_balanced(wb_gains);
+    [
+        f64::from(noise.alpha) * full * shot / fitted_shot,
+        f64::from(noise.sigma_sq) * full * full * read / fitted_read,
+    ]
 }
 
 /// Records the coding against a frame already in VRAM, `count` samples of it.

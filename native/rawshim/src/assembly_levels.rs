@@ -166,23 +166,12 @@ pub async fn seam_field<E>(
 }
 
 /// [`Plane::noise`] where the tint's floor is taken: a variance in the plane's own light, per
-/// pixel of the plane.
-///
-/// The fit describes a photosite reading a signal `s` in the mosaic's normalisation; the plane
-/// holds a luma of `s * full_scale_light`, averaged over `independent_samples` of them. Three
-/// factors, and each moves the two terms differently: only the shot term is proportional to the
-/// signal, the balance reaches a luma weighted by `w^2` where it reached the fit averaged over the
-/// CFA's four positions, and nothing but a division moves the averaging.
+/// pixel of the plane, whose luma is averaged over `independent_samples` photosites.
 fn noise_in_plane_units(plane: &Plane) -> [f32; 2] {
-    let full = f64::from(plane.full_scale_light).max(f64::MIN_POSITIVE);
     let averaged = f64::from(plane.independent_samples).max(1.0);
     // `assembly_levels.slang`'s `assembly_tint` weighs the same three channels the same way.
-    let (shot, read) = crate::base::noise_through_balance(crate::hdr_fit::LUMA, plane.wb_gains);
-    let (fitted_shot, fitted_read) = crate::base::noise_already_balanced(plane.wb_gains);
-    [
-        (f64::from(plane.noise.alpha) * full * shot / fitted_shot / averaged) as f32,
-        (f64::from(plane.noise.sigma_sq) * full * full * read / fitted_read / averaged) as f32,
-    ]
+    crate::base::luma_noise_in_light(plane.noise, plane.full_scale_light, plane.wb_gains)
+        .map(|term| (term / averaged) as f32)
 }
 
 /// A buffer's words, on the host. `COPY_SRC`, since a storage buffer cannot be mapped.
