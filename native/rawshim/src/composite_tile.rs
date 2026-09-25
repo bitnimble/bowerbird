@@ -1013,7 +1013,7 @@ pub async fn prepared(
     spec: &Composition,
     request: &CompositeRequest<'_>,
 ) -> Result<(Resident, crate::tile::Prepared), String> {
-    prepared_with(spec, request, &[]).await
+    prepared_with(spec, request, &[], None).await
 }
 
 /// [`prepared`] over one source whose RAW is a sensor-shift burst: `burst` is every frame of it, in
@@ -1023,16 +1023,24 @@ pub async fn shifted(
     request: &CompositeRequest<'_>,
     burst: &[&str],
 ) -> Result<(Resident, crate::tile::Prepared), String> {
-    if spec.sources.len() != 1 {
-        return Err("a pixel shift is rendered as its reference frame".into());
+    if spec.sources.len() != burst.len() || request.sources.len() != burst.len() {
+        return Err("the pixel shift recipe and its frames disagree".into());
     }
-    prepared_with(spec, request, burst).await
+    let first = &spec.sources[0];
+    let lens = request.sources[0].analysis
+        .and_then(|analysis| analysis.from_raw.matched.as_ref())
+        .map_or_else(|| first.lens.clone(), |matched| crate::composition::LensSpec::from(&matched.lens));
+    let mut direct = crate::composition::Composition::of_one(first.size, lens);
+    direct.sources[0].photo_id = first.photo_id.clone();
+    let request = CompositeRequest { sources: &request.sources[..1], ..request.clone() };
+    prepared_with(&direct, &request, burst, Some(spec)).await
 }
 
 async fn prepared_with(
     spec: &Composition,
     request: &CompositeRequest<'_>,
     burst: &[&str],
+    shifted: Option<&Composition>,
 ) -> Result<(Resident, crate::tile::Prepared), String> {
     let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
     let gpu = crate::gpu::device().ok_or_else(refused)?;
@@ -1053,7 +1061,7 @@ async fn prepared_with(
     // The largest gain is the shortest exposure, which is never rolled off: see `Merit::clip`.
     let shortest = spec.sources.iter().map(|source| source.gain).fold(0.0, f64::max);
     for i in order_of(spec, &request.weight) {
-        let Some(taken) = taken(gpu, base, spec, request, i, levels, burst, &mut lap).await? else {
+        let Some(taken) = taken(gpu, base, spec, request, i, levels, burst, shifted, &mut lap).await? else {
             continue;
         };
         levels = Some(taken.levels);
@@ -1167,6 +1175,7 @@ async fn taken(
     i: usize,
     anchor: Option<crate::tone::Anchored>,
     burst: &[&str],
+    shifted: Option<&Composition>,
     lap: &mut impl FnMut(&str),
 ) -> Result<Option<Taken>, String> {
     let refused = || crate::base::without_a_device("the coding, the lens gather and the composite");
@@ -1226,12 +1235,17 @@ async fn taken(
                     .await
                 }
                 false => {
+                    let recipe = shifted.ok_or("a pixel shift needs its alignment recipe")?;
+                    let prior = crate::pixel_shift::prior(recipe, view.window.raw())
+                        .ok_or("a pixel shift frame cannot be projected")?;
                     crate::decode::shifted_tile_from(
                         burst,
                         view,
                         request.detail,
                         fit,
                         crate::RENDITION_TILE_HALO,
+                        &prior,
+                        recipe,
                     )
                     .await
                 }
@@ -1438,7 +1452,7 @@ pub async fn layers_of(
         request.levels.or_else(|| whole_anchor(spec, request));
     let mut lap = crate::clock::laps("    pano source ");
     for i in order_of(spec, &request.weight) {
-        let Some(taken) = taken(gpu, base, spec, request, i, levels, &[], &mut lap).await? else {
+        let Some(taken) = taken(gpu, base, spec, request, i, levels, &[], None, &mut lap).await? else {
             continue;
         };
         levels = Some(taken.levels);
@@ -1698,11 +1712,6 @@ fn footprint_of(
     if width == 0 || height == 0 {
         return None;
     }
-    let lens = source.lens.to_lens();
-    let (cx, cy) = (source.size[0] as f64 / 2.0, source.size[1] as f64 / 2.0);
-    let half = (cx * cx + cy * cy).sqrt();
-    let knots = lens.distortion.clone().unwrap_or_default();
-
     let mut low = [f64::MAX; 2];
     let mut high = [f64::MIN; 2];
     let mut at = |x: usize, y: usize, warp: [f64; 6]| {
@@ -1719,13 +1728,10 @@ fn footprint_of(
         let Some(there) = crate::composition::ray_to_source(source, ray) else {
             return;
         };
-        let (ox, oy) = (there[0] - cx, there[1] - cy);
-        let radius = (ox * ox + oy * oy).sqrt() / half;
-        let ratio = match radius == 0.0 {
-            true => lens.crop,
-            false => crate::image::sample_radius(&knots, radius, lens.crop) / radius,
+        let Some(sensor) = crate::composition::corrected_to_sensor(source, there) else {
+            return;
         };
-        for (axis, value) in [cx + ox * ratio, cy + oy * ratio].iter().enumerate() {
+        for (axis, value) in sensor.iter().enumerate() {
             low[axis] = low[axis].min(*value);
             high[axis] = high[axis].max(*value);
         }

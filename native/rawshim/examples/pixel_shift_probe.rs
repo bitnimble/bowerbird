@@ -4,10 +4,8 @@
 //! pixel_shift_probe <frame> <frame> <frame> <frame>
 //! ```
 //!
-//! Every assignment of a one-photosite step to each frame after the first, scored by how far each
-//! merged site's two greens disagree over a central window: where the offsets are right the two read
-//! one scene point and differ by noise alone. Frames are placed by the shot the header names, so the
-//! winner is what `pixel_shift::SHIFTS` has to say for the body.
+//! Candidate one-photosite placements scored by green agreement, beside the burst's measured
+//! block-luma displacements. Frames are ordered by the shot the header names.
 
 const WINDOW: usize = 1024;
 
@@ -59,7 +57,7 @@ fn main() {
         let (dy, dx) = displacement(&reference, &block_luma(frame_samples, width, top, left));
         println!("frame {} sits ({dy:+.2}, {dx:+.2}) photosites from the first", frame + 1);
     }
-    println!("current SHIFTS {:?}", rawshim::pixel_shift::SHIFTS);
+    println!("search prior SHIFTS {:?}", rawshim::pixel_shift::SHIFTS);
 }
 
 /// Each 2x2 period of the window summed, which reads every filter once and so is a luma a shift

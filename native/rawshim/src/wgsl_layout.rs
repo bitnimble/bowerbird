@@ -118,10 +118,22 @@ mod tests {
                 crate::composite_tile::sharpness_block(),
             ),
             (
+                "pixel_shift_luma.wgsl",
+                "Params",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift_luma.wgsl")).to_string(),
+                crate::pixel_shift_align::luma_block(),
+            ),
+            (
+                "pixel_shift_align.wgsl",
+                "Params",
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift_align.wgsl")).to_string(),
+                crate::pixel_shift_align::align_block(),
+            ),
+            (
                 "pixel_shift.wgsl",
                 "Params",
                 include_str!(concat!(env!("OUT_DIR"), "/wgsl/pixel_shift.wgsl")).to_string(),
-                crate::pixel_shift::scatter_block(),
+                crate::pixel_shift::gather_block(),
             ),
             (
                 "pixel_shift_settle.wgsl",

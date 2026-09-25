@@ -159,6 +159,8 @@ pub async fn shifted_tile_from(
     detail: crate::galosh::Detail,
     fit: crate::galosh::Fit,
     halo: usize,
+    prior: &[crate::pixel_shift::Offset],
+    recipe: &crate::composition::Composition,
 ) -> Option<crate::frame::Frame> {
     if paths.iter().any(|path| crate::decode_rendered::is_rendered(path)) {
         return None;
@@ -167,7 +169,7 @@ pub async fn shifted_tile_from(
         .iter()
         .map(|path| crate::decode_rawler::mapped(path))
         .collect::<Option<Vec<_>>>()?;
-    crate::decode_rawler::decode_shifted_tile(&sources, view, detail, fit, halo).await
+    crate::decode_rawler::decode_shifted_tile(&sources, view, detail, fit, halo, prior, recipe).await
 }
 
 /// Where a photograph's bytes are, for the two entry points that take a file rather than an open.

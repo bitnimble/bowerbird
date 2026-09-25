@@ -209,6 +209,7 @@ pub mod composition;
 pub mod composite_tile;
 pub mod parallel;
 pub mod pixel_shift;
+mod pixel_shift_align;
 /// One picture of a recipe, coded and handed over, for a client that will grade it itself.
 ///
 /// A rendition stopped one stage early, so a reader dragging a slider and the export they are

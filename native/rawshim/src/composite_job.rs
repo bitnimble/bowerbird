@@ -48,7 +48,7 @@ pub enum Shape {
     /// The same, focused at different distances, which a lens breathes across: the burst align frees
     /// each frame's scale for it.
     FocusBracket,
-    /// A sensor-shift burst, whose frames sit a photosite apart by construction: nothing to search.
+    /// A sensor-shift burst.
     PixelShift,
 }
 
@@ -147,6 +147,13 @@ const STRIP_BUDGET_BYTES: f64 = 512.0 * 1024.0 * 1024.0;
 /// strip where 910 fit - and every one of those strips decodes every source that reaches it.
 const STRIP_BYTES_PER_PIXEL: f64 = 10.0 + 16.0 + 4.0 + 4.0 + 6.0;
 
+fn strip_bytes_per_pixel(recipe: &CompositeRecipe) -> f64 {
+    STRIP_BYTES_PER_PIXEL + match recipe {
+        CompositeRecipe::PixelShift(_) => crate::pixel_shift::WORKING_BYTES_PER_PIXEL,
+        _ => 0.0,
+    }
+}
+
 /// How many points of a source's border are projected to find the shape it covers.
 const SHAPE_STEPS: usize = 8;
 
@@ -216,8 +223,8 @@ fn source_shape(spec: &crate::composition::Composition) -> Option<f64> {
 /// A pan is shot in portrait, so this lands on tall narrow tiles - full-height columns once the
 /// canvas is shorter than the shape asks for, which is every single-row pan. A pan of several rows
 /// is squarer and gets squarer tiles, which is the case a fixed axis would have got wrong.
-fn tile_of(spec: &crate::composition::Composition, width: usize, height: usize) -> (usize, usize) {
-    let budget = (STRIP_BUDGET_BYTES / STRIP_BYTES_PER_PIXEL).max(1.0);
+fn tile_of(spec: &crate::composition::Composition, width: usize, height: usize, bytes_per_pixel: f64) -> (usize, usize) {
+    let budget = (STRIP_BUDGET_BYTES / bytes_per_pixel).max(1.0);
     let shape = source_shape(spec)
         .filter(|shape| shape.is_finite() && *shape > 0.0)
         .unwrap_or(1.0);
@@ -332,7 +339,32 @@ pub fn align(gpu: &'static crate::gpu::Gpu, pano: &CompositeJob, shape: Shape) -
                 crate::assembly_analysis::intersection_crop(&aligned.composition);
             aligned
         }
-        Shape::PixelShift => crate::composite_align::fixed(&sources)?,
+        Shape::PixelShift => {
+            let first = sources.first().ok_or("a pixel shift needs four frames")?;
+            if sources.len() != crate::pixel_shift::SHIFTS.len()
+                || sources.iter().any(|source| source.size != first.size)
+            {
+                return Err("these frames are not one sensor-shift burst".into());
+            }
+            let mut aligned = pollster::block_on(crate::composite_align::align(
+                gpu,
+                &sources,
+                crate::composite_solve::Leash::Assumed,
+                crate::composite_align::Kind::Burst,
+            ))?;
+            if aligned.composition.sources.len() != crate::pixel_shift::SHIFTS.len() {
+                return Err("every pixel shift frame must be placed".into());
+            }
+            let first = &aligned.composition.sources[0];
+            let direct = crate::composition::Composition::of_one(first.size, first.lens.clone());
+            aligned.composition.canvas = direct.canvas;
+            aligned.composition.centre = direct.centre;
+            aligned.composition.radians_per_pixel = direct.radians_per_pixel;
+            aligned.composition.projection = direct.projection;
+            aligned.composition.crop = direct.crop;
+            aligned.composition.reference = 0;
+            aligned
+        },
     };
     let named = |indices: &[usize]| -> Vec<String> {
         indices
@@ -844,7 +876,7 @@ pub(crate) fn base(
     let _pictures = crate::composite_tile::CameraPictures::fresh();
     // Zeroed by the device, which is what a tile no photograph reaches is left as.
     let whole = crate::resident::Resident::empty(gpu, width, height);
-    let (across, down) = tile_of(spec, width, height);
+    let (across, down) = tile_of(spec, width, height, strip_bytes_per_pixel(wanted));
     // The levels below, then a tile at a time. Every tile costs about the same - the same pixels of
     // the same canvas, gathered from whichever sources reach them - so a count of them is the
     // honest measure of how far through this is.
@@ -938,13 +970,7 @@ pub(crate) fn base(
         CompositeRecipe::Panorama(_) | CompositeRecipe::ExposureBracket(_) | CompositeRecipe::FocusBracket(_) => {
             Drawn::Blended
         }
-        // Every frame sits on the first's canvas, so the merge is that one source decoded from all
-        // of them.
-        CompositeRecipe::PixelShift(spec) => Drawn::Shifted(crate::composition::Composition {
-            sources: spec.sources[..1].to_vec(),
-            reference: 0,
-            ..spec.clone()
-        }),
+        CompositeRecipe::PixelShift(spec) => Drawn::Shifted(spec.clone()),
     };
     let burst: Vec<&str> = files.iter().map(|file| file.path).collect();
     let halo = wanted.halo();
@@ -989,7 +1015,7 @@ pub(crate) fn base(
             // corners - which a full-width strip always crossed a source somewhere in, and a tile
             // does not. Left as the zeros it was allocated with, and the rendition's own crop is
             // what trims them off (§19.4).
-            if !crate::composite_tile::covered(spec, &request) {
+            if !matches!(&drawn, Drawn::Shifted(_)) && !crate::composite_tile::covered(spec, &request) {
                 left += wide;
                 crate::progress::advance();
                 continue;
@@ -1011,10 +1037,6 @@ pub(crate) fn base(
                 }
                 Drawn::Blended => pollster::block_on(crate::composite_tile::prepared(spec, &request))?,
                 Drawn::Shifted(first) => {
-                    let request = crate::composite_tile::CompositeRequest {
-                        sources: &files[..1],
-                        ..request
-                    };
                     pollster::block_on(crate::composite_tile::shifted(first, &request, &burst))?
                 }
                 Drawn::Assembly(assembly) => {
@@ -1420,7 +1442,7 @@ mod tests {
     #[test]
     fn a_canvas_is_tiled_by_what_the_device_holds_rather_than_by_a_count() {
         // A `full` rendition of any shape, which is well inside the budget: one tile.
-        let (across, down) = tile_of(&shaped([3840, 2160], [4000, 6000]), 3840, 2160);
+        let (across, down) = tile_of(&shaped([3840, 2160], [4000, 6000]), 3840, 2160, STRIP_BYTES_PER_PIXEL);
         assert_eq!(
             (across, down),
             (3840, 2160),
@@ -1430,7 +1452,7 @@ mod tests {
         // The largest canvas there is, where a tile has to stay a tile - and stay inside the
         // budget, which is the only thing bounding what the device holds.
         let (wide, tall) = (MAX_LONG_EDGE as usize, 4544);
-        let (across, down) = tile_of(&shaped([33804, 9376], [4000, 6000]), wide, tall);
+        let (across, down) = tile_of(&shaped([33804, 9376], [4000, 6000]), wide, tall, STRIP_BYTES_PER_PIXEL);
         assert!(
             across * down <= budget(),
             "a tile of {across}x{down} is past the budget"
@@ -1443,6 +1465,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_pixel_shift_strip_counts_its_merge_buffers() {
+        let spec = shaped([9504, 6336], [9504, 6336]);
+        let ordinary = tile_of(
+            &spec, 9504, 6336,
+            strip_bytes_per_pixel(&CompositeRecipe::Panorama(spec.clone())),
+        );
+        let shifted_bytes = strip_bytes_per_pixel(&CompositeRecipe::PixelShift(spec.clone()));
+        let shifted = tile_of(&spec, 9504, 6336, shifted_bytes);
+        assert!(shifted.0 * shifted.1 < ordinary.0 * ordinary.1);
+        assert!((shifted.0 * shifted.1) as f64 * shifted_bytes <= STRIP_BUDGET_BYTES);
+    }
+
     /// **The tile takes one source's shape, not the canvas's.** How many tiles a source is decoded
     /// for falls as `A_w/W + A_h/H`, which under a fixed `W·H` is least at `W/H = A_w/A_h` - the
     /// shape of a frame. A pan shot in portrait covers a tall narrow strip of its canvas, so its
@@ -1451,7 +1486,7 @@ mod tests {
     #[test]
     fn a_tile_is_the_shape_of_a_source_rather_than_of_the_picture() {
         let (wide, tall) = (MAX_LONG_EDGE as usize, 4544);
-        let portrait = tile_of(&shaped([33804, 9376], [4000, 6000]), wide, tall);
+        let portrait = tile_of(&shaped([33804, 9376], [4000, 6000]), wide, tall, STRIP_BYTES_PER_PIXEL);
         assert_eq!(
             portrait.1, tall,
             "a portrait frame fills the height and slices the width"
@@ -1459,7 +1494,7 @@ mod tests {
 
         // The same canvas out of landscape frames wants wider, shorter tiles: fewer columns for the
         // same memory, since a landscape frame straddles fewer of them.
-        let landscape = tile_of(&shaped([33804, 9376], [6000, 4000]), wide, tall);
+        let landscape = tile_of(&shaped([33804, 9376], [6000, 4000]), wide, tall, STRIP_BYTES_PER_PIXEL);
         assert!(
             landscape.0 >= portrait.0,
             "landscape frames tile {landscape:?} where portrait ones tile {portrait:?}",
@@ -1508,7 +1543,7 @@ mod tests {
     #[test]
     fn a_tile_is_never_empty() {
         let huge = usize::from(u16::MAX) * 4;
-        let (across, down) = tile_of(&shaped([huge, huge], [6000, 4000]), huge, huge);
+        let (across, down) = tile_of(&shaped([huge, huge], [6000, 4000]), huge, huge, STRIP_BYTES_PER_PIXEL);
         assert!(across >= 2 && down >= 1);
     }
 

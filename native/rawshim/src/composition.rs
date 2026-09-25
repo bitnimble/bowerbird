@@ -372,6 +372,61 @@ pub fn ray_to_source(source: &SourceSpec, ray: [f64; 3]) -> Option<[f64; 2]> {
     ])
 }
 
+pub fn corrected_to_sensor(source: &SourceSpec, at: [f64; 2]) -> Option<[f64; 2]> {
+    let centre = [source.size[0] as f64 * 0.5, source.size[1] as f64 * 0.5];
+    let delta = [at[0] - centre[0], at[1] - centre[1]];
+    let radius = delta[0].hypot(delta[1]) / centre[0].hypot(centre[1]);
+    let crop = source.lens.crop;
+    if !crop.is_finite() || crop <= 0.0 {
+        return None;
+    }
+    let knots = source.lens.distortion.as_deref().unwrap_or(&[]);
+    let ratio = if radius == 0.0 {
+        crop
+    } else {
+        crate::image::sample_radius(knots, radius, crop) / radius
+    };
+    Some([centre[0] + delta[0] * ratio, centre[1] + delta[1] * ratio])
+}
+
+pub fn sensor_to_corrected(source: &SourceSpec, at: [f64; 2]) -> Option<[f64; 2]> {
+    let centre = [source.size[0] as f64 * 0.5, source.size[1] as f64 * 0.5];
+    let delta = [at[0] - centre[0], at[1] - centre[1]];
+    let half = centre[0].hypot(centre[1]);
+    let radius = delta[0].hypot(delta[1]) / half;
+    if radius == 0.0 {
+        return Some(centre);
+    }
+    let crop = source.lens.crop;
+    if !crop.is_finite() || crop <= 0.0 {
+        return None;
+    }
+    let knots = source.lens.distortion.as_deref().unwrap_or(&[]);
+    let corrected_radius = if knots.is_empty() {
+        radius / crop
+    } else {
+        let at_radius = |r| crate::image::sample_radius(knots, r, crop);
+        let (mut low, mut high) = (0.0, radius.max(1.0));
+        while at_radius(high) < radius && high < 16.0 {
+            high *= 2.0;
+        }
+        if !at_radius(high).is_finite() || at_radius(high) < radius {
+            return None;
+        }
+        for _ in 0..40 {
+            let middle = (low + high) * 0.5;
+            if at_radius(middle) < radius {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        (low + high) * 0.5
+    };
+    let ratio = corrected_radius / radius;
+    Some([centre[0] + delta[0] * ratio, centre[1] + delta[1] * ratio])
+}
+
 /// The ray a source's own pixel looks along, in world coordinates.
 pub fn source_to_ray(source: &SourceSpec, x: f64, y: f64) -> [f64; 3] {
     let (cx, cy) = (source.size[0] as f64 / 2.0, source.size[1] as f64 / 2.0);
