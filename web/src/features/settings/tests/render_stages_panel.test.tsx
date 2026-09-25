@@ -90,7 +90,9 @@ test('global camera matching off shows both dependent stages inactive', async ()
     const checkbox = screen.getByRole('checkbox', { name }) as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
     expect(checkbox.disabled).toBe(true);
-    expect(screen.getByText(name).parentElement?.getAttribute('title')).toBe('Camera matching is off in Rendering settings');
+    expect(screen.getByText(name).parentElement?.getAttribute('aria-description')).toBe(
+      'Camera matching is off in Rendering settings',
+    );
   }
 });
 

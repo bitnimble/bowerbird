@@ -60,4 +60,10 @@ export const stageStyles = stylex.create({
     backgroundColor: 'rgba(10, 12, 16, 0.6)',
     pointerEvents: 'none',
   },
+  // Takes the pointer, which a failed open leaves nothing under to want, so its reason can be copied.
+  failed: {
+    pointerEvents: 'auto',
+    userSelect: 'text',
+    cursor: 'text',
+  },
 });

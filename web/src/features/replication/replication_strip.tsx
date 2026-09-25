@@ -58,7 +58,7 @@ export const ReplicationStrip = observer(function ReplicationStrip({
         return (
           <Strip style={styles.peer} key={peer.peer_id}>
             <StatusDot state={moving.length > 0 ? 'working' : 'idle'} />
-            <StripLabel tone={peer.last_error == null ? undefined : 'error'} title={peer.last_error ?? undefined}>
+            <StripLabel tone={peer.last_error == null ? undefined : 'error'} tooltip={peer.last_error ?? undefined}>
               {ReplicationStripStrings.deviceLine(
                 peer.name,
                 peer.last_replicated_at == null ?
@@ -77,7 +77,7 @@ export const ReplicationStrip = observer(function ReplicationStrip({
             <Button
               variant="ghost"
               disabled={!peer.wants_originals}
-              title={
+              tooltip={
                 peer.wants_originals ?
                   ReplicationStripStrings.sendOriginalsTitle(peer.name)
                 : ReplicationStripStrings.sendOriginalsRefused(peer.name)
@@ -90,7 +90,7 @@ export const ReplicationStrip = observer(function ReplicationStrip({
             <Button
               variant="ghost"
               disabled={library.read_only || !keepsOriginals}
-              title={
+              tooltip={
                 library.read_only ? BulkBarStrings.notOnReadOnlyLibrary()
                 : keepsOriginals ? ReplicationStripStrings.fetchOriginalsTitle(peer.name)
                 : ReplicationStripStrings.fetchOriginalsRefused()
@@ -102,7 +102,7 @@ export const ReplicationStrip = observer(function ReplicationStrip({
             </Button>
             <Button
               variant="ghost"
-              title={ReplicationStripStrings.stopSyncingTitle(peer.name)}
+              tooltip={ReplicationStripStrings.stopSyncingTitle(peer.name)}
               onClick={() =>
                 void presenter.forget(library.id, peer.peer_id, (sole) =>
                   window.confirm(ReplicationStripStrings.stopSyncingWarning(library.name, peer.name, sole)),

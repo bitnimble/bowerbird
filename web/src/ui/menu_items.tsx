@@ -3,6 +3,7 @@ import * as stylex from '@stylexjs/stylex';
 import { buttonStyles } from './button';
 import { menuStyles } from './menu_styles';
 import type { Option } from './option';
+import { Tooltip } from './tooltip';
 
 export function MenuAction<T extends string>({
   option,
@@ -12,24 +13,25 @@ export function MenuAction<T extends string>({
   onSelect: (value: T) => void;
 }): JSX.Element {
   return (
-    <Menu.Item
-      {...stylex.props(menuStyles.item, option.destructive === true && menuStyles.destructive)}
-      disabled={option.disabled === true}
-      title={option.title}
-      aria-current={option.active === true}
-      onClick={() => onSelect(option.value)}
-    >
-      {option.icon}
-      {option.label}
-      {option.active === true && <span {...stylex.props(menuStyles.dot)} aria-hidden />}
-      {/* Out of the accessible name: it would read as part of the label ("Embedded
-          JPEG I"), and the shortcut is already announced by the ? help. */}
-      {option.hint != null && (
-        <span {...stylex.props(buttonStyles.hint, menuStyles.hint)} aria-hidden>
-          {option.hint}
-        </span>
-      )}
-    </Menu.Item>
+    <Tooltip label={option.tooltip}>
+      <Menu.Item
+        {...stylex.props(menuStyles.item, option.destructive === true && menuStyles.destructive)}
+        disabled={option.disabled === true}
+        aria-current={option.active === true}
+        onClick={() => onSelect(option.value)}
+      >
+        {option.icon}
+        {option.label}
+        {option.active === true && <span {...stylex.props(menuStyles.dot)} aria-hidden />}
+        {/* Out of the accessible name: it would read as part of the label ("Embedded
+            JPEG I"), and the shortcut is already announced by the ? help. */}
+        {option.hint != null && (
+          <span {...stylex.props(buttonStyles.hint, menuStyles.hint)} aria-hidden>
+            {option.hint}
+          </span>
+        )}
+      </Menu.Item>
+    </Tooltip>
   );
 }
 

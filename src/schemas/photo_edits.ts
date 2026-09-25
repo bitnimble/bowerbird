@@ -26,6 +26,9 @@ import { MOST_REPAIRS, MOST_REPAIR_VERTICES, STORED_LONG, type Repair } from './
 // balance, it is half of one, and the half that is missing reads as a colour cast.
 export const WhiteBalanceModeSchema = z.string().default('As Shot');
 
+export const TEMPERATURE_KELVIN = { min: 2000, max: 50000 };
+export const TINT = { min: -150, max: 150 };
+
 export const ColourProfileSchema = z.enum(['matched', 'none']);
 export type ColourProfile = z.infer<typeof ColourProfileSchema>;
 
@@ -158,8 +161,8 @@ export const EditDocSchema = z
     // White balance. The mode is an open enum in the file - `As Shot`, `Auto`,
     // `Daylight`, `Custom` and a user preset name are all legal - so it is a string.
     whiteBalanceMode: WhiteBalanceModeSchema,
-    temperature: z.number().int().min(2000).max(50000).nullable().default(null),
-    tint: z.number().int().min(-150).max(150).nullable().default(null),
+    temperature: z.number().int().min(TEMPERATURE_KELVIN.min).max(TEMPERATURE_KELVIN.max).nullable().default(null),
+    tint: z.number().int().min(TINT.min).max(TINT.max).nullable().default(null),
 
     // Geometry. Fractions of the frame rather than pixels, because one document grades an
     // 800px tile, a 3840px `full` and a native-resolution `max`, and a pixel rectangle

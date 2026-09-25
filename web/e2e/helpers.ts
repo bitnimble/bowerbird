@@ -242,9 +242,14 @@ export async function addShoot(page: Page, name: string): Promise<void> {
 // then the element is on the page and a click that cannot land in five seconds is a broken
 // test rather than a slow one.
 export async function openLibrary(page: Page, rootPath: string): Promise<void> {
-  const link = page.getByRole('navigation', { name: 'Sidebar' }).getByTitle(rootPath, { exact: true });
+  const link = sidebarLibrary(page, rootPath);
   await expect(link, `the sidebar should list ${rootPath}`).toBeVisible({ timeout: 30_000 });
   await link.click();
+}
+
+/** A library's link in the sidebar, which describes itself with its root. */
+export function sidebarLibrary(page: Page, rootPath: string): Locator {
+  return page.getByRole('navigation', { name: 'Sidebar' }).locator(describedBy(rootPath));
 }
 
 // Every library in the sidebar lists Photos / Shoots / Bin, so the section has to be
@@ -254,8 +259,12 @@ export function sidebarSection(page: Page, rootPath: string, name: 'Photos' | 'S
   return page
     .getByRole('navigation', { name: 'Sidebar' })
     .getByRole('group')
-    .filter({ has: page.getByTitle(rootPath, { exact: true }) })
+    .filter({ has: page.locator(describedBy(rootPath)) })
     .getByRole('link', { name, exact: true });
+}
+
+function describedBy(description: string): string {
+  return `[aria-description=${JSON.stringify(description)}]`;
 }
 
 // Maintenance actions on the selection live behind the bulk bar's overflow, so

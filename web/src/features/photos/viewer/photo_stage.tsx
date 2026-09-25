@@ -725,7 +725,7 @@ export function PhotoStage({
           variant="ghost"
           iconOnly
           aria-label={PhotoStageStrings.fullscreen()}
-          title={PhotoStageStrings.fullscreenTitle()}
+          tooltip={PhotoStageStrings.fullscreenTitle()}
           onClick={() => void toggleFullscreen()}
         >
           <Maximize size={ICON} />

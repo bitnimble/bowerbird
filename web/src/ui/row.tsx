@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
+import { Tooltip } from './tooltip';
 
 const styles = stylex.create({
   row: {
@@ -20,6 +21,7 @@ export function Row({
   as: As = 'div',
   style,
   children,
+  tooltip,
   ...rest
 }: {
   /** `label` for a control and its caption as one target. */
@@ -29,13 +31,15 @@ export function Row({
   role?: 'group';
   'aria-label'?: string;
   /** Why a control in this row is unavailable, which a disabled control cannot say itself. */
-  title?: string;
+  tooltip?: string;
   onMouseLeave?: () => void;
 }): JSX.Element {
   return (
-    <As {...stylex.props(styles.row, style)} {...rest}>
-      {children}
-    </As>
+    <Tooltip label={tooltip}>
+      <As {...stylex.props(styles.row, style)} {...rest}>
+        {children}
+      </As>
+    </Tooltip>
   );
 }
 

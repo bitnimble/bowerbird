@@ -151,7 +151,7 @@ const stackOptions = ({
     label: BulkBarStrings.triageThisStack(),
     icon: <ListChecks size={ICON} />,
     disabled: stack.kind !== 'stack',
-    title: triageRefusal(stack),
+    tooltip: triageRefusal(stack),
   },
 ];
 
@@ -173,7 +173,7 @@ const filingOptions = ({
         label: removeFrom,
         icon: <X size={ICON} />,
         disabled: removeRefusal != null,
-        title: removeRefusal,
+        tooltip: removeRefusal,
       },
     ]),
   ...(banner == null ? [] : [{ value: 'banner' as const, label: banner, icon: <ImagePlus size={ICON} /> }]),
@@ -330,7 +330,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
         <Button
           variant="primary"
           disabled={restoreRefused}
-          title={restoreRefused ? BulkBarStrings.restoreRefused() : undefined}
+          tooltip={restoreRefused ? BulkBarStrings.restoreRefused() : undefined}
           onClick={() => void photos.restoreSelected()}
         >
           <RotateCcw size={ICON} />
@@ -345,7 +345,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
             <CheckMenu
               closeOnSelect
               disabled={readOnly}
-              title={readOnlyRefusal}
+              tooltip={readOnlyRefusal}
               trigger={
                 <>
                   <HardDrive size={ICON} />
@@ -404,7 +404,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                         value: 'assembly' as const,
                         label: MergePageStrings.takeBestParts(),
                         disabled: mergeCandidate.kind !== 'ready',
-                        title: mergeRefusal(mergeCandidate),
+                        tooltip: mergeRefusal(mergeCandidate),
                       },
                     ]}
                     onSelect={(action: MergeAction) => {
@@ -438,7 +438,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                           shootId === NEW_COLLECTION ? setCreating('shoot') : void photos.addSelectedToShoot(shootId)
                         }
                         disabled={readOnly}
-                        title={readOnlyRefusal}
+                        tooltip={readOnlyRefusal}
                       />
                     )}
                     <Submenu

@@ -5,6 +5,7 @@ import { focusRing } from '../../../ui/focus_ring';
 import { menuStyles } from '../../../ui/menu_styles';
 import { Row } from '../../../ui/row';
 import { color } from '../../../ui/tokens.stylex';
+import { Tooltip } from '../../../ui/tooltip';
 import { swatchRegion } from './merge_mask';
 import { MergePageStrings } from './merge_page.strings';
 import type { MergePresenter } from './merge_presenter';
@@ -398,9 +399,9 @@ export const MergeTilePopup = observer(function MergeTilePopup({
                 <SwatchCanvas frame={frame} loop={grown} label={MergePageStrings.swatchAlt(index)} />
               )}
             </span>
-            <span {...stylex.props(styles.name)} title={swatch.name}>
-              {swatch.name}
-            </span>
+            <Tooltip label={swatch.name}>
+              <span {...stylex.props(styles.name)}>{swatch.name}</span>
+            </Tooltip>
           </button>
           );
         })}

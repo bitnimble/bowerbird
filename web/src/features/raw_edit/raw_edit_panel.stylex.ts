@@ -53,9 +53,10 @@ export const styles = stylex.create({
   headBare: {
     paddingRight: '24px',
   },
-  // The 10px a slider's name clears its track by, which a button filling its box has to ask for.
-  headAboveSelect: {
-    marginBottom: '9px',
+  selectRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
   },
   name: {
     fontSize: size.controlText,
@@ -65,6 +66,20 @@ export const styles = stylex.create({
     marginLeft: 'auto',
     color: color.boneDim,
     fontVariantNumeric: 'tabular-nums',
+  },
+  typed: {
+    width: '10ch',
+    height: '18px',
+    paddingBlock: 0,
+    paddingInline: '4px',
+    borderWidth: 0,
+    borderRadius: size.radius,
+    backgroundColor: { default: 'transparent', ':hover': color.slate, ':focus': color.field },
+    color: { default: color.boneDim, ':focus': color.bone },
+    // Under 16px, iOS Safari zooms into a focused field and never zooms back out.
+    fontSize: { default: null, [COARSE]: '16px' },
+    textAlign: 'right',
+    cursor: 'text',
   },
   reset: {
     display: 'inline-flex',
@@ -98,6 +113,9 @@ export const styles = stylex.create({
   // The full column, so the control does not change width with the ratio picked.
   selectTrigger: {
     width: '100%',
+  },
+  selectEnd: {
+    marginLeft: 'auto',
   },
   actions: {
     display: 'flex',

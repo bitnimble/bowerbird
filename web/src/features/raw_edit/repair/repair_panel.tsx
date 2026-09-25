@@ -10,6 +10,7 @@ import { ICON } from '../../../ui/icon';
 import { Panel } from '../../../ui/panel';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
+import { Tooltip } from '../../../ui/tooltip';
 import { MergePageStrings } from '../../photos/merge/merge_page.strings';
 import { EditControl } from '../edit_control';
 import { EditToolsStrings } from '../edit_tools.strings';
@@ -84,6 +85,12 @@ export const RepairPanel = observer(function RepairPanel({
           label={MergePageStrings.blend()}
           value={RawEditPanelStrings.percent(reading(blend, { min: 0, step: 0.05 }))}
           reset={null}
+          typing={store.repairSolving ? null : {
+            min: 0,
+            max: MOST_FEATHER * 100,
+            step: 0.05,
+            set: (percent) => presenter.repair.settleFeather(percent / 100),
+          }}
         >
           <Slider
             style={styles.slider}
@@ -134,24 +141,24 @@ export const RepairPanel = observer(function RepairPanel({
             {options.map((_, at) => {
               const thumbnail = store.repairOptionThumbnails.get(at);
               return (
-                <button
-                  key={at}
-                  type="button"
-                  role="radio"
-                  aria-checked={at === store.repairChoice}
-                  {...stylex.props(
-                    styles.thumbnail,
-                    styles.fill,
-                    focusRing.ring,
-                    at === store.repairChoice && styles.chosen,
-                  )}
-                  aria-label={RawEditPanelStrings.fillOption(at + 1)}
-                  title={RawEditPanelStrings.fillOption(at + 1)}
-                  disabled={store.repairSolving}
-                  onClick={() => presenter.repair.choose(at)}
-                >
-                  {thumbnail == null ? at + 1 : <SeamedThumbnail thumbnail={thumbnail} styles={styles} />}
-                </button>
+                <Tooltip key={at} label={RawEditPanelStrings.fillOption(at + 1)}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={at === store.repairChoice}
+                    {...stylex.props(
+                      styles.thumbnail,
+                      styles.fill,
+                      focusRing.ring,
+                      at === store.repairChoice && styles.chosen,
+                    )}
+                    aria-label={RawEditPanelStrings.fillOption(at + 1)}
+                    disabled={store.repairSolving}
+                    onClick={() => presenter.repair.choose(at)}
+                  >
+                    {thumbnail == null ? at + 1 : <SeamedThumbnail thumbnail={thumbnail} styles={styles} />}
+                  </button>
+                </Tooltip>
               );
             })}
           </div>
@@ -174,21 +181,21 @@ export const RepairPanel = observer(function RepairPanel({
             const busy = !stage.editable || store.repairSolving;
             return (
               <div key={index} {...stylex.props(styles.repair)}>
-                <button
-                  type="button"
-                  {...stylex.props(styles.thumbnail, focusRing.ring)}
-                  aria-label={RawEditPanelStrings.editRepair(index + 1)}
-                  title={RawEditPanelStrings.editRepair(index + 1)}
-                  disabled={busy}
-                  onClick={() => void presenter.repair.open(index)}
-                >
-                  {thumbnail != null && <SeamedThumbnail thumbnail={thumbnail} styles={styles} />}
-                </button>
+                <Tooltip label={RawEditPanelStrings.editRepair(index + 1)}>
+                  <button
+                    type="button"
+                    {...stylex.props(styles.thumbnail, focusRing.ring)}
+                    aria-label={RawEditPanelStrings.editRepair(index + 1)}
+                    disabled={busy}
+                    onClick={() => void presenter.repair.open(index)}
+                  >
+                    {thumbnail != null && <SeamedThumbnail thumbnail={thumbnail} styles={styles} />}
+                  </button>
+                </Tooltip>
                 <Button
                   variant="ghost"
                   iconOnly
                   aria-label={RawEditPanelStrings.deleteRepair(index + 1)}
-                  title={RawEditPanelStrings.deleteRepair(index + 1)}
                   disabled={busy}
                   onClick={() => presenter.repair.remove(index)}
                 >

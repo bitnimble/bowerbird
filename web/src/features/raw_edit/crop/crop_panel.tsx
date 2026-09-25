@@ -24,6 +24,8 @@ const ASPECTS: Option<AspectKey>[] = [
   ...ASPECT_RATIOS.map((each) => ({ value: each.key, label: each.key })),
 ];
 
+const STRAIGHTEN = { min: -45, max: 45, step: 0.05 };
+
 function StraightenControl({
   edit,
   stage,
@@ -41,20 +43,21 @@ function StraightenControl({
   return (
     <EditControl
       label={label}
-      value={RawEditPanelStrings.degrees(reading(angle, { min: -45, step: 0.05 }))}
+      value={RawEditPanelStrings.degrees(reading(angle, STRAIGHTEN))}
       reset={reset}
+      typing={stage.editable ? { ...STRAIGHTEN, set: presenter.settleStraighten } : null}
     >
       <Slider
         style={styles.slider}
         value={angle}
         onChange={presenter.previewStraighten}
         onCommit={presenter.settleStraighten}
-        min={-45}
-        max={45}
-        step={0.05}
+        min={STRAIGHTEN.min}
+        max={STRAIGHTEN.max}
+        step={STRAIGHTEN.step}
         snap={[0]}
         label={label}
-        valueText={(at) => RawEditPanelStrings.degrees(reading(at, { min: -45, step: 0.05 }))}
+        valueText={(at) => RawEditPanelStrings.degrees(reading(at, STRAIGHTEN))}
         disabled={!stage.editable}
       />
     </EditControl>

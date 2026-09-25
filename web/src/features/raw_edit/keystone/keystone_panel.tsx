@@ -8,6 +8,7 @@ import type { Option } from '../../../ui/option';
 import { Panel } from '../../../ui/panel';
 import { SegmentedControl } from '../../../ui/segmented_control';
 import { Text } from '../../../ui/text';
+import { Tooltip } from '../../../ui/tooltip';
 import { EditToolsStrings } from '../edit_tools.strings';
 import type { RawEditPanelStyles } from '../raw_edit_panel.stylex';
 import { RawEditPanelStrings } from '../raw_edit_panel.strings';
@@ -77,15 +78,16 @@ export const KeystonePanel = observer(function KeystonePanel({
             <Text as="span" style={styles.name}>
               {RawEditPanelStrings.guideName(each, at + 1)}
             </Text>
-            <button
-              type="button"
-              {...stylex.props(styles.reset, focusRing.ring, styles.resetAtEnd)}
-              aria-label={RawEditPanelStrings.removeGuide(each, at + 1)}
-              title={RawEditPanelStrings.removeThisGuide()}
-              onClick={() => presenter.removeGuide(index)}
-            >
-              <X size={12} {...stylex.props(styles.resetIcon)} />
-            </button>
+            <Tooltip label={RawEditPanelStrings.removeThisGuide()}>
+              <button
+                type="button"
+                {...stylex.props(styles.reset, focusRing.ring, styles.resetAtEnd)}
+                aria-label={RawEditPanelStrings.removeGuide(each, at + 1)}
+                onClick={() => presenter.removeGuide(index)}
+              >
+                <X size={12} {...stylex.props(styles.resetIcon)} />
+              </button>
+            </Tooltip>
           </div>
         )),
       )}

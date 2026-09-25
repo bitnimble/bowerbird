@@ -6,6 +6,7 @@ import { buttonProps } from './button';
 import { ICON } from './icon';
 import { menuStyles } from './menu_styles';
 import type { Option } from './option';
+import { Tooltip } from './tooltip';
 
 // A menu of independent checkboxes: several can be on at once, and it stays open
 // while they are being chosen unless `closeOnSelect` says otherwise.
@@ -16,7 +17,7 @@ export function CheckMenu<T extends string>({
   selected,
   onToggle,
   disabled = false,
-  title,
+  tooltip,
   closeOnSelect = false,
 }: {
   trigger: ReactNode;
@@ -25,7 +26,7 @@ export function CheckMenu<T extends string>({
   selected: readonly T[];
   onToggle: (value: T, checked: boolean) => void;
   disabled?: boolean;
-  title?: string;
+  tooltip?: string;
   /** For a menu of one-shot actions rather than a set of filters to tick. */
   closeOnSelect?: boolean;
 }): JSX.Element {
@@ -33,9 +34,11 @@ export function CheckMenu<T extends string>({
     <Menu.Root>
       {/* The trigger is the button itself, not a wrapper around one: base-ui
           needs a real <button> for its keyboard and ARIA wiring. */}
-      <Menu.Trigger {...buttonProps('default', false)} aria-pressed={active} disabled={disabled} title={title}>
-        {trigger}
-      </Menu.Trigger>
+      <Tooltip label={tooltip}>
+        <Menu.Trigger {...buttonProps('default', false)} aria-pressed={active} disabled={disabled}>
+          {trigger}
+        </Menu.Trigger>
+      </Tooltip>
       <Menu.Portal>
         <Menu.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="end">
           <Menu.Popup {...stylex.props(menuStyles.popup)}>

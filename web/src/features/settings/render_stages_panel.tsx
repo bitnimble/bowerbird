@@ -122,7 +122,7 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
         <Button
           disabled={busy}
           aria-busy={busy}
-          title={busy ? SettingsStrings.measureStagesBusy() : undefined}
+          tooltip={busy ? SettingsStrings.measureStagesBusy() : undefined}
           onClick={() => void appSettings.benchmarkRender(rendition)}
         >
           <Timer size={ICON} />

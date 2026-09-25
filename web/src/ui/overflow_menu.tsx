@@ -7,6 +7,7 @@ import { MenuAction, MenuItems } from './menu_items';
 import type { MenuSection } from './menu_section';
 import { menuStyles } from './menu_styles';
 import { Section, Sections } from './section';
+import { Tooltip } from './tooltip';
 
 const NARROW = '@media (max-width: 860px)';
 
@@ -35,13 +36,15 @@ export function OverflowMenu({ label, sections }: { label: string; sections: Men
 
   return (
     <Menu.Root>
-      <Menu.Trigger {...buttonProps('default', true)} aria-label={label} title={label}>
-        {/* Both drawn and one shown, rather than a media query read in JS: nothing here
-            depends on the width except which glyph, and a hook would re-render the bar on
-            every frame of a resize to answer it. */}
-        <Ellipsis size={ICON} {...stylex.props(styles.wide)} />
-        <EllipsisVertical size={ICON} {...stylex.props(styles.narrow)} />
-      </Menu.Trigger>
+      <Tooltip label={label}>
+        <Menu.Trigger {...buttonProps('default', true)} aria-label={label}>
+          {/* Both drawn and one shown, rather than a media query read in JS: nothing here
+              depends on the width except which glyph, and a hook would re-render the bar on
+              every frame of a resize to answer it. */}
+          <Ellipsis size={ICON} {...stylex.props(styles.wide)} />
+          <EllipsisVertical size={ICON} {...stylex.props(styles.narrow)} />
+        </Menu.Trigger>
+      </Tooltip>
       <Menu.Portal>
         <Menu.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="end">
           <Menu.Popup {...stylex.props(menuStyles.popup)}>

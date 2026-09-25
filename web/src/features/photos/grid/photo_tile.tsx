@@ -16,6 +16,7 @@ import {
 import { focusRing } from '../../../ui/focus_ring';
 import { menuStyles } from '../../../ui/menu_styles';
 import { Text } from '../../../ui/text';
+import { Tooltip } from '../../../ui/tooltip';
 import { tileMarker } from './grid.stylex';
 import { PanoramaIcon } from './panorama_icon';
 import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
@@ -325,13 +326,11 @@ export const PhotoTile = observer(function PhotoTile({
             {/* A photograph with no local copy has not gone - the RAW comes back when something
                 needs it (§14.5) - so the snowflake, never the word that says the opposite. */}
             {photo.is_offloaded ?
-              <span
-                {...stylex.props(tile.badge, tile.onBackup)}
-                aria-label={PhotoDetailStrings.stateOnBackup()}
-                title={PhotoDetailStrings.stateOnBackupHint()}
-              >
-                <Snowflake size={BADGE_ICON} />
-              </span>
+              <Tooltip label={PhotoDetailStrings.stateOnBackupHint()}>
+                <span {...stylex.props(tile.badge, tile.onBackup)} aria-label={PhotoDetailStrings.stateOnBackup()}>
+                  <Snowflake size={BADGE_ICON} />
+                </span>
+              </Tooltip>
             : photo.is_missing && (
                 <span {...stylex.props(tile.badge, tile.missing)}>{PhotoDetailStrings.stateMissing()}</span>
               )
@@ -396,18 +395,19 @@ const TileFoot = observer(function TileFoot({
   return (
     <div {...stylex.props(foot.foot, list && foot.list, inStrip != null && foot.strip)}>
       {named && (
-        <span
-          {...stylex.props(
-            foot.name,
-            list && foot.nameList,
-            // Not the slack in a list row, which would put the badge over by the date rather than
-            // beside the name it belongs to.
-            list && badged && foot.nameListBeforeBadge,
-          )}
-          title={photo.file_path ?? undefined}
-        >
-          {name}
-        </span>
+        <Tooltip label={photo.file_path ?? undefined}>
+          <span
+            {...stylex.props(
+              foot.name,
+              list && foot.nameList,
+              // Not the slack in a list row, which would put the badge over by the date rather than
+              // beside the name it belongs to.
+              list && badged && foot.nameListBeforeBadge,
+            )}
+          >
+            {name}
+          </span>
+        </Tooltip>
       )}
       {/* Beside the name at the size of the marks opposite, rather than a chip over the
           picture: a composite's tile is the one photograph on the row nobody has seen before,

@@ -79,7 +79,7 @@ test('greys the row and says why when no TV answers', async () => {
   await openMenu([]);
   const item = screen.getByRole('menuitem', { name: SEND });
   expect(item.getAttribute('aria-disabled')).toBe('true');
-  expect(item.title).toBe("We couldn't find a Samsung Frame TV on your network. Check it's on.");
+  expect(item.getAttribute('aria-description')).toBe("We couldn't find a Samsung Frame TV on your network. Check it's on.");
 });
 
 test('sends the selection to the one TV that answers', async () => {

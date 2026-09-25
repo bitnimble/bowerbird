@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { textStyles } from './text';
 import { color, font } from './tokens.stylex';
+import { Tooltip } from './tooltip';
 
 const pulse = stylex.keyframes({ '50%': { opacity: 0.35 } });
 
@@ -54,17 +55,17 @@ export function Strip({
 
 export function StripLabel({
   tone,
-  title,
+  tooltip,
   children,
 }: {
   tone?: 'error';
-  title?: string;
+  tooltip?: string;
   children: ReactNode;
 }): JSX.Element {
   return (
-    <span {...stylex.props(styles.label, tone === 'error' && textStyles.error)} title={title}>
-      {children}
-    </span>
+    <Tooltip label={tooltip}>
+      <span {...stylex.props(styles.label, tone === 'error' && textStyles.error)}>{children}</span>
+    </Tooltip>
   );
 }
 

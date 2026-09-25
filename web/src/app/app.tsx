@@ -58,6 +58,7 @@ import { UpdateDialog } from '../features/updates/update_dialog';
 import { Button } from '../ui/button';
 import { focusRing } from '../ui/focus_ring';
 import { ICON } from '../ui/icon';
+import { Tooltip } from '../ui/tooltip';
 import { MetaList, MetaTerm, MetaValue } from '../ui/meta_list';
 import { Modal } from '../ui/modal';
 import { PageLeadRoom } from '../ui/page';
@@ -362,7 +363,7 @@ const sidebarWidth = (width: number | null): string => (width == null ? size.sid
 const SidebarRow = observer(function SidebarRow({
   to,
   end,
-  title,
+  tooltip,
   icon,
   name,
   count,
@@ -373,7 +374,7 @@ const SidebarRow = observer(function SidebarRow({
 }: {
   to: string;
   end?: boolean;
-  title?: string;
+  tooltip?: string;
   icon: LucideIcon;
   name: string;
   count?: number;
@@ -414,29 +415,30 @@ const SidebarRow = observer(function SidebarRow({
             so it is laid over the count's own place instead.
             Named rather than left to the two spans: adjacent inline text is read as one
             run-on word, so a library of twelve announces as "Reef12". */}
-        <NavLink
-          end={end}
-          to={to}
-          className={linkClass}
-          style={linkStyle}
-          title={title}
-          aria-label={
-            count == null ? undefined : AppStrings.rowHolding(readOnly ? AppStrings.readOnlyName(name) : name, count)
-          }
-        >
-          <SidebarIcon icon={icon} />
-          <SidebarText fit={readOnly}>{name}</SidebarText>
-          {readOnly && (
-            <PencilOff size={12} {...stylex.props(styles.badge)} aria-hidden>
-              <title>{AppStrings.readOnly()}</title>
-            </PencilOff>
-          )}
-          {count != null && (
-            <span {...stylex.props(sidebarStyles.count, styles.rowCount, sectionKey != null && styles.countSwapped)}>
-              {count}
-            </span>
-          )}
-        </NavLink>
+        <Tooltip label={tooltip}>
+          <NavLink
+            end={end}
+            to={to}
+            className={linkClass}
+            style={linkStyle}
+            aria-label={
+              count == null ? undefined : AppStrings.rowHolding(readOnly ? AppStrings.readOnlyName(name) : name, count)
+            }
+          >
+            <SidebarIcon icon={icon} />
+            <SidebarText fit={readOnly}>{name}</SidebarText>
+            {readOnly && (
+              <PencilOff size={12} {...stylex.props(styles.badge)} aria-hidden>
+                <title>{AppStrings.readOnly()}</title>
+              </PencilOff>
+            )}
+            {count != null && (
+              <span {...stylex.props(sidebarStyles.count, styles.rowCount, sectionKey != null && styles.countSwapped)}>
+                {count}
+              </span>
+            )}
+          </NavLink>
+        </Tooltip>
         {sectionKey != null && (
           <button
             type="button"
@@ -533,7 +535,7 @@ const LibraryNav = observer(function LibraryNav(): JSX.Element {
           <SidebarRow
             end
             to={route(PathSegment.libraries(), library.id)}
-            title={library.root_path}
+            tooltip={library.root_path}
             icon={Library}
             name={libraryLabel(library)}
             count={library.photo_count}

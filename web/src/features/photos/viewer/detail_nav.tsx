@@ -450,7 +450,7 @@ export const DetailNav = observer(function DetailNav({
           <Button
             iconOnly={mobile}
             aria-label={PhotoDetailStrings.undo()}
-            title={PhotoDetailStrings.undo()}
+            tooltip={PhotoDetailStrings.undo()}
             disabled={edit == null || !edit.stage.editable || !edit.edit.canUndo}
             onClick={() => void edit?.presenter.undo()}
           >
@@ -460,7 +460,7 @@ export const DetailNav = observer(function DetailNav({
           <Button
             iconOnly={mobile}
             aria-label={PhotoDetailStrings.redo()}
-            title={PhotoDetailStrings.redo()}
+            tooltip={PhotoDetailStrings.redo()}
             disabled={edit == null || !edit.stage.editable || !edit.edit.canRedo}
             onClick={() => void edit?.presenter.redo()}
           >
@@ -481,7 +481,6 @@ export const DetailNav = observer(function DetailNav({
               <Button
                 iconOnly
                 aria-label={PhotoDetailStrings.previousPhoto()}
-                title={PhotoDetailStrings.previousPhoto()}
                 disabled={prevId == null}
                 onClick={() => step('prev')}
               >
@@ -490,7 +489,6 @@ export const DetailNav = observer(function DetailNav({
               <Button
                 iconOnly
                 aria-label={PhotoDetailStrings.nextPhoto()}
-                title={PhotoDetailStrings.nextPhoto()}
                 disabled={nextId == null}
                 onClick={() => step('next')}
               >
@@ -531,7 +529,7 @@ export const DetailNav = observer(function DetailNav({
         <Button
           iconOnly={mobile}
           aria-label={PhotoDetailStrings.triageStack()}
-          title={PhotoDetailStrings.triageStack()}
+          tooltip={PhotoDetailStrings.triageStack()}
           onClick={() => navigate(stackPath, { state: { entryPhotoId: photoId } })}
         >
           <Layers size={ICON} />
@@ -546,7 +544,6 @@ export const DetailNav = observer(function DetailNav({
           iconOnly
           aria-label={stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()}
           aria-expanded={stripOpen}
-          title={stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()}
           onClick={onToggleStrip}
         >
           <GalleryThumbnails size={ICON} />
@@ -560,7 +557,6 @@ export const DetailNav = observer(function DetailNav({
           iconOnly
           aria-label={panelsOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()}
           aria-expanded={panelsOpen}
-          title={panelsOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()}
           onClick={onTogglePanels}
         >
           <Info size={ICON} />

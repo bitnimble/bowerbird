@@ -22,7 +22,7 @@ import { StageStore } from '../stage/stage_store';
 // The DOM first, then the library that reaches for it as it is imported. The alternative is a
 // preload, which would install one for the server's suites too - they share this runner.
 registerDom();
-const { cleanup, render, screen, within } = await import('@testing-library/react');
+const { cleanup, fireEvent, render, screen, within } = await import('@testing-library/react');
 const { kelvinAt, RawEditPanel, trackAt } = await import('../raw_edit_panel');
 const { PrintStore } = await import('../print/print_store');
 const { RawEditPanelStrings } = await import('../raw_edit_panel.strings');
@@ -145,7 +145,16 @@ describe('the edit panel', () => {
 
   test('shows the exposure in the document own unit', () => {
     open({ exposure: -1.5 });
-    expect(screen.getByRole('group', { name: 'Light' }).textContent).toContain('-1.50 EV');
+    expect((screen.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe('-1.50 EV');
+  });
+
+  test('settles a value typed finer than the slider steps', () => {
+    const { calls } = open();
+    const field = screen.getByRole('textbox', { name: 'Exposure value' });
+    fireEvent.focus(field);
+    fireEvent.change(field, { target: { value: '0.333' } });
+    fireEvent.blur(field);
+    expect(calls).toEqual([{ name: 'settle', value: { exposure: 0.333 } }]);
   });
 
   test('closes the white balance pair on a file that records no neutral', () => {
@@ -308,8 +317,8 @@ describe('the edit panel', () => {
     expect(screen.getByRole('slider', { name: 'Colour' }).getAttribute('aria-valuenow')).toBe('76');
     expect(screen.getByRole('slider', { name: 'Luminance' }).getAttribute('aria-valuenow')).toBe('24');
     const detail = within(screen.getByRole('group', { name: 'Detail' }));
-    expect(detail.getByText('76')).toBeTruthy();
-    expect(detail.getByText('24')).toBeTruthy();
+    expect((detail.getByRole('textbox', { name: 'Colour value' }) as HTMLInputElement).value).toBe('76');
+    expect((detail.getByRole('textbox', { name: 'Luminance value' }) as HTMLInputElement).value).toBe('24');
     // Untouched, so there is nothing to reset back to.
     screen.getByLabelText('Reset Colour').click();
     expect(calls).toEqual([]);

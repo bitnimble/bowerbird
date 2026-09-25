@@ -117,7 +117,7 @@ export const ViewSwitch = observer(function ViewSwitch({
       <Button
         aria-pressed={peeking}
         aria-label={StackTriageStrings.peek()}
-        title={StackTriageStrings.peekTitle()}
+        tooltip={StackTriageStrings.peekTitle()}
         style={styles.peek}
         onPointerDown={(e: React.PointerEvent) => {
           // Capture, so releasing outside the button still ends the peek rather

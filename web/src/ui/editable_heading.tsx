@@ -6,6 +6,7 @@ import { PageLead } from './page';
 import { Text } from './text';
 import { TextField } from './text_field';
 import { color, size } from './tokens.stylex';
+import { Tooltip } from './tooltip';
 
 const styles = stylex.create({
   edit: {
@@ -35,7 +36,7 @@ export function EditableHeading({
   /** What renaming this is called: the field has no visible label, and the button hints with it. */
   label: string;
   editable: boolean;
-  /** Hover text saying why a title that is not editable cannot be renamed. */
+  /** Why a title that is not editable cannot be renamed. */
   refusal?: string;
   /** Why `draft` cannot be saved, or null. An empty or unchanged draft is refused here already. */
   validate?: (draft: string) => string | null;
@@ -53,10 +54,15 @@ export function EditableHeading({
           // Named by its text rather than by what it does: a heading takes its own
           // name from its content, so an aria-label here would leave a reader
           // listing the headings hearing "Rename Beach" where the title should be.
-          <button type="button" {...stylex.props(styles.edit, focusRing.ring)} title={label} onClick={() => setDraft(value)}>
-            {value}
-          </button>
-        : <span title={refusal}>{value}</span>}
+          <Tooltip label={label}>
+            <button type="button" {...stylex.props(styles.edit, focusRing.ring)} onClick={() => setDraft(value)}>
+              {value}
+            </button>
+          </Tooltip>
+        : <Tooltip label={refusal}>
+            <span>{value}</span>
+          </Tooltip>
+        }
       </Heading>
     );
   }

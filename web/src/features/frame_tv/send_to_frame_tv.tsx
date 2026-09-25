@@ -33,7 +33,7 @@ export const SendToFrameTv = observer(function SendToFrameTv({
   const missing = store.searching ? SendToFrameTvStrings.searching() : SendToFrameTvStrings.noneFound();
   return (
     <MenuAction
-      option={{ value: tv?.id ?? '', label, icon, disabled: tv == null, title: tv?.name ?? missing }}
+      option={{ value: tv?.id ?? '', label, icon, disabled: tv == null, tooltip: tv?.name ?? missing }}
       onSelect={onSend}
     />
   );

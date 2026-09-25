@@ -46,8 +46,9 @@ export const PrintPanelStrings = {
   dragHint: () => 'Drag the print or use arrow keys to rotate.',
   degrees: (value: number) => `${Math.round(value)}°`,
   lightSize: (value: number) => `${value < 10 ? value.toFixed(1) : Math.round(value)}°`,
-  lux: (value: number) => `${value.toLocaleString()} lx`,
-  kelvin: (value: number) => `${Math.round(value).toLocaleString()} K`,
+  // The app's locale, not the browser's: the readout is typed back into, and `typedValue` groups by comma.
+  lux: (value: number) => `${value.toLocaleString('en-GB')} lx`,
+  kelvin: (value: number) => `${Math.round(value).toLocaleString('en-GB')} K`,
   percent: (value: number) => `${(value * 100).toFixed(1)}%`,
   roughnessValue: (value: number) => value.toFixed(2),
   millimetres: (value: number) => `${Math.round(value)} mm`,

@@ -365,7 +365,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             iconOnly
             aria-label={stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()}
             aria-expanded={stripOpen}
-            title={stripOpen ? PhotoDetailStrings.hideFilmstrip() : PhotoDetailStrings.showFilmstrip()}
             onClick={toggleStrip}
           >
             <GalleryThumbnails size={ICON} />
@@ -374,7 +373,6 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             iconOnly
             aria-label={sheetOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()}
             aria-expanded={sheetOpen}
-            title={sheetOpen ? PhotoDetailStrings.hideMetadata() : PhotoDetailStrings.showMetadata()}
             onClick={() => setSheetOpen(!sheetOpen)}
           >
             <Info size={ICON} />

@@ -41,7 +41,7 @@ const createInSubfolder = (refusal: string | undefined): Option<string> => ({
   label: ShootsPageStrings.createShootInSubfolder(),
   icon: <FolderPlus size={ICON} />,
   disabled: refusal != null,
-  title: refusal,
+  tooltip: refusal,
 });
 
 /**
@@ -113,7 +113,7 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
               label: CollectionListStrings.rename(),
               icon: <Pencil size={ICON} />,
               disabled: readOnlyRefusal != null,
-              title: readOnlyRefusal,
+              tooltip: readOnlyRefusal,
             },
           ]
         : []),

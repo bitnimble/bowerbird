@@ -16,6 +16,7 @@ import {
   selectedTiles,
   selectionCount,
   shootRow,
+  sidebarLibrary,
   sidebarSection,
   selectPhoto,
   shootAction,
@@ -63,7 +64,7 @@ test('keeps the library in the shell when a shoot is opened by deep link', async
   await page.goto(shootHref);
   await expect(sidebarSection(page, PHOTOS_DIR, 'Bin')).toBeVisible();
   await expect(sidebarSection(page, PHOTOS_DIR, 'Shoots')).toBeVisible();
-  await expect(page.getByRole('navigation', { name: 'Sidebar' }).getByTitle(PHOTOS_DIR, { exact: true })).toBeVisible();
+  await expect(sidebarLibrary(page, PHOTOS_DIR)).toBeVisible();
 });
 
 // The rows are virtualised, so a row scrolled out of the window is unmounted and

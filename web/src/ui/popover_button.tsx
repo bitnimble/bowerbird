@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { buttonProps, buttonStyles } from './button';
 import { menuStyles } from './menu_styles';
 import { PanelsInPopup } from './panel';
+import { Tooltip } from './tooltip';
 
 export function PopoverButton({
   trigger,
@@ -27,14 +28,16 @@ export function PopoverButton({
 }): JSX.Element {
   return (
     <Popover.Root>
-      <Popover.Trigger
-        {...buttonProps('default', iconOnly, badge != null && buttonStyles.holdsBadge)}
-        aria-label={label}
-        aria-pressed={active}
-      >
-        {trigger}
-        {badge != null && <span {...stylex.props(buttonStyles.badge)}>{badge}</span>}
-      </Popover.Trigger>
+      <Tooltip label={iconOnly ? label : undefined}>
+        <Popover.Trigger
+          {...buttonProps('default', iconOnly, badge != null && buttonStyles.holdsBadge)}
+          aria-label={label}
+          aria-pressed={active}
+        >
+          {trigger}
+          {badge != null && <span {...stylex.props(buttonStyles.badge)}>{badge}</span>}
+        </Popover.Trigger>
+      </Tooltip>
       <Popover.Portal>
         <Popover.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align={align}>
           <Popover.Popup {...stylex.props(menuStyles.popup, menuStyles.popupPad)}>

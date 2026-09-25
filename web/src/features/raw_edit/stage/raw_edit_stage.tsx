@@ -475,7 +475,7 @@ export const RawEditStage = observer(function RawEditStage({
 export const OpenStatus = observer(function OpenStatus({ stage }: { stage: StageStore }): JSX.Element | null {
   if (stage.status === 'failed') {
     return (
-      <div {...stylex.props(stageStyles.busy)} role="alert">
+      <div {...stylex.props(stageStyles.busy, stageStyles.failed)} role="alert">
         <Text>{RawEditStageStrings.couldNotShow()}</Text>
         <Text variant="mono" tone="error" style={styles.reason}>{stage.message}</Text>
       </div>

@@ -6,6 +6,7 @@ import { App } from './app/app';
 import { StoresProvider } from './app/stores_context';
 import { gpuThread } from './gpu/gpu_thread';
 import { color, font, size } from './ui/tokens.stylex';
+import { TooltipProvider } from './ui/tooltip';
 import './app/global.css';
 
 gpuThread();
@@ -29,7 +30,9 @@ createRoot(root).render(
   <StrictMode>
     <BrowserRouter>
       <StoresProvider>
-        <App />
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>
       </StoresProvider>
     </BrowserRouter>
   </StrictMode>,

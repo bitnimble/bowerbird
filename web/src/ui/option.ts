@@ -21,6 +21,6 @@ export interface Option<T extends string> {
   // Offered but not selectable - the action exists here whatever the library or
   // the photo is, and greying it says why it cannot be taken.
   disabled?: boolean;
-  // Hover text, which is where a disabled row says what would make it selectable.
-  title?: string;
+  // Where a disabled row says what would make it selectable.
+  tooltip?: string;
 }

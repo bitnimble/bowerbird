@@ -137,7 +137,7 @@ export const ReportBugDialog = observer(function ReportBugDialog(): JSX.Element 
 
             {includePhoto && (
               <>
-                <Row as="label" title={fits ? undefined : ReportBugStrings.rawTooLarge()}>
+                <Row as="label" tooltip={fits ? undefined : ReportBugStrings.rawTooLarge()}>
                   <input
                     {...stylex.props(focusRing.ring)}
                     type="checkbox"

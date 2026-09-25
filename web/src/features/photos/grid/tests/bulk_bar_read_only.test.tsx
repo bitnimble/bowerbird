@@ -74,7 +74,7 @@ test('filing into and out of a shoot is greyed on a read-only library, and says 
   for (const name of ['Move to another shoot', 'Remove from Dawn']) {
     const item = screen.getByRole('menuitem', { name });
     expect(item.getAttribute('aria-disabled')).toBe('true');
-    expect(item.title).toBe('Turn off read-only mode to use this action.');
+    expect(item.getAttribute('aria-description')).toBe('Turn off read-only mode to use this action.');
   }
 });
 
@@ -83,6 +83,6 @@ test('a writable library offers both', async () => {
   for (const name of ['Move to another shoot', 'Remove from Dawn']) {
     const item = screen.getByRole('menuitem', { name });
     expect(item.getAttribute('aria-disabled')).not.toBe('true');
-    expect(item.title).toBe('');
+    expect(item.getAttribute('aria-description')).toBeNull();
   }
 });

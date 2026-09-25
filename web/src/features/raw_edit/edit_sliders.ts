@@ -128,5 +128,26 @@ export const EDIT_SLIDERS: readonly SliderSpec[] = [...LIGHT, ...COLOUR, ...EFFE
 /// groups above - the balance pair, the straighten - have no `SliderSpec` to hand.
 export function reading(value: number, { min, step }: Pick<SliderSpec, 'min' | 'step'>): string {
   const sign = min < 0 && value > 0 ? '+' : '';
-  return RawEditPanelStrings.reading(sign, step < 1 ? value.toFixed(2) : String(value));
+  const places = (String(Number(value.toFixed(TYPED_PLACES))).split('.')[1] ?? '').length;
+  return RawEditPanelStrings.reading(sign, step < 1 ? value.toFixed(Math.max(places, 2)) : String(value));
+}
+
+const TYPED_PLACES = 4;
+
+export interface TypedRange extends Pick<SliderSpec, 'min' | 'max' | 'step'> {
+  /** What the readout multiplies the stored value by: 100 for a fraction shown as a percentage. */
+  scale?: number;
+}
+
+/**
+ * The number typed into a control's readout, in the value's stored units and held to its range, or
+ * null where the text holds none. Units, a sign and thousands separators may come with it, as the
+ * readout shows them.
+ */
+export function typedValue(text: string, { min, max, step, scale = 1 }: TypedRange): number | null {
+  const number = /[-+]?\d*\.?\d+/.exec(text.replace('−', '-').replaceAll(',', ''));
+  if (number == null) return null;
+  const held = Math.min(Math.max(Number(Number(number[0]).toFixed(TYPED_PLACES)) / scale, min), max);
+  // A whole step is a field `EditDoc` stores as an integer.
+  return step >= 1 ? Math.round(held) : held;
 }

@@ -40,6 +40,8 @@ type Control = {
   max: number;
   step: number;
   format: (value: number) => string;
+  /** What `format` multiplies the value by, so a number typed as it reads can be stored. */
+  scale?: number;
   /** Slide in decades instead of degrees, so a pinpoint lamp and a broad one both get a usable stretch of track. */
   log?: true;
 };
@@ -51,10 +53,10 @@ const degrees = (spec: Control, position: number): number =>
 const PAPER: Control[] = [
   { key: 'paperLongEdgeMm', min: 50, max: 1000, step: 10, format: strings.millimetres },
   { key: 'roughness', min: 0.03, max: 1, step: 0.01, format: strings.roughnessValue },
-  { key: 'surfaceTexture', min: 0, max: 1, step: 0.01, format: strings.percent },
+  { key: 'surfaceTexture', min: 0, max: 1, step: 0.01, format: strings.percent, scale: 100 },
   { key: 'refractiveIndex', min: 1, max: 2, step: 0.01, format: strings.roughnessValue },
-  { key: 'whiteReflectance', min: 0.5, max: 0.99, step: 0.01, format: strings.percent },
-  { key: 'blackReflectance', min: 0.001, max: 0.2, step: 0.001, format: strings.percent },
+  { key: 'whiteReflectance', min: 0.5, max: 0.99, step: 0.01, format: strings.percent, scale: 100 },
+  { key: 'blackReflectance', min: 0.001, max: 0.2, step: 0.001, format: strings.percent, scale: 100 },
 ];
 const PRINTER: Control[] = [
   { key: 'printResolutionPpi', min: 72, max: 1200, step: 1, format: strings.ppi },
@@ -95,6 +97,13 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
         label={strings[spec.key]()}
         value={spec.format(value)}
         reset={locked || value === resting ? null : () => presenter.resetControl(spec.key)}
+        typing={locked ? null : {
+          min: spec.min,
+          max: spec.max,
+          step: spec.step,
+          scale: spec.scale,
+          set: (typed) => presenter.setControl(spec.key, typed),
+        }}
       >
         <Slider
           label={strings[spec.key]()}

@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import type { ReactNode } from 'react';
 import { color, font } from './tokens.stylex';
+import { Tooltip } from './tooltip';
 
 type TextVariant = 'body' | 'muted' | 'mono' | 'label';
 
@@ -45,6 +46,7 @@ export function Text({
   tone,
   style,
   children,
+  tooltip,
   ...rest
 }: {
   variant?: TextVariant;
@@ -53,11 +55,11 @@ export function Text({
   tone?: 'error' | 'warning';
   style?: stylex.StyleXStyles;
   children: ReactNode;
-  title?: string;
+  tooltip?: string;
   /** So a control can point at this text with `aria-describedby`. */
   id?: string;
 }): JSX.Element {
-  return (
+  const text = (
     <As
       {...stylex.props(
         textStyles[variant],
@@ -70,4 +72,6 @@ export function Text({
       {children}
     </As>
   );
+  // Text is never focused, so a tooltip arriving may remount it, and most text has none.
+  return tooltip == null ? text : <Tooltip label={tooltip}>{text}</Tooltip>;
 }

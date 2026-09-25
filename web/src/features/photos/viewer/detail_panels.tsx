@@ -23,6 +23,7 @@ import { InlineIconButton } from '../../../ui/inline_icon_button';
 import { TextLink } from '../../../ui/link';
 import { Row } from '../../../ui/row';
 import { Text } from '../../../ui/text';
+import { Tooltip } from '../../../ui/tooltip';
 import { AlbumsPageStrings } from '../../albums/albums_page.strings';
 import { ShootPhotosStrings } from '../../shoots/shoot_photos_page.strings';
 import { BulkBarStrings } from '../grid/bulk_bar.strings';
@@ -117,9 +118,9 @@ export const CameraPanel = observer(function CameraPanel({ photoId, defaultOpen,
         [
           PhotoDetailStrings.lens(),
           pending((p) => (
-            <span {...stylex.props(styles.clip)} title={p.lens_model ?? undefined}>
-              {p.lens_model ?? PhotoDetailStrings.notRecorded()}
-            </span>
+            <Tooltip label={p.lens_model ?? undefined}>
+              <span {...stylex.props(styles.clip)}>{p.lens_model ?? PhotoDetailStrings.notRecorded()}</span>
+            </Tooltip>
           )),
         ],
         [PhotoDetailStrings.iso(), pending((p) => p.iso ?? PhotoDetailStrings.notRecorded())],
@@ -361,7 +362,7 @@ export const RemoteOriginal = observer(function RemoteOriginal({
       <Button
         variant="ghost"
         disabled={readOnly}
-        title={readOnly ? BulkBarStrings.notOnReadOnlyLibrary() : undefined}
+        tooltip={readOnly ? BulkBarStrings.notOnReadOnlyLibrary() : undefined}
         onClick={() => void replication.fetchOriginal(photoId)}
       >
         <HardDriveDownload size={ICON} />

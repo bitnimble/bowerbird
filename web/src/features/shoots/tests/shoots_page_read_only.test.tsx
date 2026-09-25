@@ -63,7 +63,7 @@ async function openMenu(name: string): Promise<void> {
 
 function refusal(name: string): string | null {
   const item = screen.getByRole('menuitem', { name });
-  return item.getAttribute('aria-disabled') === 'true' ? item.title : null;
+  return item.getAttribute('aria-disabled') === 'true' ? item.getAttribute('aria-description') : null;
 }
 
 test('a read-only library greys making a folder at the root', async () => {

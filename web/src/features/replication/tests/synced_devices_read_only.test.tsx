@@ -55,7 +55,7 @@ async function openPanel(readOnly: boolean): Promise<void> {
 
 function refusal(name: string): string | null {
   const button = screen.getByRole('button', { name }) as HTMLButtonElement;
-  return button.disabled ? button.title : null;
+  return button.disabled ? button.getAttribute('aria-description') : null;
 }
 
 test('a read-only library greys pairing, replicating and fetching, and says why', async () => {

@@ -5,6 +5,7 @@ import { NavLink, type NavLinkProps } from 'react-router-dom';
 import { focusRing } from '../ui/focus_ring';
 import { ICON } from '../ui/icon';
 import { color, font, size } from '../ui/tokens.stylex';
+import { Tooltip } from '../ui/tooltip';
 
 // Every row of the drawer is a target, and these carry their own metrics rather than the
 // buttons', so the token that grew every control on a finger has to be applied here too.
@@ -81,14 +82,14 @@ export function SidebarText({ fit = false, children }: { fit?: boolean; children
 export function SidebarLink({
   to,
   end,
-  title,
+  tooltip,
   label,
   icon,
   children,
 }: {
   to: string;
   end?: boolean;
-  title?: string;
+  tooltip?: string;
   label?: string;
   icon: LucideIcon;
   children: ReactNode;
@@ -97,10 +98,12 @@ export function SidebarLink({
     stylex.props(sidebarStyles.link, isActive && sidebarStyles.active, focusRing.ring);
   const className: NavLinkProps['className'] = ({ isActive }) => styled(isActive).className;
   return (
-    <NavLink to={to} end={end} title={title} aria-label={label} className={className}>
-      <SidebarIcon icon={icon} />
-      {children}
-    </NavLink>
+    <Tooltip label={tooltip}>
+      <NavLink to={to} end={end} aria-label={label} className={className}>
+        <SidebarIcon icon={icon} />
+        {children}
+      </NavLink>
+    </Tooltip>
   );
 }
 

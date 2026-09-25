@@ -5,17 +5,16 @@ import { CheckLabel } from '../../ui/check_label';
 import { focusRing } from '../../ui/focus_ring';
 import { Panel } from '../../ui/panel';
 import type { Option } from '../../ui/option';
-import { Select } from '../../ui/select';
 import { Slider } from '../../ui/slider';
 import { Text } from '../../ui/text';
 import { CropPanel, GeometryControls } from './crop/crop_panel';
-import { EditControl } from './edit_control';
+import { EditControl, SelectControl } from './edit_control';
 import type { CropStore } from './crop/crop_store';
 import type { EditStore } from './edit/edit_store';
 import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, reading, type SliderSpec } from './edit_sliders';
 import type { RawEditPresenter } from './stage/raw_edit_presenter';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
-import type { ColourProfile, Denoiser } from '../../../../src/schemas/photo_edits';
+import { TEMPERATURE_KELVIN, TINT, type ColourProfile, type Denoiser } from '../../../../src/schemas/photo_edits';
 import { KeystonePanel } from './keystone/keystone_panel';
 import type { KeystoneStore } from './keystone/keystone_store';
 import { styles } from './raw_edit_panel.stylex';
@@ -69,6 +68,9 @@ export const kelvinAt = (at: number): number =>
 
 /** An arrow key moves 1.3 mireds at the warm end and 0.5 at the cool one, either well under a JND. */
 const TRACK_STEP = 1 / 500;
+
+const TEMPERATURE_RANGE = { ...TEMPERATURE_KELVIN, step: 1 };
+const TINT_RANGE = { ...TINT, step: 1 };
 
 /** `busy` is the two mosaic groups' only: see `StageStore.repreparing`. */
 function Group({
@@ -139,6 +141,7 @@ const EditSlider = observer(function EditSlider({
           ? null
           : () => presenter.settle({ [spec.key]: spec.measured == null ? neutral : null })
       }
+      typing={shut ? null : { ...spec, set: (typed) => presenter.settle({ [spec.key]: typed }) }}
     >
       <Slider
         style={styles.slider}
@@ -260,6 +263,7 @@ const WhiteBalance = observer(function WhiteBalance({
             label={RawEditPanelStrings.temperature()}
             value={RawEditPanelStrings.kelvin(balance.temperature)}
             reset={back}
+            typing={disabled ? null : { ...TEMPERATURE_RANGE, set: (temperature) => presenter.settleBalance({ temperature }) }}
           >
             <Slider
               style={styles.slider}
@@ -278,21 +282,22 @@ const WhiteBalance = observer(function WhiteBalance({
           </EditControl>
           <EditControl
             label={RawEditPanelStrings.tint()}
-            value={reading(balance.tint, { min: -150, step: 1 })}
+            value={reading(balance.tint, TINT_RANGE)}
             reset={back}
+            typing={disabled ? null : { ...TINT_RANGE, set: (tint) => presenter.settleBalance({ tint }) }}
           >
             <Slider
               style={styles.slider}
               value={balance.tint}
               onChange={(tint) => presenter.previewBalance({ tint })}
               onCommit={(tint) => presenter.settleBalance({ tint })}
-              min={-150}
-              max={150}
-              step={1}
+              min={TINT_RANGE.min}
+              max={TINT_RANGE.max}
+              step={TINT_RANGE.step}
               snap={[neutral.tint]}
               tone="tint"
               label={RawEditPanelStrings.tint()}
-              valueText={(at) => reading(at, { min: -150, step: 1 })}
+              valueText={(at) => reading(at, TINT_RANGE)}
               disabled={disabled}
             />
           </EditControl>
@@ -310,20 +315,12 @@ const ColourProfileChoice = observer(function ColourProfileChoice({
   presenter: RawEditPresenter;
 }): JSX.Element {
   return (
-    <div>
-      <div {...stylex.props(styles.head, styles.headAboveSelect)}>
-        <Text as="span" style={styles.name}>
-          {RawEditPanelStrings.colourProfile()}
-        </Text>
-      </div>
-      <Select
-        style={styles.selectTrigger}
-        label={RawEditPanelStrings.colourProfile()}
-        options={COLOUR_PROFILES}
-        value={edit.doc?.colourProfile ?? 'matched'}
-        onChange={presenter.setColourProfile}
-      />
-    </div>
+    <SelectControl
+      label={RawEditPanelStrings.colourProfile()}
+      options={COLOUR_PROFILES}
+      value={edit.doc?.colourProfile ?? 'matched'}
+      onChange={presenter.setColourProfile}
+    />
   );
 });
 
@@ -335,20 +332,12 @@ const DenoiserChoice = observer(function DenoiserChoice({
   presenter: RawEditPresenter;
 }): JSX.Element {
   return (
-    <div>
-      <div {...stylex.props(styles.head, styles.headAboveSelect)}>
-        <Text as="span" style={styles.name}>
-          {RawEditPanelStrings.denoiser()}
-        </Text>
-      </div>
-      <Select
-        style={styles.selectTrigger}
-        label={RawEditPanelStrings.denoiser()}
-        options={DENOISERS}
-        value={edit.doc?.denoiser ?? 'galosh'}
-        onChange={presenter.setDenoiser}
-      />
-    </div>
+    <SelectControl
+      label={RawEditPanelStrings.denoiser()}
+      options={DENOISERS}
+      value={edit.doc?.denoiser ?? 'galosh'}
+      onChange={presenter.setDenoiser}
+    />
   );
 });
 

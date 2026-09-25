@@ -77,7 +77,6 @@ export function ZoomControl({
           iconOnly
           aria-pressed={zoom.zoomed}
           aria-label={label}
-          title={label}
           onClick={() => zoom.zoomTo(zoom.stopAfter, null)}
         >
           {zoom.nextStop === MIN_SCALE ? <ZoomOut size={ICON} /> : <ZoomIn size={ICON} />}

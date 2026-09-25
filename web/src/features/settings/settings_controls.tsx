@@ -9,6 +9,7 @@ import { focusRing } from '../../ui/focus_ring';
 import { ICON } from '../../ui/icon';
 import { PanelTitle } from '../../ui/panel';
 import { Text } from '../../ui/text';
+import { Tooltip } from '../../ui/tooltip';
 import { TextField } from '../../ui/text_field';
 import { color } from '../../ui/tokens.stylex';
 import { SettingsStrings } from './settings_page.strings';
@@ -90,31 +91,29 @@ export function SettingRow({
   children: ReactNode;
 }): JSX.Element {
   return (
-    <div
-      {...stylex.props(styles.row, disabledReason != null && styles.off, stylex.defaultMarker())}
-      title={disabledReason}
-    >
-      <span {...stylex.props(styles.left)}>{label}</span>
-      <div {...stylex.props(styles.value)}>
-        {onReset != null && (
-          <Button
-            iconOnly
-            variant="ghost"
-            aria-label={SettingsStrings.resetSetting(label)}
-            title={SettingsStrings.resetSetting(label)}
-            onClick={onReset}
-          >
-            <RotateCcw size={ICON} />
-          </Button>
+    <Tooltip label={disabledReason}>
+      <div {...stylex.props(styles.row, disabledReason != null && styles.off, stylex.defaultMarker())}>
+        <span {...stylex.props(styles.left)}>{label}</span>
+        <div {...stylex.props(styles.value)}>
+          {onReset != null && (
+            <Button
+              iconOnly
+              variant="ghost"
+              aria-label={SettingsStrings.resetSetting(label)}
+              onClick={onReset}
+            >
+              <RotateCcw size={ICON} />
+            </Button>
+          )}
+          {children}
+        </div>
+        {hint != null && (
+          <Text variant="mono" as="p" style={[styles.left, styles.hint]}>
+            {hint}
+          </Text>
         )}
-        {children}
       </div>
-      {hint != null && (
-        <Text variant="mono" as="p" style={[styles.left, styles.hint]}>
-          {hint}
-        </Text>
-      )}
-    </div>
+    </Tooltip>
   );
 }
 

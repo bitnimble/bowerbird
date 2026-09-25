@@ -3,6 +3,7 @@ import * as stylex from '@stylexjs/stylex';
 import { cloneElement, forwardRef, type ReactElement, type ReactNode } from 'react';
 import { focusRing } from './focus_ring';
 import { color, font, size } from './tokens.stylex';
+import { Tooltip } from './tooltip';
 
 type ButtonVariant = 'default' | 'primary' | 'danger' | 'ghost';
 type StyleArg = stylex.StyleXArray<
@@ -104,7 +105,8 @@ interface ButtonProps {
   children?: ReactNode;
   disabled?: boolean;
   type?: 'button' | 'submit';
-  title?: string;
+  /** Defaults to the `aria-label` of a button that is only an icon. */
+  tooltip?: string;
   /**
    * -1 inside a menu popup, where the first tabbable element takes the focus the
    * menu's own items need. Everywhere else the default is what you want.
@@ -128,14 +130,17 @@ interface ButtonProps {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'default', iconOnly = false, style, render, ...props },
+  { variant = 'default', iconOnly = false, style, render, tooltip, ...props },
   ref,
 ): JSX.Element {
   const styled = buttonProps(variant, iconOnly, style);
-  // A link that looks like a button is still a link. Handing it to base-ui would
-  // relabel it role="button", costing the link role and open-in-new-tab.
-  if (render != null) return cloneElement(render, { ...styled, ...props, ref });
-  return <BaseButton ref={ref} {...styled} {...props} />;
+  return (
+    <Tooltip label={tooltip ?? (iconOnly ? props['aria-label'] : undefined)}>
+      {/* A link that looks like a button is still a link. Handing it to base-ui would
+          relabel it role="button", costing the link role and open-in-new-tab. */}
+      {render != null ? cloneElement(render, { ...styled, ...props, ref }) : <BaseButton ref={ref} {...styled} {...props} />}
+    </Tooltip>
+  );
 });
 
 /** A keyboard shortcut, dimmed after a control's label. */

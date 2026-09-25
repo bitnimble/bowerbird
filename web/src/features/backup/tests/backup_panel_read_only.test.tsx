@@ -73,20 +73,18 @@ test('a read-only library disables its storage limit and says why', async () => 
   await open(true);
 
   const refusal = 'Read-only libraries cannot remove local originals.';
-  expect(screen.getByRole('spinbutton', { name: 'Storage limit (GB)', description: refusal }).matches(':disabled')).toBe(true);
-  expect(screen.getByTitle(refusal)).toBeTruthy();
+  const field = screen.getByRole('spinbutton', { name: 'Storage limit (GB)', description: refusal });
+  expect(field.matches(':disabled')).toBe(true);
+  expect(field.closest('[aria-description]')?.getAttribute('aria-description')).toBe(refusal);
 });
 
 test('a writable library keeps its storage limit editable', async () => {
   await open(false);
 
-  expect(
-    screen
-      .getByRole('spinbutton', {
-        name: 'Storage limit (GB)',
-        description: "Above this, we'll remove the local copies you've used least recently. They stay on the backup.",
-      })
-      .matches(':disabled'),
-  ).toBe(false);
-  expect(screen.queryByTitle('Read-only libraries cannot remove local originals.')).toBeNull();
+  const field = screen.getByRole('spinbutton', {
+    name: 'Storage limit (GB)',
+    description: "Above this, we'll remove the local copies you've used least recently. They stay on the backup.",
+  });
+  expect(field.matches(':disabled')).toBe(false);
+  expect(field.closest('[aria-description]')).toBeNull();
 });

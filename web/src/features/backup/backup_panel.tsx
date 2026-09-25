@@ -105,7 +105,7 @@ const ConfiguredBackup = observer(function ConfiguredBackup({
         : BackupStrings.backedUp(status.backed_up, status.owed)}
       </Text>
 
-      <Field title={library.read_only ? BackupStrings.storageLimitReadOnly() : undefined}>
+      <Field tooltip={library.read_only ? BackupStrings.storageLimitReadOnly() : undefined}>
         <Text variant="label" as="span">
           {BackupStrings.storageLimit()}
         </Text>

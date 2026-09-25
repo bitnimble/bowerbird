@@ -32,7 +32,7 @@ export function SoftProofMenu({
     value: proof,
     label: OPTIONS[proof](),
     active: proof === value,
-    ...(proof === 'hdr' && !hdrOffered ? { disabled: true, title: strings.hdrNeedsHdrRendition() } : {}),
+    ...(proof === 'hdr' && !hdrOffered ? { disabled: true, tooltip: strings.hdrNeedsHdrRendition() } : {}),
   }));
   const shown = SHOWN[value]();
   return (

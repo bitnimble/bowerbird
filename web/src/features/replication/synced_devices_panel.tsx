@@ -59,7 +59,7 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
       )}
 
       <Row>
-        <Button disabled={library.read_only} title={readOnlyRefusal} onClick={() => setSharing(true)}>
+        <Button disabled={library.read_only} tooltip={readOnlyRefusal} onClick={() => setSharing(true)}>
           <Share2 size={ICON} />
           {SyncedDevicesStrings.syncToAnotherDevice()}
         </Button>
@@ -67,7 +67,7 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
         {store.hasPeers(library.id) && (
           <Button
             disabled={syncing || library.read_only}
-            title={readOnlyRefusal}
+            tooltip={readOnlyRefusal}
             onClick={() => void replication.replicate(library.id)}
           >
             <RefreshCw size={ICON} />

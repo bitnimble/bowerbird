@@ -219,7 +219,7 @@ const QueueRun = observer(function QueueRun({ job }: { job: ExportJob }): JSX.El
   const { export: exports } = usePresenters();
   const stop = job.running ? ExportsPageStrings.stopExport() : ExportsPageStrings.removeFromQueue();
   const button = (
-    <Button iconOnly aria-label={stop} title={stop} onClick={() => exports.stop(job.id)} disabled={job.stopping}>
+    <Button iconOnly aria-label={stop} onClick={() => exports.stop(job.id)} disabled={job.stopping}>
       <X size={ICON} />
     </Button>
   );
@@ -499,7 +499,6 @@ function PhotoRow({ photo, inRun = false }: { photo: ExportedPhoto; inRun?: bool
         <Button
           iconOnly
           aria-label={PhotoDetailStrings.openContainingFolder()}
-          title={PhotoDetailStrings.openContainingFolder()}
           onClick={() => void exportHistory.reveal(photo.output_path)}
         >
           <FolderOpen size={ICON} />
@@ -521,10 +520,10 @@ function PhotoRow({ photo, inRun = false }: { photo: ExportedPhoto; inRun?: bool
 
 // Always in the same place - the last thing before the menu, on a run's line and on a file's
 // alike - so a column of times reads down the page rather than moving with what each row has.
-// `title` carries the instant itself, which "3 h ago" is only ever an approximation of.
+// `tooltip` carries the instant itself, which "3 h ago" is only ever an approximation of.
 function When({ at }: { at: string }): JSX.Element {
   return (
-    <Text variant="muted" style={styles.when} title={localDateTime(at) ?? at}>
+    <Text variant="muted" style={styles.when} tooltip={localDateTime(at) ?? at}>
       {relativeTime(at)}
     </Text>
   );

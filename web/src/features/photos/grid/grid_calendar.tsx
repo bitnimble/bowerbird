@@ -68,7 +68,6 @@ const AnyDateButton = observer(function AnyDateButton(): JSX.Element {
       // The month arrows are a glyph apiece and the row is as wide as the calendar; a
       // word here would sit over the month's name.
       aria-label={GridControlsStrings.anyDate()}
-      title={GridControlsStrings.anyDate()}
       disabled={f.takenFrom == null && f.takenTo == null}
       onClick={() => void photos.setFilters({ ...f, takenFrom: undefined, takenTo: undefined })}
     >

@@ -28,7 +28,7 @@ test('a read-only library leaves the title as a title, saying why on hover', () 
     <EditableHeading value="Beach" label="Rename Beach" editable={false} refusal="Not here" onRename={() => {}} />,
   );
   expect(screen.queryByRole('button')).toBeNull();
-  expect(screen.getByText('Beach').title).toBe('Not here');
+  expect(screen.getByText('Beach').getAttribute('aria-description')).toBe('Not here');
 });
 
 // A heading takes its name from its content, so labelling the button inside it
@@ -36,7 +36,7 @@ test('a read-only library leaves the title as a title, saying why on hover', () 
 test('the heading is named by the title rather than by what clicking it does', () => {
   render(<EditableHeading value="Beach" label="Rename Beach" editable onRename={() => {}} />);
   expect(screen.getByRole('heading', { name: 'Beach' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Beach' }).title).toBe('Rename Beach');
+  expect(screen.getByRole('button', { name: 'Beach' }).getAttribute('aria-description')).toBe('Rename Beach');
 });
 
 test('Enter renames', () => {

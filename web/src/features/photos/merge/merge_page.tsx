@@ -13,6 +13,7 @@ import { Row, Spacer } from '../../../ui/row';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
 import { color } from '../../../ui/tokens.stylex';
+import { Tooltip } from '../../../ui/tooltip';
 import { MergePageStrings } from './merge_page.strings';
 import { MergePresenter } from './merge_presenter';
 import type { Point } from './merge_rect';
@@ -280,7 +281,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
         </Button>
         <Button
           aria-label={MergePageStrings.undo()}
-          title={MergePageStrings.undo()}
+          tooltip={MergePageStrings.undo()}
           disabled={store.readOnly || !store.canUndo}
           onClick={presenter.undo}
         >
@@ -289,7 +290,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
         </Button>
         <Button
           aria-label={MergePageStrings.redo()}
-          title={MergePageStrings.redo()}
+          tooltip={MergePageStrings.redo()}
           disabled={store.readOnly || !store.canRedo}
           onClick={presenter.redo}
         >
@@ -333,14 +334,11 @@ export const MergePage = observer(function MergePage(): JSX.Element {
         <Spacer />
         <div {...stylex.props(styles.tools)}>
           {store.unaligned && (
-            <span
-              {...stylex.props(styles.unaligned)}
-              role="img"
-              aria-label={MergePageStrings.unaligned()}
-              title={MergePageStrings.unaligned()}
-            >
-              <TriangleAlert size={ICON} />
-            </span>
+            <Tooltip label={MergePageStrings.unaligned()}>
+              <span {...stylex.props(styles.unaligned)} role="img" aria-label={MergePageStrings.unaligned()}>
+                <TriangleAlert size={ICON} />
+              </span>
+            </Tooltip>
           )}
           <ZoomControl zoom={zoom} variant="default" />
         </div>
