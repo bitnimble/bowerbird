@@ -5,7 +5,7 @@
 import { expect, test, type Locator } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { GRID_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
-import { cursorTile, openLibrary, tiles, useLibrary } from '../helpers';
+import { cursorTile, gotoLibrary, tiles, useLibrary } from '../helpers';
 
 const picked = (scope: Locator) => scope.getByRole('button', { name: 'Clear Pick', pressed: true });
 const stars = (scope: Locator) => scope.getByRole('group', { name: 'Rating' }).getByRole('button', { pressed: true });
@@ -19,8 +19,7 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test('rating and picking work from the grid without opening a photo', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, GRID_PHOTOS_DIR);
+  await gotoLibrary(page, GRID_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   // Arrow to the first tile, rate it, pick it. The whole point is that culling
@@ -41,8 +40,7 @@ test('rating and picking work from the grid without opening a photo', async ({ p
 });
 
 test('the verdict and rating on a tile are clickable, and clicking again clears them', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, GRID_PHOTOS_DIR);
+  await gotoLibrary(page, GRID_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   const tile = tiles(page).nth(1);
 
@@ -67,8 +65,7 @@ test('the verdict and rating on a tile are clickable, and clicking again clears 
 });
 
 test('rejecting removes a photo from the default working set', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, GRID_PHOTOS_DIR);
+  await gotoLibrary(page, GRID_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   // The gallery opens on Active (untriaged + picked), so a reject should leave

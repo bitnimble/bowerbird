@@ -6,18 +6,27 @@ import path from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTO_NAMES, VIEWER_PHOTOS_DIR } from '../fixture_library';
-import { frames, gallery, openLibrary, openPhoto, photoIdOfImageUrl, showMetadata, shownFrame, tiles, useLibrary } from '../helpers';
+import {
+  frames,
+  gallery,
+  gotoLibrary,
+  gotoPhoto,
+  openPhoto,
+  photoIdOfImageUrl,
+  showMetadata,
+  shownFrame,
+  tiles,
+  useLibrary,
+} from '../helpers';
 
 test.beforeAll(async ({ browser }) => {
   // This library serves the camera's JPEG, and the panels below say so, so the
   // viewer has to be opening at it rather than at whatever was last chosen.
-  await useLibrary(browser, VIEWER_PHOTOS_DIR, { viewerRendition: 'Embedded JPEG' });
+  await useLibrary(browser, VIEWER_PHOTOS_DIR, { viewerRendition: 'embedded' });
 });
 
 test('the detail view shows shooting metadata, the triage control and steps between photos', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, VIEWER_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, VIEWER_PHOTOS_DIR);
 
   // Three-way triage in the header, not a checkbox: "undecided" has to be
   // expressible, and the control is there even with the metadata column closed
@@ -74,9 +83,7 @@ test('the detail view shows shooting metadata, the triage control and steps betw
 // A real click on a real tile inside a scroller, which is what needs a browser;
 // what the strip is *over* is `StripViewStore`'s arithmetic.
 test('the filmstrip lists the collection, and a tile opens its own photograph', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, VIEWER_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, VIEWER_PHOTOS_DIR);
 
   const navPath = pathOf(page);
   const opened = await navPath.innerText();
@@ -106,8 +113,7 @@ test('a photo the catalogue does not have says so, with the reason', async ({ pa
 // Two detail fetches can be in flight at once - stepping is faster than the
 // round trip - and they need not answer in order.
 test('a detail that lands after the reader has stepped on does not replace the photo they are looking at', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, VIEWER_PHOTOS_DIR);
+  await gotoLibrary(page, VIEWER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   const first = await tiles(page).first().locator('img').getAttribute('src');
@@ -143,9 +149,7 @@ test('a detail that lands after the reader has stepped on does not replace the p
 // fired, and both arrows stayed dead for as long as that photo was open. Every
 // photo of a small collection is within the margin, so it was not an edge case.
 test('the arrows come back after leaving a photo and opening it again', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, VIEWER_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, VIEWER_PHOTOS_DIR);
   await expect(page.getByRole('button', { name: 'Next photo' })).toBeEnabled({ timeout: 60_000 });
 
   for (let round = 0; round < 2; round++) {
@@ -162,9 +166,7 @@ test('the arrows come back after leaving a photo and opening it again', async ({
 // stage - a grid track sized against that strip - painted the photo full-size and
 // then shrank it when the panels landed.
 test('the panels keep their shape while the next photo is loading', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, VIEWER_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, VIEWER_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   await showMetadata(page);
 

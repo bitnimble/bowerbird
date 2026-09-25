@@ -9,9 +9,8 @@
 // Only a real browser can answer this: what a canvas does with no adapter is the browser's
 // behaviour, not the app's.
 import { expect, test } from '@playwright/test';
-import { PathSegment, route } from '../../../src/schemas/route';
 import { FALLBACK_PHOTOS_DIR } from '../fixture_library';
-import { openLibrary, openPhoto, shownFrame, useLibrary } from '../helpers';
+import { gotoPhoto, shownFrame, useLibrary } from '../helpers';
 
 // `launchOptions` replaces the config's rather than merging with it, so the args that make a
 // browser start at all here have to be repeated - minus the ones that turn WebGPU on, which is
@@ -23,13 +22,11 @@ test.use({
 });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, FALLBACK_PHOTOS_DIR, { viewerRendition: 'Embedded JPEG' });
+  await useLibrary(browser, FALLBACK_PHOTOS_DIR, { viewerRendition: 'embedded' });
 });
 
 test('a photograph is shown on a machine with no WebGPU adapter', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FALLBACK_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, FALLBACK_PHOTOS_DIR);
 
   // Refused rather than merely absent: `navigator.gpu` is still there with the feature off,
   // and it is the adapter that does not arrive. If this ever comes back true the rest of the

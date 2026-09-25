@@ -1,9 +1,8 @@
 // What the address bar carries for a grid, and what it must not carry into the
 // next one. Here because only a browser can answer a reload.
 import { expect, test } from '@playwright/test';
-import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTO_NAMES, URL_OTHER_PHOTOS_DIR, URL_PHOTOS_DIR, URL_PHOTO_NAMES } from '../fixture_library';
-import { addLibrary, gallery, openLibrary, tiles } from '../helpers';
+import { addLibrary, gallery, gotoLibrary, openLibrary, tiles } from '../helpers';
 
 test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage();
@@ -17,14 +16,11 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test('a reload comes back to the photograph the window started on', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, URL_PHOTOS_DIR);
-  await expect(tiles(page)).toHaveCount(URL_PHOTO_NAMES.length);
   // Narrow enough that masonry packs one frame to a line, so four of them are
-  // several windows tall and the end of the scroll is rows past the first. After
-  // the library is open, because the sidebar this was opened from is a drawer at
-  // this width and cannot be clicked.
+  // several windows tall and the end of the scroll is rows past the first.
   await page.setViewportSize({ width: 420, height: 560 });
+  await gotoLibrary(page, URL_PHOTOS_DIR);
+  await expect(tiles(page)).toHaveCount(URL_PHOTO_NAMES.length);
 
   const scroller = gallery(page);
   await scroller.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
@@ -41,8 +37,7 @@ test('a reload comes back to the photograph the window started on', async ({ pag
 });
 
 test('a search survives a reload of the tab, and is not carried into another library or a fresh visit', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, URL_PHOTOS_DIR);
+  await gotoLibrary(page, URL_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(URL_PHOTO_NAMES.length);
   const library = page.url();
 

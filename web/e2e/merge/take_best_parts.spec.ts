@@ -8,7 +8,7 @@
 // changed and never that the value was right, which is the failure that actually happens.
 import { expect, test } from '@playwright/test';
 import { MERGE_PHOTOS_DIR, MERGE_PHOTO_NAMES } from '../fixture_library';
-import { openLibrary, photoStage, selectPhoto, selectedTiles, tiles, useLibrary } from '../helpers';
+import { gotoLibrary, photoStage, selectPhoto, selectedTiles, tiles, useLibrary } from '../helpers';
 
 // The analysis is minutes on a real burst and tens of seconds on this one, and Save renders the
 // composite before it answers.
@@ -20,10 +20,7 @@ test.beforeAll(async ({ browser }) => {
 
 // First: a saved merge folds its frames under its own tile, leaving none to select.
 test('Cancel leaves nothing behind', async ({ page }) => {
-  // Its own library rather than whatever the home page opens: the shell opens the first root by
-  // path, which is whichever spec's sorts first.
-  await page.goto('/settings');
-  await openLibrary(page, MERGE_PHOTOS_DIR);
+  await gotoLibrary(page, MERGE_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(MERGE_PHOTO_NAMES.length);
 
   // The whole burst: the synthetic frames have no capture dates, so which two lead the grid is up to
@@ -60,8 +57,7 @@ test('seed a tile, pick a frame for it, commit, and the result survives a reload
     const answer = (await response.json().catch(() => null)) as { seams: ({ pick: number[] } | null)[] | null } | null;
     for (const seams of answer?.seams ?? []) if (seams != null) solved.push(seams.pick);
   });
-  await page.goto('/settings');
-  await openLibrary(page, MERGE_PHOTOS_DIR);
+  await gotoLibrary(page, MERGE_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(MERGE_PHOTO_NAMES.length);
 
   for (let frame = 0; frame < MERGE_PHOTO_NAMES.length; frame += 1) {
@@ -120,8 +116,7 @@ test('seed a tile, pick a frame for it, commit, and the result survives a reload
   await expect(photoStage(page)).toBeVisible({ timeout: 120_000 });
 
   // In the grid the merge goes unnamed, and its badge still opens the frames it was made from.
-  await page.goto('/settings');
-  await openLibrary(page, MERGE_PHOTOS_DIR);
+  await gotoLibrary(page, MERGE_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(1);
   await expect(tiles(page).getByText(`Merge of ${MERGE_PHOTO_NAMES.length} photos`, { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: `Show the ${MERGE_PHOTO_NAMES.length} frames of this merge` }).click();

@@ -9,7 +9,7 @@ import { PathSegment, route } from '../../../src/schemas/route';
 import { API_URL, PHOTO_NAMES, RENDITION_PHOTOS_DIR, libraryDataDir } from '../fixture_library';
 import {
   bulkAction,
-  openLibrary,
+  gotoPhoto,
   openPhoto,
   openPhotoId,
   photoAction,
@@ -33,7 +33,7 @@ import {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, RENDITION_PHOTOS_DIR, { viewerRendition: 'Embedded JPEG' });
+  await useLibrary(browser, RENDITION_PHOTOS_DIR, { viewerRendition: 'embedded' });
 });
 
 // Where this library's renditions land. Generated files live outside every
@@ -65,22 +65,15 @@ test('opening a photo whose rendition is gone builds that rendition back', async
   // Two real renders of the RAW, and the 60s default expires mid-poll: the
   // failure then reads as a timeout rather than as the wait it is.
   test.setTimeout(240_000);
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, RENDITION_PHOTOS_DIR);
-  await openPhoto(page);
-  await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
-  const photoId = openPhotoId(page);
-
   // A library that serves the camera's JPEG cannot lose its rendition - those bytes
   // come out of a RAW that is still on disk - so the gap only exists for one that
   // renders. Switching it is also what makes the reload open at the full-size
   // rendition rather than at the JPEG.
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'Rendered RAW');
-  await setViewerRendition(page, 'Rendered RAW');
-  const full = await renditionPath(page.request, 'full', photoId);
+  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'render');
+  await setViewerRendition(page.request, 'full');
 
-  await page.goto(route(PathSegment.photos(), photoId));
+  const photoId = await gotoPhoto(page, RENDITION_PHOTOS_DIR);
+  const full = await renditionPath(page.request, 'full', photoId);
   await expect.poll(() => existsSync(full), { timeout: 90_000 }).toBe(true);
   rmSync(full, { force: true });
 
@@ -103,11 +96,8 @@ test('opening a photo whose rendition is gone builds that rendition back', async
 // The point of caching the renditions is that switching back to one already seen
 // costs nothing.
 test('a chosen rendition is cached on disk, and survives a tile rebuild', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, RENDITION_PHOTOS_DIR);
-  await openPhoto(page);
+  const photoId = await gotoPhoto(page, RENDITION_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
-  const photoId = openPhotoId(page);
 
   const showRendition = (label: string): Promise<void> => photoAction(page, 'Rendition', label, { exact: true });
 
@@ -205,14 +195,11 @@ test('a chosen rendition is cached on disk, and survives a tile rebuild', async 
 test('i and o switch between the camera JPEG and the render, and the cache can be forced past', async ({ page }) => {
   // A forced rebuild is a real render of the RAW, not a cache hit.
   test.setTimeout(240_000);
-  await page.goto(route(PathSegment.settings()));
   // Named here rather than inherited: re-rendering is offered only where the library
   // has a render of its own to remake.
-  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'Rendered RAW');
-  await openLibrary(page, RENDITION_PHOTOS_DIR);
-  await openPhoto(page);
+  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'render');
+  const photoId = await gotoPhoto(page, RENDITION_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
-  const photoId = openPhotoId(page);
   const versioned = `${route(PathSegment.image())}/${photoId}${route(PathSegment.renditions(), 'full')}?v=`;
   const fetched: string[] = [];
   page.on('request', (request) => {
@@ -268,16 +255,13 @@ test('a reader set to the camera JPEG never loads the render', async ({ page }) 
   const requested: string[] = [];
   page.on('request', (r) => requested.push(r.url()));
 
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'Rendered RAW');
-  await setViewerRendition(page, 'Embedded JPEG');
-  await openLibrary(page, RENDITION_PHOTOS_DIR);
-  await openPhoto(page);
+  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'render');
+  await setViewerRendition(page.request, 'embedded');
+  const openId = await gotoPhoto(page, RENDITION_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 
   // Warmed at the rendition on screen rather than the library's, or the step
   // below arrives cold and shows the stage background while it fetches.
-  const openId = openPhotoId(page);
   await expect.poll(() => requested.some((url) => url.includes(route(PathSegment.renditions(), 'embedded')) && !url.includes(openId))).toBe(true);
   const openName = await shownFilename(page);
 
@@ -299,12 +283,9 @@ test('a photo reopens at the rendition it was last read in, without the library 
   const requested: string[] = [];
   page.on('request', (r) => requested.push(r.url()));
 
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'Rendered RAW');
-  await setViewerRendition(page, 'Last used per photo');
-  await openLibrary(page, RENDITION_PHOTOS_DIR);
-  await openPhoto(page);
-  const photoId = openPhotoId(page);
+  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'render');
+  await setViewerRendition(page.request, 'remember_per_photo');
+  const photoId = await gotoPhoto(page, RENDITION_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 
   // Read it in the camera's JPEG, which this library does not default to.
@@ -325,12 +306,9 @@ test('a photo reopens at the rendition it was last read in, without the library 
 test('viewer rotation turns embedded display and tags full AVIF without moving coded pixels', async ({ page }) => {
   test.setTimeout(180_000);
   const contexts = await recordCanvasContexts(page);
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'Rendered RAW');
-  await setViewerRendition(page, 'Embedded JPEG');
-  await openLibrary(page, RENDITION_PHOTOS_DIR);
-  await openPhoto(page);
-  const photoId = openPhotoId(page);
+  await setRenditionSource(page, RENDITION_PHOTOS_DIR, 'render');
+  await setViewerRendition(page.request, 'embedded');
+  const photoId = await gotoPhoto(page, RENDITION_PHOTOS_DIR);
   const embedded = photoStage(page).getByRole('img', { name: /Embedded JPEG$/ });
   await expect(embedded).toBeVisible({ timeout: 60_000 });
   const before = await embedded.evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height]);

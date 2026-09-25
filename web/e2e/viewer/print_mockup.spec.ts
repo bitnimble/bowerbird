@@ -9,9 +9,7 @@ import {
   editDiagnosticSize,
   editDiagnostics,
   editTools,
-  openLibrary,
-  openPhoto,
-  openPhotoId,
+  gotoPhoto,
   savedRev,
   softProof,
   useLibrary,
@@ -25,16 +23,13 @@ const DRAWN = { timeout: 170_000 };
 test.describe.configure({ timeout: 180_000, mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, PRINT_PHOTOS_DIR, { viewerRendition: 'Embedded JPEG' });
+  await useLibrary(browser, PRINT_PHOTOS_DIR, { viewerRendition: 'embedded' });
 });
 
 // The max rendition holds every edit at the sensor's own size: the RAW never crosses, and this
 // browser decodes the rendition itself.
 test('the viewer shows a print mockup from the max rendition, and comes back to the photograph unedited', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PRINT_PHOTOS_DIR);
-  await openPhoto(page);
-  const photoId = openPhotoId(page);
+  const photoId = await gotoPhoto(page, PRINT_PHOTOS_DIR);
   const photoPath = new URL(page.url()).pathname;
   const revision = await savedRev(page, photoId);
   const requested: URL[] = [];
@@ -64,9 +59,7 @@ test('the viewer shows a print mockup from the max rendition, and comes back to 
 });
 
 test('the flat print and the sheet are one open, and the flat one has no light to set', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PRINT_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, PRINT_PHOTOS_DIR);
 
   await softProof(page, 'Printed media');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
@@ -80,11 +73,8 @@ test('the flat print and the sheet are one open, and the flat one has no light t
 });
 
 test('the mockup opens on its own address, and escape leaves it', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PRINT_PHOTOS_DIR);
-  await openPhoto(page);
-  const photoPath = new URL(page.url()).pathname;
-  await page.goto(`${photoPath}${route(PathSegment.mockup())}`);
+  await gotoPhoto(page, PRINT_PHOTOS_DIR, route(PathSegment.mockup()));
+  const photoPath = new URL(page.url()).pathname.replace(new RegExp(`${route(PathSegment.mockup())}$`), '');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
   await expect(page.getByRole('group', { name: 'Paper', exact: true })).toBeVisible();
 
@@ -96,9 +86,7 @@ test('the mockup opens on its own address, and escape leaves it', async ({ page 
 // A stage that outgrows the rendition is served tiles of it from the server, and the frame drawn
 // from them takes its camera match and balance from the open's own answer.
 test('a rendition opened in the browser draws from the tiles it is served', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PRINT_PHOTOS_DIR);
-  await openPhoto(page);
+  const photoId = await gotoPhoto(page, PRINT_PHOTOS_DIR);
   const shown = await page.evaluate(async (photoId) => {
     const { LocalDecoder } = await import('/src/features/raw_edit/local_decode/local_decoder.ts');
     const { preparedPicture } = await import('/src/features/raw_edit/local_decode/open_photo.ts');
@@ -126,6 +114,6 @@ test('a rendition opened in the browser draws from the tiles it is served', asyn
     } finally {
       decoder.close();
     }
-  }, openPhotoId(page));
+  }, photoId);
   expect(shown).toBe('{"missing":null}');
 });

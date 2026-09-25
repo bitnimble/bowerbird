@@ -10,7 +10,8 @@ import {
   bulkAction,
   collectionList,
   fileIntoShoot,
-  openLibrary,
+  gotoLibrary,
+  gotoShoot,
   openPhoto,
   openShoot,
   selectedTiles,
@@ -36,9 +37,7 @@ const rows = (page: Page) => collectionList(page).getByRole('listitem');
 const cursored = (page: Page) => collectionList(page).locator('[role="listitem"][aria-current="true"]');
 
 test('keeps the library in the shell when a shoot is opened by deep link', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PHOTOS_DIR);
-  await sidebarSection(page, PHOTOS_DIR, 'Shoots').click();
+  await gotoLibrary(page, PHOTOS_DIR, 'shoots');
 
   // The library root is a permanent row, and the photographs no shoot has claimed
   // lead the list, so a library with photos and no shoots is never an empty page.
@@ -72,9 +71,7 @@ test('keeps the library in the shell when a shoot is opened by deep link', async
 // then restarted at the top of the page. The cursor is a value in the store, so
 // it survives that, and exactly one row is ever in the tab order.
 test('the folder list is walkable by keyboard, and Tab lands on the cursor', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PHOTOS_DIR);
-  await sidebarSection(page, PHOTOS_DIR, 'Shoots').click();
+  await gotoLibrary(page, PHOTOS_DIR, 'shoots');
   await addShoot(page, 'Kelp');
   await expect(rows(page).getByText('Kelp', { exact: true })).toBeVisible();
 
@@ -132,9 +129,7 @@ test('the folder list is walkable by keyboard, and Tab lands on the cursor', asy
 // The actual regression, which needs more rows than fit on screen: the list must
 // hold the reader's place when the row they were in stops existing.
 test('a cursor survives the row under it being unmounted by a scroll', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PHOTOS_DIR);
-  await sidebarSection(page, PHOTOS_DIR, 'Shoots').click();
+  await gotoLibrary(page, PHOTOS_DIR, 'shoots');
 
   const made = Array.from({ length: 30 }, (_, i) => `Deep${String(i).padStart(2, '0')}`);
   for (const name of made) await addShoot(page, name);
@@ -178,8 +173,7 @@ test('a cursor survives the row under it being unmounted by a scroll', async ({ 
 });
 
 test('adding a photo to a shoot moves the file out of the library root on disk', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PHOTOS_DIR);
+  await gotoLibrary(page, PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   await selectPhoto(page);
@@ -187,8 +181,7 @@ test('adding a photo to a shoot moves the file out of the library root on disk',
   await expect(selectionCount(page)).toHaveText('1 selected');
   await fileIntoShoot(page, 'Reef');
 
-  await sidebarSection(page, PHOTOS_DIR, 'Shoots').click();
-  await openShoot(page, 'Reef');
+  await gotoShoot(page, PHOTOS_DIR, 'Reef');
   await expect(tiles(page)).toHaveCount(1);
 
   // A shoot is a real folder, so the add is a file move, not just a DB flag.
@@ -202,10 +195,7 @@ test('adding a photo to a shoot moves the file out of the library root on disk',
 // The way out of the viewer is the grid the reader came in by: a photo opened
 // from a shoot returns to the shoot, not to the library it happens to live in.
 test('leaving a photo returns to the collection it was opened from', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PHOTOS_DIR);
-  await sidebarSection(page, PHOTOS_DIR, 'Shoots').click();
-  await openShoot(page, 'Reef');
+  await gotoShoot(page, PHOTOS_DIR, 'Reef');
   await expect(tiles(page)).toHaveCount(1);
   const shoot = page.url();
 
@@ -233,10 +223,7 @@ test('leaving a photo returns to the collection it was opened from', async ({ pa
 });
 
 test('a photo can be taken back out of a shoot', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PHOTOS_DIR);
-  await sidebarSection(page, PHOTOS_DIR, 'Shoots').click();
-  await openShoot(page, 'Reef');
+  await gotoShoot(page, PHOTOS_DIR, 'Reef');
   await expect(tiles(page)).toHaveCount(1);
 
   // Removal goes over DELETE with a JSON body (§13.3). Hono/Bun do parse that,
@@ -252,10 +239,7 @@ test('a photo can be taken back out of a shoot', async ({ page }) => {
 
 // Last, because it renames the shoot the rest of this journey opens by name.
 test('the title of a shoot is the rename control, and refuses a name no folder could have', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, PHOTOS_DIR);
-  await sidebarSection(page, PHOTOS_DIR, 'Shoots').click();
-  await openShoot(page, 'Reef');
+  await gotoShoot(page, PHOTOS_DIR, 'Reef');
 
   await page.getByRole('heading', { name: 'Reef' }).getByRole('button').click();
   const field = page.getByRole('textbox', { name: 'Rename Reef' });

@@ -1,13 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { DECODE_PHOTOS_DIR, DECODE_PHOTO_NAMES } from '../fixture_library';
-import {
-  addLibrary,
-  openLibrary,
-  openPhoto,
-  openPhotoId,
-  watchForComplaints,
-} from '../helpers';
+import { addLibrary, firstPhotoId, watchForComplaints } from '../helpers';
 
 // **The one claim a cargo build cannot make.** The crate has linked for wasm32 for a while and
 // `tests/wasm_build.rs` pins what a host can ask of it, but neither can say whether the module
@@ -25,9 +19,7 @@ let photoId = '';
 test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage();
   await addLibrary(page, DECODE_PHOTOS_DIR, { photos: DECODE_PHOTO_NAMES.length });
-  await openLibrary(page, DECODE_PHOTOS_DIR);
-  await openPhoto(page);
-  photoId = openPhotoId(page);
+  photoId = await firstPhotoId(page, DECODE_PHOTOS_DIR);
   await page.close();
 });
 

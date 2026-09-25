@@ -10,7 +10,7 @@ import {
   bulkAction,
   frames,
   fusedBands,
-  openLibrary,
+  gotoLibrary,
   openPhotoId,
   photoStage,
   picks,
@@ -74,7 +74,7 @@ test('identical frames collapse into one tile that says how many it stands for',
   // Detection runs as part of settling, so the grid has to be opened after it
   // rather than during the import.
   await addLibrary(page, STACK_PHOTOS_DIR, { autoStack: true, photos: STACK_PHOTO_NAMES.length });
-  await openLibrary(page, STACK_PHOTOS_DIR);
+  await gotoLibrary(page, STACK_PHOTOS_DIR);
 
   await expect(tiles(page)).toHaveCount(1, { timeout: 45_000 });
   await expect(stackFrames(page)).toHaveAccessibleName(new RegExp(`stack of ${STACK_PHOTO_NAMES.length},`));
@@ -82,8 +82,7 @@ test('identical frames collapse into one tile that says how many it stands for',
 
 // Where the members sit inside the band is `bands.spec.ts`.
 test('the tile opens a band below the row in every view, and closes it again', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
+  await gotoLibrary(page, STACK_PHOTOS_DIR);
   const tile = frames(rowTiles(page));
   await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
 
@@ -182,8 +181,7 @@ test.describe('a joined stack at a fractional device ratio', () => {
   }
 
   test('draws nothing along the edge its tile and its band share', async ({ page }) => {
-    await page.goto(route(PathSegment.settings()));
-    await openLibrary(page, STACK_PHOTOS_DIR);
+    await gotoLibrary(page, STACK_PHOTOS_DIR);
     await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
     await frames(rowTiles(page)).click();
     await expect.poll(() => fusedBands(page)).toBe(1);
@@ -213,7 +211,7 @@ test.describe('a joined stack at a fractional device ratio', () => {
       copyFileSync(source, path.join(dir, name));
     }
     await addLibrary(page, dir, { autoStack: true, photos: 4 });
-    await openLibrary(page, dir);
+    await gotoLibrary(page, dir);
     await expect(stackFrames(page).first()).toBeVisible({ timeout: 60_000 });
 
     // The second of the two, so the tile it opens is not the first of its row.
@@ -230,8 +228,7 @@ test.describe('a joined stack at a fractional device ratio', () => {
 });
 
 test('a list row opens its stack from anywhere along it, not just the thumbnail', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
+  await gotoLibrary(page, STACK_PHOTOS_DIR);
   await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
   await setViewMode(page, 'List');
 
@@ -254,8 +251,7 @@ test('a list row opens its stack from anywhere along it, not just the thumbnail'
 // a member has no position to be in a run, so it travels by id beside them
 // (§19.6.1).
 test('a selection spans the grid and the contents of a stack', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
+  await gotoLibrary(page, STACK_PHOTOS_DIR);
   const stack = frames(rowTiles(page));
   await stack.click();
   await expect(members(page)).toHaveCount(STACK_PHOTO_NAMES.length);
@@ -310,8 +306,7 @@ test('a selection spans the grid and the contents of a stack', async ({ page }) 
 // against the presenter because what is in question is the modifier reaching the
 // handler from a real click, on the frame and on the tick box alike.
 test('shift-click spans the members of an open band, and back out of it', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
+  await gotoLibrary(page, STACK_PHOTOS_DIR);
   await frames(rowTiles(page)).click();
   const band = members(page);
   await expect(band).toHaveCount(STACK_PHOTO_NAMES.length);
@@ -332,8 +327,7 @@ test('shift-click spans the members of an open band, and back out of it', async 
 // The collapse taken off the listing itself (§19.5.4), which is a different thing
 // from opening every band: there is no stack in the grid to open.
 test('expanding all stacks puts every frame in the grid, and keeps what was selected', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
+  await gotoLibrary(page, STACK_PHOTOS_DIR);
   await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
 
   // Cmd-click, because a plain click on a stack's tile opens its band (§19.6).
@@ -366,8 +360,7 @@ test('the viewer steps through every member of a stack, not just its tile', asyn
   // rendition read off disk on a machine running the rest of the suite beside it. The default
   // sixty seconds is the one budget here that is not generous.
   test.setTimeout(240_000);
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
+  await gotoLibrary(page, STACK_PHOTOS_DIR);
   await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
   await frames(rowTiles(page)).click();
   await expect(members(page)).toHaveCount(STACK_PHOTO_NAMES.length);
@@ -412,8 +405,7 @@ test('the viewer steps through every member of a stack, not just its tile', asyn
 });
 
 test('a member picked out of the band can be removed from the stack', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
+  await gotoLibrary(page, STACK_PHOTOS_DIR);
   await frames(rowTiles(page)).click();
   await expect(members(page)).toHaveCount(STACK_PHOTO_NAMES.length);
 
@@ -434,8 +426,7 @@ test('a member picked out of the band can be removed from the stack', async ({ p
 // A stack made by hand, in a selection beside a loose frame: the stack comes apart
 // and the loose frame is left alone.
 test('a stack made by hand is taken apart by Unstack, beside a photo that is not one', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, STACK_PHOTOS_DIR);
+  await gotoLibrary(page, STACK_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(STACK_PHOTO_NAMES.length, { timeout: 45_000 });
 
   // Two of the three fused, so the collection is one stack row and one loose

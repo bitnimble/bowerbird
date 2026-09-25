@@ -10,9 +10,7 @@ import {
   editPreview,
   editTools,
   emulateHdrDisplay,
-  openLibrary,
-  openPhoto,
-  openPhotoId,
+  firstPhotoId,
   photoAction,
   photoStage,
   savedRev,
@@ -50,9 +48,7 @@ let photoId = '';
 test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage();
   await addLibrary(page, EDIT_PHOTOS_DIR);
-  await openLibrary(page, EDIT_PHOTOS_DIR);
-  await openPhoto(page);
-  photoId = openPhotoId(page);
+  photoId = await firstPhotoId(page, EDIT_PHOTOS_DIR);
   await page.close();
 });
 

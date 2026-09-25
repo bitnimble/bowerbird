@@ -1,9 +1,8 @@
 // Narrowing the grid: the verdict presets, and the panel behind them holding the
 // set they are named points in, the filename search and the range of days.
 import { expect, test, type Page } from '@playwright/test';
-import { PathSegment, route } from '../../../src/schemas/route';
 import { FILTER_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
-import { cursorTile, gallery, openLibrary, sidebarSection, tiles, useLibrary } from '../helpers';
+import { cursorTile, gallery, gotoLibrary, sidebarSection, tiles, useLibrary } from '../helpers';
 
 // Every filter but the five presets lives behind one button, so a test that asks
 // about one opens it first.
@@ -18,8 +17,7 @@ test.beforeAll(async ({ browser }) => {
   // What these controls do from the grid is `grid/triage.spec.ts`; here they are
   // how the fixture gets its picked, rated frame.
   const page = await browser.newPage();
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FILTER_PHOTOS_DIR);
+  await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   await page.keyboard.press('ArrowRight');
   await expect(cursorTile(page)).toHaveCount(1);
@@ -30,8 +28,7 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test('the Picks filter narrows to what was picked', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FILTER_PHOTOS_DIR);
+  await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await page.getByRole('button', { name: 'Picks', exact: true }).click();
   await expect(tiles(page)).toHaveCount(1);
 
@@ -40,8 +37,7 @@ test('the Picks filter narrows to what was picked', async ({ page }) => {
 });
 
 test('filename search finds a single frame', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FILTER_PHOTOS_DIR);
+  await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await openFilters(page);
   await page.getByLabel('Find by filename').fill('alpha');
   await expect(tiles(page)).toHaveCount(1);
@@ -54,8 +50,7 @@ test('filename search finds a single frame', async ({ page }) => {
 });
 
 test('a search cleared from outside the box stays cleared', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FILTER_PHOTOS_DIR);
+  await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await openFilters(page);
   const box = page.getByLabel('Find by filename');
 
@@ -74,8 +69,7 @@ test('a search cleared from outside the box stays cleared', async ({ page }) => 
 });
 
 test('the filter set unions its options instead of intersecting them', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FILTER_PHOTOS_DIR);
+  await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   // A preset is a named point in the same space as the set behind it, so it arrives
@@ -98,8 +92,7 @@ test('the filter set unions its options instead of intersecting them', async ({ 
 });
 
 test('the bodies a collection was shot on open beside the panel rather than in it', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FILTER_PHOTOS_DIR);
+  await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   await openFilters(page);
 
@@ -118,8 +111,7 @@ test('the bodies a collection was shot on open beside the panel rather than in i
 });
 
 test('a list left open does not open itself the next time the panel is', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FILTER_PHOTOS_DIR);
+  await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   // Shut from outside while a list is open, which is what a portal takes away rather
@@ -145,8 +137,7 @@ test('a list left open does not open itself the next time the panel is', async (
 });
 
 test('a preset filter arrives with its options already ticked, and wears no badge', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FILTER_PHOTOS_DIR);
+  await gotoLibrary(page, FILTER_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   // Active is untriaged + picked, so the set must show exactly those two ticked

@@ -6,7 +6,7 @@ import { API_URL, PHOTO_NAMES, THUMBNAIL_PHOTOS_DIR } from '../fixture_library';
 import {
   FIRST_FRAME,
   bulkAction,
-  openLibrary,
+  gotoLibrary,
   openPhoto,
   photoIdOfImageUrl,
   renditionDetails,
@@ -24,12 +24,11 @@ import {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, THUMBNAIL_PHOTOS_DIR, { viewerRendition: 'Embedded JPEG' });
+  await useLibrary(browser, THUMBNAIL_PHOTOS_DIR, { viewerRendition: 'embedded' });
 });
 
 test("a selection's grid tiles are rebuilt from the bulk bar, and pushed to the tile that changed alone", async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, THUMBNAIL_PHOTOS_DIR);
+  await gotoLibrary(page, THUMBNAIL_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   const src = (index: number): Promise<string | null> => tiles(page).nth(index).locator('img').getAttribute('src');
   const [rebuilt, untouched] = [await src(0), await src(1)];
@@ -55,12 +54,11 @@ test("a selection's grid tiles are rebuilt from the bulk bar, and pushed to the 
 // cache: one stamp each, so a URL only moves when the file behind it did.
 test('rebuilding a photo rendition leaves its grid tile where it is', async ({ page }) => {
   test.setTimeout(240_000);
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, THUMBNAIL_PHOTOS_DIR, 'Rendered RAW');
+  await setRenditionSource(page, THUMBNAIL_PHOTOS_DIR, 'render');
   // The viewer has to follow the library for the last assertion here, and what it
   // follows by default is whatever rendition was last chosen anywhere.
-  await setViewerRendition(page, 'Rendered RAW');
-  await openLibrary(page, THUMBNAIL_PHOTOS_DIR);
+  await setViewerRendition(page.request, 'full');
+  await gotoLibrary(page, THUMBNAIL_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   const tile = tiles(page).first().locator('img');

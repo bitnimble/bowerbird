@@ -1,17 +1,15 @@
 // How the grid arranges what it is given: the masonry view's rows, and what a
 // list row paints over its frame. The band a stack opens is `bands.spec.ts`.
 import { expect, test } from '@playwright/test';
-import { PathSegment, route } from '../../../src/schemas/route';
 import { LAYOUT_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
-import { frames, gallery, openLibrary, setViewMode, tileName, tiles, useLibrary } from '../helpers';
+import { frames, gallery, gotoLibrary, setViewMode, tileName, tiles, useLibrary } from '../helpers';
 
 test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, LAYOUT_PHOTOS_DIR);
 });
 
 test('masonry lays photos out across a row, not down a column', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, LAYOUT_PHOTOS_DIR);
+  await gotoLibrary(page, LAYOUT_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   await setViewMode(page, 'Masonry');
 
@@ -50,8 +48,7 @@ test('masonry lays photos out across a row, not down a column', async ({ page })
 });
 
 test('a list row draws its name and date over the frame, not under it', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, LAYOUT_PHOTOS_DIR);
+  await gotoLibrary(page, LAYOUT_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   await setViewMode(page, 'List');
 

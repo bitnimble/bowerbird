@@ -21,9 +21,7 @@ import { type APIRequestContext, expect, test } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { API_URL, HDR_PHOTOS_DIR, libraryDataDir } from '../fixture_library';
 import {
-  openLibrary,
-  openPhoto,
-  openPhotoId,
+  gotoPhoto,
   photoStage,
   recordCanvasContexts,
   setRenditionSource,
@@ -60,16 +58,12 @@ test('an HDR rendition reaches the GPU and draws a photograph', async ({ page })
   test.setTimeout(320_000);
   const contexts = await recordCanvasContexts(page);
 
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, HDR_PHOTOS_DIR, 'Rendered RAW');
+  await setRenditionSource(page, HDR_PHOTOS_DIR, 'render');
   // `rendition_hdr` is on by default, so a library that renders renders HDR; the viewer has
   // to be pointed at that rendition rather than at the camera's JPEG for the stage to draw it.
-  await setViewerRendition(page, 'Rendered RAW');
+  await setViewerRendition(page.request, 'full');
 
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, HDR_PHOTOS_DIR);
-  await openPhoto(page);
-  const photoId = openPhotoId(page);
+  const photoId = await gotoPhoto(page, HDR_PHOTOS_DIR);
 
   // The canvas goes ready on whatever the stage has - a grid tile while the render runs - so
   // the file has to arrive before anything is asserted about the picture.

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { z } from 'zod';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { MOBILE_EDIT_PHOTOS_DIR } from '../fixture_library';
-import { editDiagnostics, editorFailure, editPreview, editTools, openLibrary, openPhoto, openPhotoId, photoStage, softProof, useLibrary, waitForEditorLive } from '../helpers';
+import { editDiagnostics, editorFailure, editPreview, editTools, firstPhotoId, photoStage, softProof, useLibrary, waitForEditorLive } from '../helpers';
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 test.describe.configure({ timeout: 180_000 });
@@ -10,11 +10,8 @@ test.describe.configure({ timeout: 180_000 });
 let photoId = '';
 test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, MOBILE_EDIT_PHOTOS_DIR);
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, hasTouch: false, isMobile: false });
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, MOBILE_EDIT_PHOTOS_DIR);
-  await openPhoto(page);
-  photoId = openPhotoId(page);
+  const page = await browser.newPage();
+  photoId = await firstPhotoId(page, MOBILE_EDIT_PHOTOS_DIR);
   await page.close();
 });
 

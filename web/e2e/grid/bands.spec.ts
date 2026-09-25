@@ -7,7 +7,7 @@ import {
   bands,
   frames,
   fusedBands,
-  openLibrary,
+  gotoLibrary,
   rowTiles,
   setViewMode,
   stackFrames,
@@ -25,7 +25,7 @@ async function openBand(page: import('@playwright/test').Page, dir: string): Pro
   mkdirSync(dir, { recursive: true });
   for (const name of NAMES) copyFileSync(FIXTURE, path.join(dir, name));
   await addLibrary(page, dir, { autoStack: true, photos: NAMES.length });
-  await openLibrary(page, dir);
+  await gotoLibrary(page, dir);
   await expect(stackFrames(page)).toBeVisible({ timeout: 60_000 });
   await frames(rowTiles(page)).click();
   await expect(bands(page).getByRole('listitem')).toHaveCount(NAMES.length);

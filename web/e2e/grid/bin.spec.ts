@@ -1,13 +1,12 @@
 // Soft delete and what comes back from it: the keystroke, the toast that undoes
 // it, and the Bin's own restore.
 import { expect, test } from '@playwright/test';
-import { PathSegment, route } from '../../../src/schemas/route';
 import { BIN_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import {
   bulkAction,
   cursorTile,
   gallery,
-  openLibrary,
+  gotoLibrary,
   sidebarSection,
   selectPhoto,
   tileName,
@@ -23,8 +22,7 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test('Delete bins the focused photo and the toast undoes it', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, BIN_PHOTOS_DIR);
+  await gotoLibrary(page, BIN_PHOTOS_DIR);
   // Wait for the grid: a keypress before the photos land finds nothing to focus.
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
@@ -43,8 +41,7 @@ test('Delete bins the focused photo and the toast undoes it', async ({ page }) =
 });
 
 test('the Bin holds only the binned photo, and restoring returns it to the library', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, BIN_PHOTOS_DIR);
+  await gotoLibrary(page, BIN_PHOTOS_DIR);
 
   await selectPhoto(page);
   await bulkAction(page, 'Move to Bin');

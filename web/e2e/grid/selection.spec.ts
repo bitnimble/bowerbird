@@ -8,12 +8,13 @@ import { SELECT_PHOTOS_DIR, SELECT_PHOTO_NAMES } from '../fixture_library';
 import {
   cursorTile,
   frames,
-  openLibrary,
+  gotoLibrary,
   openPhoto,
   picks,
   selectPhoto,
   selectedTiles,
   selectionBar,
+  sidebarLibrary,
   ticked,
   tiles,
   useLibrary,
@@ -25,8 +26,7 @@ test.beforeAll(async ({ browser }) => {
 
 // The frame belongs to navigation, and the tick box is the way into a selection.
 test('the tick box starts a selection and the frame then toggles', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, SELECT_PHOTOS_DIR);
+  await gotoLibrary(page, SELECT_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(SELECT_PHOTO_NAMES.length);
 
   await expect(selectionBar(page)).toBeHidden();
@@ -59,8 +59,7 @@ test('the tick box starts a selection and the frame then toggles', async ({ page
 
 // The file-manager gesture, kept: it reaches a selection without going for the box.
 test('cmd-click builds a selection without opening anything', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, SELECT_PHOTOS_DIR);
+  await gotoLibrary(page, SELECT_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(SELECT_PHOTO_NAMES.length);
 
   await frames(tiles(page).first()).click({ modifiers: ['ControlOrMeta'] });
@@ -85,13 +84,13 @@ test('cmd-click builds a selection without opening anything', async ({ page }) =
 });
 
 test('the cursor moves without choosing anything, and Enter opens what it is on', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, SELECT_PHOTOS_DIR);
+  await gotoLibrary(page, SELECT_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(SELECT_PHOTO_NAMES.length);
 
-  // Arrived by clicking the sidebar link, so the focus is on that link until the
-  // first arrow key hands it to the grid - without which Enter belongs to the
-  // link and the cull's own "open" is dead.
+  // Focus on the sidebar link, as a reader who arrived by clicking it has it, until the
+  // first arrow key hands it to the grid - without which Enter belongs to the link and
+  // the cull's own "open" is dead.
+  await sidebarLibrary(page, SELECT_PHOTOS_DIR).focus();
   await page.keyboard.press('ArrowRight');
   await expect(cursorTile(page)).toHaveCount(1);
   await expect(selectedTiles(page)).toHaveCount(0);
@@ -103,8 +102,7 @@ test('the cursor moves without choosing anything, and Enter opens what it is on'
 
 // Building a set from the keyboard, which is the one key that selects.
 test('Space toggles the photo under the cursor', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, SELECT_PHOTOS_DIR);
+  await gotoLibrary(page, SELECT_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(SELECT_PHOTO_NAMES.length);
 
   await page.keyboard.press('ArrowRight');
@@ -122,8 +120,7 @@ test('Space toggles the photo under the cursor', async ({ page }) => {
 
 // Picking a burst out of a shoot is a range, not forty clicks.
 test('shift-click extends the selection from the anchor', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, SELECT_PHOTOS_DIR);
+  await gotoLibrary(page, SELECT_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(SELECT_PHOTO_NAMES.length);
 
   const last = SELECT_PHOTO_NAMES.length - 1;

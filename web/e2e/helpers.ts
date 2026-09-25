@@ -1,8 +1,18 @@
 import { expect, type APIRequestContext, type Browser, type Locator, type Page } from '@playwright/test';
 import { z } from 'zod';
-import { LibrariesSchema, LibraryScanStatusSchema, type Library } from '../../src/schemas/libraries';
+import { type RenditionSource } from '../../src/schemas/common';
+import {
+  CreateLibraryRequestSchema,
+  LibrariesSchema,
+  LibraryScanStatusSchema,
+  type Library,
+  type UpdateLibraryRequest,
+} from '../../src/schemas/libraries';
 import { EditStateSchema } from '../../src/schemas/photo_edits';
+import { PhotoListResponseSchema, type PhotoSummary } from '../../src/schemas/photos';
 import { PathSegment, route } from '../../src/schemas/route';
+import { ShootListSchema } from '../../src/schemas/shoots';
+import { type UpdateSettingsRequest, type ViewerRenditionMode } from '../../src/schemas/settings';
 import { PHOTO_NAMES } from './fixture_library';
 
 /**
@@ -17,67 +27,37 @@ import { PHOTO_NAMES } from './fixture_library';
  */
 export const FIRST_FRAME = { timeout: 45_000 };
 
-// Navigation the specs share. Libraries are added in Settings and then live
-// permanently in the sidebar, so there is no "pick a library" screen to go through.
-export function libraryRow(page: Page, rootPath: string) {
-  return page.getByRole('list', { name: 'Libraries' }).getByRole('listitem').filter({ hasText: rootPath });
-}
-
-/** Adds a library through the dialog, and returns once its import has settled at `photos`. */
+/**
+ * Adds a library, and returns once its import has settled at `photos`.
+ *
+ * Through the API: a test goes straight to the page it is about, and the one whose subject is
+ * adding a library in Settings is `library/indexing.spec.ts`.
+ */
 export async function addLibrary(
   page: Page,
   rootPath: string,
   options: { autoStack?: boolean; readOnly?: boolean; includeNonRaw?: boolean; photos?: number } = {},
 ): Promise<void> {
   await forgetLibrary(page, rootPath);
-  await page.goto(route(PathSegment.settings()));
-  await page.getByRole('button', { name: 'Add library' }).click();
-  // The picker writes the folder it opened at into this box, so a path typed
-  // before that lands would be overwritten by it.
-  const dialog = page.getByRole('dialog', { name: 'Add library' });
-  const path = dialog.getByLabel('Library root');
-  await expect(path).not.toHaveValue('');
-  await path.fill(rootPath);
-  if (options.readOnly === true) {
-    await dialog.getByRole('checkbox', { name: 'Read-only mode' }).check();
-  }
-  // Both answered in the dialog rather than PATCHed once the row exists: the import
-  // starts as the library lands (§9.8), so either of them written afterwards is
-  // racing an import that has already acted on the defaults. A rendition source
-  // arrives with a render per photo dispatched, which Stop cannot call back until it
-  // has landed; stacking has already grouped the frames, and §19.4 never revisits a
-  // photograph imported before it was switched off.
-  //
-  // Renditions default to a full HDR render, which is minutes of work per frame on
-  // the fixture and is not what most specs are looking at; they assert against the
-  // embedded JPEG, which the sync lifts straight out of the RAW. The specs that
-  // want the render switch back with `setRenditionSource`.
-  await dialog.getByRole('combobox', { name: 'Build renditions from' }).click();
-  await page.getByRole('option', { name: 'Embedded JPEG' }).click();
-  // The fixture is the same ARW copied under several names, so every frame in it
-  // is identical to every other and automatic stacking - correctly - collapses
-  // the whole library into one tile. That is a property of the fixture rather
-  // than of anything most specs are testing, so it is off unless a spec asks for
-  // it; `grid/stacks.spec.ts` is the one that does.
-  if (options.autoStack !== true) {
-    await dialog.getByRole('checkbox', { name: 'Group similar photos automatically' }).uncheck();
-  }
-  // Off by default, so a root of finished pictures says so: the panorama's views are PNGs,
-  // there being no RAW fixture that is a pan.
-  if (options.includeNonRaw === true) {
-    await dialog.getByRole('checkbox', { name: /Import JPEG, PNG/ }).check();
-  }
-  // The dialog's own button carries the same name as the one that opened it, so
-  // the confirm has to be scoped to the dialog.
-  await dialog.getByRole('button', { name: 'Add library' }).click();
-  // Creating a library walks the folder before the row can be re-read, so this one is a real
-  // wait rather than a render.
-  await expect(libraryRow(page, rootPath)).toBeVisible({ timeout: 30_000 });
-  // Waited out rather than stopped: with the settings above answered in the dialog
-  // the import is building exactly what the spec asked for, and only the grid
-  // tiles - a tenth of a second for the whole library. A stop landing before the
-  // batch starts leaves the library with no descriptors, and stack detection runs
-  // on the settle of the import that *added* the photographs and never again.
+  const created = await page.request.post(route(PathSegment.api(), PathSegment.libraries()), {
+    data: {
+      root_path: rootPath,
+      read_only: options.readOnly === true,
+      // Renditions default to a full HDR render, which is minutes of work per frame on the
+      // fixture and not what most specs are looking at; the specs that want the render switch
+      // back with `setRenditionSource`.
+      rendition_source: 'embedded',
+      // The fixture is the same ARW copied under several names, so automatic stacking -
+      // correctly - collapses the whole library into one tile. Off unless a spec asks for it.
+      auto_stack: options.autoStack === true,
+      include_non_raw: options.includeNonRaw === true,
+    } satisfies z.input<typeof CreateLibraryRequestSchema>,
+    timeout: 60_000,
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+  // Waited out rather than stopped: a stop landing before the batch starts leaves the library
+  // with no descriptors, and stack detection runs on the settle of the import that *added* the
+  // photographs and never again.
   await waitForImport(page, rootPath, options.photos ?? PHOTO_NAMES.length);
 }
 
@@ -109,12 +89,62 @@ async function libraryAt(page: Page, rootPath: string): Promise<Library | undefi
   return LibrariesSchema.parse(await listed.json()).find((library) => library.root_path === rootPath);
 }
 
+async function libraryOf(page: Page, rootPath: string): Promise<Library> {
+  const library = await libraryAt(page, rootPath);
+  if (library == null) throw new Error(`no library is added at ${rootPath}`);
+  return library;
+}
+
 /** Removes the library an earlier pass of the same spec added, so `--repeat-each` starts each pass fresh. */
-async function forgetLibrary(page: Page, rootPath: string): Promise<void> {
+export async function forgetLibrary(page: Page, rootPath: string): Promise<void> {
   const held = await libraryAt(page, rootPath);
   if (held == null) return;
   const deleted = await page.request.delete(route(PathSegment.api(), PathSegment.libraries(), held.id));
   expect(deleted.ok()).toBe(true);
+}
+
+/** A library's grid, or its Shoots page or Bin, by its address. */
+export async function gotoLibrary(page: Page, rootPath: string, within?: 'shoots' | 'bin'): Promise<void> {
+  const library = route(PathSegment.libraries(), (await libraryOf(page, rootPath)).id);
+  const section = { shoots: route(PathSegment.shoots()), bin: route(PathSegment.bin()) };
+  await page.goto(within == null ? library : `${library}${section[within]}`);
+}
+
+/** A shoot's grid, by its address, found by the folder it is. */
+export async function gotoShoot(page: Page, rootPath: string, folderPath: string): Promise<void> {
+  const library = await libraryOf(page, rootPath);
+  const listed = await page.request.get(route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.shoots()));
+  const shoot = ShootListSchema.parse(await listed.json()).find((each) => each.folder_path === folderPath);
+  if (shoot == null) throw new Error(`no shoot at ${folderPath} in ${rootPath}`);
+  await page.goto(route(PathSegment.shoots(), shoot.id));
+}
+
+/**
+ * The first photo of a library's grid, opened in the viewer by its address - or a page under it,
+ * like the print mockup's - as though from the grid. Returns its id.
+ */
+export async function gotoPhoto(page: Page, rootPath: string, within = ''): Promise<string> {
+  const library = await libraryOf(page, rootPath);
+  const photoId = await firstPhotoId(page, rootPath);
+  await page.goto(`${route(PathSegment.libraries(), library.id)}${route(PathSegment.photos(), photoId)}${within}`);
+  return photoId;
+}
+
+/** The photo a library's grid leads with. */
+export async function firstPhotoId(page: Page, rootPath: string): Promise<string> {
+  const [first] = await libraryPhotos(page, rootPath);
+  if (first == null) throw new Error(`the library at ${rootPath} has no photos`);
+  return first.id;
+}
+
+/** A library's photos, in the order its grid shows them. */
+export async function libraryPhotos(page: Page, rootPath: string): Promise<PhotoSummary[]> {
+  const library = await libraryOf(page, rootPath);
+  const listed = await page.request.get(
+    `${route(PathSegment.api(), PathSegment.libraries(), library.id, PathSegment.photos())}?ordering=${library.ordering}`,
+  );
+  expect(listed.ok()).toBe(true);
+  return PhotoListResponseSchema.parse(await listed.json()).photos;
 }
 
 /**
@@ -133,7 +163,7 @@ async function forgetLibrary(page: Page, rootPath: string): Promise<void> {
 export async function useLibrary(
   browser: Browser,
   rootPath: string,
-  options: { viewerRendition?: string; hideSidebarInViewer?: boolean; photos?: number; includeNonRaw?: boolean } = {},
+  options: { viewerRendition?: ViewerRenditionMode; hideSidebarInViewer?: boolean; photos?: number; includeNonRaw?: boolean } = {},
 ): Promise<void> {
   const page = await browser.newPage();
   // `photos` for a root with a list of its own (`fixture_library.ts`): waiting for
@@ -143,70 +173,41 @@ export async function useLibrary(
   // global, and the rendition's default - "last used" - is whatever the file before
   // this one happened to choose. A spec that reads what the viewer is showing, or
   // measures the shape it shows it in, says what it needs.
-  if (options.viewerRendition != null || options.hideSidebarInViewer != null) {
-    await page.goto(route(PathSegment.settings()));
-    if (options.viewerRendition != null) await setViewerRendition(page, options.viewerRendition);
-    if (options.hideSidebarInViewer != null) await setHideSidebarInViewer(page, options.hideSidebarInViewer);
-  }
+  if (options.viewerRendition != null) await setViewerRendition(page.request, options.viewerRendition);
+  if (options.hideSidebarInViewer != null) await setHideSidebarInViewer(page.request, options.hideSidebarInViewer);
   await page.close();
 }
 
-// Settings is a five-tab page; open the tab a control lives on before reaching
-// for it. Idempotent, so a spec that is already on the right tab pays nothing.
-async function openSettingsTab(page: Page, name: string): Promise<void> {
-  const tab = page.getByRole('radio', { name });
-  if ((await tab.getAttribute('aria-checked')) !== 'true') await tab.click();
+/**
+ * Points a library at the pixels its renditions are built from. Set before the page under test
+ * is opened: a page already open holds the library it loaded.
+ */
+export async function setRenditionSource(page: Page, rootPath: string, source: RenditionSource): Promise<void> {
+  const library = await libraryOf(page, rootPath);
+  const response = await page.request.patch(route(PathSegment.api(), PathSegment.libraries(), library.id), {
+    data: { rendition_source: source } satisfies UpdateLibraryRequest,
+  });
+  expect(response.ok()).toBe(true);
 }
 
-// Folders / renditions / stacks sit behind this disclosure so Settings stays
-// short; open it before touching any of those controls.
-async function openLibrarySettings(page: Page, rootPath: string): Promise<void> {
-  const details = libraryRow(page, rootPath)
-    .locator('details')
-    .filter({ has: page.locator('summary', { hasText: 'Library settings' }) });
-  if (!(await details.evaluate((el) => (el as HTMLDetailsElement).open))) {
-    await details.locator('summary').click();
-  }
-  await expect(details).toHaveAttribute('open', '');
-}
-
-// Points a library at the pixels its renditions are built from. The control is a
-// Select, whose trigger is a combobox named after the setting rather than a
-// button named after the value, so the value is picked from the menu it opens.
-export async function setRenditionSource(page: Page, rootPath: string, source: string): Promise<void> {
-  // Specs interleave this with the Viewing-tab helpers below, so the tab a
-  // library's own controls sit on cannot be assumed to already be open.
-  await openSettingsTab(page, 'Libraries');
-  await openLibrarySettings(page, rootPath);
-  await libraryRow(page, rootPath).getByRole('combobox', { name: 'Build renditions from' }).click();
-  await page.getByRole('option', { name: source }).click();
-}
-
-// Which rendition the photo viewer opens at, an app-wide setting rather than a
-// per-library one. Same shape of control as above, and named for the question it
-// answers rather than for the answer currently showing.
-export async function setViewerRendition(page: Page, rendition: string): Promise<void> {
-  await openSettingsTab(page, 'Viewing');
-  await page.getByRole('combobox', { name: 'Default viewer rendition' }).click();
-  await page.getByRole('option', { name: rendition, exact: true }).click();
+/** Which rendition the photo viewer opens at, an app-wide setting rather than a per-library one. */
+export function setViewerRendition(request: APIRequestContext, mode: ViewerRenditionMode): Promise<void> {
+  return patchSettings(request, { viewer_rendition_mode: mode });
 }
 
 // On by default, so the stage in the viewer is the window less its margins. A spec
 // that measures what the stage's shape does - where the strip sits, whether a
 // magnified frame overhangs - turns it off and keeps the sidebar's width in the sum.
-export async function setHideSidebarInViewer(page: Page, hide: boolean): Promise<void> {
-  await openSettingsTab(page, 'Viewing');
-  const box = page.getByRole('checkbox', { name: 'Hide sidebar automatically in photo viewer' });
-  // Clicked and then waited for, rather than `setChecked`: the box is drawn from what
-  // the server answered, so it is still holding the old value when the click returns.
-  if ((await box.isChecked()) !== hide) await box.click();
-  await expect(box).toBeChecked({ checked: hide });
+export function setHideSidebarInViewer(request: APIRequestContext, hide: boolean): Promise<void> {
+  return patchSettings(request, { hide_sidebar_in_viewer: hide });
 }
 
-export async function setOnboardingComplete(request: APIRequestContext, done: boolean): Promise<void> {
-  const response = await request.patch(route(PathSegment.api(), PathSegment.settings()), {
-    data: { onboarding_complete: done },
-  });
+export function setOnboardingComplete(request: APIRequestContext, done: boolean): Promise<void> {
+  return patchSettings(request, { onboarding_complete: done });
+}
+
+async function patchSettings(request: APIRequestContext, settings: UpdateSettingsRequest): Promise<void> {
+  const response = await request.patch(route(PathSegment.api(), PathSegment.settings()), { data: settings });
   expect(response.ok()).toBe(true);
 }
 

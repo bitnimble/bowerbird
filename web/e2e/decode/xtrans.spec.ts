@@ -5,9 +5,7 @@ import {
   addLibrary,
   editDiagnosticSize,
   editDiagnostics,
-  openLibrary,
-  openPhoto,
-  openPhotoId,
+  firstPhotoId,
   waitForEditorLive,
 } from '../helpers';
 
@@ -34,9 +32,7 @@ test.beforeAll(async ({ browser }) => {
   // decided it is an original, decoded it and written its renditions. A format missing from the
   // scan set settles at zero and the test below would fail on a photograph that is not there.
   await addLibrary(page, XTRANS_PHOTOS_DIR, { photos: XTRANS_PHOTO_NAMES.length });
-  await openLibrary(page, XTRANS_PHOTOS_DIR);
-  await openPhoto(page);
-  photoId = openPhotoId(page);
+  photoId = await firstPhotoId(page, XTRANS_PHOTOS_DIR);
   await page.close();
 });
 

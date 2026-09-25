@@ -5,7 +5,7 @@ import { ARCHIVE_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import {
   addLibrary,
   bulkAction,
-  openLibrary,
+  gotoLibrary,
   sidebarSection,
   selectPhoto,
   tiles,
@@ -36,7 +36,7 @@ test('a read-only library bins and restores without touching the folder', async 
   const before = tree(ARCHIVE_PHOTOS_DIR);
   expect(Object.keys(before).sort()).toEqual([...PHOTO_NAMES].sort());
 
-  await openLibrary(page, ARCHIVE_PHOTOS_DIR);
+  await gotoLibrary(page, ARCHIVE_PHOTOS_DIR);
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   await selectPhoto(page);
@@ -51,7 +51,7 @@ test('a read-only library bins and restores without touching the folder', async 
   await page.getByRole('button', { name: 'Restore to original location' }).click();
   await expect(tiles(page)).toHaveCount(0);
 
-  await openLibrary(page, ARCHIVE_PHOTOS_DIR);
+  await sidebarSection(page, ARCHIVE_PHOTOS_DIR, 'Photos').click();
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
 
   // No bin folder, no suffixed `alpha_1.arw` from a restore that claimed the name

@@ -7,7 +7,7 @@ import {
   bands,
   frames,
   gallery,
-  openLibrary,
+  gotoLibrary,
   setHideSidebarInViewer,
   shownFrame,
   stackFrames,
@@ -33,8 +33,8 @@ test('an open stack is a spine, and the photograph on the stage is ringed inside
   // The sidebar stays, because the edge the strip takes is decided by the shape of the
   // stage: without it this window is wide enough that the photograph is bound by its
   // height, and the strip stands on its end instead.
-  await setHideSidebarInViewer(page, false);
-  await openLibrary(page, ROOT);
+  await setHideSidebarInViewer(page.request, false);
+  await gotoLibrary(page, ROOT);
   await expect(stackFrames(page)).toBeVisible({ timeout: 60_000 });
 
   // Into the stack, and then into one of its members: a member has no row of its

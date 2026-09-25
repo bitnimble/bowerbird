@@ -2,16 +2,17 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PHONE_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import {
-  addLibrary,
   editPreview,
   editTools,
+  firstPhotoId,
   gallery,
-  openLibrary,
+  gotoLibrary,
+  gotoPhoto,
   openPhoto,
-  openPhotoId,
   photoStage,
   shownFrame,
   tiles,
+  useLibrary,
   waitForEditorLive,
 } from '../helpers';
 
@@ -19,10 +20,14 @@ import {
 // which is what everything below is about.
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-// Serial because the library is set up once, and long because one spec opens a RAW: the decode
-// is the same cold open `editor/raw_editing.spec.ts` gives three minutes for, and the config's default
-// 60s would kill it however patient the poll inside it is.
-test.describe.configure({ mode: 'serial', timeout: 180_000 });
+// Long because one spec opens a RAW: the decode is the same cold open
+// `editor/raw_editing.spec.ts` gives three minutes for, and the config's default 60s would kill it
+// however patient the poll inside it is.
+test.describe.configure({ timeout: 180_000 });
+
+test.beforeAll(async ({ browser }) => {
+  await useLibrary(browser, PHONE_PHOTOS_DIR);
+});
 
 // Playwright's touchscreen taps and nothing else, and a mouse drag is a mouse
 // however the context is configured, so a real finger is driven through CDP:
@@ -57,17 +62,8 @@ async function pinch(page: Page, centre: { x: number; y: number }, from: number,
   await cdp.detach();
 }
 
-// The sidebar is a drawer here rather than a column, so it has to be pulled out
-// before it can be navigated with.
-async function openLibraryFromDrawer(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Show sidebar' }).click();
-  await openLibrary(page, PHONE_PHOTOS_DIR);
-}
-
 async function openFirstPhoto(page: Page): Promise<void> {
-  await page.goto(route(PathSegment.settings()));
-  await openLibraryFromDrawer(page);
-  await openPhoto(page);
+  await gotoPhoto(page, PHONE_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 }
 
@@ -86,39 +82,43 @@ function sheet(page: Page): Locator {
 
 const PANELS = /^(Notes|Edits|Camera|Rendition details|Original)$/;
 
-test('the phone library is indexed', async ({ page }) => {
-  await addLibrary(page, PHONE_PHOTOS_DIR);
-  await openLibraryFromDrawer(page);
-  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length, { timeout: 45_000 });
-});
+/** A point on the grid, which is the page the gesture is for. */
+async function onTheGrid(page: Page): Promise<{ x: number; y: number }> {
+  await gotoLibrary(page, PHONE_PHOTOS_DIR);
+  await expect(tiles(page).first()).toBeVisible({ timeout: 45_000 });
+  const grid = await gallery(page).boundingBox();
+  if (grid == null) throw new Error('the grid has no box');
+  return { x: grid.x + 60, y: grid.y + grid.height / 2 };
+}
 
 // The sidebar is a drawer here, and the button that opens it is one target on a page
-// otherwise given over to photographs.
-test('a swipe rightwards opens the sidebar from anywhere, and one back leftwards closes it', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
+// otherwise given over to photographs. Over the grid, whose scroller claims the touch as soon
+// as it reads it as a scroll, which cancels the pointer stream and left the first version of
+// this working everywhere except the photographs.
+test('a swipe rightwards opens the sidebar over the grid, and one back leftwards closes it', async ({ page }) => {
+  const at = await onTheGrid(page);
   const sidebar = drawer(page);
   await expect(sidebar).not.toBeVisible();
 
   // Mid-page rather than at the edge: there is no strip to find. Past half the drawer's
   // width, so letting go settles it open rather than putting it back.
-  await swipe(page, { x: 200, y: 400 }, 160);
+  await swipe(page, at, 160);
   await expect(sidebar).toBeVisible();
 
-  await swipe(page, { x: 200, y: 400 }, -160);
+  await swipe(page, { x: 200, y: at.y }, -160);
   await expect(sidebar).not.toBeVisible();
 
   // Short of halfway it goes back where it came from, however far the finger got.
-  await swipe(page, { x: 200, y: 400 }, 60);
+  await swipe(page, at, 60);
   await expect(sidebar).not.toBeVisible();
 });
 
 // The drag is the animation: how far out the drawer is has to be where the finger has got
 // to, which is only observable while one is still down.
 test('the drawer follows the finger rather than snapping open at the end', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
+  const at = await onTheGrid(page);
   const sidebar = drawer(page);
   const cdp = await page.context().newCDPSession(page);
-  const at = { x: 200, y: 400 };
 
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [at] });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: at.x + 80, y: at.y }] });
@@ -135,23 +135,6 @@ test('the drawer follows the finger rather than snapping open at the end', async
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await cdp.detach();
   await expect(sidebar).not.toBeVisible();
-});
-
-// The page the gesture is actually for, and the one a settings page cannot stand in for: a
-// scroller claims the touch as soon as it reads it as a scroll, which cancels the pointer
-// stream and left the first version of this working everywhere except the photographs.
-test('the grid opens the sidebar on a swipe, over a scroller that wants the same touch', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibraryFromDrawer(page);
-  await expect(tiles(page).first()).toBeVisible({ timeout: 45_000 });
-
-  const sidebar = drawer(page);
-  await expect(sidebar).not.toBeVisible();
-
-  const grid = await gallery(page).boundingBox();
-  if (grid == null) throw new Error('the grid has no box');
-  await swipe(page, { x: grid.x + 60, y: grid.y + grid.height / 2 }, 160);
-  await expect(sidebar).toBeVisible();
 });
 
 test('swiping the frame steps to the next photo and back', async ({ page }) => {
@@ -189,8 +172,8 @@ test('swiping the frame steps to the next photo and back', async ({ page }) => {
 // a run of presses to get out of. Two photographs is enough to ask it: with an
 // entry per swipe, Back lands on the first one rather than on the grid.
 test('a back press leaves the viewer rather than walking back through the swipes', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibraryFromDrawer(page);
+  await gotoLibrary(page, PHONE_PHOTOS_DIR);
+  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
   const grid = page.url();
   await openPhoto(page);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
@@ -224,8 +207,7 @@ test('a back press leaves the viewer rather than walking back through the swipes
  * the photograph slides out from under a rectangle laid out for a fitted view.
  */
 test('the crop rectangle takes a finger, and the stage does not pan under it', async ({ page }) => {
-  await openFirstPhoto(page);
-  const photoId = openPhotoId(page);
+  const photoId = await firstPhotoId(page, PHONE_PHOTOS_DIR);
   await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
   await waitForEditorLive(page);
 

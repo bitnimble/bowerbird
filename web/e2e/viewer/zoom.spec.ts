@@ -5,8 +5,7 @@ import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTO_NAMES, ZOOM_PHOTOS_DIR } from '../fixture_library';
 import {
   FIRST_FRAME,
-  openLibrary,
-  openPhoto,
+  gotoPhoto,
   photoStage,
   setRenditionSource,
   setViewerRendition,
@@ -24,16 +23,14 @@ test.beforeAll(async ({ browser }) => {
   // The sidebar stays: a portrait frame at its own pixels overhangs sideways in a stage
   // the window less 208px wide, and not in one with the sidebar's width back, which
   // leaves the pan limit below at zero and nothing to clamp.
-  await useLibrary(browser, ZOOM_PHOTOS_DIR, { viewerRendition: 'Embedded JPEG', hideSidebarInViewer: false });
+  await useLibrary(browser, ZOOM_PHOTOS_DIR, { viewerRendition: 'embedded', hideSidebarInViewer: false });
 });
 
 // The stage draws this into a slot inside a popup that exists only while the menu is
 // open, which is the part no unit test can stand in for: the track's ends and what Fit
 // does are `zoom_slider.test.tsx`, and Base UI's slider takes no drag headlessly anyway.
 test('the photo fits the stage, clicks step fit, double, own pixels, and the menu range follows', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, ZOOM_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, ZOOM_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
 
   // Regression: as a grid item the image grew the row to its own height, so
@@ -93,9 +90,7 @@ function readout(page: Page): Locator {
 }
 
 test('clicking zooms into the point clicked, not the centre', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, ZOOM_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, ZOOM_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
 
   // Regression: the zoom-about-point maths ran inside a setScale updater and
@@ -139,9 +134,7 @@ test('clicking zooms into the point clicked, not the centre', async ({ page }) =
 });
 
 test('panning a zoomed photo cannot drag it off the stage', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, ZOOM_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, ZOOM_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
 
   await stepZoom(page);
@@ -174,9 +167,7 @@ test('panning a zoomed photo cannot drag it off the stage', async ({ page }) => 
 });
 
 test('zoom resets on a step to the next photo, which is a different photograph', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, ZOOM_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, ZOOM_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   const opened = await shownFilename(page);
 
@@ -200,9 +191,7 @@ test('zoom resets on a step to the next photo, which is a different photograph',
  * moved nothing until it had eaten the excess, and snapped.
  */
 test('holds a zoomed photo inside a stage that changed shape', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, ZOOM_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, ZOOM_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 
   // What the transform is, and what it is allowed to be, measured from the page rather than
@@ -260,11 +249,9 @@ test('holds a zoomed photo inside a stage that changed shape', async ({ page }) 
 //
 // Last with the one after it, because they are the tests here that need the library to render.
 test('zoom survives a rendition change, so two files can be compared at the same magnification', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, ZOOM_PHOTOS_DIR, 'Rendered RAW');
-  await setViewerRendition(page, 'Rendered RAW');
-  await openLibrary(page, ZOOM_PHOTOS_DIR);
-  await openPhoto(page);
+  await setRenditionSource(page, ZOOM_PHOTOS_DIR, 'render');
+  await setViewerRendition(page.request, 'full');
+  await gotoPhoto(page, ZOOM_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 
   const scale = (): Promise<number> =>
@@ -289,10 +276,8 @@ test('zoom survives a rendition change, so two files can be compared at the same
 test('at its own pixels, a render flipped back to is drawn sharp from the frame already held', async ({ page }) => {
   // The max-quality render is built on the way in, and the 60s default expires mid-build.
   test.setTimeout(240_000);
-  await page.goto(route(PathSegment.settings()));
-  await setViewerRendition(page, 'Rendered RAW (max quality)');
-  await openLibrary(page, ZOOM_PHOTOS_DIR);
-  await openPhoto(page);
+  await setViewerRendition(page.request, 'max');
+  await gotoPhoto(page, ZOOM_PHOTOS_DIR);
   await expect(shownFrame(page)).toHaveAccessibleName(/\(max quality\)$/, { timeout: 120_000 });
 
   await stepZoom(page);

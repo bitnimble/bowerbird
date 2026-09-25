@@ -2,15 +2,15 @@
 // of the one on screen, the picture held while a cold one decodes, and the animation a
 // step arrives with. Everything here is about the moment of a swap, which is why so much
 // of it samples every animation frame rather than reading the DOM once.
+import path from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { API_URL, FRAME_PHOTOS_DIR, PHOTO_NAMES } from '../fixture_library';
 import {
   FIRST_FRAME,
-  openLibrary,
-  openPhoto,
+  gotoPhoto,
+  libraryPhotos,
   openPhotoId,
-  photoIdOfImageUrl,
   photoStage,
   renditionDetails,
   setRenditionSource,
@@ -18,8 +18,6 @@ import {
   showMetadata,
   shownFilename,
   shownFrame,
-  tileName,
-  tiles,
   useLibrary,
 } from '../helpers';
 
@@ -28,7 +26,7 @@ import {
 test.describe.configure({ mode: 'serial' });
 
 test.beforeAll(async ({ browser }) => {
-  await useLibrary(browser, FRAME_PHOTOS_DIR, { viewerRendition: 'Embedded JPEG' });
+  await useLibrary(browser, FRAME_PHOTOS_DIR, { viewerRendition: 'embedded' });
 });
 
 interface Sample {
@@ -76,9 +74,7 @@ function cameFrom(picture: Locator): Promise<string | undefined> {
 // the timer firing and the effect that would have cancelled it, which an idle
 // machine almost never does. Treat this as coverage of slow decodes, not of that.
 test('a frame that lands as the held one is dropped is still shown', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FRAME_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 
   // Delays either side of the 100ms cap.
@@ -97,9 +93,6 @@ test('a frame that lands as the held one is dropped is still shown', async ({ pa
 });
 
 test('the previous photo is held for a beat and then dropped, however slow the next one is', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FRAME_PHOTOS_DIR);
-
   // Installed before the photo is opened, so the neighbours it then holds are as slow as
   // everything else and the frame stepped to is genuinely still coming. The hold is for a
   // photograph the stage was *not* holding, and with these answering at once there is no
@@ -109,7 +102,7 @@ test('the previous photo is held for a beat and then dropped, however slow the n
     await intercepted.continue();
   });
 
-  await openPhoto(page);
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   const openId = openPhotoId(page);
   const openName = await shownFilename(page);
@@ -139,9 +132,7 @@ test('the previous photo is held for a beat and then dropped, however slow the n
 // they inherit; Firefox does not, and started an image drag that cancelled the pointer
 // capture, so a zoomed photo could not be panned at all.
 test('the neighbours held either side never take the pointer from the frame', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FRAME_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   // Both neighbours are pictures of this stage, so the first photo of the collection has
   // one of them beside itself. Counted rather than merely "not one", which a stage
@@ -163,9 +154,7 @@ test('the neighbours held either side never take the pointer from the frame', as
 // which frame is on screen cannot see it: the DOM is already correct, so
 // what this pins is the overlap that covers the gap.
 test('the frame being replaced is held opaque under its replacement for a beat', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FRAME_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
 
   // Every frame, because the hold is a few frames long and no round trip can be
@@ -197,9 +186,7 @@ test('the frame being replaced is held opaque under its replacement for a beat',
 // through - rather than off the control that moved it, so the arrows, the
 // buttons and the browser's own back all animate the way the reader went.
 test('stepping to a neighbour slides in from the side it came from', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await openLibrary(page, FRAME_PHOTOS_DIR);
-  await openPhoto(page);
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   // Opening a photo is not a step, so the first picture just appears.
   expect(
@@ -269,14 +256,12 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
   // Only a stored rendition is held. A library serving the camera's JPEG has nothing to
   // ask for here, so say which kind this is rather than inheriting it from whichever test
   // ran last.
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, FRAME_PHOTOS_DIR, 'Rendered RAW');
+  await setRenditionSource(page, FRAME_PHOTOS_DIR, 'render');
   // And which rendition it opens at, for the same reason: the setting is global
   // and its default follows whatever was last chosen, here and in every other
   // spec file.
-  await setViewerRendition(page, 'Rendered RAW');
-  await openLibrary(page, FRAME_PHOTOS_DIR);
-  await openPhoto(page);
+  await setViewerRendition(page.request, 'full');
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
 
   // The neighbour is mounted only after this frame decodes, so it never competes for the
@@ -294,12 +279,9 @@ test('the next photo is fetched while the current one is on screen', async ({ pa
 // empty, and the render must never be the picture, not even for a frame.
 test('stepping through photos shows no empty stage and never the wrong rendition', async ({ page }) => {
   test.setTimeout(240_000);
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, FRAME_PHOTOS_DIR, 'Rendered RAW');
-  await setViewerRendition(page, 'Embedded JPEG');
-  await openLibrary(page, FRAME_PHOTOS_DIR);
-  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
-  await openPhoto(page);
+  await setRenditionSource(page, FRAME_PHOTOS_DIR, 'render');
+  await setViewerRendition(page.request, 'embedded');
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   // The neighbour is mounted once this frame is up, and the step below is only honest
   // with it in place - it is the whole of why there is no gap.
@@ -338,12 +320,9 @@ test('stepping through photos shows no empty stage and never the wrong rendition
 // and each of those arrivals is at a photograph this stage has already held and painted.
 test('stepping back and forth over a fresh stage shows no empty stage', async ({ page }) => {
   test.setTimeout(240_000);
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, FRAME_PHOTOS_DIR, 'Rendered RAW');
-  await setViewerRendition(page, 'Embedded JPEG');
-  await openLibrary(page, FRAME_PHOTOS_DIR);
-  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
-  await openPhoto(page);
+  await setRenditionSource(page, FRAME_PHOTOS_DIR, 'render');
+  await setViewerRendition(page.request, 'embedded');
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible({ timeout: 60_000 });
   // Slow enough that a step which had to ask for its picture again would show: these
   // arrivals are all at photographs this stage has already painted, so none of them should.
@@ -378,15 +357,12 @@ test('stepping back and forth over a fresh stage shows no empty stage', async ({
 // nothing builds it, so nothing rewrites it under a URL a live page is holding, and a
 // replaced RAW is caught by the ETag on the next mount instead (§13.5).
 test('a neighbour rebuilt while it was held is painted at the URL it was held at', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
-  await setRenditionSource(page, FRAME_PHOTOS_DIR, 'Rendered RAW');
-  await setViewerRendition(page, 'Rendered RAW');
-  await openLibrary(page, FRAME_PHOTOS_DIR);
-  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
-  const second = await tiles(page).nth(1).locator('img').getAttribute('src');
-  const secondId = photoIdOfImageUrl(second);
-  expect(secondId).not.toBe('');
-  const secondName = await tileName(tiles(page).nth(1));
+  await setRenditionSource(page, FRAME_PHOTOS_DIR, 'render');
+  await setViewerRendition(page.request, 'full');
+  const [, secondPhoto] = await libraryPhotos(page, FRAME_PHOTOS_DIR);
+  if (secondPhoto?.file_path == null) throw new Error('the library has no second photo');
+  const secondId = secondPhoto.id;
+  const secondName = path.basename(secondPhoto.file_path);
   const secondRender = `${route(PathSegment.image())}/${secondId}${route(PathSegment.renditions(), 'full')}`;
   const fetched: string[] = [];
   page.on('request', (request) => {
@@ -400,7 +376,7 @@ test('a neighbour rebuilt while it was held is painted at the URL it was held at
     { timeout: 180_000 },
   );
 
-  await openPhoto(page);
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
   await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
   await expect(photoStage(page).getByRole('img', { name: `${secondName}, `, includeHidden: true })).toHaveCount(1);
   // What it is held at *before* the rebuild. The stamp is already on this URL, the build

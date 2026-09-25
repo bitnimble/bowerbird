@@ -5,7 +5,7 @@ import {
   addLibrary,
   bands,
   frames,
-  openLibrary,
+  gotoLibrary,
   openPhotoId,
   photoStage,
   shownFrame,
@@ -80,7 +80,7 @@ function shown(page: Page): Promise<string | null> {
 // Opens a member of the stack in the viewer, which is the only way in (§20.5).
 async function enterTriage(page: Page): Promise<void> {
   await clearVerdicts(page);
-  await openLibrary(page, TRIAGE_DIR);
+  await gotoLibrary(page, TRIAGE_DIR);
   await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
   // A stack's tile opens its band rather than the photo, so the way to a member's
   // detail view is through the band.
@@ -99,7 +99,7 @@ async function enterTriage(page: Page): Promise<void> {
 
 test('a stack of identical frames is set up to be triaged', async ({ page }) => {
   await addLibrary(page, TRIAGE_DIR, { autoStack: true, photos: TRIAGE_PHOTO_NAMES.length });
-  await openLibrary(page, TRIAGE_DIR);
+  await gotoLibrary(page, TRIAGE_DIR);
   await expect(stackFrames(page)).toHaveAccessibleName(new RegExp(`stack of ${TRIAGE_PHOTO_NAMES.length}, `), { timeout: 45_000 });
 });
 
@@ -111,8 +111,7 @@ test('the viewer offers the way in for any member of a stack, not just its repre
   // The band is client state and does not survive the trip back, so it is opened
   // once per member rather than once for the loop.
   for (let index = 0; index < TRIAGE_PHOTO_NAMES.length; index++) {
-    await page.goto(route(PathSegment.settings()));
-    await openLibrary(page, TRIAGE_DIR);
+    await gotoLibrary(page, TRIAGE_DIR);
     await expect(stackFrames(page)).toBeVisible({ timeout: 45_000 });
     await stackFrames(page).click();
     await expect(bands(page).getByRole('listitem')).toHaveCount(TRIAGE_PHOTO_NAMES.length);
@@ -126,7 +125,6 @@ test('the viewer offers the way in for any member of a stack, not just its repre
 // so both arrows of both axes cast the same two verdicts. That costs `↓` its Pick both,
 // which keeps Space.
 test('either arrow of either axis casts, and Pick both is Space alone', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
   await enterTriage(page);
 
   const pool = TRIAGE_PHOTO_NAMES.length;
@@ -154,7 +152,6 @@ test('either arrow of either axis casts, and Pick both is Space alone', async ({
 });
 
 test('a decisive verdict holds the winner over, and re-judging it from the queue discards what came after', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
   await enterTriage(page);
 
   const pool = TRIAGE_PHOTO_NAMES.length;
@@ -188,7 +185,6 @@ test('a decisive verdict holds the winner over, and re-judging it from the queue
 // Flipped in three kinds of round: the first; one whose *both* frames are new to the
 // stage; and one holding a winner carried over from the round before.
 test('flip shows one frame at a time and keeps both reachable, round after round, and split draws both', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
   await enterTriage(page);
 
   // Both frames of the round are mounted under one photoKey: that is what makes
@@ -262,7 +258,6 @@ test('flip shows one frame at a time and keeps both reachable, round after round
 // gallery's filter, so the viewer could say nothing about what came before or
 // after it and both arrows were dead.
 test('a session runs to its end, writes its verdicts, and ends on a live photo in the collection it was entered from', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
   await enterTriage(page);
   const entry = page.url();
   // Off the route while the session is still on it: the screen leaves for the
@@ -313,7 +308,6 @@ test('a session runs to its end, writes its verdicts, and ends on a live photo i
 });
 
 test('Pick remaining photos ends the session with everything still in the pool', async ({ page }) => {
-  await page.goto(route(PathSegment.settings()));
   await enterTriage(page);
   const stackId = stackIdOf(page);
 
