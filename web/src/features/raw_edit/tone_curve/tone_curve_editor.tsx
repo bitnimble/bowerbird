@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { RotateCcw } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { DIFFUSE_WHITE_CODE, TONE_CURVE_KIND, type ToneCurve, type ToneCurvePoints } from '../../../../../src/schemas/photo_edits';
 import { focusRing } from '../../../ui/focus_ring';
 import type { EditStore } from '../edit/edit_store';
@@ -12,7 +12,7 @@ import { pointMarker, styles } from './tone_curve_editor.stylex';
 import { ToneCurveEditorStrings as strings } from './tone_curve_editor.strings';
 
 type CurvePresenter = Pick<RawEditPresenter, 'previewToneCurve' | 'settleToneCurve'>;
-type Drag = { index: number; pointerId: number; changed: boolean; before: ToneCurve | null; bounds: DOMRect };
+type Drag = { index: number; pointerId: number; svg: SVGSVGElement; changed: boolean; before: ToneCurve | null; bounds: DOMRect };
 const storedCurve = (points: ToneCurvePoints): ToneCurve => ({ kind: TONE_CURVE_KIND, points });
 
 export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, presenter }: {
@@ -47,7 +47,7 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
   ];
   const start = (svg: SVGSVGElement, pointerId: number, index: number, changed: boolean,
     before: ToneCurve | null, bounds = svg.getBoundingClientRect()): void => {
-    drag.current = { index, pointerId, changed, before, bounds };
+    drag.current = { index, pointerId, svg, changed, before, bounds };
     setActiveIndex(index);
     try {
       svg.setPointerCapture(pointerId);
@@ -57,22 +57,34 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
       if (changed) presenter.previewToneCurve(before);
     }
   };
-  const release = (event: React.PointerEvent<SVGSVGElement>): Drag | null => {
+  const release = useCallback((pointerId: number): Drag | null => {
     const active = drag.current;
-    if (active == null || active.pointerId !== event.pointerId) return null;
+    if (active == null || active.pointerId !== pointerId) return null;
     drag.current = null;
     setActiveIndex(null);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (active.svg.hasPointerCapture(pointerId)) active.svg.releasePointerCapture(pointerId);
     return active;
-  };
+  }, []);
   const end = (event: React.PointerEvent<SVGSVGElement>): void => {
-    const active = release(event);
+    const active = release(event.pointerId);
     if (active?.changed && edit.doc?.toneCurve != null) presenter.settleToneCurve(edit.doc.toneCurve);
   };
-  const cancel = (event: React.PointerEvent<SVGSVGElement>): void => {
-    const active = release(event);
+  const cancel = useCallback((pointerId: number): void => {
+    const active = release(pointerId);
     if (active?.changed) presenter.previewToneCurve(active.before);
-  };
+  }, [presenter, release]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      const active = drag.current;
+      if (event.key !== 'Escape' || active == null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancel(active.pointerId);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [cancel]);
 
   return <div {...stylex.props(styles.editor)}>
     <div {...stylex.props(styles.header)}>
@@ -132,8 +144,8 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
         active.changed = true;
       }}
       onPointerUp={end}
-      onPointerCancel={cancel}
-      onLostPointerCapture={cancel}
+      onPointerCancel={(event) => cancel(event.pointerId)}
+      onLostPointerCapture={(event) => cancel(event.pointerId)}
     >
       <rect width="100" height="100" fill="transparent" />
       {[25, 50, 75].map((at) => <g key={at}>

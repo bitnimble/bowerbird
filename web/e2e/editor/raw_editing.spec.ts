@@ -318,6 +318,18 @@ test('tone curve points drag and drag off the plot', async ({ page }) => {
     const x = pointBox.x + pointBox.width / 2;
     const y = pointBox.y + pointBox.height / 2;
     await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + plotBox.width * 0.05, y - plotBox.height * 0.05, { steps: 3 });
+    await expect(point).not.toHaveAttribute('aria-label', originalName ?? '');
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    await expect(editTools(page)).toBeVisible();
+    await expect(point).toHaveAttribute('aria-label', originalName ?? '');
+    const cancelledState = await state();
+    expect(cancelledState.doc.toneCurve).toEqual(insertedState.doc.toneCurve);
+    expect(cancelledState.rev).toBe(insertedState.rev);
+
+    await page.mouse.move(x, y);
     const movedSave = savedByEditor();
     await page.mouse.down();
     await expect(point).toBeFocused();

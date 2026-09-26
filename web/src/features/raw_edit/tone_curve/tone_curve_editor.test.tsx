@@ -153,6 +153,29 @@ test('pointercancel restores a stored curve without settling', () => {
   expect(edit.doc?.toneCurve).toEqual(CAMERA);
 });
 
+test('Escape restores an active drag without settling or propagating', () => {
+  const { calls, edit } = open(CAMERA);
+  const svg = plot();
+  const point = screen.getByRole('slider', { name: /Curve point 1/ });
+  let propagated = false;
+  const editorCancel = (): void => { propagated = true; };
+  window.addEventListener('keydown', editorCancel);
+  try {
+    fireEvent.pointerDown(point, { pointerId: 1, isPrimary: true, button: 0 });
+    fireEvent.pointerMove(svg, { pointerId: 1, clientX: 60, clientY: 35 });
+    expect(fireEvent.keyDown(point, { key: 'Escape' })).toBe(false);
+    fireEvent.pointerUp(svg, { pointerId: 1 });
+    expect(edit.doc?.toneCurve).toEqual(CAMERA);
+    expect(calls.some(({ kind }) => kind === 'settle')).toBe(false);
+    expect(svg.hasPointerCapture(1)).toBe(false);
+    expect(propagated).toBe(false);
+    fireEvent.keyDown(point, { key: 'Escape' });
+    expect(propagated).toBe(true);
+  } finally {
+    window.removeEventListener('keydown', editorCancel);
+  }
+});
+
 test('an existing point previews its drag and settles once', () => {
   const { calls } = open(CAMERA);
   const svg = plot();
