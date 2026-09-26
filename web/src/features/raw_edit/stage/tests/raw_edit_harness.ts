@@ -38,7 +38,7 @@ export class FakeDecoder {
   geometry: EditGeometry | null = null;
   adjust: EditAdjust | null = null;
   proof: Proof | null = null;
-  exposure = 0;
+  exposure: number | null = null;
   draws = 0;
 
   /**
@@ -79,7 +79,7 @@ export class FakeDecoder {
   landed: () => Promise<void> = () => Promise.resolve();
 
   tick(tick: {
-    ev: number;
+    ev: number | null;
     drawStage: boolean;
     region: Region | null;
     loupe: Region | null;
@@ -309,9 +309,9 @@ export class FakeDecoder {
   }
 
   /** Every thumbnail asked for. */
-  readonly thumbnails: { side: number; ev: number; region: Region; repair: Repair }[] = [];
+  readonly thumbnails: { side: number; ev: number | null; region: Region; repair: Repair }[] = [];
 
-  repairThumbnail(side: number, ev: number, region: Region, repair: Repair): Promise<Blob> {
+  repairThumbnail(side: number, ev: number | null, region: Region, repair: Repair): Promise<Blob> {
     this.thumbnails.push({ side, ev, region, repair });
     return Promise.resolve(new Blob([new Uint8Array(1)], { type: 'image/png' }));
   }
@@ -319,7 +319,7 @@ export class FakeDecoder {
   /** Every thumbnail of a fill on offer asked for. */
   readonly optionThumbnails: { region: Region; showing: Repair | null; option: Repair }[] = [];
 
-  optionThumbnail(_side: number, _ev: number, region: Region, showing: Repair | null, option: Repair): Promise<Blob> {
+  optionThumbnail(_side: number, _ev: number | null, region: Region, showing: Repair | null, option: Repair): Promise<Blob> {
     this.optionThumbnails.push({ region, showing, option });
     return Promise.resolve(new Blob([new Uint8Array(1)], { type: 'image/png' }));
   }

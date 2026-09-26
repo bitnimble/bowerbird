@@ -11,7 +11,7 @@ import { CropPanel, GeometryControls } from './crop/crop_panel';
 import { EditControl, SelectControl } from './edit_control';
 import type { CropStore } from './crop/crop_store';
 import type { EditStore } from './edit/edit_store';
-import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, onStep, reading, type SliderSpec } from './edit_sliders';
+import { COLOUR, DETAIL, DUST, EFFECTS, LIGHT, snapped, sliderValue, reading, type SliderSpec } from './edit_sliders';
 import type { RawEditPresenter } from './stage/raw_edit_presenter';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
 import { TEMPERATURE_KELVIN, TINT, type ColourProfile, type Denoiser } from '../../../../src/schemas/photo_edits';
@@ -125,7 +125,7 @@ const EditSlider = observer(function EditSlider({
   // than the document holding a particular number - so the reset arrow goes back to null and the
   // row goes on following the frame.
   const measured = followsPhoto ? stage.measured?.[spec.key] : undefined;
-  const neutral = measured == null ? (spec.neutral ?? 0) : onStep(measured, spec);
+  const neutral = measured == null ? (spec.neutral ?? 0) : snapped(measured, spec);
   const value = Number(stored ?? neutral);
   const untouched = followsPhoto ? stored == null : value === neutral;
   // Blank until the header lands: the measurement comes off it, and a number in its place would
@@ -148,8 +148,8 @@ const EditSlider = observer(function EditSlider({
       <Slider
         style={styles.slider}
         value={value}
-        onChange={(next) => presenter.preview({ [spec.key]: next })}
-        onCommit={(next) => presenter.settle({ [spec.key]: next })}
+        onChange={(next) => presenter.preview({ [spec.key]: sliderValue(next, spec, neutral) })}
+        onCommit={(next) => presenter.settle({ [spec.key]: sliderValue(next, spec, neutral) })}
         min={spec.min}
         max={spec.max}
         step={spec.step}

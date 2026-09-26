@@ -459,12 +459,14 @@ public Colour<DisplayNits> matched_nits(Colour<SceneNits> nits, float2 at)
     // Into `Graded` on the way in and back out on the way out, which is the whole of why the
     // sliders read the same on a frame the fit landed on and one it declined.
     let white = matched_white();
+    let rendered = measured<Graded>(matched / white.v);
     Colour<Graded> graded;
-    if (edit.curve_is_camera != 0 && edit.exposure == 0.0 && sliders_at_rest()) {
-        graded = measured<Graded>(matched / white.v);
+    if (edit.curve_is_camera != 0 && edit.exposure == edit.camera_exposure && sliders_at_rest()) {
+        graded = rendered;
     } else {
-        let untoned = camera_undone(measured<Graded>(matched / white.v));
-        graded = adjusted(times(untoned, gain_of(stops(edit.exposure))), base_luma(nits), at);
+        let untoned = camera_undone(rendered);
+        graded = times(adjusted(times(untoned, gain_of(stops(edit.exposure))), base_luma(nits), at),
+            camera_floor_residual(rendered));
     }
     // Last, on the colour a still will code: the matrix and the lattice are free to send a colour
     // past the floor, and this is the one place it is brought back before anything quantises it.

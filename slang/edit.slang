@@ -7,6 +7,7 @@
 // Named apart from the uniform it declares: a module and a variable of one name are ambiguous
 // wherever both are in scope, and it is the variable every importer spells.
 module edit_uniform;
+import light;
 
 public struct Edit {
     public uint width;
@@ -238,8 +239,9 @@ public struct Edit {
     public uint reader_curve_count;
     public uint camera_curve_count;
     public uint curve_is_camera;
-    public float4 reader_curve[16];
-    public float4 camera_curve[16];
+    public float4 reader_curve[CURVE_POINTS];
+    public float4 camera_curve[CURVE_POINTS];
+    public float camera_exposure;
 };
 
 [vk::binding(0, 0)] public ConstantBuffer<Edit> edit;

@@ -1,6 +1,8 @@
 import * as stylex from '@stylexjs/stylex';
 import { color, size } from '../../../ui/tokens.stylex';
 
+export const pointMarker = stylex.defineMarker();
+
 export const styles = stylex.create({
   editor: { paddingTop: '8px' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' },
@@ -30,7 +32,31 @@ export const styles = stylex.create({
   pointTarget: {
     fill: 'transparent',
     cursor: 'grab',
+    outline: 'none',
   },
-  point: { fill: color.bone, stroke: color.field, strokeWidth: 0.8, pointerEvents: 'none' },
+  point: {
+    fill: color.bone,
+    stroke: color.field,
+    strokeWidth: 0.8,
+    pointerEvents: 'none',
+    transitionProperty: 'fill',
+    transitionDuration: '120ms',
+    transitionTimingFunction: 'ease',
+  },
+  pointRing: {
+    fill: 'none',
+    stroke: color.bone,
+    strokeWidth: 1.2,
+    pointerEvents: 'none',
+    opacity: {
+      default: 0,
+      [stylex.when.ancestor(':hover', pointMarker)]: 1,
+      [stylex.when.ancestor(':has(:focus-visible)', pointMarker)]: 1,
+    },
+    transitionProperty: 'opacity',
+    transitionDuration: '120ms',
+    transitionTimingFunction: 'ease',
+  },
+  pointActive: { fill: color.satin },
   disabled: { opacity: 0.4, cursor: 'default' },
 });

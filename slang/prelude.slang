@@ -12,8 +12,7 @@ import light;
 /// Not `image::LUMA`. That one is BT.709 and belongs to the denoise, which is measuring
 /// where detail is rather than what a colour weighs, and never meets this. Taking it here
 /// put the wrong weights under `finish_chroma`'s grey axis, the chroma map's level axis and
-/// its reconstructed middle channel, and the exposure ratio in `exposure_gain` - so every matched
-/// photograph was graded around a luma the CPU never computed.
+/// its reconstructed middle channel, so every matched photograph was graded around the wrong luma.
 public static const float3 LUMA = float3(0.2627, 0.678, 0.0593);
 
 /// BT.709's weights, which `image::luma709` is the host's statement of.
@@ -107,6 +106,7 @@ public struct Rolloff {
     public float lw;
     public float max_lum;
     public float ks;
+    public float floor_nits;
     // Whether the scene already fits inside the display, in which case there is nothing to
     // roll off and every channel returns unchanged.
     public bool fits;
@@ -122,13 +122,14 @@ public Rolloff rolloff(Light<DisplayNits> source_peak, Light<DisplayNits> peak, 
     knee.lw = lw;
     knee.max_lum = max_lum;
     knee.ks = max(1.5 * max_lum - 0.5, floor);
+    knee.floor_nits = min(white.v, peak.v) * gain_of(KNEE_UNDER_WHITE).g;
     knee.fits = max_lum >= 1.0;
     return knee;
 }
 
 public Light<DisplayNits> roll(Light<DisplayNits> nits, Rolloff knee)
 {
-    if (knee.fits) { return nits; }
+    if (knee.fits || nits.v <= knee.floor_nits) { return nits; }
     let e1 = pq(nits).v / knee.lw;
     if (e1 < knee.ks) { return nits; }
     let reach = knee.max_lum - knee.ks;

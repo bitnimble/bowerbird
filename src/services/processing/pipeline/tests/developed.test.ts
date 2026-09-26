@@ -2,6 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import { developed } from '../developed';
 
 describe('developed', () => {
+  it('leaves an unedited photo at the camera exposure', () => {
+    expect(developed(null).exposure).toBeNull();
+  });
+
   // A prepare for an editor previewing a Detail or dust setting it has not saved: those run before
   // the samples cross, so they come from the preview, and everything else from the last save.
   it('takes what the reader is previewing over the stored document, and keeps the rest', () => {

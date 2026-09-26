@@ -88,6 +88,20 @@ export class StageStore {
 
   /** The camera match's curve. Null where nothing was matched or before a frame is open. */
   @observable accessor cameraCurve: ToneCurve | null = null;
+  /** The camera match's exposure in stops, where one was fitted. */
+  @observable accessor cameraExposure: number | null = null;
+
+  @computed get headerKnown(): boolean {
+    return this.detail != null;
+  }
+
+  @computed get cameraMatchShown(): boolean {
+    return this.edit.doc?.colourProfile !== 'none';
+  }
+
+  @computed get cameraCurveShown(): ToneCurve | null {
+    return this.cameraMatchShown ? this.cameraCurve : null;
+  }
 
   /**
    * What each slider the photograph answers for shows where the document holds null
@@ -99,6 +113,7 @@ export class StageStore {
     return {
       luminanceNoise: detail[0],
       colourNoise: detail[1],
+      exposure: this.cameraMatchShown ? this.cameraExposure ?? 0 : 0,
     };
   }
 

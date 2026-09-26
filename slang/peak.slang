@@ -157,13 +157,9 @@ void measure(uint3 id : SV_DispatchThreadID)
 /// The brightest of those million, kept so the tick does not have to find them again.
 ///
 /// Runs once, after a full `measure` and the `quantile` that turns it into a threshold.
-/// What makes this sound is that the exposure cannot reorder the frame much: `matched_nits`
-/// is `base(level) * exposure_gain`, where the base colour is fixed at the open and only the
-/// gain moves with the slider, so a pixel's rank changes only by how differently the tone
-/// curve compresses its luma from its neighbours' - and among highlights, which sit in the
-/// same compressed stretch of the curve, hardly at all. Where it does not hold, it does
-/// not matter: ranks shuffle freely only when the values are close together, and then any
-/// of them is the same answer.
+/// The camera inverse, exposure gain, and reader curve preserve luma rank. Tone sliders and
+/// differing colour ratios can still reorder channel maxima, so retained pixels are regraded
+/// at each tick and the candidate-parity test holds them against the whole sample.
 ///
 /// The presence sliders are the one gain that is *not* smooth in the pixel's own value - a
 /// clarity lift is worth more at an edge than a stop away from one - so a frame graded with

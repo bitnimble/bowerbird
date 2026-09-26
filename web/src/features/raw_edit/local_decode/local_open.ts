@@ -194,22 +194,22 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('repairThumbnail'),
     side: z.number(),
-    ev: z.number(),
+    ev: z.number().nullable(),
     region: JsonSchema,
     repair: JsonSchema,
   }),
   z.object({
     kind: z.literal('optionThumbnail'),
     side: z.number(),
-    ev: z.number(),
+    ev: z.number().nullable(),
     region: JsonSchema,
     showing: JsonSchema.nullable(),
     option: JsonSchema,
   }),
   z.object({
     kind: z.literal('tick'),
-    /** Stops. */
-    ev: z.number(),
+    /** Stops, or null for the camera match's exposure. */
+    ev: z.number().nullable(),
     /** Whether the stage is drawn at all: a pointer move over the glass draws only the loupe. */
     drawStage: z.boolean(),
     /** Absent draws the cropped picture whole, which the module works out from the geometry. */

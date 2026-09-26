@@ -26,8 +26,8 @@ export interface SliderSpec {
   /**
    * Whether the *photograph* answers where the document holds null, rather than a fixed default.
    *
-   * The Detail pair comes off the frame's noise fit where the document stores null. Reset keeps
-   * that measured value following the photograph.
+   * Exposure comes from the camera match and the Detail pair from the noise fit where the
+   * document stores null. Reset keeps the measured value following the photograph.
    */
   measured?: boolean;
 }
@@ -53,6 +53,7 @@ export const LIGHT: readonly SliderSpec[] = [
     max: EV_RANGE,
     step: 0.01,
     unit: RawEditPanelStrings.exposureUnit(),
+    measured: true,
   },
   { key: 'contrast', label: RawEditPanelStrings.contrast(), min: -100, max: 100, step: 1 },
   { key: 'highlights', label: RawEditPanelStrings.highlights(), min: -100, max: 100, step: 1 },
@@ -150,6 +151,10 @@ export function typedValue(text: string, { min, max, step, scale = 1 }: TypedRan
   return step >= 1 ? Math.round(held) : held;
 }
 
-export function onStep(value: number, { step }: Pick<SliderSpec, 'step'>): number {
+export function snapped(value: number, { step }: Pick<SliderSpec, 'step'>): number {
   return Number((Math.round(value / step) * step).toFixed(TYPED_PLACES));
+}
+
+export function sliderValue(value: number, spec: Pick<SliderSpec, 'measured'>, neutral: number): number | null {
+  return spec.measured === true && value === neutral ? null : value;
 }

@@ -17,7 +17,7 @@ import { StageStore } from '../stage_store';
 import type { LocalPrepare } from '../../local_decode/local_open';
 import type { Region } from '../../edits';
 import type { PreparedHeader } from '../../../../../../src/schemas/prepared';
-import { neutralEdits } from '../../../../../../src/schemas/photo_edits';
+import { neutralEdits, TONE_CURVE_KIND } from '../../../../../../src/schemas/photo_edits';
 import { type EditCheckpoint, type EditState } from '../../../../../../src/schemas/photo_edits';
 import { photoEditsApi } from '../../../../api/photo_edits';
 import { ApiError } from '../../../../api/request';
@@ -72,13 +72,16 @@ describe('a slider reaching the picture', () => {
     expect(decoder.exposure).toBeCloseTo(1.25, 6);
   });
 
-  test('hands the module numeric neutral tone', async () => {
+  test('hands the module null for the camera exposure', async () => {
+    stage.detail = [24, 76];
+    stage.cameraExposure = 0.347;
+    expect(stage.measured?.exposure).toBe(0.347);
     presenter.settle({ exposure: 1.25, contrast: 20 });
     await drawn();
 
-    presenter.settle({ exposure: 0, contrast: 0 });
+    presenter.settle({ exposure: null, contrast: 0 });
     await drawn();
-    expect(decoder.exposure).toBe(0);
+    expect(decoder.exposure).toBeNull();
     expect(decoder.adjust).toMatchObject({ contrast: 0, whites: 0, blacks: 0, toneCurve: null });
   });
 
@@ -620,56 +623,6 @@ describe('a picture prepared on the server', () => {
     expect(fresh.mosaic).toBe(true);
   });
 
-  /**
-   * The levels are held whole or not at all, because a tile handed two of the three is refused.
-   *
-   * `tone::Levels::usable` wants a floor as well as a white and a peak, and a set it refuses is a
-   * set the tile re-measures **off its own crop** - which is a few hundred thousand photosites of
-   * one corner rather than the photograph, and grades the loupe differently from the render it is
-   * meant to be a window on. So a header with no floor has to leave nothing behind rather than a
-   * pair the tile will hand back and have thrown away.
-   */
-  test('holds the levels only when the open measured a floor', () => {
-    const header = {
-      width: 4000,
-      height: 3000,
-      asShot: null,
-      white: 8133,
-      peak: 13783,
-      floor: 141,
-      matched: true,
-      cameraMatch: 'lensAndColour',
-      mosaic: true,
-      defocus: [0, 0],
-    } as unknown as PreparedHeader;
-    const applied = (floor: number | null) =>
-      (presenter as unknown as {
-        describe(header: PreparedHeader, elsewhere: boolean): void;
-      }).describe({ ...header, floor }, false);
-
-    applied(141);
-    expect(stage.levels).toEqual({ white: 8133, peak: 13783, floor: 141 });
-
-    applied(null);
-    expect(stage.levels).toBeNull();
-  });
-
-  test("holds the camera match's curve off the header", () => {
-    const header = { width: 4000, height: 3000, detail: [24, 76], defocus: [0, 0] } as unknown as PreparedHeader;
-    const headed = (cameraCurve: PreparedHeader['cameraCurve']): void =>
-      (presenter as unknown as { describe(header: PreparedHeader, elsewhere: boolean): void }).describe(
-        { ...header, cameraCurve },
-        false,
-      );
-
-    headed([[0, 0.1], [0.5, 0.55], [1, 1]]);
-    expect(stage.cameraCurve).toEqual([[0, 0.1], [0.5, 0.55], [1, 1]]);
-    expect(edit.doc?.toneCurve).toBeNull();
-
-    headed(null);
-    expect(stage.cameraCurve).toBeNull();
-  });
-
   test('the grade still ticks without asking the server for anything', async () => {
     opened({ local: { decoder, open: { longEdge: 0, grade: GRADE, defringe: 0.5 }, onTheBackend: true } });
     stage.preparedElsewhere = true;
@@ -701,6 +654,7 @@ const PAN = {
 const PAN_ROW = { width: 8000, height: 6000 };
 
 describe('the level a zoom is served at', () => {
+  let headerOverrides: Partial<PreparedHeader>;
   /** Every prepare the presenter asked the server for, as the query stated it. */
   let asked: URL[];
   let realFetch: typeof globalThis.fetch;
@@ -712,6 +666,7 @@ describe('the level a zoom is served at', () => {
   });
 
   beforeEach(() => {
+    headerOverrides = {};
     asked = [];
     realFetch = globalThis.fetch;
     // **Answered through the server's own arithmetic, not a fixed header.** Which window a region
@@ -753,8 +708,10 @@ describe('the level a zoom is served at', () => {
         mosaic: false,
         asShot: null,
         detail: [0, 0],
+        cameraExposure: null,
         cameraCurve: null,
         defocus: [0, 0],
+        ...headerOverrides,
       });
       const text = new TextEncoder().encode(header);
       const body = new Uint8Array(4 + text.length);
@@ -789,6 +746,39 @@ describe('the level a zoom is served at', () => {
 
   /** A quarter of the picture, off-centre, which the coarse level can only magnify. */
   const QUARTER = { x: 2000, y: 1500, width: 2000, height: 1500 };
+
+  test('a public window fetch carries camera exposure and curve into the panel', async () => {
+    const cameraCurve: NonNullable<PreparedHeader['cameraCurve']> = {
+      kind: TONE_CURVE_KIND, points: [[0, 0.1], [0.5, 0.55], [1, 1]],
+    };
+    headerOverrides = { detail: [24, 76], cameraExposure: 0.347, cameraCurve };
+    presenter.showRegion(QUARTER);
+    await settled();
+    expect(stage.cameraCurveShown).toEqual(cameraCurve);
+    expect(stage.measured?.exposure).toBe(0.347);
+    presenter.setColourProfile('none');
+    expect(stage.cameraCurveShown).toBeNull();
+    expect(stage.measured?.exposure).toBe(0);
+  });
+
+  test('a public window without a camera match shows zero exposure and identity curve', async () => {
+    presenter.showRegion(QUARTER);
+    await settled();
+    expect(stage.cameraExposure).toBeNull();
+    expect(stage.cameraCurveShown).toBeNull();
+    expect(stage.measured?.exposure).toBe(0);
+  });
+
+  test('a public window fetch holds levels only with a measured floor', async () => {
+    headerOverrides = { white: 8133, peak: 13783, floor: 141 };
+    presenter.showRegion(QUARTER);
+    await settled();
+    expect(stage.levels).toEqual({ white: 8133, peak: 13783, floor: 141 });
+    headerOverrides.floor = null;
+    presenter.clearLevel();
+    await presenter.rewindow();
+    expect(stage.levels).toBeNull();
+  });
 
   test('maps a framed zoom into the held level before asking for picture coverage', async () => {
     opened({
@@ -1101,19 +1091,22 @@ describe('leaving the editor', () => {
       saved.push(doc.toneCurve);
       return Promise.resolve({ doc, rev: ++edit.rev, canUndo: true, canRedo: false });
     };
-    const points: NonNullable<EditState['doc']['toneCurve']> = [[0, 0.1], [0.5, 0.6], [1, 1]];
-    presenter.previewToneCurve(points);
+    const curve: NonNullable<EditState['doc']['toneCurve']> = {
+      kind: TONE_CURVE_KIND,
+      points: [[0, 0.1], [0.5, 0.6], [1, 1]],
+    };
+    presenter.previewToneCurve(curve);
     await drawn();
-    expect(decoder.adjust?.toneCurve).toEqual(points);
+    expect(decoder.adjust?.toneCurve).toEqual(curve);
     expect(saved).toEqual([]);
 
-    presenter.settleToneCurve(points);
+    presenter.settleToneCurve(curve);
     await Bun.sleep(0);
-    expect(saved).toEqual([points]);
+    expect(saved).toEqual([curve]);
 
     presenter.settleToneCurve(null);
     await Bun.sleep(0);
-    expect(saved).toEqual([points, null]);
+    expect(saved).toEqual([curve, null]);
   });
 
   test('asks for the render the reader ended up with', async () => {

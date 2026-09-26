@@ -440,7 +440,7 @@ fn neutral_scene<'a>(
         matched.and_then(|m| m.colour.as_ref()),
         levels,
         options.grade.reference_white_nits,
-        crate::light::Stops::ZERO,
+        None,
         crate::gpu::Adjust::none(),
         None,
     )

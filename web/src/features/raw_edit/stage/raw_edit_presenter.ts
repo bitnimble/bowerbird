@@ -444,12 +444,12 @@ export class RawEditPresenter {
     this.edit.preview(patch);
   }
 
-  previewToneCurve(points: ToneCurve | null): void {
-    this.preview({ toneCurve: points });
+  previewToneCurve(curve: ToneCurve | null): void {
+    this.preview({ toneCurve: curve });
   }
 
-  settleToneCurve(points: ToneCurve | null): void {
-    this.settle({ toneCurve: points });
+  settleToneCurve(curve: ToneCurve | null): void {
+    this.settle({ toneCurve: curve });
   }
 
   private write(patch: Partial<EditDoc>): EditDoc | null {
@@ -787,6 +787,7 @@ export class RawEditPresenter {
         // landing after a newer one's would draw the newer tiles at the older scale.
         if (!mine()) return;
         this.took(kept);
+        this.describe(kept, true);
       }
 
       const level = this.level;
@@ -813,6 +814,7 @@ export class RawEditPresenter {
         const kept = readPreparedHeader(await source.decoder.takeTiles(framed, missing));
         if (!mine()) return;
         this.took(kept);
+        this.describe(kept, true);
       }
       this.request();
     } catch (error) {
@@ -1072,6 +1074,7 @@ export class RawEditPresenter {
     this.stage.noiseFit = null;
     this.stage.detail = null;
     this.stage.cameraCurve = null;
+    this.stage.cameraExposure = null;
     this.stage.defocus = null;
     this.stage.levels = null;
   }
@@ -1111,6 +1114,7 @@ export class RawEditPresenter {
     this.stage.noiseFit = header.noiseFit ?? null;
     this.stage.detail = header.detail;
     this.stage.cameraCurve = header.cameraCurve;
+    this.stage.cameraExposure = header.cameraExposure;
     this.stage.defocus = header.defocus;
     // All three or none: a tile handed a white and a peak without a floor is refused whole
     // (`tone::Levels::usable`), so there is nothing to hold.

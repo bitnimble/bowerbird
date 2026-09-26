@@ -159,7 +159,7 @@ impl Prepared {
     /// reader's own exposure and sliders.
     pub fn scene(
         &self,
-        exposure: crate::light::Stops,
+        exposure: Option<crate::light::Stops>,
         adjust: crate::gpu::Adjust,
     ) -> crate::tone::SceneGrade<'_> {
         crate::tone::SceneGrade::new(

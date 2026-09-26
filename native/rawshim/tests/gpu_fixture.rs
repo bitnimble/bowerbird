@@ -84,21 +84,12 @@ fn levels(
     rawshim::hdr::levels_of(gpu, samples, width, height, quantile).expect("the frame's levels")
 }
 
-/// A camera match with something in every part of it.
-///
-/// Every field is off the identity, and the lattice varies per node rather than repeating
-/// one saturation, so a reader that swapped the chroma axes or mis-scaled the level axis
-/// lands on the wrong node and fails. An identity anywhere is a no-op the pin cannot tell
-/// from a correct implementation or from a missing one.
+/// A synthetic colour model with DSC06597's camera exposure and contrast curve.
+/// Exposure acts after camera tone is undone and before the reader curve.
 fn matched() -> HdrColour {
     let mut colour = HdrColour::identity();
     for (channel, curve) in colour.curves.iter_mut().enumerate() {
         let gain = 1.0 + 0.06 * (channel as f64 - 1.0);
-        // A shoulder, which a fitted curve has and a straight ramp does not. It is what
-        // makes this fixture able to say anything about the peak: the exposure is a gain on
-        // the scene, but the curve compresses what the gain produces, so the measured peak
-        // rises more slowly than the slider does. A near-linear curve hides every way of
-        // getting the peak's histogram wrong, because there the two rise together.
         let bend = 2.2 + 0.4 * channel as f64;
         let last = (curve.len() - 1) as f64;
         let full = 1.0 - (-bend).exp();
@@ -113,6 +104,15 @@ fn matched() -> HdrColour {
     colour.anchor = TRUST_CEILING * 0.4;
     colour.matrix = [[0.92, 0.06, 0.02], [0.05, 0.90, 0.05], [0.01, 0.07, 0.92]];
     colour.saturation = 1.08;
+    colour.exposure = Stops::measured(-0.0954543948173523);
+    colour.curve = vec![
+        [0.0, 0.0],
+        [0.1015625, 0.04486139491200447],
+        [0.27615270018577576, 0.27615270018577576],
+        [0.41015625, 0.44641077518463135],
+        [0.5234375, 0.5336015820503235],
+        [1.0, 1.0],
+    ];
     colour.chroma = Some(ChromaMap::from_nodes(|x, y, z| {
         let scale = 1.04 + 0.03 * x as f64 - 0.02 * y as f64 + 0.05 * z as f64;
         let skew = 0.02 * (x as f64 - y as f64);
@@ -192,10 +192,11 @@ fn filter_once(prepared: &mut Prepared, grade: &hdr::Grade, strengths: Strengths
 #[test]
 fn the_editor_puts_each_slider_where_this_host_does() {
     let colour = HdrColour {
+        exposure: Stops::measured(0.625),
         curve: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
         ..HdrColour::identity()
     };
-    let at = |exposure: Stops, adjust: rawshim::gpu::Adjust| {
+    let at = |exposure: Option<Stops>, adjust: rawshim::gpu::Adjust| {
         rawshim::gpu::uniform_words(
             &rawshim::gpu::Grade {
                 colour: Some(&colour),
@@ -228,7 +229,9 @@ fn the_editor_puts_each_slider_where_this_host_does() {
         shadows: 33.0,
         whites: -44.0,
         blacks: 55.0,
-        tone_curve: Some(vec![[0.0, 0.0], [0.3, 0.25], [0.7, 0.75], [1.0, 1.0]]),
+        tone_curve: Some(rawshim::gpu::ToneCurve::PchipCbrt3 {
+            points: vec![[0.0, 0.0], [0.3, 0.25], [1.0, 1.0]],
+        }),
         vibrance: -66.0,
         saturation: 77.0,
         texture: -88.0,
@@ -241,12 +244,12 @@ fn the_editor_puts_each_slider_where_this_host_does() {
     let cases = [
         // As it arrives on a photo nobody has edited, which is also the state the frame's own
         // words are shipped in.
-        ("rest", Stops::ZERO, rawshim::gpu::Adjust::none()),
-        ("moved", Stops::measured(1.75), moved.clone()),
+        ("rest", None, rawshim::gpu::Adjust::none()),
+        ("moved", Some(Stops::measured(1.75)), moved.clone()),
         // Half a white balance pair, which is the case the two hosts disagreed about.
         (
             "half-balance",
-            Stops::measured(-2.5),
+            Some(Stops::measured(-2.5)),
             rawshim::gpu::Adjust {
                 tint: None,
                 ..moved.clone()
@@ -264,7 +267,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
             };
             format!(
                 "{name} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
-                exposure.raw(),
+                or_null(exposure.map(Stops::raw)),
                 adjust.contrast,
                 adjust.highlights,
                 adjust.shadows,
@@ -619,10 +622,10 @@ fn the_encode_pass_reproduces_the_recorded_frame() {
     let levels = levels(gpu, &samples, WIDTH, HEIGHT, grade.white_quantile);
 
     for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
-        for ev in [0.0f32, 1.0, -1.5] {
+        for (exposure, ev) in [(Some(Stops::ZERO), "0"), (Some(Stops::measured(1.0)), "1"), (Some(Stops::measured(-1.5)), "-1.5"), (None, "camera")] {
+            if exposure.is_none() && colour.is_none() { continue; }
             // Stops, which is what the uniform carries now: `colour.slang` raises them, so a
             // gain here would be a second conversion on top of the shader's.
-            let exposure = Stops::measured(f64::from(ev));
             let mut prepared = Prepared {
                 samples: samples.clone(),
                 width: WIDTH,
@@ -680,10 +683,10 @@ fn the_rolled_arm_reproduces_the_recorded_grade() {
     let levels = levels(gpu, &samples, WIDTH, HEIGHT, grade.white_quantile);
 
     for (name, colour) in [("neutral", None), ("matched", Some(matched()))] {
-        for ev in [0.0f32, 1.0, -1.5] {
+        for (exposure, ev) in [(Some(Stops::ZERO), "0"), (Some(Stops::measured(1.0)), "1"), (Some(Stops::measured(-1.5)), "-1.5"), (None, "camera")] {
+            if exposure.is_none() && colour.is_none() { continue; }
             // Stops, which is what the uniform carries now: `colour.slang` raises them, so a
             // gain here would be a second conversion on top of the shader's.
-            let exposure = Stops::measured(f64::from(ev));
             let mut prepared = Prepared {
                 samples: samples.clone(),
                 width: WIDTH,

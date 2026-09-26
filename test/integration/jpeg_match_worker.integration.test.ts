@@ -74,7 +74,7 @@ async function render(
     repairs: [],
     // Unedited: this measures what the camera match does, so a
     // reader's would be a second variable in it.
-    exposure: 0,
+    exposure: null,
     adjust: adjustOf(neutralEdits()),
     geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },
     ...render,

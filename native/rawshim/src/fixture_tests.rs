@@ -213,7 +213,7 @@ fn tile_job(path: &str, tile: Option<[usize; 4]>, levels: Option<crate::tone::Le
         repairs: Vec::new(),
         sharpen: 0.0,
         defringe: 0.0,
-        exposure: crate::light::Stops::ZERO,
+        exposure: None,
         adjust: crate::gpu::Adjust::none(),
         geometry: crate::image::Geometry::none(),
         preserve_source_orientation: false,
@@ -1592,16 +1592,25 @@ mod loupe_tile {
                 let (tile, tile_width, tile_height) = crate::job::graded(&cut).expect("the tile");
 
                 let mut worst = 0u32;
+                let mut reference_max = 0u16;
                 for row in 0..tile_height {
                     for col in 0..tile_width {
                         for channel in 0..3 {
                             let from = ((at.top + row) * width + at.left + col) * 3 + channel;
                             let to = (row * tile_width + col) * 3 + channel;
+                            reference_max = reference_max.max(reference[from]);
                             worst = worst.max(u32::from(reference[from].abs_diff(tile[to])));
                         }
                     }
                 }
                 assert_eq!(worst, 0, "{path}, {what}, over {place}: the tile is not the rendition");
+                if place == "highlight" && what == "as metered" {
+                    let frame_max = *reference.iter().max().expect("a frame");
+                    let nits = |code| crate::tone::pq_inv::<crate::light::DisplayNits>(
+                        crate::light::Light::measured(f64::from(code) / 65535.0));
+                    let share = nits(reference_max) / nits(frame_max);
+                    assert!(share.raw() >= 0.5, "{path}, {what}: bright tile reaches only {:.3} of frame peak", share.raw());
+                }
             }
         }
     }
@@ -3150,13 +3159,11 @@ mod hdr_grade {
             crate::hdr::code_base(&mut coded, levels, REFERENCE);
             let source =
                 crate::hdr::Source { samples: &coded, width: decoded.width, height: decoded.height };
-            // As the camera rendered it, and upright: this measures the resample, not anybody's
-            // edit of it.
             let scene = crate::tone::SceneGrade::new(
                 m.and_then(|m| m.colour.as_ref()),
                 levels,
                 REFERENCE,
-                crate::light::Stops::measured(1.0),
+                Some(crate::light::Stops::measured(1.0)),
                 crate::gpu::Adjust::none(),
                 None,
             );
@@ -3943,7 +3950,9 @@ mod tone_domain {
         let colour = matched.as_ref().and_then(|m| m.colour.as_ref());
         let levels = crate::hdr::levels_of(gpu, &samples, frame.width, frame.height, QUANTILE)
             .expect("levels");
-        let curve = Some(vec![[0.0, 0.0], [1.0, 1.0]]);
+        let curve = Some(crate::gpu::ToneCurve::PchipCbrt3 {
+            points: vec![[0.0, 0.0], [1.0, 1.0]],
+        });
         let flat = graded(gpu, &samples, &frame, colour, levels, crate::gpu::Adjust { tone_curve: curve.clone(), ..crate::gpu::Adjust::none() });
         adjust.tone_curve = curve;
         let moved = graded(gpu, &samples, &frame, colour, levels, adjust);
@@ -3986,6 +3995,7 @@ mod tone_domain {
         crate::hdr::code_base(&mut coded, levels.anchored(), REFERENCE_NITS);
         gpu.encode(&coded, &crate::gpu::Grade {
             colour,
+            exposure: Some(crate::light::Stops::ZERO),
             adjust,
             // The frame's own, or the balance has no illuminant to move away from and the
             // temperature slider is the identity whatever it is set to.

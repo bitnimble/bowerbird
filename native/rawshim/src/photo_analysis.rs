@@ -31,7 +31,7 @@ use half::f16;
 /// is preferred over a fresh fit, and nothing ever clears it - so a library holding both would
 /// grade two photographs by two rules with nothing to say which was which. Discarding them costs
 /// one re-fit per photograph on next open, about half a second, once.
-const VERSION: u8 = 15;
+const VERSION: u8 = 17;
 const MAGIC: [u8; 3] = *b"BBP";
 
 const KIND_MATCH: u8 = 0;
@@ -533,6 +533,7 @@ fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
     // that came back without it would report a photograph as unmeasured rather than as measured
     // well.
     put_f32(out, colour.delta_e);
+    put_f32(out, colour.exposure.raw());
     put_u32(out, colour.curve.len() as u32);
     for point in &colour.curve { put_f32s(out, point); }
 
@@ -563,7 +564,7 @@ fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
 fn take_match(at: &mut Reader<'_>) -> Option<HdrMatch> {
     let colour = match at.u8()? {
         0 => None,
-        1 => Some(take_colour(at)?),
+        1 => take_colour(at)?,
         _ => return None,
     };
     let distortion = at.option_f32s()?;
@@ -583,7 +584,7 @@ fn take_match(at: &mut Reader<'_>) -> Option<HdrMatch> {
     Some(HdrMatch { lens: Lens { distortion, crop, falloff, tca }, colour })
 }
 
-fn take_colour(at: &mut Reader<'_>) -> Option<HdrColour> {
+fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
     let bins = at.u32()? as usize;
     // A length from a stored blob decides how much is read, so it is bounded before it is trusted:
     // the fit's own is 256, and nothing legitimate is anywhere near this.
@@ -599,13 +600,11 @@ fn take_colour(at: &mut Reader<'_>) -> Option<HdrColour> {
     let saturation = at.f32()?;
     let ceiling = at.f32()?;
     let delta_e = at.f32()?;
+    let exposure = crate::light::Stops::measured(at.f32()?);
     let count = at.u32()? as usize;
-    if !(2..=16).contains(&count) { return None; }
+    if count > 4096 { return None; }
     let mut curve = Vec::with_capacity(count);
     for _ in 0..count { curve.push([at.f32()?, at.f32()?]); }
-    // The grade refuses an invalid curve outright, so one read from disk costs the match here
-    // rather than every render of the photograph after.
-    if !crate::light::curve_is_valid(&curve) { return None; }
 
     let (chroma, surround) = match at.u8()? {
         0 => (None, crate::hdr_fit::SurroundThumb::none()),
@@ -645,18 +644,21 @@ fn take_colour(at: &mut Reader<'_>) -> Option<HdrColour> {
         }
     };
 
-    Some(HdrColour {
+    if !exposure.raw().is_finite() || !crate::light::curve_is_valid(&curve) {
+        return Some(None);
+    }
+    Some(Some(HdrColour {
         anchor: crate::hdr_fit::chroma_anchor(&curves[1], ceiling),
         curves,
         ceiling,
         matrix,
         saturation,
         delta_e,
+        exposure,
         curve,
-        curve_error: 0.0,
         chroma,
         surround,
-    })
+    }))
 }
 
 /// Seven numbers at the width the kernels read them: `NoiseFit` is `f32` throughout and crosses to
@@ -958,8 +960,9 @@ pub(crate) mod tests {
                 ],
                 saturation: 0.937,
                 delta_e: 1.83,
-                curve: vec![[0.0, 0.04], [0.35, 0.3], [0.68, 0.72], [1.0, 1.0]],
-                curve_error: 0.0,
+                exposure: crate::light::Stops::measured(0.625),
+                curve: [[0.0, 0.04], [0.35, 0.3], [0.68, 0.72], [1.0, 1.0]]
+                    .map(|point| point.map(|value| f64::from(value as f32))).to_vec(),
                 // Densified, as every map a fit hands out is: the writer stores its coarse
                 // decimation and the reader densifies back, so this round-trips exactly.
                 chroma: ChromaMap::from_parts(&nodes, [0.11, 0.22], [3.5, 4.5])
@@ -1076,6 +1079,8 @@ pub(crate) mod tests {
             }
         }
         assert_eq!(is_colour.curve.len(), was_colour.curve.len());
+        assert_eq!(is_colour.exposure, was_colour.exposure);
+        assert_eq!(is_colour.curve, was_colour.curve);
         for (read, wrote) in is_colour.curve.iter().zip(&was_colour.curve) {
             assert!(read.iter().zip(wrote).all(|(a, b)| (a - b).abs() < 1e-6), "{read:?} against {wrote:?}");
         }
@@ -1373,11 +1378,28 @@ pub(crate) mod tests {
         colour.curve = vec![[0.5, 0.0], [0.4, 1.0]];
 
         let read = decode(&encode(&blob)).expect("the blob still reads");
-        assert!(
-            read.from_raw.matched.and_then(|m| m.colour).is_none(),
-            "an unsorted curve reached the grade"
-        );
+        let matched = read.from_raw.matched.expect("lens survives");
+        assert!(matched.colour.is_none(), "an unsorted curve reached the grade");
+        assert_eq!(matched.lens.crop, f64::from(blob.from_raw.matched.as_ref().unwrap().lens.crop as f32));
         assert_eq!(read.from_raw.noise.is_some(), blob.from_raw.noise.is_some());
+    }
+
+    #[test]
+    fn invalid_stored_camera_controls_preserve_the_lens() {
+        for count in [0, 1, crate::light::CURVE_MAX_POINTS + 1] {
+            let mut blob = everything();
+            let matched = blob.from_raw.matched.as_mut().unwrap();
+            matched.colour.as_mut().unwrap().curve = (0..count)
+                .map(|i| [i as f64 / count.max(1) as f64; 2]).collect();
+            let crop = matched.lens.crop;
+            let read = decode(&encode(&blob)).unwrap().from_raw.matched.expect("lens survives");
+            assert!(read.colour.is_none());
+            assert_eq!(read.lens.crop, f64::from(crop as f32));
+        }
+        let mut blob = everything();
+        blob.from_raw.matched.as_mut().unwrap().colour.as_mut().unwrap().exposure = crate::light::Stops::measured(f64::NAN);
+        let read = decode(&encode(&blob)).unwrap().from_raw.matched.expect("lens survives");
+        assert!(read.colour.is_none());
     }
 
     /// The quantiles a library can actually be configured with are readable.

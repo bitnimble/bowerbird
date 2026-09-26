@@ -39,14 +39,14 @@ export class EditStore {
   @observable accessor asShot: AsShot | null = null;
 
   /**
-   * The exposure the tick draws at, in EV.
+   * The exposure the tick draws at, in EV; null uses the camera match's own.
    *
    * Derived rather than stored beside the document. Holding both is two
    * representations of one value, and any path that moved one without the other
    * would draw a picture that disagrees with what a save would send.
    */
-  @computed get exposureEv(): number {
-    return this.doc?.exposure ?? 0;
+  @computed get exposureEv(): number | null {
+    return this.doc?.exposure ?? null;
   }
 
   /**

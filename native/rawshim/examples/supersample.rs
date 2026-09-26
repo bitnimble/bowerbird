@@ -140,7 +140,7 @@ fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
         matched.as_ref().and_then(|m| m.colour.as_ref()),
         levels,
         options.grade.reference_white_nits,
-        rawshim::light::Stops::ZERO,
+        None,
         rawshim::gpu::Adjust::none(),
         frame.as_shot,
     );

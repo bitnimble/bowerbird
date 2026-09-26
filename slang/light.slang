@@ -141,21 +141,23 @@ public struct Stops {
 }
 
 public static const Stops CURVE_TOP = { 3.0 };
+public static const uint CURVE_POINTS = 16;
 
 public struct CurveCode {
     public float v;
 }
 
-public CurveCode curve_code(float white_ratio)
+public CurveCode curve_code(Gain white_ratio)
 {
     CurveCode code;
-    code.v = pow(max(white_ratio, 0.0), 1.0 / 3.0) / exp2(CURVE_TOP.s / 3.0);
+    code.v = pow(max(white_ratio.g, 0.0), 1.0 / 3.0) / exp2(CURVE_TOP.s / 3.0);
     return code;
 }
 
-public float curve_light(CurveCode code)
+public Gain curve_light(CurveCode code)
 {
-    return pow(code.v * exp2(CURVE_TOP.s / 3.0), 3.0);
+    let linear = code.v * exp2(CURVE_TOP.s / 3.0);
+    return gain(linear * linear * linear);
 }
 
 /// A number entering a domain a standard fixes the unit of.

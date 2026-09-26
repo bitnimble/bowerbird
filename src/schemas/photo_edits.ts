@@ -35,11 +35,21 @@ export type ColourProfile = z.infer<typeof ColourProfileSchema>;
 export const DenoiserSchema = z.enum(['galosh', 'pmrid']);
 export type Denoiser = z.infer<typeof DenoiserSchema>;
 
-export const ToneCurveSchema = z.array(z.tuple([
+/** PCHIP on u = cbrt(luma / diffuse white) / 2, flat below and tangent-linear above; top is +3 stops. */
+export const TONE_CURVE_KIND = 'pchipCbrt3' as const;
+export const TONE_CURVE_MAX_POINTS = 16;
+export const DIFFUSE_WHITE_CODE = 0.5;
+
+export const ToneCurvePointsSchema = z.array(z.tuple([
   z.number().min(0).max(1),
   z.number().min(0).max(1),
-])).min(2).max(16).refine((points) => points.every((point, index) =>
+])).min(2).max(TONE_CURVE_MAX_POINTS).refine((points) => points.every((point, index) =>
   index === 0 || (point[0] > points[index - 1]![0] && point[1] >= points[index - 1]![1])));
+export type ToneCurvePoints = z.infer<typeof ToneCurvePointsSchema>;
+export const ToneCurveSchema = z.discriminatedUnion('kind', [z.object({
+  kind: z.literal(TONE_CURVE_KIND),
+  points: ToneCurvePointsSchema,
+})]);
 export type ToneCurve = z.infer<typeof ToneCurveSchema>;
 
 // The document is one replicated cell re-parsed on every write, so a repair is bounded: the most
@@ -91,8 +101,7 @@ export const EditDocSchema = z
 
     // Tone. `exposure` is EV and is the only one here with a physical unit; the
     // rest are slider positions whose mapping to anything is ours to decide.
-    //
-    exposure: z.number().min(-5).max(5).default(0),
+    exposure: z.number().min(-5).max(5).nullable().default(null),
     contrast: z.number().int().min(-100).max(100).default(0),
     highlights: z.number().int().min(-100).max(100).default(0),
     shadows: z.number().int().min(-100).max(100).default(0),

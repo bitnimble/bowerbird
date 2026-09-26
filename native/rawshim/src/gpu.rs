@@ -1805,7 +1805,8 @@ pub struct Grade<'a> {
     /// Where this target's highlights roll into, which is `job::peak_nits` and not the library's
     /// mastering peak: an SDR target's sits at diffuse white.
     pub peak_nits: crate::light::Light<crate::light::DisplayNits>,
-    pub exposure: crate::light::Stops,
+    /// None resolves to the camera match's exposure, or zero without a match.
+    pub exposure: Option<crate::light::Stops>,
     /// The reader's own sliders, on Camera Raw's -100..100 scales.
     pub adjust: Adjust,
     /// The illuminant the camera balanced this frame for, which is the baseline the reader's
@@ -1920,7 +1921,7 @@ impl<'a> Grade<'a> {
             floor: levels.floor,
             reference_nits,
             peak_nits,
-            exposure: crate::light::Stops::ZERO,
+            exposure: None,
             adjust: Adjust::none(),
             as_shot: None,
             output: Output::Pq,
@@ -2033,7 +2034,6 @@ impl<'a> Grade<'a> {
 /// The last three are the presence group, which read the blur `detail.slang` builds rather
 /// than the pixel alone. They are terms in the same function as the rest - what the blur
 /// costs is a pass at upload, not a second grade.
-///
 #[derive(Clone, Default, PartialEq, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Adjust {
@@ -2042,7 +2042,7 @@ pub struct Adjust {
     pub shadows: f64,
     pub whites: f64,
     pub blacks: f64,
-    pub tone_curve: Option<Vec<[f64; 2]>>,
+    pub tone_curve: Option<ToneCurve>,
     pub vibrance: f64,
     /// `sat_adjust` in the shader: `saturation` there is the camera match's own multiplier.
     pub saturation: f64,
@@ -2066,6 +2066,47 @@ pub enum ColourProfile {
     #[default]
     Matched,
     None,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "ToneCurveData", into = "ToneCurveData")]
+pub enum ToneCurve {
+    /// PCHIP harmonic spline, flat below and linear above, on cbrt(luma / white) / 2 to +3 stops.
+    PchipCbrt3 { points: Vec<[f64; 2]> },
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind")]
+enum ToneCurveData {
+    #[serde(rename = "pchipCbrt3")]
+    PchipCbrt3 { points: Vec<[f64; 2]> },
+}
+
+impl TryFrom<ToneCurveData> for ToneCurve {
+    type Error = &'static str;
+
+    fn try_from(value: ToneCurveData) -> Result<Self, Self::Error> {
+        let ToneCurveData::PchipCbrt3 { points } = value;
+        if !crate::light::curve_is_valid(&points) {
+            return Err("tone curve points must be finite, ordered, and inside [0,1]");
+        }
+        Ok(Self::PchipCbrt3 { points })
+    }
+}
+
+impl From<ToneCurve> for ToneCurveData {
+    fn from(value: ToneCurve) -> Self {
+        let ToneCurve::PchipCbrt3 { points } = value;
+        Self::PchipCbrt3 { points }
+    }
+}
+
+impl ToneCurve {
+    pub fn points(&self) -> &[[f64; 2]] {
+        match self {
+            ToneCurve::PchipCbrt3 { points } => points,
+        }
+    }
 }
 
 impl Adjust {
@@ -3955,8 +3996,9 @@ const EDIT_FIELDS: &[&str] = &[
     "reader_curve_count",
     "camera_curve_count",
     "curve_is_camera",
-    "reader_curve[16]",
-    "camera_curve[16]",
+    "reader_curve[CURVE_POINTS]",
+    "camera_curve[CURVE_POINTS]",
+    "camera_exposure",
 ];
 
 /// `struct Edit`, field for field, in the order the shader declares them.
@@ -3990,9 +4032,9 @@ pub fn uniform_words(grade: &Grade<'_>, colour: &HdrColour) -> Vec<u32> {
 fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> Vec<u32> {
     let shape = colour.chroma.as_ref().map(|m| m.shape());
     let shape = shape.as_ref();
-    let identity = [[0.0, 0.0], [1.0, 1.0]];
+    let identity = crate::light::IDENTITY_CURVE;
     let camera = grade.colour.map_or(identity.as_slice(), |c| c.curve.as_slice());
-    let reader = grade.adjust.tone_curve.as_deref().unwrap_or(camera);
+    let reader = grade.adjust.tone_curve.as_ref().map(ToneCurve::points).unwrap_or(camera);
     let mut w: Vec<u32> = Vec::new();
     let f = |w: &mut Vec<u32>, v: f64| w.push((v as f32).to_bits());
     w.push(grade.width as u32);
@@ -4001,7 +4043,8 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, grade.source_level.raw());
     f(&mut w, grade.reference_nits.raw());
     f(&mut w, grade.peak_nits.raw());
-    f(&mut w, grade.exposure.raw());
+    let camera_exposure = grade.colour.map_or(crate::light::Stops::ZERO, |c| c.exposure);
+    f(&mut w, grade.exposure.unwrap_or(camera_exposure).raw());
     w.push(match grade.output {
         Output::Pq => 0,
         Output::Srgb => 1,
@@ -4130,7 +4173,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     w.push(u32::from(smoothed && grade.colour.is_some()));
     w.push(chroma_shrink(grade.photograph_long).raw() as u32);
     f(&mut w, colour.anchor);
-    f(&mut w, crate::tone::floor_share(grade.floor, grade.white));
+    f(&mut w, crate::tone::floor_share(grade.floor, grade.white).raw());
     f(&mut w, grade.print_blur.raw());
     let written = grade.written();
     w.push(written.top.raw() as u32);
@@ -4144,11 +4187,12 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     w.resize(w.len().next_multiple_of(4), 0);
     for points in [reader, camera] {
         let tangents = crate::light::curve_tangents(points);
-        for (point, tangent) in points.iter().zip(tangents).take(16) {
+        for (point, tangent) in points.iter().zip(tangents) {
             for value in [point[0], point[1], tangent, 0.0] { f(&mut w, value); }
         }
-        w.resize(w.len() + (16 - points.len()) * 4, 0);
+        w.resize(w.len() + (crate::light::CURVE_MAX_POINTS - points.len()) * 4, 0);
     }
+    f(&mut w, camera_exposure.raw());
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. Here it was implicit in the field count until a field was
@@ -4565,10 +4609,10 @@ mod tests {
         // appended made this expect one word fewer than the writer emits.
         let words: usize = super::EDIT_FIELDS
             .iter()
-            .map(|name| if name.starts_with("region_") || *name == "canvas_size" { 2 } else if name.ends_with("[16]") { 64 } else { 1 })
+            .map(|name| if name.starts_with("region_") || *name == "canvas_size" { 2 } else if name.ends_with("[CURVE_POINTS]") { crate::light::CURVE_MAX_POINTS * 4 } else { 1 })
             .sum::<usize>()
             + 1;
-        let before_curve = super::EDIT_FIELDS.iter().take_while(|name| **name != "reader_curve[16]")
+        let before_curve = super::EDIT_FIELDS.iter().take_while(|name| **name != "reader_curve[CURVE_POINTS]")
             .map(|name| if name.starts_with("region_") || *name == "canvas_size" { 2 } else { 1 })
             .sum::<usize>() + 1;
         assert_eq!(before_curve % 4, 0, "curve array needs 16-byte alignment");
@@ -4596,7 +4640,10 @@ mod tests {
             vec![[0.0, 0.8], [1.0, 0.2]],
         ] {
             let grade = super::Grade {
-                adjust: super::Adjust { tone_curve: Some(points), ..super::Adjust::none() },
+                adjust: super::Adjust {
+                    tone_curve: Some(super::ToneCurve::PchipCbrt3 { points }),
+                    ..super::Adjust::none()
+                },
                 ..super::Grade::new(
                     1,
                     1,
@@ -4632,7 +4679,9 @@ mod tests {
             gpu.encode(&frame, &grade)
         };
         let plain = render(None);
-        let lifted = render(Some(vec![[0.0, 0.1], [1.0, 1.0]]));
+        let lifted = render(Some(super::ToneCurve::PchipCbrt3 {
+            points: vec![[0.0, 0.1], [1.0, 1.0]],
+        }));
         assert!(lifted[0] > plain[0], "curve origin left black at {}", plain[0]);
     }
 
@@ -4701,7 +4750,7 @@ mod tests {
         };
         let grade = super::Grade {
             colour: Some(&colour),
-            exposure: Stops::measured(0.5),
+            exposure: Some(Stops::measured(0.5)),
             output: super::Output::Rolled,
             canvas: Some(shown),
             ..super::Grade::new(
@@ -4815,7 +4864,7 @@ mod tests {
         let colour = crate::hdr_fit::HdrColour::identity();
         let grade = |canvas: super::Canvas| super::Grade {
             colour: Some(&colour),
-            exposure: Stops::measured(0.5),
+            exposure: Some(Stops::measured(0.5)),
             output: super::Output::Rolled,
             canvas: Some(canvas),
             ..super::Grade::new(
@@ -4908,10 +4957,8 @@ mod tests {
     /// `wasm::HeldRaw::draw`, which re-measures every tick off the candidates the open collected.
     ///
     /// **A compressive tone, and it is the whole point of the fixture.** The camera curve here bends
-    /// under exposure, so a bright pixel gains
-    /// less than a dim one, which is the only thing that can move a pixel in or out of the top
-    /// hundred. The curves' shoulder differs per channel because the peak is over the maximum
-    /// channel, which a gain on luma alone would never reorder by.
+    /// under exposure, so a bright pixel gains less than a dim one. Candidate reuse must still
+    /// agree with a measurement of the whole frame after that compression.
     #[test]
     fn the_kept_candidates_answer_as_the_whole_sample_does() {
         let Some(gpu) = super::device() else { return };
@@ -4931,12 +4978,6 @@ mod tests {
 
         // A ramp with a specular tail on it: the quantile is a rank near the top, so a frame
         // whose brightest pixels are all one value is answered the same way by any rule at all.
-        //
-        // **Coded to land under the trust ceiling**, which is where the curve is a curve.
-        // `curves_at` divides a pixel past the ceiling down, samples there and scales back, so
-        // above it the transform is homogeneous by construction and the exposure is a gain again -
-        // a frame coded to full scale is 49 render units and every one of these ranks is decided
-        // in that straight part.
         let (width, height) = (256usize, 192usize);
         let mut frame: Vec<u16> = Vec::with_capacity(width * height * 3);
         for y in 0..height {
@@ -4954,7 +4995,7 @@ mod tests {
 
         let at = |exposure: Stops| super::Grade {
             colour: Some(&colour),
-            exposure,
+            exposure: Some(exposure),
             ..super::Grade::new(
                 width,
                 height,
@@ -5003,7 +5044,7 @@ mod tests {
         //   flat at particular slider positions.
         //
         // Rising catches both. Tracking the gain catches the first on its own, and needs a band
-        // rather than a number because the tone is allowed to bend it: this fixture's contrast
+        // rather than a number because the tone is allowed to bend it: this fixture's camera curve
         // takes it 13.8% under at +5 stops, where a fitted frame sits near 5% and a saturating
         // histogram reads 35%. So the compression guard above and this one bound it from either
         // side, and the fixture has to sit between them.
@@ -5072,7 +5113,7 @@ mod tests {
         }));
         let grade = |exposure| super::Grade {
             colour: Some(&colour),
-            exposure,
+            exposure: Some(exposure),
             output: super::Output::Rolled,
             ..super::Grade::new(
                 width,
@@ -5116,12 +5157,16 @@ mod tests {
             (0..width * height * 3).map(|i| ((i / 3) * 16 + (i % 3) * 700).min(65535) as u16).collect();
         let fitted = crate::hdr_fit::HdrColour::identity();
         let told = crate::hdr_fit::HdrColour {
-            curve: vec![[0.0, 0.04], [0.35, 0.25], [0.7, 0.78], [1.0, 0.96]],
+            exposure: Stops::measured(0.7),
+            curve: vec![[0.0, 0.0], [0.35, 0.25], [0.7, 0.78], [1.0, 0.96]],
             ..fitted.clone()
         };
-        let graded = |colour: &crate::hdr_fit::HdrColour, tone_curve: Option<Vec<[f64; 2]>>| {
+        let graded = |colour: &crate::hdr_fit::HdrColour,
+                      exposure: Option<Stops>,
+                      tone_curve: Option<super::ToneCurve>| {
             let grade = super::Grade {
                 colour: Some(colour),
+                exposure,
                 adjust: super::Adjust { tone_curve, ..super::Adjust::none() },
                 output: super::Output::Rolled,
                 ..super::Grade::new(
@@ -5141,12 +5186,25 @@ mod tests {
             let peak = gpu.scene_peak();
             gpu.upload(&frame, &grade, &peak).encode(&grade)
         };
-        let plain = graded(&fitted, None);
-        let untouched = graded(&told, None);
+        let plain = graded(&fitted, None, None);
+        let untouched = graded(&told, None, None);
         assert!(plain == untouched, "an unedited photo's curve moved the match");
-        let undone = graded(&told, Some(told.curve.clone()));
+        let undone = graded(&told, Some(told.exposure), Some(super::ToneCurve::PchipCbrt3 {
+            points: told.curve.clone(),
+        }));
         let worst = plain.iter().zip(&undone).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
         assert!(worst <= 2, "the camera's own curve, written out, moved the match by {worst} codes");
+
+        let one_stop = crate::hdr_fit::HdrColour {
+            exposure: Stops::measured(1.0),
+            ..fitted.clone()
+        };
+        assert_eq!(plain, graded(&one_stop, None, None));
+        let zero = graded(&one_stop, Some(Stops::ZERO), None);
+        let middle = plain.iter().position(|&code| (1000..30000).contains(&code))
+            .expect("a midtone");
+        let ratio = f64::from(zero[middle]) / f64::from(plain[middle]);
+        assert!((ratio - 0.5).abs() < 0.01, "zero exposure left midtone at {ratio:.3} of match");
     }
 
     /// The temperature reaches a frame that is already up.

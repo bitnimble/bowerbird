@@ -31,6 +31,28 @@ fn sample() -> Sample {
 }
 
 #[test]
+fn an_unknown_tone_curve_kind_is_refused() {
+    let curve = r#"{"kind":"linearSrgb","points":[[0,0],[1,1]]}"#;
+    assert!(serde_json::from_str::<rawshim::gpu::ToneCurve>(curve).is_err());
+}
+
+#[test]
+fn invalid_curve_points_are_refused_at_the_json_boundary() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/tables/module-json.json");
+    let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    for points in [
+        vec![[0.5, 0.1], [0.4, 0.9]],
+        vec![[0.5, 0.1], [0.5, 0.9]],
+        (0..17).map(|i| [i as f64 / 16.0; 2]).collect(),
+        vec![[0.0, 0.0], [1.0, 1.1]],
+    ] {
+        let mut adjust = fixture["adjust"].clone();
+        adjust["toneCurve"]["points"] = serde_json::to_value(points).unwrap();
+        assert!(serde_json::from_value::<rawshim::gpu::Adjust>(adjust).is_err());
+    }
+}
+
+#[test]
 fn a_tick_names_its_region_the_way_this_host_reads_it() {
     let region = sample().region;
     assert_eq!((region.x, region.y), (12.5, 34.25));
@@ -43,10 +65,11 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
     assert_eq!(adjust.contrast, 11.0);
     assert_eq!(adjust.highlights, -22.0);
     assert_eq!(adjust.shadows, 33.0);
-    // The camera match's own, which a stand-in number would override.
     assert_eq!(adjust.whites, -44.0);
     assert_eq!(adjust.blacks, 55.0);
-    assert_eq!(adjust.tone_curve, Some(vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]]));
+    assert_eq!(adjust.tone_curve, Some(rawshim::gpu::ToneCurve::PchipCbrt3 {
+        points: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
+    }));
     assert_eq!(adjust.vibrance, -66.0);
     assert_eq!(adjust.saturation, 77.0);
     assert_eq!(adjust.texture, -88.0);

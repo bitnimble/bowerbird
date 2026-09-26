@@ -196,9 +196,9 @@ pub struct Job {
     /// on the way in is one rule with an implementation on each path, and the kind that fails
     /// silently because both answers are plausible exposures. `colour.slang` raises it once, for
     /// both.
-    ///
+    /// None resolves to the camera match's level, or zero without a match.
     #[serde(default)]
-    pub exposure: Stops,
+    pub exposure: Option<Stops>,
     /// The reader's tonal and colour sliders, on Camera Raw's -100..100 scales.
     ///
     /// Defaulted whole, so a caller that knows nothing about edits sends no field and gets
@@ -1704,8 +1704,8 @@ pub(crate) async fn render(
     // Refused rather than clamped where it is not positive: a gain of zero or less is not a
     // dark picture, it is a caller that sent stops where a multiplier belongs, and grading
     // every photo in the library black is a worse answer than saying so.
-    if !job.exposure.raw().is_finite() {
-        return Err(format!("an exposure is a number of stops: {}", job.exposure.raw()));
+    if job.exposure.is_some_and(|exposure| !exposure.raw().is_finite()) {
+        return Err(format!("an exposure is a number of stops: {:?}", job.exposure));
     }
     let scene = tone::SceneGrade::new(
         matched.as_ref().and_then(|m| m.colour.as_ref()),
@@ -1761,7 +1761,7 @@ pub(crate) async fn render(
     // (`composite_job::camera_levels`), so the knee a render of the RAWs rolled off against is not on
     // its scale. Both halves of the pair are gated, or the arm that is forbidden from filing a peak
     // would still be graded by one.
-    let at_rest = job.exposure == Stops::ZERO && job.adjust == crate::gpu::Adjust::none();
+    let at_rest = job.exposure.is_none() && job.adjust == crate::gpu::Adjust::none();
     // The cache key omits match mode, so neutral peaks must not reuse or replace matched peaks.
     let keeps_peak = at_rest && describes_the_photograph && matched.as_ref().is_some_and(|m| m.colour.is_some());
     let known_peak = match keeps_peak {
@@ -2288,5 +2288,32 @@ mod tests {
         );
         assert_eq!(job.scene_peak, Some(Light::measured(4130.5)));
         assert_eq!(job.noise_fit.map(|fit| fit.alpha), Some(0.0001502));
+        assert_eq!(job.exposure, Some(Stops::measured(0.5)));
+    }
+
+    #[test]
+    fn a_job_preserves_null_and_explicit_exposure() {
+        let mut value = serde_json::json!({
+            "rawFilePath": "/library/a.arw", "cameraMatch": "lensAndColour", "targets": [],
+            "sharpen": 0, "defringe": 0,
+            "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+            "exposure": null
+        });
+        let rest: Job = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(rest.exposure, None);
+        value["exposure"] = serde_json::json!(1.75);
+        let moved: Job = serde_json::from_value(value).unwrap();
+        assert_eq!(moved.exposure, Some(Stops::measured(1.75)));
+
+        let mut value = serde_json::json!({
+            "rawFilePath": "/library/a.arw", "cameraMatch": "lensAndColour", "targets": [],
+            "sharpen": 0, "defringe": 0,
+            "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+            "adjust": { "toneCurve": serde_json::to_value(crate::gpu::ToneCurve::PchipCbrt3 {
+                points: crate::light::IDENTITY_CURVE.to_vec()
+            }).unwrap() }
+        });
+        value["adjust"]["toneCurve"]["points"] = serde_json::json!([[0.5, 0.0], [0.4, 1.0]]);
+        assert!(serde_json::from_value::<Job>(value).is_err());
     }
 }

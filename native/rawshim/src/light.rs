@@ -198,6 +198,9 @@ pub struct Gain(f64);
 pub struct Stops(f64);
 
 pub const CURVE_TOP: Stops = Stops::exactly(3.0);
+pub const PIVOT: Light<Scene> = Light::exactly(0.18);
+pub const CURVE_MAX_POINTS: usize = 16;
+pub const IDENTITY_CURVE: [[f64; 2]; 2] = [[0.0, 0.0], [1.0, 1.0]];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CurveCode(f64);
@@ -207,12 +210,12 @@ impl CurveCode {
         Self(code)
     }
 
-    pub fn of_white_ratio(ratio: f64) -> Self {
-        Self(ratio.max(0.0).cbrt() / CURVE_TOP.raw().exp2().cbrt())
+    pub fn of_white_ratio(ratio: Gain) -> Self {
+        Self(ratio.raw().max(0.0).cbrt() / CURVE_TOP.raw().exp2().cbrt())
     }
 
-    pub fn white_ratio(self) -> f64 {
-        (self.0 * CURVE_TOP.raw().exp2().cbrt()).powi(3)
+    pub fn white_ratio(self) -> Gain {
+        Gain::of_ratio((self.0 * CURVE_TOP.raw().exp2().cbrt()).powi(3))
     }
 
     pub fn raw(self) -> f64 {
@@ -222,7 +225,7 @@ impl CurveCode {
 
 /// 2 to 16 finite points inside the unit square, rising in x and never falling in y.
 pub fn curve_is_valid(points: &[[f64; 2]]) -> bool {
-    (2..=16).contains(&points.len())
+    (2..=CURVE_MAX_POINTS).contains(&points.len())
         && points.iter().all(|p| p.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)))
         && points.windows(2).all(|p| p[0][0] < p[1][0] && p[0][1] <= p[1][1])
 }
@@ -250,13 +253,14 @@ pub fn curve_tangents(points: &[[f64; 2]]) -> Vec<f64> {
     tangents
 }
 
-pub fn curve_at(points: &[[f64; 2]], tangents: &[f64], x: f64) -> f64 {
+pub fn curve_at(points: &[[f64; 2]], tangents: &[f64], code: CurveCode) -> CurveCode {
+    let x = code.raw();
     if x <= points[0][0] {
-        return points[0][1];
+        return CurveCode::from_raw(points[0][1]);
     }
     let last = points.len() - 1;
     if x >= points[last][0] {
-        return points[last][1] + (x - points[last][0]) * tangents[last];
+        return CurveCode::from_raw(points[last][1] + (x - points[last][0]) * tangents[last]);
     }
     let i = points.partition_point(|point| point[0] < x) - 1;
     let width = points[i + 1][0] - points[i][0];
@@ -265,7 +269,7 @@ pub fn curve_at(points: &[[f64; 2]], tangents: &[f64], x: f64) -> f64 {
     let b = (t.powi(3) - 2.0 * t.powi(2) + t) * width * tangents[i];
     let c = (-2.0 * t.powi(3) + 3.0 * t.powi(2)) * points[i + 1][1];
     let d = (t.powi(3) - t.powi(2)) * width * tangents[i + 1];
-    a + b + c + d
+    CurveCode::from_raw(a + b + c + d)
 }
 
 impl Gain {
@@ -547,7 +551,7 @@ mod tests {
             .into_iter()
             .map(|(name, points)| {
                 let tangents = curve_tangents(&points);
-                let samples = axes.iter().map(|&x| [x, curve_at(&points, &tangents, x)]).collect();
+                let samples = axes.iter().map(|&x| [x, curve_at(&points, &tangents, CurveCode::from_raw(x)).raw()]).collect();
                 CurveCase { name: name.to_string(), points, tangents, samples }
             })
             .collect();
@@ -581,18 +585,22 @@ mod tests {
     fn curve_code_and_monotone_tangents_match_the_shader_contract() {
         assert!(include_str!("../../../slang/light.slang")
             .contains("public static const Stops CURVE_TOP = { 3.0 };"));
-        assert_eq!(CURVE_TOP, Stops::exactly(3.0));
-        assert_eq!(CurveCode::of_white_ratio(1.0).raw(), 0.5);
-        assert_eq!(CurveCode::of_white_ratio(8.0).raw(), 1.0);
-        assert_eq!(CurveCode::from_raw(1.0).white_ratio(), 8.0);
+        let pivot: f64 = include_str!("../../../slang/adjust.slang")
+            .split_once("PIVOT = {").unwrap().1
+            .split_once('}').unwrap().0.trim().parse().unwrap();
+        assert_eq!(PIVOT.raw(), pivot);
+        assert!(include_str!("../../../slang/light.slang").contains(&format!("public static const uint CURVE_POINTS = {CURVE_MAX_POINTS};")));
+        assert_eq!(CurveCode::of_white_ratio(Gain::ONE).raw(), 0.5);
+        assert_eq!(CurveCode::of_white_ratio(Gain::of(CURVE_TOP)).raw(), 1.0);
+        assert_eq!(CurveCode::from_raw(1.0).white_ratio(), Gain::of(CURVE_TOP));
         let points = [[0.0, 0.1], [0.3, 0.1], [0.6, 0.8], [1.0, 1.0]];
         let tangents = curve_tangents(&points);
         assert_eq!(tangents[1], 0.0);
         let values: Vec<f64> =
-            (0..=100).map(|i| curve_at(&points, &tangents, i as f64 / 100.0)).collect();
+            (0..=100).map(|i| curve_at(&points, &tangents, CurveCode::from_raw(i as f64 / 100.0)).raw()).collect();
         assert!(values.windows(2).all(|pair| pair[0] <= pair[1] + 1e-12));
-        assert_eq!(curve_at(&points, &tangents, -1.0), 0.1);
-        assert!(curve_at(&points, &tangents, 1.2) > 1.0);
+        assert_eq!(curve_at(&points, &tangents, CurveCode::from_raw(-1.0)).raw(), 0.1);
+        assert!(curve_at(&points, &tangents, CurveCode::from_raw(1.2)).raw() > 1.0);
     }
 
     /// The algebra a bare `f64` had nothing to say about.

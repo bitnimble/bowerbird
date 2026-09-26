@@ -180,7 +180,7 @@ impl SurroundThumb {
 
 /// `PartialEq` because [`crate::gpu::Uploaded`] owns a copy and refuses a grade describing a
 /// different one; the fields are plain numbers, so the derive is the whole comparison.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct HdrColour {
     /// Per-channel, `BINS` samples spanning render values 0 to `ceiling`.
     pub curves: [Vec<f64>; 3],
@@ -250,22 +250,8 @@ pub struct HdrColour {
     /// than chooses, and it remains one number over a whole frame - so a render is what says
     /// a render is right.
     pub delta_e: f64,
+    pub exposure: crate::light::Stops,
     pub curve: Vec<[f64; 2]>,
-    pub curve_error: f64,
-}
-
-impl PartialEq for HdrColour {
-    fn eq(&self, other: &Self) -> bool {
-        self.curves == other.curves
-            && self.ceiling == other.ceiling
-            && self.anchor == other.anchor
-            && self.matrix == other.matrix
-            && self.saturation == other.saturation
-            && self.chroma == other.chroma
-            && self.surround == other.surround
-            && self.delta_e == other.delta_e
-            && self.curve == other.curve
-    }
 }
 
 /// Nodes across each chroma axis and up the level axis.
@@ -1379,8 +1365,8 @@ impl HdrColour {
             chroma: None,
             surround: SurroundThumb::none(),
             delta_e: 0.0,
-            curve: vec![[0.0, 0.0], [1.0, 1.0]],
-            curve_error: 0.0,
+            exposure: crate::light::Stops::ZERO,
+            curve: crate::light::IDENTITY_CURVE.to_vec(),
         }
     }
 }
@@ -5075,8 +5061,8 @@ async fn fit_model(
         chroma: None,
         surround: SurroundThumb::none(),
         delta_e: f64::INFINITY,
-        curve: vec![[0.0, 0.0], [1.0, 1.0]],
-        curve_error: 0.0,
+        exposure: crate::light::Stops::ZERO,
+        curve: crate::light::IDENTITY_CURVE.to_vec(),
     };
     lap("curves");
 
@@ -5226,74 +5212,114 @@ pub async fn fit_linearised(
     // two passes that both already have it.
     let mut colour =
         fit_model_planes(gpu, plane, 1.0 / levels.white.raw(), wide_jpeg, &lens).await?;
-    (colour.curve, colour.curve_error) = camera_curve(gpu, &colour, levels.floor_share()).await?;
+    let (exposure, curve) = camera_curve(gpu, &colour).await
+        .map(|(exposure, curve, _)| (exposure, curve))
+        .unwrap_or_else(|| (crate::light::Stops::ZERO, crate::light::IDENTITY_CURVE.to_vec()));
+    colour.exposure = exposure;
+    colour.curve = curve;
     Some(HdrMatch { lens, colour: Some(colour) })
 }
 
 const CAMERA_CURVE_MAX_POINTS: usize = 6;
 const CAMERA_CURVE_SAMPLES: usize = 257;
 const CAMERA_CURVE_MAX_ERROR: f64 = 0.005;
+const CAMERA_KNOT_GAP: f64 = 0.1;
+const CAMERA_EXPOSURE_LIMIT: crate::light::Stops = crate::light::Stops::exactly(4.0);
+const CAMERA_MIN_SLOPE: f64 = 0.02;
+const CAMERA_MIN_PIVOT_SHARE: crate::light::Gain = crate::light::Gain::of_ratio(1e-9);
+
+pub async fn camera_curve_error(gpu: &'static crate::gpu::Gpu, colour: &HdrColour) -> Option<f64> {
+    Some(camera_curve(gpu, colour).await?.2)
+}
 
 async fn camera_curve(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
-    floor: f64,
-) -> Option<(Vec<[f64; 2]>, f64)> {
-    let first = crate::light::CurveCode::of_white_ratio(floor.max(2.0f64.powi(-12)))
-        .raw()
-        .clamp(1e-4, 0.5);
+) -> Option<(crate::light::Stops, Vec<[f64; 2]>, f64)> {
+    use crate::light::{CurveCode, Gain, Light, Rendered, Stops};
+    let pivot = crate::light::PIVOT;
+    let white = Light::<Rendered>::measured(f64::from(
+        evaluated(gpu, colour, &[[1.0; 4]], Stage::ToneMatrix).await?[0][3]));
+    let at_pivot = Light::<Rendered>::measured(f64::from(
+        evaluated(gpu, colour, &[[pivot.raw() as f32; 4]], Stage::Full).await?[0][3]));
+    if !white.is_finite() || !at_pivot.is_finite()
+        || white <= Light::ZERO || at_pivot <= Light::ZERO {
+        return None;
+    }
+    let exposed_pivot = at_pivot / white;
+    if exposed_pivot.raw() <= CAMERA_MIN_PIVOT_SHARE.raw() { return None; }
+    let bounded = (exposed_pivot.raw() / pivot.raw()).log2()
+        .clamp(-CAMERA_EXPOSURE_LIMIT.raw(), CAMERA_EXPOSURE_LIMIT.raw());
+    let exposure = Stops::measured(f64::from(bounded as f32));
+    let gain = Gain::of(exposure);
+    let pivot_code = CurveCode::of_white_ratio(Gain::of_ratio(pivot.raw()) * gain).raw();
     let dense: Vec<f64> = (0..CAMERA_CURVE_SAMPLES)
         .map(|i| {
             if i == CAMERA_CURVE_SAMPLES - 1 {
                 1.0
             } else {
-                first + (1.0 - first) * i as f64 / (CAMERA_CURVE_SAMPLES - 1) as f64
+                i as f64 / (CAMERA_CURVE_SAMPLES - 1) as f64
             }
         })
         .collect();
     let levels: Vec<[f32; 4]> = dense
         .iter()
         .map(|&x| {
-            let level = crate::light::CurveCode::from_raw(x).white_ratio() as f32;
+            let level = (CurveCode::from_raw(x).white_ratio().raw() / gain.raw()) as f32;
             [level, level, level, level]
         })
         .collect();
-    let white = evaluated(gpu, colour, &[[1.0; 4]], Stage::ToneMatrix).await?[0][3].max(1e-9);
     let responses = evaluated(gpu, colour, &levels, Stage::Full).await?;
     let target: Vec<[f64; 2]> = dense
         .into_iter()
         .zip(responses)
         .map(|(x, output)| {
-            let y = crate::light::CurveCode::of_white_ratio(f64::from(output[3].max(0.0) / white))
+            let rendered = Light::<Rendered>::measured(f64::from(output[3].max(0.0)));
+            let y = CurveCode::of_white_ratio(rendered / white)
                 .raw()
                 .clamp(0.0, 1.0);
             [x, y]
         })
         .collect();
-    Some(fitted_camera_curve(&target))
+    if target[0][1] > pivot_code * (1.0 - CAMERA_MIN_SLOPE) { return None; }
+    let (curve, error) = fitted_camera_curve(&target, pivot_code);
+    Some((exposure, curve, error))
 }
 
-fn fitted_camera_curve(target: &[[f64; 2]]) -> (Vec<[f64; 2]>, f64) {
+fn fitted_camera_curve(target: &[[f64; 2]], pivot: f64) -> (Vec<[f64; 2]>, f64) {
     let mut monotone = Vec::with_capacity(target.len());
     let mut last = 0.0f64;
     for &[x, y] in target {
-        last = last.max(y);
-        monotone.push([x, last]);
+        let offset = (y - CAMERA_MIN_SLOPE * x).clamp(0.0, 1.0 - CAMERA_MIN_SLOPE);
+        let pivot_offset = pivot * (1.0 - CAMERA_MIN_SLOPE);
+        let bounded = if x < pivot { offset.min(pivot_offset) } else { offset.max(pivot_offset) };
+        last = last.max(bounded);
+        monotone.push([x, last + CAMERA_MIN_SLOPE * x]);
     }
-    let mut curve = vec![[0.0, monotone[0][1]], [1.0, last]];
+    let mut curve = vec![[0.0, monotone[0][1]], [pivot, pivot], [1.0, last + CAMERA_MIN_SLOPE]];
     loop {
         let tangents = crate::light::curve_tangents(&curve);
-        let mut worst = (0usize, 0.0f64);
+        let mut max_error = 0.0f64;
+        let mut eligible: Option<(usize, f64)> = None;
         for (index, &[x, y]) in monotone.iter().enumerate() {
-            let error = (crate::light::curve_at(&curve, &tangents, x) - y).abs();
-            if error > worst.1 {
-                worst = (index, error);
+            let error = (crate::light::curve_at(&curve, &tangents, crate::light::CurveCode::from_raw(x)).raw() - y).abs();
+            max_error = max_error.max(error);
+            if curve.iter().all(|point| (point[0] - x).abs() >= CAMERA_KNOT_GAP)
+                && eligible.is_none_or(|(_, best)| error > best)
+            {
+                eligible = Some((index, error));
             }
         }
-        if worst.1 < CAMERA_CURVE_MAX_ERROR || curve.len() == CAMERA_CURVE_MAX_POINTS {
-            return (curve, worst.1);
+        if max_error < CAMERA_CURVE_MAX_ERROR || curve.len() == CAMERA_CURVE_MAX_POINTS || eligible.is_none() {
+            for point in &mut curve { for value in point { *value = f64::from(*value as f32); } }
+            let tangents = crate::light::curve_tangents(&curve);
+            let error = monotone.iter().map(|&[x, y]|
+                (crate::light::curve_at(&curve, &tangents, crate::light::CurveCode::from_raw(x)).raw() - y).abs()
+            ).fold(0.0f64, f64::max);
+            return (curve, error);
         }
-        let point = monotone[worst.0];
+        let (index, _) = eligible.expect("an eligible knot");
+        let point = monotone[index];
         let at = curve.partition_point(|existing| existing[0] < point[0]);
         curve.insert(at, point);
     }
@@ -5846,6 +5872,53 @@ pub fn render_srgb8(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camera_curve_fits_the_neutral_target_and_keeps_a_quantised_diagonal_pivot() {
+        let gpu = searching();
+        let colour = HdrColour::identity();
+        let (exposure, curve, error) = pollster::block_on(camera_curve(gpu, &colour)).unwrap();
+        let pivot = crate::light::PIVOT.raw();
+        let white = pollster::block_on(evaluated(gpu, &colour, &[[1.0; 4]], Stage::ToneMatrix)).unwrap()[0][3];
+        let grey = pollster::block_on(evaluated(gpu, &colour, &[[pivot as f32; 4]], Stage::Full)).unwrap()[0][3];
+        let expected = f64::from((f64::from(grey) / f64::from(white) / pivot).log2() as f32);
+        assert_eq!(exposure.raw(), expected);
+        assert!(curve.iter().any(|p| p[0] > 0.0 && p[0] < 1.0 && p[0] == p[1]));
+        assert!(curve.iter().flatten().all(|&v| v == f64::from(v as f32)));
+        assert!(curve.windows(2).all(|p| p[1][1] > p[0][1]));
+        assert!(error < CAMERA_CURVE_MAX_ERROR, "neutral fit error {error}");
+        let mut degenerate = colour;
+        degenerate.matrix = [[0.0; 3]; 3];
+        assert!(pollster::block_on(camera_curve(gpu, &degenerate)).is_none());
+        assert_eq!(degenerate.curve, crate::light::IDENTITY_CURVE);
+        assert_eq!(degenerate.exposure, crate::light::Stops::ZERO);
+        let mut deep = HdrColour::identity();
+        for channel in &mut deep.curves { for light in channel { *light = light.powi(4); } }
+        let (exposure, _, _) = pollster::block_on(camera_curve(gpu, &deep)).unwrap();
+        assert_eq!(exposure.raw(), -CAMERA_EXPOSURE_LIMIT.raw());
+        let mut raised = HdrColour::identity();
+        for channel in &mut raised.curves { for light in channel { *light = 0.8 + 0.2 * *light; } }
+        assert!(pollster::block_on(camera_curve(gpu, &raised)).is_none());
+    }
+
+    #[test]
+    fn camera_knots_leave_room_for_handles() {
+        let target: Vec<[f64; 2]> = (0..=256)
+            .map(|i| {
+                let x = 0.02 + 0.98 * i as f64 / 256.0;
+                [x, (x / 0.25).sqrt().min(1.0)]
+            })
+            .collect();
+        let (curve, _) = fitted_camera_curve(&target, 0.28);
+        assert!((3..=CAMERA_CURVE_MAX_POINTS).contains(&curve.len()));
+        assert!(curve.contains(&[f64::from(0.28f32); 2]));
+        assert!(curve.windows(2).all(|pair| pair[1][0] - pair[0][0] + 1e-7 >= CAMERA_KNOT_GAP));
+
+        let target = [[0.04, 0.3], [0.05, 0.6], [0.96, 0.9], [1.0, 1.0]];
+        let (curve, error) = fitted_camera_curve(&target, 0.5);
+        assert_eq!(curve.len(), 3);
+        assert!(error > CAMERA_CURVE_MAX_ERROR);
+    }
 
     /// The selection over two planes flat enough that its own ceiling lands on `TRUST_CEILING`,
     /// so the only thing varying is the pair.

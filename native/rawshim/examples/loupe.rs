@@ -85,7 +85,7 @@ fn main() {
     drop(frame);
     let window =
         rawshim::tile::prepared(rawshim::tile::Source::Path(raw), &request).expect("a tile");
-    let scene = window.scene(rawshim::light::Stops::ZERO, rawshim::gpu::Adjust::none());
+    let scene = window.scene(None, rawshim::gpu::Adjust::none());
     // Diffuse white as the peak, because this writes sRGB: the same reasoning as `renders`.
     let grade = window.grade(
         &scene,

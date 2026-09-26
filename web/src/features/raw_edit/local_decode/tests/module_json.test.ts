@@ -6,14 +6,20 @@
 // renamed in `edits.ts` stops compiling here, and one added or dropped fails the comparison.
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import { TONE_CURVE_KIND } from '../../../../../../src/schemas/photo_edits';
 import type { EditAdjust, EditGeometry, Region } from '../../edits';
 import { DEFAULT_PRINT_SCENE, PrintSceneSchema } from '../../print/print_scene';
+import { OpenAskSchema } from '../local_open';
 
 // Typed as what it is meant to be so the comparisons below read straight. It is the *literals*
 // that carry the annotation this pin rests on; the file is the other host's answer.
 const sample = (await Bun.file(
   new URL('../../../../../../test/fixtures/tables/module-json.json', import.meta.url).pathname,
-).json()) as { region: Region; adjust: EditAdjust; geometry: EditGeometry };
+).json()) as {
+  region: Region;
+  adjust: EditAdjust;
+  geometry: EditGeometry;
+};
 
 describe('what a tick carries', () => {
   test('names the print scene as the module reads it', async () => {
@@ -39,6 +45,15 @@ describe('what a tick carries', () => {
     expect(region).toEqual(sample.region);
   });
 
+  test('carries the camera exposure and an explicit override', () => {
+    for (const ev of [null, 1.75]) {
+      expect(OpenAskSchema.parse({
+        kind: 'tick', ev, drawStage: true, region: null, loupe: null, adjust: null,
+        geometry: null, proof: null, print: null, stage: null,
+      })).toMatchObject({ kind: 'tick', ev });
+    }
+  });
+
   test('names every slider as the module reads it', () => {
     const adjust: EditAdjust = {
       contrast: 11,
@@ -46,7 +61,7 @@ describe('what a tick carries', () => {
       shadows: 33,
       whites: -44,
       blacks: 55,
-      toneCurve: [[0, 0.04], [0.35, 0.3], [0.7, 0.78], [1, 1]],
+      toneCurve: { kind: TONE_CURVE_KIND, points: [[0, 0.04], [0.35, 0.3], [0.7, 0.78], [1, 1]] },
       vibrance: -66,
       saturation: 77,
       texture: -88,

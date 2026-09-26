@@ -10,7 +10,7 @@
 // front of it - while a plain React input in the same document answers all three. Their wiring
 // stays in `raw_editing.spec.ts`, where a browser can say.
 import { afterEach, describe, expect, test } from 'bun:test';
-import { neutralEdits } from '../../../../../src/schemas/photo_edits';
+import { neutralEdits, TONE_CURVE_KIND } from '../../../../../src/schemas/photo_edits';
 import { registerDom } from '../../../test_dom';
 import { CropStore } from '../crop/crop_store';
 import { EditStore } from '../edit/edit_store';
@@ -85,9 +85,10 @@ function open(
   // What the open resolved the Detail pair to off this frame's fit, which is what the two rows
   // show where the document holds nothing. Distinct and off every fixed number the panel could
   // have fallen back to, so a row reading one of those fails here.
-  stage.detail = [24, 76];
+  stage.detail = status === 'live' ? [24, 76] : null;
   // The same for the camera match's own tone, fitted rather than chosen, so off every step too.
-  stage.cameraCurve = [[0, 0.1], [1, 1]];
+  stage.cameraCurve = { kind: TONE_CURVE_KIND, points: [[0, 0.1], [1, 1]] };
+  stage.cameraExposure = 0.347;
   stage.noiseFit = noiseFit;
   const { presenter, calls } = recording();
   render(
@@ -176,35 +177,32 @@ describe('the edit panel', () => {
     expect(calls).toEqual([{ name: 'settle', value: { highlights: 0 } }]);
   });
 
-  test('shows numeric neutral tone sliders', () => {
-    const { calls } = open();
-
+  test('shows the camera exposure rounded to its slider step', () => {
+    open();
     const light = within(screen.getByRole('group', { name: 'Light' }));
-    expect((light.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe('0.00 EV');
-    expect(screen.getByRole('slider', { name: 'Contrast' }).getAttribute('aria-valuenow')).toBe('0');
-    expect(screen.getByRole('slider', { name: 'Whites' }).getAttribute('aria-valuenow')).toBe('0');
-    expect(screen.getByRole('slider', { name: 'Blacks' }).getAttribute('aria-valuenow')).toBe('0');
-    screen.getByLabelText('Reset Contrast').click();
-    expect(calls).toEqual([]);
+    expect((light.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe('+0.35 EV');
   });
 
-  test('reads the tone at zero with the colour profile off, as the picture is', () => {
+  test('shows zero exposure with the camera profile off', () => {
     open({ colourProfile: 'none' });
-    expect(screen.getByRole('slider', { name: 'Contrast' }).getAttribute('aria-valuenow')).toBe('0');
     expect(
       (screen.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value,
     ).toBe('0.00 EV');
   });
 
-  test('resets a moved tone slider to zero', () => {
-    const { calls } = open({ exposure: 1.5, contrast: 40 });
+  test('resets exposure to the camera value', () => {
+    const { calls } = open({ exposure: 1.5 });
 
     screen.getByLabelText('Reset Exposure').click();
-    screen.getByLabelText('Reset Contrast').click();
     expect(calls).toEqual([
-      { name: 'settle', value: { exposure: 0 } },
-      { name: 'settle', value: { contrast: 0 } },
+      { name: 'settle', value: { exposure: null } },
     ]);
+  });
+
+  test('leaves the exposure readout unknown until the header arrives', () => {
+    open({}, null, false, 'opening');
+    expect(screen.queryByRole('textbox', { name: 'Exposure value' })).toBeNull();
+    expect((screen.getByRole('slider', { name: 'Exposure' }) as HTMLInputElement).disabled).toBe(true);
   });
 
   test('offers nothing to reset on a parameter nobody has moved', () => {

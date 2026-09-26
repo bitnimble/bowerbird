@@ -86,7 +86,7 @@ export interface Developed {
   sharpen: number;
   defringe: number;
   /** The photographer's exposure in stops, as the document stores it. */
-  exposure: number;
+  exposure: number | null;
   /** The rest of the reader's sliders, on Camera Raw's -100..100 scales (`JobAdjustSchema`). */
   adjust: JobAdjust;
   /** The reader's crop, straighten and quarter turn. */

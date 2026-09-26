@@ -45,7 +45,7 @@ fn main() {
     paths.truncate(limit);
 
     println!(
-        "{:<18} {:>7} {:>8} {:>8} {:>4} {:>8} {:>9} {:>9}  camera curve (max u error)",
+        "{:<18} {:>7} {:>8} {:>8} {:>4} {:>8} {:>9} {:>9}  camera exposure, curve (max u error)",
         "frame", "deltaE", "percept", "relative", "map", "neutrals", "drift g-r", "drift b-r"
     );
     let mut worst: Vec<(f64, String)> = Vec::new();
@@ -59,7 +59,7 @@ fn main() {
             Some(r) => {
                 println!(
                     "{name:<18} {:>7.3} {:>8.3} {:>8.3} {:>4} {:>8} {:>+9.1} {:>+9.1}  \
-                     {:?} ({:.6})",
+                     {:+.3} stops, {:?} ({:.6})",
                     r.delta_e,
                     r.rendered,
                     r.rendered_relative,
@@ -70,6 +70,7 @@ fn main() {
                     r.neutrals,
                     r.drift_gr,
                     r.drift_br,
+                    r.exposure.raw(),
                     r.curve,
                     r.curve_error,
                 );
@@ -110,6 +111,7 @@ struct Report {
     neutrals: usize,
     drift_gr: f64,
     drift_br: f64,
+    exposure: rawshim::light::Stops,
     curve: Vec<[f64; 2]>,
     curve_error: f64,
 }
@@ -148,8 +150,9 @@ fn measure(path: &str) -> Option<Report> {
         neutrals: perceptual.neutrals,
         drift_gr: perceptual.drift_gr,
         drift_br: perceptual.drift_br,
+        exposure: matched.colour.as_ref()?.exposure,
         curve: matched.colour.as_ref()?.curve.clone(),
-        curve_error: matched.colour.as_ref()?.curve_error,
+        curve_error: pollster::block_on(rawshim::hdr_fit::camera_curve_error(gpu, matched.colour.as_ref()?)).unwrap_or(0.0),
     })
 }
 

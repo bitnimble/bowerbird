@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   EditDocSchema,
+  TONE_CURVE_KIND,
   applyEdits,
   diffEdits,
   neutralEdits,
@@ -14,15 +15,23 @@ function doc(over: Partial<EditDoc> = {}): EditDoc {
 }
 
 describe('tone curve document', () => {
-  it('defaults tone sliders to zero and leaves the camera curve selected', () => {
-    expect(neutralEdits()).toMatchObject({ exposure: 0, contrast: 0, whites: 0, blacks: 0, toneCurve: null });
+  it('defaults exposure and the curve to the camera while other tone sliders start at zero', () => {
+    expect(neutralEdits()).toMatchObject({ exposure: null, contrast: 0, whites: 0, blacks: 0, toneCurve: null });
+    expect(EditDocSchema.parse({ exposure: 0 }).exposure).toBe(0);
   });
 
   it('keeps ordered points within the curve axes', () => {
-    expect(EditDocSchema.safeParse({ toneCurve: [[0, 0], [0.5, 0.6], [1, 1]] }).success).toBe(true);
-    expect(EditDocSchema.safeParse({ toneCurve: [[0, 0], [0, 0.4]] }).success).toBe(false);
-    expect(EditDocSchema.safeParse({ toneCurve: [[0, 0.6], [1, 0.4]] }).success).toBe(false);
-    expect(EditDocSchema.safeParse({ toneCurve: [[0, 0], [0.5, 1.1]] }).success).toBe(false);
+    const curve = (points: [number, number][]) => ({ kind: TONE_CURVE_KIND, points });
+    expect(EditDocSchema.safeParse({ toneCurve: curve([[0, 0], [0.5, 0.6], [1, 1]]) }).success).toBe(true);
+    expect(EditDocSchema.safeParse({ toneCurve: curve([[0, 0], [0, 0.4]]) }).success).toBe(false);
+    expect(EditDocSchema.safeParse({ toneCurve: curve([[0, 0.6], [1, 0.4]]) }).success).toBe(false);
+    expect(EditDocSchema.safeParse({ toneCurve: curve([[0, 0], [0.5, 1.1]]) }).success).toBe(false);
+    expect(EditDocSchema.safeParse({ toneCurve: { kind: 'someOtherCurve', points: [[0, 0], [1, 1]] } }).success).toBe(false);
+  });
+
+  it('rejects 17 strictly rising points', () => {
+    const points = Array.from({ length: 17 }, (_, index) => [index / 16, index / 16]);
+    expect(EditDocSchema.safeParse({ toneCurve: { kind: TONE_CURVE_KIND, points } }).success).toBe(false);
   });
 });
 

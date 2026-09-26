@@ -76,7 +76,7 @@ describe('PhotoEditsRepository.save', () => {
 
     // Not three undos through pictures that never existed - an import writes ten
     // fields at once and a crop drag four.
-    expect(undone.doc.exposure).toBe(0);
+    expect(undone.doc.exposure).toBeNull();
     expect(undone.doc.contrast).toBe(0);
     expect(undone.doc.shadows).toBe(0);
     expect(undone.canUndo).toBe(false);
@@ -104,7 +104,7 @@ describe('PhotoEditsRepository undo and redo', () => {
     expect(back.canRedo).toBe(true);
 
     const again = repo.undo(PHOTO, back.rev);
-    expect(again.doc.exposure).toBe(0);
+    expect(again.doc.exposure).toBeNull();
     expect(again.canUndo).toBe(false);
     expect(again.canRedo).toBe(true);
 

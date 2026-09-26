@@ -29,6 +29,12 @@ function parse(attrs: string, children = ''): XmpSettings {
 }
 
 describe('editsFromXmp', () => {
+  it('reports a non-identity Lightroom point curve without importing it', () => {
+    const { doc, unsupported } = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="1"`,
+      '<crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li><rdf:li>128, 150</rdf:li><rdf:li>255, 255</rdf:li></rdf:Seq></crs:ToneCurvePV2012>'));
+    expect(doc?.toneCurve).toBeNull();
+    expect(unsupported).toContain('Lightroom point curves');
+  });
   it('carries the tone and presence sliders across at the values the file states', () => {
     const { doc, reasons } = editsFromXmp(
       parse(
@@ -197,6 +203,13 @@ describe('editsFromXmp', () => {
     const { doc } = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="2.0"`));
 
     expect(doc).toEqual({ ...neutralEdits(), exposure: 2.0 });
+  });
+
+  it('leaves a zero exposure at the camera value alongside another edit', () => {
+    const { doc } = editsFromXmp(parse(`${CURRENT} crs:Exposure2012="0" crs:Contrast2012="20"`));
+
+    expect(doc?.exposure).toBeNull();
+    expect(doc?.contrast).toBe(20);
   });
 
   it('declines a sidecar whose tone sits at Camera Raw zeros and states nothing else', () => {

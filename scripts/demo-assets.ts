@@ -72,19 +72,6 @@ const SCENES: readonly string[] = ['gamut', 'whites', 'sun', 'saturated'];
  */
 const COLOUR = 'colour';
 
-/**
- * What the unmatched arm is exposed down by, so the pair differs in colour and not in level.
- *
- * The camera's curve is what rolls the highlights off, and the neutral arm does not have one,
- * so it renders brighter everywhere: on this frame 3.3% of its pixels clip against the matched
- * arm's 1.1%, and the overcast sky behind the trees goes flat white. That reads as a broken
- * render rather than as an unmatched one, which is the opposite of what the demo is for.
- *
- * Swept at 0.3 stop steps and measured against the matched arm: 0.9 stops down puts the two
- * within 0.2 points of each other on the share of the frame in the top quarter of the range,
- * 12.5% against 12.3%, and takes the clipping under it at 0.3%. The shadows stay lifted at any
- * exposure, because that is the curve rather than the level, and the demo says so.
- */
 const NEUTRAL_EXPOSURE = -0.9;
 
 /**
@@ -442,7 +429,7 @@ async function buildSwatches(): Promise<void> {
 async function buildColour(): Promise<void> {
   const raw = rawFor(COLOUR);
   for (const profile of ['matched', 'none'] as const) {
-    renderSrgb(raw, colourPath(profile), profile, profile === 'none' ? NEUTRAL_EXPOSURE : 0);
+    renderSrgb(raw, colourPath(profile), profile, profile === 'none' ? NEUTRAL_EXPOSURE : null);
     console.error(`[demo-assets] colour ${profile}: ${(Bun.file(colourPath(profile)).size / 1024).toFixed(0)}kB`);
   }
 }
@@ -514,7 +501,7 @@ async function buildPanorama(): Promise<void> {
 
   for (const frame of PANORAMA) {
     const path = join(LANDING_OUT, `${frame}.avif`);
-    renderSrgb(rawFor(frame), path, 'matched', 0, FRAME_EDGE);
+    renderSrgb(rawFor(frame), path, 'matched', null, FRAME_EDGE);
   }
 }
 
@@ -560,7 +547,7 @@ function renderSrgb(
   raw: string,
   outputPath: string,
   colourProfile: 'matched' | 'none',
-  exposure = 0,
+  exposure: number | null = null,
   size = LONG_EDGE,
 ): void {
   runJob({

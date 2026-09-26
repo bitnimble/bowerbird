@@ -42,6 +42,7 @@ export const PreparedHeaderSchema = z.object({
    * used it reports it rather than the page deriving a second copy that would drift.
    */
   detail: PairSchema,
+  cameraExposure: z.number().nullable(),
   /** The camera match's curve, or null where nothing was matched. */
   cameraCurve: ToneCurveSchema.nullable(),
   /**

@@ -1015,7 +1015,7 @@ impl HeldRaw {
         let frame = frame.into_frame();
         let refused = || JsValue::from_str("rawshim: this browser offered no WebGPU adapter");
         let gpu = crate::gpu::device().ok_or_else(refused)?;
-        let scene = window.scene(crate::light::Stops::ZERO, crate::gpu::Adjust::none());
+        let scene = window.scene(None, crate::gpu::Adjust::none());
         let grade = window.grade(&scene, request.grade.peak_nits, crate::gpu::Output::Pq);
         // **The photograph's peak, not this crop's**, which is why it is taken off the drawing:
         // it has already been claimed, so the upload measures nothing and the tile binds the same
@@ -1644,11 +1644,11 @@ impl HeldRaw {
     /// `region` absent draws the cropped picture whole, which is what a reader who has not panned
     /// is looking at - worked out here because the geometry it is cropped by is here.
     #[wasm_bindgen(js_name = tick)]
-    pub fn tick(&self, ev: f64, region: Option<String>) -> Result<(), JsValue> {
+    pub fn tick(&self, ev: Option<f64>, region: Option<String>) -> Result<(), JsValue> {
         // The page's own number, entering at the boundary that knows it is stops.
         self.draw(
             &self.stage,
-            crate::light::Stops::measured(ev),
+            ev.map(crate::light::Stops::measured),
             region.as_deref(),
             Reading::Frame,
             false,
@@ -1659,11 +1659,11 @@ impl HeldRaw {
     /// The same grade at the loupe's own region, onto the loupe's canvas: the rendition's own tile
     /// where one has been built for where it points, and the editor's frame until it lands.
     #[wasm_bindgen(js_name = tickLoupe)]
-    pub fn tick_loupe(&self, ev: f64, region: &str) -> Result<(), JsValue> {
+    pub fn tick_loupe(&self, ev: Option<f64>, region: &str) -> Result<(), JsValue> {
         let tile = self.tile.borrow();
         self.draw(
             &self.loupe,
-            crate::light::Stops::measured(ev),
+            ev.map(crate::light::Stops::measured),
             Some(region),
             tile.as_ref().map_or(Reading::Frame, Reading::Tile),
             true,
@@ -1678,7 +1678,7 @@ impl HeldRaw {
         &self,
         canvas: web_sys::OffscreenCanvas,
         side: u32,
-        ev: f64,
+        ev: Option<f64>,
         region: &str,
         repair: &str,
     ) -> Result<(), JsValue> {
@@ -1696,7 +1696,7 @@ impl HeldRaw {
         &self,
         canvas: web_sys::OffscreenCanvas,
         side: u32,
-        ev: f64,
+        ev: Option<f64>,
         region: &str,
         showing: Option<String>,
         option: &str,
@@ -1714,7 +1714,7 @@ impl HeldRaw {
         &self,
         canvas: web_sys::OffscreenCanvas,
         side: u32,
-        ev: f64,
+        ev: Option<f64>,
         region: &str,
         part: impl FnOnce(
             &crate::retouched_frame::RetouchedFrame,
@@ -1760,7 +1760,7 @@ impl HeldRaw {
         let (width, height, window) = part;
         let drawn = self.draw(
             &self.thumbnail,
-            crate::light::Stops::measured(ev),
+            ev.map(crate::light::Stops::measured),
             Some(region),
             Reading::Part {
                 uploaded: &uploaded,
@@ -1840,7 +1840,7 @@ impl HeldRaw {
     fn draw(
         &self,
         onto: &std::cell::RefCell<Option<crate::gpu::Stage>>,
-        ev: crate::light::Stops,
+        ev: Option<crate::light::Stops>,
         region: Option<&str>,
         reading: Reading<'_>,
         magnified: bool,

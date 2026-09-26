@@ -323,8 +323,8 @@ fn a_colorimetric_intent_leaves_what_the_paper_holds() {
     assert!((drawn / expected - 1.0).abs() < 0.02, "relative moved a colour the paper holds: {drawn} against {expected} nits");
 }
 
-/// The tones just under a blown patch: perceptual spends some of the paper on the patch and brings
-/// them down with it, where relative leaves them and clips the patch.
+/// The 1.3x-white probe lies above the knee. Perceptual compresses it beneath a 4x-white patch;
+/// relative preserves its level until the paper clips it.
 #[test]
 fn the_intents_differ_under_a_blown_highlight() {
     let colour = HdrColour::identity();

@@ -1,7 +1,7 @@
 import { type Locator, type Page, expect } from '@playwright/test';
 import { test } from '../fixtures';
 import { z } from 'zod';
-import { EditStateSchema } from '../../../src/schemas/photo_edits';
+import { EditStateSchema, TONE_CURVE_KIND } from '../../../src/schemas/photo_edits';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { EDIT_PHOTOS_DIR } from '../fixture_library';
 import {
@@ -284,45 +284,72 @@ test('tone curve points drag and drag off the plot', async ({ page }) => {
   const state = async () => EditStateSchema.parse(await (await page.request.get(editsUrl)).json());
   const original = await state();
   const seeded = await page.request.put(editsUrl, {
-    data: { doc: { ...original.doc, toneCurve: [[0, 0], [0.5, 0.5], [1, 1]] }, rev: original.rev, session: 'rawEditingSpec' },
+    data: { doc: { ...original.doc, exposure: null, toneCurve: { kind: TONE_CURVE_KIND, points: [[0, 0], [1, 1]] } }, rev: original.rev, session: 'rawEditingSpec' },
   });
   expect(seeded.ok()).toBe(true);
+  const seededState = EditStateSchema.parse(await seeded.json());
+  const savedByEditor = () => page.waitForResponse((response) =>
+    response.url().endsWith(editsUrl) && response.request().method() === 'PUT', { timeout: 30_000 });
 
   try {
     await open(page);
+    const exposure = page.getByRole('slider', { name: 'Exposure', exact: true });
+    const thumb = await exposure.evaluate((input) => {
+      const box = input.parentElement?.getBoundingClientRect();
+      if (box == null) throw new Error('exposure has no thumb');
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    });
+    const neutralCommit = savedByEditor();
+    await page.mouse.click(thumb.x, thumb.y);
+    expect(EditStateSchema.parse(await (await neutralCommit).json()).doc.exposure).toBeNull();
     const plot = page.getByRole('group', { name: 'Tone curve' });
-    const point = plot.getByRole('button', { name: /^Curve point 1,/ });
+    const plotBox = await plot.boundingBox();
+    if (plotBox == null) throw new Error('tone curve has no plot');
+    const insertedSave = savedByEditor();
+    await page.mouse.click(plotBox.x + plotBox.width / 2, plotBox.y + plotBox.height / 2);
+    const insertedState = EditStateSchema.parse(await (await insertedSave).json());
+    expect(insertedState.doc.toneCurve?.points).toHaveLength(3);
+    const point = plot.getByRole('slider', { name: /^Curve point 1,/ });
     await expect(point).toBeVisible();
     const originalName = await point.getAttribute('aria-label');
-    const before = await savedRev(page, photoId);
-    const plotBox = await plot.boundingBox();
     const pointBox = await point.boundingBox();
     if (plotBox == null || pointBox == null) throw new Error('tone curve has no plot or point');
 
     const x = pointBox.x + pointBox.width / 2;
     const y = pointBox.y + pointBox.height / 2;
     await page.mouse.move(x, y);
+    const movedSave = savedByEditor();
     await page.mouse.down();
+    await expect(point).toBeFocused();
     await page.mouse.move(x + plotBox.width * 0.1, y - plotBox.height * 0.1, { steps: 6 });
     await page.mouse.up();
 
     await expect(point).not.toHaveAttribute('aria-label', originalName ?? '');
-    await expect.poll(async () => (await state()).doc.toneCurve?.[1]?.[0] ?? 0, { timeout: 30_000 })
-      .toBeGreaterThan(0.55);
-    expect((await state()).doc.toneCurve?.[1]?.[1]).toBeGreaterThan(0.55);
-    const moved = await savedRev(page, photoId);
-    expect(moved).toBeGreaterThan(before);
+    const movedState = EditStateSchema.parse(await (await movedSave).json());
+    expect(movedState.doc.toneCurve?.points[1]?.[0]).toBeGreaterThan(0.55);
+    expect(movedState.doc.toneCurve?.points[1]?.[1]).toBeGreaterThan(0.55);
+    expect(movedState.rev).toBeGreaterThan(seededState.rev);
 
     const movedBox = await point.boundingBox();
     if (movedBox == null) throw new Error('tone curve point disappeared before removal');
     await page.mouse.move(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2);
+    const removedSave = savedByEditor();
     await page.mouse.down();
-    await page.mouse.move(plotBox.x + plotBox.width * 1.3, plotBox.y + plotBox.height / 2, { steps: 8 });
+    await page.mouse.move(plotBox.x - plotBox.width * 0.2, plotBox.y + plotBox.height / 2, { steps: 8 });
     await page.mouse.up();
 
-    await expect(plot.getByRole('button', { name: /^Curve point/ })).toHaveCount(0);
-    await expect.poll(async () => (await state()).doc.toneCurve?.length, { timeout: 30_000 }).toBe(2);
-    expect(await savedRev(page, photoId)).toBeGreaterThan(moved);
+    await expect(plot.getByRole('slider', { name: /^Curve point/ })).toHaveCount(0);
+    const removedState = EditStateSchema.parse(await (await removedSave).json());
+    expect(removedState.doc.toneCurve?.points).toHaveLength(2);
+    expect(removedState.rev).toBeGreaterThan(movedState.rev);
+    const reinsertedSave = savedByEditor();
+    await page.mouse.click(plotBox.x + plotBox.width / 2, plotBox.y + plotBox.height / 2);
+    await reinsertedSave;
+    const doubleClickSave = savedByEditor();
+    await plot.getByRole('slider', { name: /^Curve point 1,/ }).dblclick();
+    const doubleClickedState = EditStateSchema.parse(await (await doubleClickSave).json());
+    expect(doubleClickedState.doc.toneCurve?.points).toHaveLength(2);
+    await expect(plot.getByRole('slider', { name: /^Curve point/ })).toHaveCount(0);
   } finally {
     const current = await state();
     const restored = await page.request.put(editsUrl, {

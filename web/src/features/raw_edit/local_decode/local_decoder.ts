@@ -286,7 +286,7 @@ export class LocalDecoder {
    * `region` of the output from under `repair`, every other repair as drawn, as a PNG `side`
    * pixels square: what the repair removed.
    */
-  repairThumbnail(side: number, ev: number, region: Region, repair: Repair): Promise<Blob> {
+  repairThumbnail(side: number, ev: number | null, region: Region, repair: Repair): Promise<Blob> {
     return this.ask(BlobSchema, {
       kind: 'repairThumbnail',
       side,
@@ -300,7 +300,7 @@ export class LocalDecoder {
    * `region` of the output with `option` drawn in place of `showing`, the fill the frame is drawn
    * with at the loop, as `repairThumbnail` draws: what choosing `option` would show.
    */
-  optionThumbnail(side: number, ev: number, region: Region, showing: Repair | null, option: Repair): Promise<Blob> {
+  optionThumbnail(side: number, ev: number | null, region: Region, showing: Repair | null, option: Repair): Promise<Blob> {
     return this.ask(BlobSchema, {
       kind: 'optionThumbnail',
       side,
@@ -318,7 +318,7 @@ export class LocalDecoder {
    * the current frame finishes.
    */
   tick(tick: {
-    ev: number;
+    ev: number | null;
     drawStage: boolean;
     region: Region | null;
     loupe: Region | null;

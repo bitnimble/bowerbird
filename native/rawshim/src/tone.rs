@@ -8,8 +8,8 @@
 // Two ITU standards close that, and neither needs a look to be invented:
 //   BT.2408  diffuse white in HDR sits at 203 nits, which is what makes HDR read at
 //            the same brightness as the SDR beside it.
-//   BT.2390  the EETF, a Hermite roll-off applied in PQ space, compressing whatever
-//            is above the display's peak into it instead of clipping.
+//   BT.2390  the knee in PQ space, followed by a rational shoulder that maps the
+//            scene peak to the display peak.
 //
 // The one judgement left is which sample counts as diffuse white, which no standard
 // prescribes because a camera takes it from the metered exposure. A histogram
@@ -208,14 +208,14 @@ pub struct Levels {
 }
 
 /// [`Levels::floor_share`], for a caller holding the two apart.
-pub fn floor_share(floor: Option<Light<Level>>, white: Light<Level>) -> f64 {
+pub fn floor_share(floor: Option<Light<Level>>, white: Light<Level>) -> Gain {
     match floor {
-        Some(floor) if white.raw() > 0.0 => floor.raw() / white.raw(),
+        Some(floor) if white.raw() > 0.0 => floor / white,
         // The `white > 0` half of that guard is the load-bearing one. Zero here is the unmeasured
         // reading and gives the pair a full photograph's span; dividing by a white of zero would
         // send an infinity instead, which floors the span at a sixteenth of a stop - the opposite
         // answer, on the darkest frame there is.
-        _ => 0.0,
+        _ => Gain::of_ratio(0.0),
     }
 }
 
@@ -239,7 +239,7 @@ impl Levels {
 
     /// The floor as a share of white, which is what `adjust.slang` places the low pair against
     /// (`edit.black_floor`).
-    pub fn floor_share(&self) -> f64 {
+    pub fn floor_share(&self) -> Gain {
         floor_share(self.floor, self.white)
     }
 
@@ -301,25 +301,10 @@ pub(crate) fn marks(counted: usize, quantile: f64) -> (u32, u32, u32) {
 pub(crate) const WHITE_FLOOR_UNDER_PEAK: Gain = Gain::of_ratio(8.0);
 
 /// Everything the grade settles for one photo, before any rendition's size or display.
-///
-/// The matched arm's three curve tables are 65536 entries each, read by `colour.slang`'s
-/// `curves_at`, and the scene peak is a quantile taken through the whole colour
-/// transform over a million pixels. Neither depends on the size a rendition is cut at or on the
-/// peak it targets, so both are settled once here rather than per rendition.
-///
-/// Sharing the scene peak is a correctness fix as much as a saving: it is what every pixel
-/// is rolled off against, and two renditions of one photo measuring it off two differently
-/// sized frames were compressing their highlights by different amounts. This is the same
-/// argument [`QUANTILE_SAMPLES`] already makes about the anchor, and it is settled the same
-/// way - once, on the photo.
-///
-/// None where there is no exposure to read: `white` at zero, or a non-positive exposure, or
-/// a matched frame whose peak comes back zero. The caller ships the frame as it arrived,
-/// which beats dividing by zero.
 pub struct SceneGrade<'a> {
     levels: Levels,
     reference: Light<SceneNits>,
-    exposure: Stops,
+    exposure: Option<Stops>,
     /// The reader's own sliders. Settled on the photo like the levels and the colour, and
     /// for the same reason: two sizes of one photograph must not be adjusted differently.
     adjust: crate::gpu::Adjust,
@@ -342,12 +327,12 @@ impl<'a> SceneGrade<'a> {
         colour: Option<&'a HdrColour>,
         levels: Anchored,
         reference: Light<SceneNits>,
-        exposure: Stops,
+        exposure: Option<Stops>,
         adjust: crate::gpu::Adjust,
         as_shot: Option<crate::white_balance::AsShot>,
     ) -> Self {
         assert!(
-            exposure.raw().is_finite(),
+            exposure.is_none_or(|stops| stops.raw().is_finite()),
             "an exposure is a number of stops: {exposure:?}"
         );
         SceneGrade {

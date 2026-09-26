@@ -247,7 +247,7 @@ describe('ProcessingService.processUnprocessed', () => {
     // A rendition of the picture as the camera metered it is a worse rendition than the
     // reader asked for, and a far better outcome than a photo that never builds one. The
     // out-of-range document is the same case: the schema refuses it, so it reads as absent.
-    expect(posted.map((job) => job.exposure)).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(posted.map((job) => job.exposure)).toEqual([null, null, null, null, null, null]);
   });
 
   it('renders an edited photo even where the library serves the camera JPEG', async () => {

@@ -1,5 +1,6 @@
 import { neutralEdits, sameEditValue, type EditDoc } from '../../schemas/photo_edits';
 import type { XmpSettings } from '../processing/xmp/xmp_schema';
+import { FromXmpStrings } from './from_xmp.strings';
 
 /**
  * What a sidecar produced, and everything about it we could not carry.
@@ -123,7 +124,7 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
   const doc: EditDoc = {
     ...neutralEdits(),
     ...(geometry.hasCrop && geometry.cropUnits === 0 ? crop : {}),
-    exposure: tone.exposure,
+    exposure: tone.exposure === 0 ? null : tone.exposure,
     contrast: tone.contrast,
     highlights: tone.highlights,
     shadows: tone.shadows,
@@ -151,6 +152,10 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
     tone.parametricLights !== 0 ||
     tone.parametricHighlights !== 0;
   if (parametric) unsupported.push('the parametric curve');
+  if ([tone.curve, tone.curveRed, tone.curveGreen, tone.curveBlue].some((curve) =>
+    curve[0]?.x !== 0 || curve.at(-1)?.x !== 255 || curve.some(({ x, y }) => x !== y))) {
+    unsupported.push(FromXmpStrings.pointCurves());
+  }
 
   // Whether there is anything here, asked of the values rather than of
   // `crs:HasSettings`. That flag defaults to *false* when absent (`xmp.ts`), so

@@ -10,8 +10,8 @@
 //! is not the same feature. Timing alone would hide that, and `deltaE` alone would hide the point.
 //!
 //! `deltaE` is the fit's own: the mean over pairs it was not fitted from. `matched` says whether a
-//! colour was fitted at all. The colour figures below are the fitted transform itself, printed so that two runs can be
-//! held against each other exactly rather than through a rendered picture.
+//! colour was fitted at all. The colour figures below are the fitted transform itself, printed so
+//! that two runs can be held against each other exactly rather than through a rendered picture.
 //!
 //! The decode is done once and the match repeated, because it is the match being measured.
 

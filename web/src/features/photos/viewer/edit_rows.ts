@@ -5,6 +5,7 @@ import { aspectLabel } from '../../raw_edit/crop/crop_aspect';
 import { EditToolsStrings } from '../../raw_edit/edit_tools.strings';
 import { DUST, EDIT_SLIDERS, reading, type SliderSpec } from '../../raw_edit/edit_sliders';
 import { RawEditPanelStrings } from '../../raw_edit/raw_edit_panel.strings';
+import { ToneCurveEditorStrings } from '../../raw_edit/tone_curve/tone_curve_editor.strings';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import type { Size } from './zoom_pan';
 
@@ -45,7 +46,7 @@ export function editRows(doc: EditDoc, frame: Size | null): Row[] {
 
   EDIT_SLIDERS.forEach(slider);
 
-  if (doc.toneCurve != null) rows.push([PhotoDetailStrings.toneCurve(), PhotoDetailStrings.edited()]);
+  if (doc.toneCurve != null) rows.push([ToneCurveEditorStrings.heading(), PhotoDetailStrings.edited()]);
 
   // Only with the Kelvins that carry it: a sidecar names the camera's own mode ("Daylight")
   // beside no temperature at all, and the render then uses the as-shot multipliers - so the

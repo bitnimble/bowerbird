@@ -90,7 +90,6 @@ export const PhotoDetailStrings = {
   gps: () => 'GPS',
 
   edits: () => 'Edits',
-  toneCurve: () => 'Tone curve',
   edited: () => 'Edited',
   noEdits: () => 'No edits',
   // The editor names these inside a group heading, which this list has nothing of.

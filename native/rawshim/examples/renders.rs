@@ -84,7 +84,7 @@ struct Stages<'a> {
     /// The focus difference to correct, where the caller would rather say than have it measured.
     defocus: Option<(f32, f32)>,
     /// The reader's exposure, in stops, or None for the camera match's own.
-    ev: Stops,
+    ev: Option<Stops>,
     /// Which domain the crop is written in.
     ///
     /// `Pq` is what `rendition_hdr` actually serves and what a picture bug is reproduced against,
@@ -492,7 +492,7 @@ fn main() {
         clarity: 0.0,
         curve_gain: 1.0,
         defocus: None,
-        ev: Stops::ZERO,
+        ev: None,
         domain: Domain::Pq,
         encode: None,
         out: &out,
@@ -561,7 +561,7 @@ fn main() {
             "--no-tone" => stages.tone = false,
             "--ev" => {
                 let stops: f64 = args.next().expect("a number").parse().expect("a number");
-                stages.ev = Stops::measured(stops);
+                stages.ev = Some(Stops::measured(stops));
             }
             // How much of the shrinkage's cycle spin to run. What fewer phases cost is a picture
             // question, and a mean deviation over a frame cannot say whether an eye finds it.

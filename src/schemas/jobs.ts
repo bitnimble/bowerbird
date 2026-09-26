@@ -203,11 +203,12 @@ export const JobSchema = z.object({
   sharpen: z.number(),
   defringe: z.number(),
   /**
-   * The photographer's exposure **in stops**, exactly as `EditDoc` stores it.
+   * The photographer's exposure **in stops**, exactly as `EditDoc` stores it. Null uses the
+   * camera match's exposure.
    *
    * The document's own unit, carried to the shader untouched: `colour.slang` raises it.
    */
-  exposure: z.number(),
+  exposure: z.number().nullable(),
   /**
    * Every slider but the exposure, on Camera Raw's -100..100 scales, as `adjust.slang` reads
    * them.
