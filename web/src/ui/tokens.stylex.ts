@@ -40,6 +40,7 @@ export const size = stylex.defineVars({
   // Mirrors `TILE_PAD`.
   tilePad: '4px',
   ring: '2px',
+  thumb: '11px',
   sheetPad: '8px',
   padX: '14px',
   padB: '20px',

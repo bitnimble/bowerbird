@@ -59,8 +59,8 @@ const styles = stylex.create({
   },
   thumb: {
     position: 'relative',
-    width: '11px',
-    height: '11px',
+    width: size.thumb,
+    height: size.thumb,
     borderRadius: '50%',
     backgroundColor: color.bone,
     // A grab bigger than the dot, for a finger only: at a cursor the row is 30px and this would hang

@@ -96,7 +96,6 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
     </div>
     <svg
       {...stylex.props(styles.plot, focusRing.ring, disabled && styles.disabled)}
-      viewBox="0 0 100 100"
       role="group"
       aria-label={strings.heading()}
       aria-disabled={disabled}
@@ -144,25 +143,29 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
       onPointerCancel={(event) => cancel(event.pointerId)}
       onLostPointerCapture={(event) => cancel(event.pointerId)}
     >
-      <rect width="100" height="100" fill="transparent" />
-      {[25, 50, 75].map((at) => <g key={at}>
-        <line x1={at} y1="0" x2={at} y2="100" {...stylex.props(styles.grid)} />
-        <line x1="0" y1={at} x2="100" y2={at} {...stylex.props(styles.grid)} />
-      </g>)}
-      {headerKnown && <>
-        <path d="M0 100 L100 0" {...stylex.props(styles.reference)} />
-        <line x1={DIFFUSE_WHITE_CODE * 100} y1="0" x2={DIFFUSE_WHITE_CODE * 100} y2="100" {...stylex.props(styles.white)} />
-        <line x1="0" y1={DIFFUSE_WHITE_CODE * 100} x2="100" y2={DIFFUSE_WHITE_CODE * 100} {...stylex.props(styles.white)} />
-        <path d={path} {...stylex.props(styles.curve)} />
-      </>}
+      <svg viewBox="0 0 100 100">
+        <rect width="100" height="100" fill="transparent" />
+        {[25, 50, 75].map((at) => <g key={at}>
+          <line x1={at} y1="0" x2={at} y2="100" {...stylex.props(styles.grid)} />
+          <line x1="0" y1={at} x2="100" y2={at} {...stylex.props(styles.grid)} />
+        </g>)}
+        {headerKnown && <>
+          <path d="M0 100 L100 0" {...stylex.props(styles.reference)} />
+          <line x1={DIFFUSE_WHITE_CODE * 100} y1="0" x2={DIFFUSE_WHITE_CODE * 100} y2="100" {...stylex.props(styles.white)} />
+          <line x1="0" y1={DIFFUSE_WHITE_CODE * 100} x2="100" y2={DIFFUSE_WHITE_CODE * 100} {...stylex.props(styles.white)} />
+          <path d={path} {...stylex.props(styles.curve)} />
+        </>}
+      </svg>
       {headerKnown && points.map(([x, y], index) => {
         const name = index === 0 ? strings.blackPoint()
           : index === points.length - 1 ? strings.whitePoint() : strings.curvePoint(index);
+        const cx = `${x * 100}%`;
+        const cy = `${(1 - y) * 100}%`;
         return <g key={index} {...stylex.props(pointMarker)}>
           <circle
-            cx={x * 100}
-            cy={(1 - y) * 100}
-            r="11"
+            cx={cx}
+            cy={cy}
+            r="11%"
             {...stylex.props(styles.pointTarget)}
             role="slider"
             tabIndex={disabled ? -1 : 0}
@@ -202,13 +205,9 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
               }
             }}
           />
-          {/* A zero-length round-capped line, so the dot is the slider thumb's size in pixels
-              however wide the plot is drawn. */}
-          <line
-            x1={x * 100}
-            y1={(1 - y) * 100}
-            x2={x * 100}
-            y2={(1 - y) * 100}
+          <circle
+            cx={cx}
+            cy={cy}
             {...stylex.props(styles.point, activeIndex === index && styles.pointActive)}
             aria-hidden="true"
           />

@@ -27,18 +27,16 @@ export const styles = stylex.create({
     outline: 'none',
   },
   point: {
-    stroke: {
+    fill: {
       default: color.bone,
       [stylex.when.ancestor(':has(:focus-visible)', pointMarker)]: color.satin,
     },
-    strokeWidth: '11px',
-    strokeLinecap: 'round',
-    vectorEffect: 'non-scaling-stroke',
+    r: `calc(${size.thumb} / 2)`,
     pointerEvents: 'none',
-    transitionProperty: 'stroke',
+    transitionProperty: 'fill',
     transitionDuration: '120ms',
     transitionTimingFunction: 'ease',
   },
-  pointActive: { stroke: color.satin },
+  pointActive: { fill: color.satin },
   disabled: { opacity: 0.4, cursor: 'default' },
 });
