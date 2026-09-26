@@ -4,12 +4,9 @@ import { type PhotoSummary } from '../../../../../src/schemas/photos';
 import { useListingStore, useMarksStore, usePresenters } from '../../../app/stores_context';
 import { Rating, Verdict } from '../marks';
 
-const COARSE = '@media (pointer: coarse)';
-
 const styles = stylex.create({
-  // Not under a finger: a thumb big enough to hit one covers the photograph it decides about.
   marks: {
-    display: { default: 'flex', [COARSE]: 'none' },
+    display: 'flex',
     alignItems: 'center',
     gap: '8px',
     flexGrow: 0,

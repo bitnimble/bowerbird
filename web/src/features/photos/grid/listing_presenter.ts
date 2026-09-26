@@ -11,6 +11,7 @@ import { openingFilters, type ModelPair, type PhotoDay, type PhotoFilters } from
 import type { PhotoSource, ViewMode } from '../photos_store';
 import { type IndexSample, SelectionRanges } from '../selection';
 import { loadViewState, saveViewState } from '../view_state';
+import { pointerIsCoarse } from '../../../app/device';
 import type { MarksStore } from './marks_store';
 import type { ViewerStore } from '../viewer/viewer_store';
 import type { SelectionPresenter } from './selection_presenter';
@@ -509,7 +510,9 @@ export class ListingPresenter {
     if (saved?.mode != null) this.listing.mode = saved.mode;
     this.listing.expandStacks = saved?.expandStacks ?? false;
     this.listing.showFilenames = saved?.showFilenames ?? true;
-    this.selection.setDisplay(saved?.showTriage ?? true, saved?.showRating ?? true);
+    // Off under a finger: marks big enough to hit cover the photo they decide about.
+    const marksByDefault = !pointerIsCoarse();
+    this.selection.setDisplay(saved?.showTriage ?? marksByDefault, saved?.showRating ?? marksByDefault);
   }
 
   remember(): void {
