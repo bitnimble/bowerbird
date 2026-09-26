@@ -140,6 +140,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 COPY package.json bun.lock ./
+COPY packages/samsung-frame-art ./packages/samsung-frame-art
 RUN bun install --frozen-lockfile
 COPY scripts/get-pmrid.ts ./scripts/
 RUN bun run scripts/get-pmrid.ts

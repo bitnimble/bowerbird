@@ -5,3 +5,5 @@
 *.raf filter=lfs diff=lfs merge=lfs -text
 *.RAF filter=lfs diff=lfs merge=lfs -text
 test/fixtures/snapshots/**/*.png filter=lfs diff=lfs merge=lfs -text
+*.diff text eol=lf
+*.patch text eol=lf
