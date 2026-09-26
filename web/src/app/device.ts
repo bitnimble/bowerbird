@@ -27,6 +27,10 @@ export function useIsTouch(): boolean {
   return useMediaQuery(TOUCH);
 }
 
+export function pointerIsCoarse(): boolean {
+  return globalThis.matchMedia != null && globalThis.matchMedia(TOUCH).matches;
+}
+
 /**
  * Whether the display shows light past SDR white, asked where it is used: a window dragged between
  * two screens changes the answer. Firefox says no on an HDR display, which is right for a canvas,

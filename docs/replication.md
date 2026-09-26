@@ -12,8 +12,8 @@ staging - and it is what lets a laptop hold a ceiling's worth of its library and
 Replication is the protocol name. In product copy, a library syncs between devices and is backed
 up to a folder; a scan reads its files into the catalogue (§9 of DESIGN.md). Code keeps the
 protocol under `replication_*`, while `ScanService` owns the disk scan. A library's jobs in
-Settings are "Scan library" for the disk, "Sync library" for the network, and "Back up originals"
-for the folder.
+Settings are "Scan library" for the disk, "Sync library to other devices" for the network, and
+"Back up originals" for the folder, the last two only once the library has a device or a folder.
 
 ## 1. Goals and non-goals
 
@@ -1052,7 +1052,7 @@ and this sentence is the one that belongs in the user docs in bold.
 - **Device sync strip** per synced library: per-device last sync, in-flight state,
   awaiting-originals counts in both directions, and errors. What is moving - a session, fetches,
   sends, a backup pass - is also said on the library's own status line beside its scan, and
-  "Sync library" is a library job.
+  "Sync library to other devices" is a library job.
 - **"Automatically send and fetch originals"** per library, off by default: every session that
   reaches a device also queues the originals either side lacks, in each direction the two sides'
   §7.10 answers allow.

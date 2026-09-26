@@ -16,7 +16,9 @@ import type { ReplicationStore } from './replication_store';
 const styles = stylex.create({
   peer: {
     paddingBlock: '4px',
-    borderTopWidth: { default: '1px', ':first-child': 0 },
+  },
+  laterPeer: {
+    borderTopWidth: '1px',
     borderTopStyle: 'solid',
     borderTopColor: color.slate,
   },
@@ -42,7 +44,7 @@ export const ReplicationStrip = observer(function ReplicationStrip({
 
   return (
     <>
-      {peers.map((peer) => {
+      {peers.map((peer, index) => {
         const transfers = store.transfersOf(library.id).filter((t) => t.peer_id === peer.peer_id);
         const moving = transfers.filter((t) => t.state === 'active' || t.state === 'queued');
         const sending = moving.filter((t) => t.direction === 'push').length;
@@ -50,7 +52,7 @@ export const ReplicationStrip = observer(function ReplicationStrip({
         const failed = transfers.filter((t) => t.state === 'failed').length;
 
         return (
-          <Strip style={styles.peer} key={peer.peer_id}>
+          <Strip style={[styles.peer, index > 0 && styles.laterPeer]} key={peer.peer_id}>
             <StatusDot state={moving.length > 0 ? 'working' : 'idle'} />
             <StripLabel tone={peer.last_error == null ? undefined : 'error'} tooltip={peer.last_error ?? undefined}>
               {ReplicationStripStrings.deviceLine(

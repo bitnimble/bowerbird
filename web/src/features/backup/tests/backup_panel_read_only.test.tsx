@@ -75,7 +75,7 @@ async function open(readOnly: boolean, seeded: BackupStatus = status): Promise<v
 test('a read-only library disables its storage limit and says why', async () => {
   await open(true);
 
-  const field = screen.getByRole('spinbutton', { name: 'Storage limit (GB)' });
+  const field = screen.getByRole('spinbutton', { name: 'Local storage limit (GB)' });
   expect(field.matches(':disabled')).toBe(true);
   expect(field.closest('[aria-description]')?.getAttribute('aria-description')).toBe(
     'Read-only libraries cannot remove local originals.',
@@ -85,12 +85,12 @@ test('a read-only library disables its storage limit and says why', async () => 
 test('a writable library keeps its storage limit editable', async () => {
   await open(false);
 
-  const field = screen.getByRole('spinbutton', { name: 'Storage limit (GB)' });
+  const field = screen.getByRole('spinbutton', { name: 'Local storage limit (GB)' });
   expect(field.matches(':disabled')).toBe(false);
   expect(field.closest('[aria-description]')).toBeNull();
 });
 
-test('stopping offers to fetch back the photos only the backup holds', async () => {
+test('removing offers to fetch back the photos only the backup holds', async () => {
   const removed: boolean[] = [];
   backupApi.remove = (_libraryId, fetchFirst) => {
     removed.push(fetchFirst);
@@ -99,11 +99,11 @@ test('stopping offers to fetch back the photos only the backup holds', async () 
   await open(false, { ...status, offloaded: 2 });
 
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Stop backing up' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove backup' }));
   });
-  expect(screen.getByRole('dialog', { name: 'Stop backing up to "Backup"?' })).toBeTruthy();
+  expect(screen.getByRole('dialog', { name: 'Remove backup folder "Backup"?' })).toBeTruthy();
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Fetch and stop' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch and remove' }));
   });
 
   expect(removed).toEqual([true]);
@@ -116,10 +116,10 @@ test('fetching back shows how far it has got and which file it is on', async () 
     Promise.resolve({ done: 1, total: 4, current: { path: 'trip/two.arw', bytes_done: 50, bytes_total: 100 } });
   await open(false, { ...status, offloaded: 4 });
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Stop backing up' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove backup' }));
   });
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Fetch and stop' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch and remove' }));
   });
 
   const bar = screen.getByRole('progressbar', { name: '1 of 4 photos fetched' }) as HTMLProgressElement;
@@ -128,8 +128,8 @@ test('fetching back shows how far it has got and which file it is on', async () 
   await act(async () => finish());
 });
 
-test('what the backup holds and what this device keeps is one line', async () => {
+test('what the backup holds, what this device keeps and where the backup is are one line', async () => {
   await open(false);
 
-  expect(screen.getByText('12 photos backed up · using 3.0 GB')).toBeTruthy();
+  expect(screen.getByText('12 photos backed up · using 3.0 GB · /backup')).toBeTruthy();
 });
