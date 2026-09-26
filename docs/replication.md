@@ -447,6 +447,29 @@ so and the others would keep the stack it dissolved - the same trap as §5.1's c
 same answer: an ordinary write travels like one, and peers disagreeing about *when* settle it by
 exchanging tombstones.
 
+#### 5.2.1 Labels named alike
+
+Two devices creating a label of one name while apart cannot refuse each other, so each keeps its
+own until they meet. At the close of a session (`mergeLabelsNamedAlike`), labels of a library
+sharing a name, ignoring case, become one: the survivor is the one whose `label` unit (name and
+colour) was **set last**, so it keeps its name, colour and place, and the others' photos **move to
+it**. The losers are deleted with final tombstones, stamped where the merge ran, as the stack
+collapse's are.
+
+At the close and not per page for the reason the stack rule is: mid-session a loser's photos may
+still be on their way, and they would land on a label already buried here. A loser's tombstone
+arriving at a peer that holds its twin moves that peer's photos across before the cascade, so a
+label put on a photo in the window between one device merging and another hearing of it is kept.
+A photo somebody took the survivor off after the loser was put on it is not moved.
+
+A tombstone does not say whether it was a merge or somebody deleting the label, and the move
+treats both alike: a label deleted on one device while another held a twin it had never seen
+leaves its photos on the twin. Had the two devices met first, the merge would have put them there
+anyway.
+
+Names are compared with a locale-independent lower-casing (`toLowerCase`), never SQL's `lower`,
+which folds ASCII only, nor a locale-aware one, whose answer would differ between devices.
+
 ### 5.3 Edits: sessions, and the one user-facing conflict
 
 Opening the editor begins a **session**: a random 16-char `session_id` on every save until the

@@ -16,8 +16,8 @@ export class LabelsService {
 
   create(request: CreateLabelRequest): Label {
     this.requireLibrary(request.library_id);
-    const wanted = request.name.toLocaleLowerCase();
-    if (this.repo.listByLibrary(request.library_id).some((label) => label.name.toLocaleLowerCase() === wanted)) {
+    const wanted = request.name.toLowerCase();
+    if (this.repo.listByLibrary(request.library_id).some((label) => label.name.toLowerCase() === wanted)) {
       throw new AppError('CONFLICT', `label already exists: ${request.name}`);
     }
     const id = this.newId();
@@ -50,8 +50,8 @@ export class LabelsService {
     // otherwise refuse every save until somebody happened to rename one.
     const resulting = [...ordered, ...kept];
     for (const label of ordered.filter((candidate) => candidate.renamed)) {
-      const wanted = label.name.toLocaleLowerCase();
-      if (resulting.some((other) => other.id !== label.id && other.name.toLocaleLowerCase() === wanted)) {
+      const wanted = label.name.toLowerCase();
+      if (resulting.some((other) => other.id !== label.id && other.name.toLowerCase() === wanted)) {
         throw new AppError('CONFLICT', `label already exists: ${label.name}`);
       }
     }

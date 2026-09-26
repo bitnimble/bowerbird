@@ -427,7 +427,7 @@ CREATE INDEX idx_photo_labels_photo ON photo_labels(photo_id, label_id);
 A library's free-form tags, in the order the reader arranged them, and which photos carry each.
 
 - **Per library, not global like an album**, so they replicate with the library (docs/replication.md §3.2). A label applies only to photos of its own library, which the write enforces.
-- **No unique index on `name`.** Two devices naming a label the same while apart is a state neither can refuse, and a unique index would defer the second row on every session for good. `LabelsService` refuses a duplicate, ignoring case, where it is made.
+- **No unique index on `name`.** Two devices naming a label the same while apart is a state neither can refuse, and a unique index would defer the second row on every session for good. `LabelsService` refuses a duplicate, ignoring case, where it is made, and the ones replication brings together merge when the session closes (docs/replication.md §5.2.1).
 - `position` ties are broken by `id`, since two devices each appending a label while apart both take the same position.
 - A listing filters by labels as scope (`photo_query.ts`): a photo must carry **every** label asked for, and `match: 'any'` does not reach them.
 

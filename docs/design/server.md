@@ -109,7 +109,7 @@ This service handles the full scan algorithm. See §9 for the detailed algorithm
 |---|---|
 | `list()` | Every library's labels, each library's in its own order, with how many live photos carry each. |
 | `create(request)` | Appends a label to a library. 409 for a name the library already has, ignoring case. |
-| `save(request)` | Writes the edit dialog's list: its labels in its order, then any label it never mentioned in the order they had, less `removed`. A name or colour is sent only where the reader changed it, so a rename replicated in while the dialog was open survives. A label the request names that has since gone is a 404 rather than recreated. A name given now that another label has is a 409; two labels replication left sharing one are not. One stamp for the save, moved only onto what each label actually changed (§4.10). |
+| `save(request)` | Writes the edit dialog's list: its labels in its order, then any label it never mentioned in the order they had, less `removed`. A name or colour is sent only where the reader changed it, so a rename replicated in while the dialog was open survives. A label the request names that has since gone is a 404 rather than recreated. A name given now that another label has is a 409; two labels replication left sharing one, until the session's merge folds them (replication §5.2.1), are not. One stamp for the save, moved only onto what each label actually changed (§4.10). |
 | `addPhotos(labelId, photoIds)` | Labels the photos, ignoring any outside the label's library. |
 | `removePhotos(labelId, photoIds)` | Takes the label off the photos. |
 

@@ -2,7 +2,7 @@ import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { applyChanges, dissolveEmptiedStacks, observePage, rebuildCandidates } from './apply';
 import { stampBefore, stampPeer } from './clock';
-import { repair } from './repair';
+import { mergeLabelsNamedAlike, repair } from './repair';
 import { peerId } from './stamps';
 import { PAGE_ROWS, type Page } from '../../schemas/replication';
 import { page } from './stream';
@@ -252,6 +252,7 @@ function close(into: Replica, intake: Intake, peer: string, delivered: Vector): 
     // Everything the sender had is here now, so a stack a removal emptied is one
     // this peer can honestly say has ended (§5.2).
     dissolveEmptiedStacks(into.db, into.libraryId);
+    mergeLabelsNamedAlike(into.db, into.libraryId);
     repair(into.db, into.libraryId);
     advance(into.db, into.libraryId, delivered);
     recordPeer(into.db, into.libraryId, peer, delivered);

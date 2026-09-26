@@ -1,10 +1,11 @@
 import { Popover } from '@base-ui-components/react/popover';
 import * as stylex from '@stylexjs/stylex';
-import { Pencil, Plus } from 'lucide-react';
+import { Plus, Settings } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useState } from 'react';
 import { LABEL_NAME_MAX } from '../../../../src/schemas/labels';
 import { useLabelsStore, usePresenters } from '../../app/stores_context';
+import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { ICON } from '../../ui/icon';
 import { menuStyles } from '../../ui/menu_styles';
@@ -44,6 +45,11 @@ const styles = stylex.create({
     color: { default: color.boneDim, ':hover': color.bone },
     textAlign: 'start',
   },
+  search: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+  },
   swatch: {
     width: '8px',
     height: '8px',
@@ -68,9 +74,9 @@ export const AddLabelMenu = observer(function AddLabelMenu({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const all = store.labelsOf(libraryId);
-  const wanted = query.trim().toLocaleLowerCase();
-  const offered = all.filter((label) => !applied.includes(label.id) && label.name.toLocaleLowerCase().includes(wanted));
-  const creatable = wanted !== '' && !all.some((label) => label.name.toLocaleLowerCase() === wanted);
+  const wanted = query.trim().toLowerCase();
+  const offered = all.filter((label) => !applied.includes(label.id) && label.name.toLowerCase().includes(wanted));
+  const creatable = wanted !== '' && !all.some((label) => label.name.toLowerCase() === wanted);
 
   const close = (): void => {
     setOpen(false);
@@ -95,30 +101,33 @@ export const AddLabelMenu = observer(function AddLabelMenu({
       <Popover.Portal>
         <Popover.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="start">
           <Popover.Popup {...stylex.props(menuStyles.popup, styles.popup)} aria-label={AddLabelMenuStrings.addLabel()}>
-            <button
-              type="button"
-              {...stylex.props(menuStyles.item, styles.row, focusRing.ring)}
-              onClick={() => {
-                close();
-                void labels.openEditor(libraryId);
-              }}
-            >
-              <Pencil size={ICON} />
-              {EditLabelsStrings.open()}
-            </button>
-            <TextField
-              autoFocus
-              label={AddLabelMenuStrings.findOrCreate()}
-              placeholder={AddLabelMenuStrings.findOrCreate()}
-              value={query}
-              maxLength={LABEL_NAME_MAX}
-              onChange={setQuery}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' || wanted === '') return;
-                if (offered.length === 1) pick(offered[0]!.id);
-                else if (creatable) create();
-              }}
-            />
+            <div {...stylex.props(styles.search)}>
+              <TextField
+                grow
+                autoFocus
+                label={AddLabelMenuStrings.findOrCreate()}
+                placeholder={AddLabelMenuStrings.findOrCreate()}
+                value={query}
+                maxLength={LABEL_NAME_MAX}
+                onChange={setQuery}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' || wanted === '') return;
+                  if (offered.length === 1) pick(offered[0]!.id);
+                  else if (creatable) create();
+                }}
+              />
+              <Button
+                variant="ghost"
+                iconOnly
+                aria-label={EditLabelsStrings.open()}
+                onClick={() => {
+                  close();
+                  void labels.openEditor(libraryId);
+                }}
+              >
+                <Settings size={ICON} />
+              </Button>
+            </div>
             {offered.map((label) => (
               <button
                 key={label.id}
@@ -138,7 +147,9 @@ export const AddLabelMenu = observer(function AddLabelMenu({
             )}
             {offered.length === 0 && !creatable && (
               <Text variant="muted" style={styles.empty}>
-                {all.length === 0 ? AddLabelMenuStrings.typeToCreate() : AddLabelMenuStrings.noMatches()}
+                {all.length === 0 ? AddLabelMenuStrings.typeToCreate()
+                : wanted === '' ? AddLabelMenuStrings.allApplied()
+                : AddLabelMenuStrings.noMatches()}
               </Text>
             )}
           </Popover.Popup>

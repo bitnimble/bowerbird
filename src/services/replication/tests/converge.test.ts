@@ -191,9 +191,14 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
   // sees it happen.
   (peer, rng) => new PhotoPathsRepository(peer.db, new StackMembership(peer.db)).deleteByIds([rng.pick(PHOTOS)]),
   (peer, rng) => new ShootsRepository(peer.db).delete(rng.pick(SHOOTS)),
-  // Names from a small set, so two peers creating the same name while apart comes up: nothing may
-  // refuse the second, or it is deferred for good.
-  (peer, rng) => new LabelsRepository(peer.db).create(LIB, { id: rng.id(), name: `label ${rng.int(4)}`, colour: '#000000' }),
+  // Names from a small set, so two peers creating the same name while apart comes up, which the merge
+  // then has to settle the same way everywhere. Never one this peer already has: the service refuses it.
+  (peer, rng) => {
+    const labels = new LabelsRepository(peer.db);
+    const name = `label ${rng.int(4)}`;
+    if (labels.listByLibrary(LIB).some((label) => label.name === name)) return;
+    labels.create(LIB, { id: rng.id(), name, colour: `#${rng.int(10)}00000` });
+  },
   // A save of the edit dialog: the whole list reordered, one label renamed, sometimes one deleted.
   // Every position moves under one stamp, so this is what races a rename made elsewhere.
   (peer, rng) => {
@@ -205,11 +210,13 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
       [order[i]!, order[j]!] = [order[j]!, order[i]!];
     }
     const renamed = rng.pick(order).id;
+    const name = `label ${rng.int(4)}`;
+    const taken = order.some((label) => label.id !== renamed && label.name === name);
     const removed = rng.next() < 0.3 ? [rng.pick(order).id] : [];
     const kept = order
       .filter((label) => !removed.includes(label.id))
       .map((label) =>
-        label.id === renamed ? { id: label.id, name: `label ${rng.int(4)}`, colour: `#${rng.int(10)}00000` } : label,
+        label.id === renamed && !taken ? { id: label.id, name, colour: `#${rng.int(10)}00000` } : label,
       );
     labels.save(LIB, kept, removed);
   },
@@ -455,6 +462,81 @@ describe('convergence', () => {
 
     quiesce(peers, rng);
     converged(peers);
+  });
+
+  it('merges two labels given one name apart into the one set last, holding both sets of photos', () => {
+    const server = makePeer('server');
+    const laptop = makePeer('laptop');
+    seed(server);
+    replicate(server, laptop);
+
+    const onServer = new LabelsRepository(server.db);
+    onServer.create(LIB, { id: 'label-a', name: 'Keeper', colour: '#ff0000' });
+    onServer.addPhotos('label-a', LIB, ['p1', 'p2']);
+    laptop.advance();
+    const onLaptop = new LabelsRepository(laptop.db);
+    onLaptop.create(LIB, { id: 'label-b', name: 'keeper', colour: '#00ff00' });
+    onLaptop.addPhotos('label-b', LIB, ['p2', 'p3']);
+    replicate(server, laptop);
+    replicate(server, laptop);
+
+    for (const peer of [server, laptop]) {
+      expect(peer.db.query('SELECT id, name, colour FROM labels').all()).toEqual([
+        { id: 'label-b', name: 'keeper', colour: '#00ff00' },
+      ]);
+      expect(peer.db.query('SELECT photo_id FROM photo_labels ORDER BY photo_id').all()).toEqual([
+        { photo_id: 'p1' },
+        { photo_id: 'p2' },
+        { photo_id: 'p3' },
+      ]);
+    }
+    converged([server, laptop]);
+  });
+
+  it('merges names that differ only in a case SQL cannot fold', () => {
+    const server = makePeer('server');
+    const laptop = makePeer('laptop');
+    seed(server);
+    replicate(server, laptop);
+    new LabelsRepository(server.db).create(LIB, { id: 'label-a', name: 'Élan', colour: '#ff0000' });
+    laptop.advance();
+    new LabelsRepository(laptop.db).create(LIB, { id: 'label-b', name: 'élan', colour: '#00ff00' });
+    replicate(server, laptop);
+    replicate(server, laptop);
+    for (const peer of [server, laptop]) {
+      expect(peer.db.query('SELECT id FROM labels').all()).toEqual([{ id: 'label-b' }]);
+    }
+    converged([server, laptop]);
+  });
+
+  // A tombstone cannot say whether it was a merge or a delete, so a label deleted while a twin
+  // existed elsewhere leaves its photos on the twin, as the merge would have (§5.2.1).
+  it('moves a deleted label’s photos onto a twin the deleting device never saw', () => {
+    const server = makePeer('server');
+    const laptop = makePeer('laptop');
+    const phone = makePeer('phone');
+    seed(server);
+    pull(phone, server);
+    const onServer = new LabelsRepository(server.db);
+    onServer.create(LIB, { id: 'label-a', name: 'Keeper', colour: '#ff0000' });
+    onServer.addPhotos('label-a', LIB, ['p1']);
+    pull(laptop, server);
+
+    // The phone never held `label-a`, and the server deletes it before hearing of the phone's.
+    phone.advance(20);
+    new LabelsRepository(phone.db).create(LIB, { id: 'label-b', name: 'Keeper', colour: '#00ff00' });
+    new LabelsRepository(phone.db).addPhotos('label-b', LIB, ['p2']);
+    server.advance(40);
+    onServer.save(LIB, [], ['label-a']);
+    pull(server, phone);
+    // The laptop takes the twin and the grave in one session.
+    pull(laptop, server);
+
+    expect(laptop.db.query('SELECT id FROM labels').all()).toEqual([{ id: 'label-b' }]);
+    expect(laptop.db.query("SELECT photo_id FROM photo_labels WHERE label_id = 'label-b' ORDER BY photo_id").all()).toEqual([
+      { photo_id: 'p1' },
+      { photo_id: 'p2' },
+    ]);
   });
 
   // The rule the random walk exercises by accident, stated on its own so that a

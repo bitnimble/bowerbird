@@ -150,6 +150,77 @@ function removedFromWinner(
   return grave != null && (member.stamp == null || grave.stamp >= member.stamp);
 }
 
+/**
+ * Labels two devices gave one name while apart become one: the one whose name or colour was set last,
+ * holding every photo either was on.
+ *
+ * At the close of a session only, like `dissolveEmptiedStacks`: mid-session, a loser's photos can still
+ * be on their way, and they would arrive at a label already buried here and have nowhere to go.
+ */
+export function mergeLabelsNamedAlike(db: Database, libraryId: string): void {
+  const twins = [...labelsByName(db, libraryId).values()].filter((group) => group.length > 1);
+  if (twins.length === 0) return;
+  const at = stamp(db);
+  for (const [winner, ...losing] of twins) {
+    for (const loser of losing) {
+      foldLabel(db, libraryId, loser, winner!, at);
+      db.query('DELETE FROM labels WHERE id = ?').run(loser);
+      tombstone(db, libraryId, 'label', loser, at);
+    }
+  }
+}
+
+/** The label another of the same name folds into, if one is here (see `mergeLabelsNamedAlike`). */
+export function labelNamedAlike(db: Database, libraryId: string, labelId: string): string | null {
+  const group = [...labelsByName(db, libraryId).values()].find((ids) => ids.includes(labelId)) ?? [];
+  return group.find((id) => id !== labelId) ?? null;
+}
+
+/**
+ * A library's label ids grouped by name ignoring case, each group newest `label` unit first.
+ *
+ * Folded in JS with `toLowerCase`, not SQL's `lower`, which folds ASCII only: "Élan" and "élan" are
+ * one name to `LabelsService`. Not `toLocaleLowerCase` either, whose answer moves with the device's
+ * locale, so two peers would group differently.
+ */
+function labelsByName(db: Database, libraryId: string): Map<string, string[]> {
+  const rows = db
+    .query('SELECT id, name FROM labels WHERE library_id = ? ORDER BY stamp DESC, id DESC')
+    .all(libraryId) as { id: string; name: string }[];
+  const groups = new Map<string, string[]>();
+  for (const row of rows) {
+    const key = row.name.toLowerCase();
+    groups.set(key, [...(groups.get(key) ?? []), row.id]);
+  }
+  return groups;
+}
+
+/** Moves a label's photos onto another, leaving the first on none. */
+export function foldLabel(db: Database, libraryId: string, fromId: string, intoId: string, at: string): void {
+  const rows = db
+    .query('SELECT photo_id, stamp FROM photo_labels WHERE library_id = ? AND label_id = ?')
+    .all(libraryId, fromId) as { photo_id: string; stamp: string | null }[];
+  for (const row of rows) {
+    // Not onto a photo somebody took the surviving label off after this one was put on it.
+    const grave = db
+      .query(
+        `SELECT stamp FROM replication_log WHERE library_id = ? AND entity = 'photo_label' AND row_id = ? AND deleted = 1`,
+      )
+      .get(libraryId, `${intoId}/${row.photo_id}`) as { stamp: string } | null;
+    if (grave == null || (row.stamp != null && grave.stamp < row.stamp)) {
+      db.query(
+        `INSERT INTO photo_labels (library_id, label_id, photo_id, stamp) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      ).run(libraryId, intoId, row.photo_id, at);
+    }
+    db.query('DELETE FROM photo_labels WHERE library_id = ? AND label_id = ? AND photo_id = ?').run(
+      libraryId,
+      fromId,
+      row.photo_id,
+    );
+    tombstone(db, libraryId, 'photo_label', `${fromId}/${row.photo_id}`, at);
+  }
+}
+
 export function repair(db: Database, libraryId: string): void {
   collapseOverlappingStacks(db, libraryId);
 

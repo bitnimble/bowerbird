@@ -36,7 +36,7 @@ export class LabelEditorStore {
    * this dialog: two labels replication left sharing one are not the reader's to fix before saving.
    */
   @computed get duplicates(): Set<string> {
-    const named = (draft: DraftLabel): string => draft.name.trim().toLocaleLowerCase();
+    const named = (draft: DraftLabel): string => draft.name.trim().toLowerCase();
     return new Set(
       this.drafts
         .filter((draft) => renamed(draft) && this.drafts.some((other) => other.key !== draft.key && named(other) === named(draft)))

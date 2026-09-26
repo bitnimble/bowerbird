@@ -4,4 +4,5 @@ export const AddLabelMenuStrings = {
   create: (name: string) => `Create ${name}`,
   typeToCreate: () => 'Type a name to create a label.',
   noMatches: () => 'No matching labels.',
+  allApplied: () => 'Every label is on this photo.',
 };

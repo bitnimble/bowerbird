@@ -15,6 +15,7 @@ const styles = stylex.create({
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: '4px',
+    marginBlock: '8px',
   },
 });
 

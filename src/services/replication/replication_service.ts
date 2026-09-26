@@ -20,7 +20,7 @@ import {
 } from '../../schemas/replication';
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import { applyChanges, dissolveEmptiedStacks, observePage, rebuildCandidates } from './apply';
-import { repair } from './repair';
+import { mergeLabelsNamedAlike, repair } from './repair';
 import type { BlobLocations } from '../blobs/blob_locations';
 import { DEFAULT_SKEW_MS } from './clock';
 import {
@@ -228,6 +228,7 @@ export class ReplicationService {
       // The same close a pull has, and for the same reason: everything the pusher
       // held is here, so a stack its removals emptied has genuinely ended (§5.2).
       dissolveEmptiedStacks(this.db, request.library_id);
+      mergeLabelsNamedAlike(this.db, request.library_id);
       repair(this.db, request.library_id);
       advance(this.db, request.library_id, delivered);
       recordPeer(this.db, request.library_id, request.peer_id, delivered);

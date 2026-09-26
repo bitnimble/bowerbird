@@ -6,6 +6,7 @@ import { parkDivergentEdits, parseChain } from '../photo_edits/edit_sessions';
 import { StacksRepository } from '../stacks/stacks_repository';
 import { entityOf, type ReplicatedEntity, type ReplicatedKind } from './entities';
 import { queueMaterialisation, recipePathToTouch } from './materialise';
+import { foldLabel, labelNamedAlike } from './repair';
 import { observeStamp, stamp as stampFor } from './stamps';
 import type { Cell, Change, LiveChange, Tombstone } from '../../schemas/replication';
 import { keyPartsOf, parseable, whereKey, whereSidecar } from './stream';
@@ -357,6 +358,10 @@ function applyTombstone(db: Database, libraryId: string, entity: ReplicatedEntit
     // the row, and this peer stops advertising the ones it was holding.
     if (entity.kind === 'photo' || entity.kind === 'shoot' || entity.kind === 'stack' || entity.kind === 'label') {
       if (entity.kind === 'photo') sayWhatTheDeletionCosts(db, change);
+      // A label another device folded into its twin (`mergeLabelsNamedAlike`): photos this peer put on
+      // it since go with it to the twin rather than losing the label.
+      const twin = entity.kind === 'label' ? labelNamedAlike(db, libraryId, change.rowId) : null;
+      if (twin != null) foldLabel(db, libraryId, change.rowId, twin, stampFor(db));
       // A shoot takes the tree under it, and the tree *here* is not the tree the
       // sender had: a child made on this peer while the other was deleting the
       // parent is one the sender never heard of, so its tombstone names only the
