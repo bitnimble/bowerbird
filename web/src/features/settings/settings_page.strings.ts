@@ -102,6 +102,9 @@ export const SettingsStrings = {
   serverAddress: () => 'Bowerbird server',
   serverAddressPlaceholder: () => 'http://bowerbird.local:3000',
   connect: () => 'Connect',
+  uiScale: () => 'Interface scale',
+  uiScalePercent: (percent: number) => `${percent}%`,
+  couldNotSetUiScale: () => "We couldn't change the interface scale. Try again.",
 
   groupProcessing: () => 'Processing',
   matchEmbeddedJpeg: () => 'Match lens and camera colour',

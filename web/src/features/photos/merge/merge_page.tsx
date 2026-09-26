@@ -9,6 +9,7 @@ import { Button } from '../../../ui/button';
 import { EmptyState } from '../../../ui/empty_state';
 import { ICON } from '../../../ui/icon';
 import { Page, PageHead, ShowSidebarButton } from '../../../ui/page';
+import { DRAGS_WINDOW } from '../../../ui/title_bar';
 import { Row, Spacer } from '../../../ui/row';
 import { Slider } from '../../../ui/slider';
 import { Text } from '../../../ui/text';
@@ -277,7 +278,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
     <Page fill>
       {/* The editor's bar, in the editor's order: the way out and the way to keep it first, then
           the history, then whatever this page has of its own. */}
-      <Row style={styles.nav}>
+      <Row {...DRAGS_WINDOW} style={styles.nav}>
         <ShowSidebarButton />
         <Button onClick={cancel}>{MergePageStrings.cancel()}</Button>
         <Button variant="primary" disabled={committing || store.readOnly} onClick={() => void save()}>

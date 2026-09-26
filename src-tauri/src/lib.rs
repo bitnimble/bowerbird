@@ -32,9 +32,12 @@ pub fn run() {
         .setup(|app| {
             // Before the stream, which reads the address it was told about.
             api::load_config(app.handle());
+            if let Err(why) = api::apply_ui_scale(app.handle()) {
+                eprintln!("[bowerbird] {why}");
+            }
             // A desktop Bowerbird holds a library of its own, so it starts a server
-            // for itself. A reader who has pointed this app at a hosted one keeps
-            // that, and pays nothing for a second server they are not using.
+            // for itself. One pointed at another server - `BOWERBIRD_SERVER`, or the
+            // address Android's settings name - pays nothing for a second it is not using.
             if api::configured_origin().is_none() {
                 match server::start(app.handle()) {
                     Ok(origin) => eprintln!("[bowerbird] serving this library locally on {origin}"),
@@ -64,6 +67,8 @@ pub fn run() {
             api::api,
             api::server_origin,
             api::set_server_origin,
+            api::ui_scale,
+            api::set_ui_scale,
             events::events_following,
             export::pick_export_folder,
             export::export_to_folder,

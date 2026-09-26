@@ -1,11 +1,11 @@
 import { ArrowLeft, Ban, Check, Columns2, Equal, RotateCcw, SquareStack } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { type PhotoSummary } from '../../../../../src/schemas/photos';
-import { AppStrings } from '../../../app/app.strings';
 import { usePresenters, useStackTriageStore } from '../../../app/stores_context';
 import { Button, ButtonHint } from '../../../ui/button';
 import { ICON } from '../../../ui/icon';
 import { ShowSidebarButton } from '../../../ui/page';
+import { DRAGS_WINDOW } from '../../../ui/title_bar';
 import { Row } from '../../../ui/row';
 import { SegmentedControl } from '../../../ui/segmented_control';
 import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
@@ -29,7 +29,7 @@ const PICKS: Choice[] = [
   { verdict: 'b', label: StackTriageStrings.pickB(), hint: '' },
 ];
 
-const BOTH: Choice = { verdict: 'both', label: StackTriageStrings.both(), hint: AppStrings.keysSpace() };
+const BOTH: Choice = { verdict: 'both', label: StackTriageStrings.both(), hint: StackTriageStrings.bothKey() };
 
 // Click-only: every key that could carry it is an arrow, and all four of these
 // name a photograph rather than a fate.
@@ -112,7 +112,7 @@ export const Header = observer(function Header({ onLeave, ready }: { onLeave: ()
   const running = store.status === 'running';
 
   return (
-    <Row style={styles.bar}>
+    <Row {...DRAGS_WINDOW} style={styles.bar}>
       <ShowSidebarButton />
       <Row style={styles.barEnd}>
         <Button onClick={onLeave}>

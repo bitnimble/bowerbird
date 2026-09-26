@@ -93,6 +93,13 @@ test('a drag past either end stops at it', async () => {
   expect(store.width).toBe(520);
 });
 
+test('a double click on the edge hides the sidebar', async () => {
+  const handle = await mount();
+  expect(store.open).toBe(true);
+  fireEvent.doubleClick(handle);
+  expect(store.open).toBe(false);
+});
+
 test('a pointer that never took the handle does not move it', async () => {
   const handle = await mount();
   // A pointer crossing the handle on its way somewhere else, with no `pointerdown` to

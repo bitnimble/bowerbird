@@ -16,17 +16,19 @@ use tauri::ipc::Response;
 
 /// What this app remembers for itself, as opposed to what the library remembers.
 ///
-/// Only the server address so far, and that one cannot live with the library's settings
-/// because those are on the far side of it: asking the server where the server is does not
-/// work. A JSON object rather than that one string, because the next app-local setting
-/// should be a field rather than a second file - `serde` ignores what it does not know, so
-/// an older build reading a newer config keeps the fields it understands.
+/// The server address cannot live with the library's settings because those are on the far
+/// side of it: asking the server where the server is does not work. The interface scale is
+/// this window's, applied before the page has loaded anything to ask. One JSON object, and
+/// `serde` ignores what it does not know, so an older build reading a newer config keeps the
+/// fields it understands.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
     /// Absent until the reader sets one, which is different from set-to-empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_scale: Option<f64>,
 }
 
 static CONFIG: std::sync::RwLock<Option<Config>> = std::sync::RwLock::new(None);
@@ -111,6 +113,17 @@ pub fn load_config(app: &tauri::AppHandle<crate::Runtime>) {
     }
 }
 
+/// Saved before it is adopted, so a write that fails leaves the running app and the file
+/// still agreeing on the old value rather than disagreeing until a restart.
+fn update(app: &tauri::AppHandle<crate::Runtime>, change: impl FnOnce(&mut Config)) -> Result<(), String> {
+    let mut held = CONFIG.write().map_err(|_| "the config is locked".to_string())?;
+    let mut next = (*held).clone().unwrap_or_default();
+    change(&mut next);
+    save(app, &next)?;
+    *held = Some(next);
+    Ok(())
+}
+
 /// Writes the whole object back, so a field added later is not dropped by this one.
 fn save(app: &tauri::AppHandle<crate::Runtime>, config: &Config) -> Result<(), String> {
     let Some(path) = config_file(app) else { return Ok(()) };
@@ -137,22 +150,38 @@ pub fn set_server_origin(
 ) -> Result<String, String> {
     let trimmed = value.trim().trim_end_matches('/').to_string();
     let server = if trimmed.is_empty() { None } else { Some(trimmed) };
-
-    {
-        let mut held = CONFIG.write().map_err(|_| "the config is locked".to_string())?;
-        // Saved before it is adopted, so a write that fails leaves the running app and the
-        // file still agreeing on the old address rather than disagreeing until a restart.
-        let mut next = (*held).clone().unwrap_or_default();
-        next.server = server;
-        save(&app, &next)?;
-        *held = Some(next);
-    }
+    update(&app, |config| config.server = server)?;
     // The event stream is following the old address and will not notice on its own: it
     // re-reads the origin only when a connection ends, and a server that is still running
     // never ends one.
     crate::events::address_changed();
-    // Outside the guard: `origin` takes the read lock, and this one is not reentrant.
     Ok(origin())
+}
+
+const UI_SCALES: std::ops::RangeInclusive<f64> = 0.5..=2.0;
+
+#[tauri::command]
+pub fn ui_scale() -> f64 {
+    CONFIG
+        .read()
+        .ok()
+        .and_then(|held| held.as_ref().and_then(|c| c.ui_scale))
+        .unwrap_or(1.0)
+}
+
+#[tauri::command]
+pub fn set_ui_scale(app: tauri::AppHandle<crate::Runtime>, value: f64) -> Result<(), String> {
+    if !UI_SCALES.contains(&value) {
+        return Err(format!("an interface scale of {value} is outside {UI_SCALES:?}"));
+    }
+    update(&app, |config| config.ui_scale = Some(value))?;
+    apply_ui_scale(&app)
+}
+
+pub fn apply_ui_scale(app: &tauri::AppHandle<crate::Runtime>) -> Result<(), String> {
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window("main") else { return Ok(()) };
+    window.set_zoom(ui_scale()).map_err(|e| format!("could not scale the window: {e}"))
 }
 
 /// Every request the shell makes, so none reaches the local server without its token.

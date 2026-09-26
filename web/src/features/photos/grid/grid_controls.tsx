@@ -19,6 +19,7 @@ import { Row } from '../../../ui/row';
 import { SegmentedControl } from '../../../ui/segmented_control';
 import { Select } from '../../../ui/select';
 import { Text } from '../../../ui/text';
+import { DRAGS_WINDOW } from '../../../ui/title_bar';
 import { GridControlsStrings } from './grid_controls.strings';
 import { styles } from './grid_controls.stylex';
 import { GridFilterMenu } from './grid_filter_menu';
@@ -83,7 +84,7 @@ export const GridControls = observer(function GridControls({
   const mobile = useIsMobile();
 
   return (
-    <Row style={styles.controls}>
+    <Row {...(withSidebarButton && DRAGS_WINDOW)} style={styles.controls}>
       {withSidebarButton && <ShowSidebarButton />}
       {/* A phone gets the two a cull is actually made from. The other three are a
           press further into the panel beside them, which is where the reader who

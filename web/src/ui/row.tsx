@@ -33,6 +33,7 @@ export function Row({
   /** Why a control in this row is unavailable, which a disabled control cannot say itself. */
   tooltip?: string;
   onMouseLeave?: () => void;
+  'data-tauri-drag-region'?: 'deep';
 }): JSX.Element {
   return (
     <Tooltip label={tooltip}>

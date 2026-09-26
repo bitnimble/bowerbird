@@ -5,7 +5,7 @@ export const BulkBarStrings = {
   // reader has answered the format, the size and where the files go.
   exportPhotos: () => 'Export photos…',
 
-  /** The action, wherever it is offered or documented: this bar, the viewer's menu, the shortcut sheet. */
+  /** The action, wherever it is offered: this bar and the viewer's menu. */
   moveToBin: () => 'Move to Bin',
   moveAllToBin: () => 'Move all to Bin',
   moveCountToBin: (count: number) => `Move ${count} to Bin`,

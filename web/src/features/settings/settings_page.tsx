@@ -5,7 +5,15 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { FolderOpen, FolderPlus, Link2, RefreshCw, Sparkles } from 'lucide-react';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { type Settings, type ViewerRenditionMode } from '../../../../src/schemas/settings';
-import { appDataDir, openAppDataDir, serverOrigin, setServerOrigin } from '../../api/transport';
+import {
+  appDataDir,
+  openAppDataDir,
+  serverOrigin,
+  setServerOrigin,
+  setUiScale,
+  shellInvoke,
+  uiScale,
+} from '../../api/transport';
 import {
   useAppSettingsStore,
   useDeviceSettingsStore,
@@ -326,13 +334,55 @@ const LOG_LEVELS: Option<Settings['log_level']>[] = [
   { value: 'error', label: SettingsStrings.logLevelError() },
 ];
 
+// The desktop app serves its own library, so only Android has a server to name.
+const HAS_SERVER_ADDRESS = navigator.userAgent.includes('Android');
+
+const UI_SCALES: Option<string>[] = ['0.8', '0.9', '1', '1.1', '1.25', '1.5'].map((value) => ({
+  value,
+  label: SettingsStrings.uiScalePercent(Math.round(Number(value) * 100)),
+}));
+
 /**
- * Which Bowerbird this app talks to. Desktop only, and nothing at all in a browser.
- *
- * It cannot live with the settings below it, because those are on the far side of it:
- * asking the server where the server is does not work. So the shell keeps it beside its
- * own config and answers for it over IPC, and a page - which already knows its origin -
- * never sees this section.
+ * The settings the shell keeps for itself rather than the library, and nothing at all in a
+ * browser. They cannot live with the settings below, because those are on the far side of the
+ * server address: asking the server where the server is does not work.
+ */
+function ThisApp(): JSX.Element | null {
+  if (shellInvoke() == null) return null;
+  return (
+    <>
+      <GroupTitle>{SettingsStrings.groupThisApp()}</GroupTitle>
+      <Panel flush>{HAS_SERVER_ADDRESS ? <ServerAddress /> : <UiScale />}</Panel>
+    </>
+  );
+}
+
+function UiScale(): JSX.Element | null {
+  const [scale, setScale] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    void uiScale().then((value) => value != null && setScale(String(value)));
+  }, []);
+
+  if (scale == null) return null;
+
+  const choose = (next: string): void => {
+    setFailure(null);
+    void setUiScale(Number(next))
+      .then(() => setScale(next))
+      .catch(() => setFailure(SettingsStrings.couldNotSetUiScale()));
+  };
+
+  return (
+    <SettingRow label={SettingsStrings.uiScale()} hint={failure ?? undefined} onReset={resetTo(scale, '1', choose)}>
+      <Select label={SettingsStrings.uiScale()} options={UI_SCALES} value={scale} onChange={choose} />
+    </SettingRow>
+  );
+}
+
+/**
+ * Which Bowerbird this app talks to.
  *
  * Applied on save rather than as you type: every request in the app goes through this, and
  * re-pointing them at a half-typed hostname would empty the screen with each keystroke.
@@ -366,28 +416,25 @@ const ServerAddress = observer(function ServerAddress(): JSX.Element | null {
   };
 
   return (
-    <>
-      <GroupTitle>{SettingsStrings.groupThisApp()}</GroupTitle>
-      <SettingRow
+    <SettingRow
+      label={SettingsStrings.serverAddress()}
+      hint={failure ?? undefined}
+      onReset={saved === draft ? undefined : () => setDraft(saved)}
+    >
+      <TextField
+        style={settingStyles.field}
         label={SettingsStrings.serverAddress()}
-        hint={failure ?? undefined}
-        onReset={saved === draft ? undefined : () => setDraft(saved)}
-      >
-        <TextField
-          style={settingStyles.field}
-          label={SettingsStrings.serverAddress()}
-          value={draft}
-          placeholder={SettingsStrings.serverAddressPlaceholder()}
-          onChange={setDraft}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') apply();
-          }}
-        />
-        <Button variant="primary" disabled={draft === saved} onClick={apply}>
-          {SettingsStrings.connect()}
-        </Button>
-      </SettingRow>
-    </>
+        value={draft}
+        placeholder={SettingsStrings.serverAddressPlaceholder()}
+        onChange={setDraft}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') apply();
+        }}
+      />
+      <Button variant="primary" disabled={draft === saved} onClick={apply}>
+        {SettingsStrings.connect()}
+      </Button>
+    </SettingRow>
   );
 });
 
@@ -424,7 +471,7 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
 
   return (
     <>
-      <ServerAddress />
+      <ThisApp />
       <UpdateSettings />
 
       {store.settings != null && (

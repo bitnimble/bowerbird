@@ -14,7 +14,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = [] }
 
 [dependencies]
-tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = [] }
+# `macos-private-api` is what lets WKWebView take an element fullscreen, which the photo viewer
+# offers only where `document.fullscreenEnabled`; `tauri.conf.json`'s `macOSPrivateApi` has to agree.
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "1212c22d89c5136acc9d349b75cc6bfd36ede10c", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The shell proxies for the hosted server, so it needs a client. `rustls` rather than the

@@ -33,7 +33,7 @@ export const HdrPageStrings = {
   hdr: () => 'HDR',
   clickToSwitch: () => 'Select to switch',
 
-  title: () => 'HDR photos',
+  title: () => 'Why HDR?',
   intro: () =>
     "Your camera's RAW files hold bright detail that an 8-bit JPEG clips. HDR shows it on screen.",
   introHowToUse: () => 'Every photo here starts as 8 bits. Select a photo to see its HDR version.',

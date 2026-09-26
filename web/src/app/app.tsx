@@ -12,7 +12,6 @@ import {
   GitMerge,
   Image,
   Images,
-  Keyboard,
   Layers,
   Library,
   PanelLeftClose,
@@ -31,8 +30,6 @@ import { HdrPageStrings } from '../features/hdr/hdr_page.strings';
 import { libraryLabel } from '../features/libraries/library_label';
 import { BinPage } from '../features/photos/grid/bin_page';
 import { BinPageStrings } from '../features/photos/grid/bin_page.strings';
-import { BulkBarStrings } from '../features/photos/grid/bulk_bar.strings';
-import { TriageControlStrings } from '../features/photos/stack_triage/triage_control.strings';
 import { LibraryPhotosPage } from '../features/photos/grid/library_photos_page';
 import { MergePage } from '../features/photos/merge/merge_page';
 import { PhotoDetailPage } from '../features/photos/viewer/photo_detail_page';
@@ -58,11 +55,10 @@ import { Button } from '../ui/button';
 import { focusRing } from '../ui/focus_ring';
 import { ICON } from '../ui/icon';
 import { Tooltip } from '../ui/tooltip';
-import { MetaList, MetaTerm, MetaValue } from '../ui/meta_list';
-import { Modal } from '../ui/modal';
 import { ShowSidebar } from '../ui/page';
 import { ProgressBar } from '../ui/progress_bar';
 import { Text } from '../ui/text';
+import { DRAGS_WINDOW } from '../ui/title_bar';
 import { color, derivedSize, font, size } from '../ui/tokens.stylex';
 import { AppStrings } from './app.strings';
 import { CollectionListStrings } from './collection_list.strings';
@@ -90,6 +86,7 @@ const NARROW = '@media (max-width: 860px)';
 const SECTION_PAD = '8px';
 // Also where a guide rule stands in the icon column of the row it belongs to.
 const ROW_INSET = `calc(${size.sidebarStep} - 2px)`;
+const COARSE_CHEV_SLOT = `calc(${size.controlH} + 14px)`;
 
 const drawerOut = stylex.createTheme(drawer, { progress: '1' });
 
@@ -123,7 +120,6 @@ const styles = stylex.create({
     display: 'flex',
     flexDirection: 'column',
     minHeight: 0,
-    overflow: 'auto',
     // The tree's sticky rows count down from a depth no folder reaches, which the resize handle
     // and the drawer's scrim must not be compared against.
     isolation: 'isolate',
@@ -147,7 +143,18 @@ const styles = stylex.create({
   following: {
     transition: { default: null, [NARROW]: 'none' },
   },
-  brand: {
+  // Outside the scroll, which would otherwise carry the tree up under the traffic lights.
+  scroll: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '0%',
+    minHeight: 0,
+    overflow: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  // Same height as a page's first row, so the traffic lights sit centred in either.
+  head: {
     paddingTop: '12px',
     paddingInline: '12px',
     paddingBottom: '10px',
@@ -155,9 +162,15 @@ const styles = stylex.create({
     borderBottomStyle: 'solid',
     borderBottomColor: color.slate,
     display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: '8px',
+    justifyContent: 'flex-end',
+  },
+  brand: {
+    paddingTop: '10px',
+    paddingInline: '12px',
+    paddingBottom: '12px',
+    borderTopWidth: '1px',
+    borderTopStyle: 'solid',
+    borderTopColor: color.slate,
   },
   brandMark: {
     fontFamily: font.display,
@@ -221,8 +234,6 @@ const styles = stylex.create({
     height: derivedSize.sidebarRow,
     marginBlock: 0,
     marginInline: `calc(-1 * ${SECTION_PAD})`,
-    paddingRight: { default: null, [COARSE]: '8px' },
-    gap: { default: null, [COARSE]: '6px' },
     // One rule per ancestor, drawn as the image over the sticky backdrop's colour so a stuck
     // parent keeps them. Rows abut, so what each draws stacks into a continuous rule.
     backgroundImage: `repeating-linear-gradient(to right, ${color.slate} 0 1px, transparent 1px ${size.sidebarStep})`,
@@ -243,15 +254,6 @@ const styles = stylex.create({
     // Colour, not the shorthand, which would take the guide rules with it.
     backgroundColor: color.bower,
   }),
-  // A row with nothing to open keeps the chevron's column empty on a finger, so counts line up.
-  leaf: {
-    '::after': {
-      content: { default: null, [COARSE]: '""' },
-      flexGrow: 0,
-      flexShrink: 0,
-      flexBasis: size.controlH,
-    },
-  },
   rowLink: {
     flexGrow: 1,
     flexShrink: 1,
@@ -259,15 +261,17 @@ const styles = stylex.create({
     minWidth: 0,
     height: '100%',
     paddingLeft: ROW_INSET,
-    // Where the count's right edge lands, and so where the chevron over it is anchored.
-    paddingRight: '12px',
+    // Where the count's right edge lands. On a fine pointer the chevron lies over the count; on a
+    // finger nothing hovers, so the chevron stays shown and every row holds its slot, leaf rows
+    // too, so counts line up.
+    paddingRight: { default: '12px', [COARSE]: COARSE_CHEV_SLOT },
     // The chevron lies over the link, so without this the row drops its hover on reaching it.
     backgroundColor: { default: null, ':hover': color.slateSoft, [stylex.when.ancestor(':hover')]: color.slateSoft },
     color: { default: color.boneDim, ':hover': color.bone, [stylex.when.ancestor(':hover')]: color.bone },
   },
   // With no count to hold the chevron's slot open, the name holds it.
   rowLinkUncounted: {
-    paddingRight: { default: '34px', [COARSE]: '10px' },
+    paddingRight: { default: '34px', [COARSE]: COARSE_CHEV_SLOT },
   },
   indent: (marginLeft: string) => ({ marginLeft }),
   // The count holds the slot the chevron lies over, never narrower than it, so the swap cannot
@@ -292,11 +296,10 @@ const styles = stylex.create({
     },
   },
   chev: {
-    // Nothing hovers on a finger, so there the chevron takes a place beside the count rather than over it.
-    position: { default: 'absolute', [COARSE]: 'static' },
-    right: '12px',
+    position: 'absolute',
+    right: { default: '12px', [COARSE]: '8px' },
     top: '50%',
-    transform: { default: 'translateY(-50%)', [COARSE]: 'none' },
+    transform: 'translateY(-50%)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -400,7 +403,7 @@ const SidebarRow = observer(function SidebarRow({
         {...stylex.props(
           styles.row,
           styles.guides(guides(depth), guides(Math.max(0, depth - 1))),
-          sectionKey == null ? styles.leaf : styles.sticky(`calc(${derivedSize.sidebarRow} * ${depth})`, 999 - depth),
+          sectionKey != null && styles.sticky(`calc(${derivedSize.sidebarRow} * ${depth})`, 999 - depth),
           stylex.defaultMarker(),
         )}
       >
@@ -642,6 +645,7 @@ export const SidebarResizer = observer(function SidebarResizer(): JSX.Element {
         if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
         sidebar.setWidth(e.clientX);
       }}
+      onDoubleClick={sidebar.toggleOpen}
       onKeyDown={(e) => {
         const steps = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
         if (steps === 0) return;
@@ -687,8 +691,46 @@ export function Sidebar({
       {...stylex.props(styles.sidebar, shown && styles.sidebarShown, following && styles.following)}
       aria-label={AppStrings.sidebar()}
     >
-      <div {...stylex.props(styles.brand)}>
-        <div>
+      <div {...DRAGS_WINDOW} {...stylex.props(styles.head)}>
+        <Button iconOnly aria-label={AppStrings.hideSidebar()} aria-expanded onClick={onCollapse}>
+          <PanelLeftClose size={ICON} />
+        </Button>
+      </div>
+
+      <div {...stylex.props(styles.scroll)}>
+        <LibraryNav />
+
+        <div {...stylex.props(styles.section)}>
+          <SectionLabel>{AppStrings.catalogue()}</SectionLabel>
+          <SidebarRow
+            to={route(PathSegment.albums())}
+            icon={Images}
+            name={AlbumsPageStrings.albums()}
+            depth={0}
+            sectionKey="albums"
+          >
+            <SidebarAlbums />
+          </SidebarRow>
+          <EditConflictsLink />
+          <ReplicationTroubleLink />
+        </div>
+
+        {/* About the app rather than the photos, so away from the catalogue. */}
+        <div {...stylex.props(styles.section, styles.sectionApp)}>
+          <ExportsLink />
+          <SidebarLink to={route(PathSegment.settings())} icon={Settings}>
+            {SettingsStrings.settings()}
+          </SidebarLink>
+          {/* Beside Settings because it is what the HDR setting there is asking about:
+              the case for turning it on, made in pictures. */}
+          <SidebarLink to={route(PathSegment.hdr())} icon={Sun}>
+            {HdrPageStrings.title()}
+          </SidebarLink>
+          <ReportBugEntry />
+          <UpdateBadge />
+        </div>
+
+        <div {...stylex.props(styles.brand)}>
           <div {...stylex.props(styles.brandMark)}>{AppStrings.brand()}</div>
           <div {...stylex.props(styles.bower)} aria-hidden="true">
             <i {...stylex.props(styles.bowerBlue)} />
@@ -696,43 +738,6 @@ export function Sidebar({
             <i {...stylex.props(styles.bowerSlate)} />
           </div>
         </div>
-        <Button iconOnly aria-label={AppStrings.hideSidebar()} aria-expanded onClick={onCollapse}>
-          <PanelLeftClose size={ICON} />
-        </Button>
-      </div>
-
-      <LibraryNav />
-
-      <div {...stylex.props(styles.section)}>
-        <SectionLabel>{AppStrings.catalogue()}</SectionLabel>
-        <SidebarRow
-          to={route(PathSegment.albums())}
-          icon={Images}
-          name={AlbumsPageStrings.albums()}
-          depth={0}
-          sectionKey="albums"
-        >
-          <SidebarAlbums />
-        </SidebarRow>
-        <EditConflictsLink />
-        <ReplicationTroubleLink />
-      </div>
-
-      {/* Settings and the shortcut sheet are both "about the app" rather than
-          about the photographs, so they sit together, away from the catalogue. */}
-      <div {...stylex.props(styles.section, styles.sectionApp)}>
-        <ExportsLink />
-        <SidebarLink to={route(PathSegment.settings())} icon={Settings}>
-          {SettingsStrings.settings()}
-        </SidebarLink>
-        {/* Beside Settings because it is what the HDR setting there is asking about:
-            the case for turning it on, made in pictures. */}
-        <SidebarLink to={route(PathSegment.hdr())} icon={Sun}>
-          {HdrPageStrings.title()}
-        </SidebarLink>
-        <ShortcutHelp />
-        <ReportBugEntry />
-        <UpdateBadge />
       </div>
     </nav>
   );
@@ -781,68 +786,6 @@ function ServerEvents(): null {
     return () => events.disconnect();
   }, [events]);
   return null;
-}
-
-// One place that states the cull keybindings, reachable with ? from anywhere.
-// C and X are neighbours so the left hand can pick and reject without moving
-// while the right hand drives the arrow keys.
-const SHORTCUTS: [string, string][] = [
-  [AppStrings.keysArrows(), AppStrings.shortcutMoveBetweenPhotos()],
-  [AppStrings.keysRatings(), AppStrings.shortcutSetRating()],
-  ['C', AppStrings.shortcutPickOrClear()],
-  ['X', TriageControlStrings.reject()],
-  [AppStrings.keysDelete(), BulkBarStrings.moveToBin()],
-  [AppStrings.keysSpace(), AppStrings.shortcutAddToSelection()],
-  [AppStrings.keysEnter(), AppStrings.shortcutOpenPhoto()],
-  ['F', AppStrings.shortcutFullscreen()],
-  [AppStrings.keysZoom(), AppStrings.shortcutZoom()],
-  ['I', AppStrings.shortcutShowCameraJpeg()],
-  ['O', AppStrings.shortcutShowRendition()],
-  ['[', AppStrings.shortcutToggleFilmstrip()],
-  [']', AppStrings.shortcutToggleInfo()],
-  ['\\', AppStrings.shortcutMoreActions()],
-  [AppStrings.keysEscape(), AppStrings.shortcutClearOrLeave()],
-  [AppStrings.keysSides(), AppStrings.shortcutPreferSide()],
-  [AppStrings.keysDownOrSpace(), AppStrings.shortcutPickBoth()],
-  [AppStrings.keysPeek(), AppStrings.shortcutPeek()],
-  [AppStrings.keysUndo(), AppStrings.shortcutUndoRound()],
-  ['V', AppStrings.shortcutSwitchPresentation()],
-  [AppStrings.keysUpDown(), AppStrings.shortcutMoveBetweenFolders()],
-  [AppStrings.keysOpenClose(), AppStrings.shortcutOpenCloseFolder()],
-  [AppStrings.keysHomeEnd(), AppStrings.shortcutFirstLastFolder()],
-];
-
-function ShortcutHelp(): JSX.Element {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent): void {
-      const target = e.target as HTMLElement | null;
-      if (target != null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (e.key === '?') setOpen((v) => !v);
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  return (
-    <>
-      <SidebarButton icon={Keyboard} onClick={() => setOpen(true)}>
-        {AppStrings.shortcuts()}
-        <span {...stylex.props(sidebarStyles.count)}>?</span>
-      </SidebarButton>
-      <Modal open={open} onOpenChange={setOpen} title={AppStrings.keyboardShortcuts()}>
-        <MetaList>
-          {SHORTCUTS.map(([keys, what]) => (
-            <Fragment key={keys}>
-              <MetaTerm>{keys}</MetaTerm>
-              <MetaValue>{what}</MetaValue>
-            </Fragment>
-          ))}
-        </MetaList>
-      </Modal>
-    </>
-  );
 }
 
 // Every grid a photo can be opened from. `collectionPath` builds the concrete

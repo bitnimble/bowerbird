@@ -6,6 +6,7 @@ import { HeadingInRow } from './heading';
 import { ICON } from './icon';
 import { PageStrings } from './page.strings';
 import { Row } from './row';
+import { DRAGS_WINDOW, HAS_TRAFFIC_LIGHTS } from './title_bar';
 import { size } from './tokens.stylex';
 
 const styles = stylex.create({
@@ -25,6 +26,10 @@ const styles = stylex.create({
   },
   head: {
     marginBottom: '8px',
+  },
+  // Past the traffic lights `trafficLightPosition` puts at x 14, 54px wide, plus a 12px gap, less the page's 14px padding.
+  clearTrafficLights: {
+    marginLeft: '66px',
   },
 });
 
@@ -49,7 +54,13 @@ export function ShowSidebarButton(): JSX.Element | null {
   const show = useContext(ShowSidebar);
   if (show == null) return null;
   return (
-    <Button iconOnly aria-label={PageStrings.showSidebar()} aria-expanded={false} onClick={show}>
+    <Button
+      iconOnly
+      aria-label={PageStrings.showSidebar()}
+      aria-expanded={false}
+      onClick={show}
+      style={HAS_TRAFFIC_LIGHTS && styles.clearTrafficLights}
+    >
       <PanelLeftOpen size={ICON} />
     </Button>
   );
@@ -64,7 +75,7 @@ export function PageHead({
   children?: ReactNode;
 }): JSX.Element {
   return (
-    <Row style={styles.head}>
+    <Row {...(withSidebarButton && DRAGS_WINDOW)} style={styles.head}>
       {withSidebarButton && <ShowSidebarButton />}
       <HeadingInRow.Provider value>{children}</HeadingInRow.Provider>
     </Row>

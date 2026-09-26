@@ -2,6 +2,7 @@ export const StackTriageStrings = {
   pickA: () => 'Pick A',
   pickB: () => 'Pick B',
   both: () => 'Pick both',
+  bothKey: () => 'Space',
   keysUndo: () => '⌘Z',
   neither: () => 'Reject both',
 

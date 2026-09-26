@@ -151,6 +151,19 @@ export async function setServerOrigin(value: string): Promise<string> {
   return z.string().parse(await invoke('set_server_origin', { value }));
 }
 
+/** The webview's zoom, or null in a browser, which has its own. */
+export async function uiScale(): Promise<number | null> {
+  const invoke = shellInvoke();
+  if (invoke == null) return null;
+  return z.number().parse(await invoke('ui_scale', {}));
+}
+
+export async function setUiScale(value: number): Promise<void> {
+  const invoke = shellInvoke();
+  if (invoke == null) throw new Error('the interface scale is the desktop app’s to set');
+  await invoke('set_ui_scale', { value });
+}
+
 /**
  * Where the shell keeps the catalogue, or null where there is no folder to offer.
  *

@@ -40,6 +40,7 @@ import { menuStyles } from '../../../ui/menu_styles';
 import type { Option } from '../../../ui/option';
 import { OverflowMenu } from '../../../ui/overflow_menu';
 import { ShowSidebarButton } from '../../../ui/page';
+import { DRAGS_WINDOW } from '../../../ui/title_bar';
 import { Row, Spacer } from '../../../ui/row';
 import { Text } from '../../../ui/text';
 import { SendToFrameTv } from '../../frame_tv/send_to_frame_tv';
@@ -459,7 +460,12 @@ export const DetailNav = observer(function DetailNav({
   const leaveTool = (): void => edit?.presenter.setTool('cursor');
 
   return (
-    <Row style={[styles.nav, editing && styles.navEditing]} role="group" aria-label={PhotoDetailStrings.controls()}>
+    <Row
+      {...DRAGS_WINDOW}
+      style={[styles.nav, editing && styles.navEditing]}
+      role="group"
+      aria-label={PhotoDetailStrings.controls()}
+    >
       <ShowSidebarButton />
       {/* The way out and the way back through the grade take the same corner: leaving is
           what the reader reaches for in either mode, and stepping to another photograph

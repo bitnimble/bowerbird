@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "What the editor's window is allowed to call",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
 }
