@@ -87,19 +87,20 @@ export class UpdatesPresenter {
    */
   @action.bound
   async install(): Promise<void> {
-    if (this.store.installing) return;
-    this.store.installing = true;
+    if (this.store.install !== 'idle') return;
+    this.store.install = 'downloading';
     this.store.failure = null;
     const target = this.store.available?.version ?? null;
     try {
       this.put(await updatesApi.apply());
     } catch (err) {
       runInAction(() => {
-        this.store.installing = false;
+        this.store.install = 'idle';
         this.store.failure = message(err);
       });
       return;
     }
+    runInAction(() => (this.store.install = 'restarting'));
     await this.waitForRestart(target);
   }
 
@@ -131,7 +132,7 @@ export class UpdatesPresenter {
       }
     }
     runInAction(() => {
-      this.store.installing = false;
+      this.store.install = 'idle';
       this.store.failure = UpdatesStrings.restartTookTooLong();
     });
   }

@@ -201,7 +201,10 @@ fn watch_for_restart(app: tauri::AppHandle<crate::Runtime>) {
                 *held = None;
                 drop(held);
                 if restarting {
-                    app.exit(launcher::RESTART);
+                    // Not `app.exit`: Tauri ends its event loop with `ControlFlow::Exit`, which
+                    // is code 0 whatever it was asked for, and the supervisor reads 0 as a quit.
+                    app.cleanup_before_exit();
+                    std::process::exit(launcher::RESTART);
                 }
                 return;
             }

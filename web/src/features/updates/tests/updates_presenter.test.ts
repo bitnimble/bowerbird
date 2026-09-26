@@ -96,7 +96,7 @@ test('an install that is refused leaves the button usable again', async () => {
   await presenter.check();
   updatesApi.apply = () => Promise.reject(new Error('no payload for linux-x86_64'));
   await presenter.install();
-  expect(store.installing).toBe(false);
+  expect(store.install).toBe('idle');
   expect(store.failure).toBe('no payload for linux-x86_64');
 });
 
@@ -109,8 +109,13 @@ test('the page reloads only once the new version is the one answering', async ()
   await presenter.check();
 
   let asked = 0;
-  updatesApi.apply = () => Promise.resolve(status('0.1.0', ['0.2.0']));
+  const phases: string[] = [];
+  updatesApi.apply = () => {
+    phases.push(store.install);
+    return Promise.resolve(status('0.1.0', ['0.2.0']));
+  };
   updatesApi.get = () => {
+    phases.push(store.install);
     asked += 1;
     // Down for the first two polls, which is the whole of the restart.
     if (asked < 3) return Promise.reject(new Error('connection refused'));
@@ -121,6 +126,7 @@ test('the page reloads only once the new version is the one answering', async ()
   expect(reloads).toHaveLength(1);
   expect(asked).toBeGreaterThanOrEqual(3);
   expect(store.failure).toBeNull();
+  expect(phases).toEqual(['downloading', ...Array<string>(asked).fill('restarting')]);
 });
 
 // Everything is installed and the reader has to start it themselves - which is a different
@@ -135,7 +141,7 @@ test('a version that never comes back says so rather than waiting for ever', asy
 
   await presenter.install();
   expect(reloads).toHaveLength(0);
-  expect(store.installing).toBe(false);
+  expect(store.install).toBe('idle');
   expect(store.failure).toBe(UpdatesStrings.restartTookTooLong());
 });
 

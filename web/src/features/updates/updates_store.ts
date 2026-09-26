@@ -1,6 +1,8 @@
 import { computed, observable } from 'mobx';
 import { type ReleaseNote, type UpdateStatus } from '../../../../src/schemas/updates';
 
+export type InstallPhase = 'idle' | 'downloading' | 'restarting';
+
 // What the install is, and what it could be. One observable for the whole answer rather
 // than a field each: it arrives from the server as one object, and the sidebar's badge and
 // the dialog behind it read the same one.
@@ -14,8 +16,11 @@ export class UpdatesStore {
    * replies, so by the time a status arrives it has never once been in the middle of one.
    */
   @observable accessor checking = false;
-  /** From the moment the button is pressed until the new version is answering. */
-  @observable accessor installing = false;
+  /**
+   * `downloading` while the server fetches and unpacks the payload, `restarting` from its
+   * answer until the new version is the one answering.
+   */
+  @observable accessor install: InstallPhase = 'idle';
   @observable.ref accessor failure: string | null = null;
 
   @computed get current(): string | null {

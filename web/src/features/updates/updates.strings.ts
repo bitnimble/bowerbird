@@ -10,6 +10,7 @@ export const UpdatesStrings = {
   releasedOn: (when: string) => `Released ${when}`,
 
   updateNow: () => 'Update now',
+  downloading: () => 'Downloading…',
   installing: () => 'Installing…',
   // Where the install cannot replace itself: a phone, or a container the reader pulls.
   download: () => 'Download',

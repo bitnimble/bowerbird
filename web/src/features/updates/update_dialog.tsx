@@ -13,6 +13,7 @@ import { color } from '../../ui/tokens.stylex';
 import { usePresenters, useUpdatesStore } from '../../app/stores_context';
 import { ReleaseNotes } from './release_notes';
 import { UpdatesStrings } from './updates.strings';
+import { type InstallPhase } from './updates_store';
 
 const styles = stylex.create({
   // Its own scroll rather than the modal's, so the install button stays on screen however many releases were skipped.
@@ -36,6 +37,12 @@ const styles = stylex.create({
   },
 });
 
+const INSTALL_LABEL: Record<InstallPhase, () => string> = {
+  idle: UpdatesStrings.updateNow,
+  downloading: UpdatesStrings.downloading,
+  restarting: UpdatesStrings.installing,
+};
+
 /** Every release between the one running and the newest one, newest first (§23.1). */
 export const UpdateDialog = observer(function UpdateDialog(): JSX.Element | null {
   const store = useUpdatesStore();
@@ -50,9 +57,9 @@ export const UpdateDialog = observer(function UpdateDialog(): JSX.Element | null
         <Text variant="mono">{UpdatesStrings.fromVersion(current, newest.version)}</Text>
         <Spacer />
         {store.canInstall ? (
-          <Button variant="primary" disabled={store.installing} onClick={() => void updates.install()}>
+          <Button variant="primary" disabled={store.install !== 'idle'} onClick={() => void updates.install()}>
             <Sparkles size={ICON} />
-            {store.installing ? UpdatesStrings.installing() : UpdatesStrings.updateNow()}
+            {INSTALL_LABEL[store.install]()}
           </Button>
         ) : (
           <DownloadInstead />
