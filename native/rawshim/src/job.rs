@@ -543,7 +543,12 @@ fn describe_if_grid(image: crate::rgb::RgbRef<'_>, target: &Target, outcome: &mu
 }
 
 #[cfg(feature = "renditions")]
-fn save_avif(image: crate::rgb::RgbRef<'_>, target: &Target, rotate: u16) -> Result<(), String> {
+fn save_avif(
+    image: crate::rgb::RgbRef<'_>,
+    target: &Target,
+    rotate: u16,
+    exif: Option<&[u8]>,
+) -> Result<(), String> {
     crate::save_avif_frame(
         image,
         target.sdr_quantizer,
@@ -551,6 +556,7 @@ fn save_avif(image: crate::rgb::RgbRef<'_>, target: &Target, rotate: u16) -> Res
         target.sdr_full_chroma,
         &target.output_path,
         rotate,
+        exif,
     )
 }
 
@@ -1323,6 +1329,9 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     }
 
     let output_rotation = job.output_rotation()?;
+    let opened = source.as_ref().zip(decoder.as_deref());
+    let exif = exif_block(job, opened);
+    let exif = exif.as_deref();
     let mut rendered: Vec<&Target> = Vec::new();
     for target in &job.targets {
         // Never for a panorama: what a photograph's embedded target lifts is one JPEG out of one
@@ -1362,7 +1371,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
                     height: preview.height,
                     data: &preview.data,
                 };
-                save_avif(image, target, output_rotation)?;
+                save_avif(image, target, output_rotation, exif)?;
                 describe_if_grid(image, target, &mut outcome);
                 lap("embedded preview, encode, write");
                 continue;
@@ -1419,7 +1428,7 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         if measuring.as_ref().is_some_and(|value| std::ptr::eq(target, value)) {
             return Ok(());
         }
-        write(coded, width, height, target, options, output_rotation, &mut outcome)
+        write(coded, width, height, target, options, output_rotation, exif, &mut outcome)
     }))?;
     outcome.photo_analysis = measured.owed;
     if banded.is_empty() {
@@ -1431,11 +1440,26 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
     };
     lap("hold");
     for target in banded {
-        pollster::block_on(bands(job, target, &held, &measured.known, measured.peak, output_rotation, &mut outcome))?;
+        pollster::block_on(bands(job, target, &held, &measured.known, measured.peak, output_rotation, exif, &mut outcome))?;
         lap("bands, encode, write");
         step(job);
     }
     Ok(outcome)
+}
+
+/// The EXIF every file this job writes carries (`crate::exif`), off the RAW `opened` where the job
+/// already has it open.
+#[cfg(feature = "renditions")]
+fn exif_block(
+    job: &Job,
+    opened: Option<(&rawler::rawsource::RawSource, &dyn rawler::decoders::Decoder)>,
+) -> Option<Vec<u8>> {
+    let recorded = match (opened, &job.composite) {
+        (Some((source, decoder)), _) => crate::exif::Recorded::opened(source, decoder),
+        (None, Some(composite)) => crate::exif::Recorded::read(&composite.sources.first()?.raw_file_path),
+        (None, None) => crate::exif::Recorded::read(&job.raw_file_path),
+    };
+    recorded?.block(crate::exif::NON_IDENTIFYING)
 }
 
 /// The long edge a photograph is measured at where only windows of it are wanted: the bands of a
@@ -1497,6 +1521,7 @@ async fn bands(
     known: &crate::photo_analysis::PhotoAnalysis,
     scene_peak: Light<DisplayNits>,
     rotate: u16,
+    exif: Option<&[u8]>,
     outcome: &mut Outcome,
 ) -> Result<(), String> {
     let graded = graded_bands(job, target, held, known, scene_peak, BAND_PIXELS).await?;
@@ -1513,7 +1538,7 @@ async fn bands(
                 Coded::Pq(samples) => Some(samples),
                 Coded::Srgb(_) => None,
             });
-            hdr::encode_bands(bands.collect(), width, &options, rotate)
+            hdr::encode_bands(bands.collect(), width, &options, rotate, exif)
         }
         Output::Srgb => {
             let bands: Vec<Vec<u8>> = graded.bands.into_iter().filter_map(|band| match band {
@@ -1536,6 +1561,7 @@ async fn bands(
                 target.sdr_full_chroma || odd,
                 &target.output_path,
                 rotate,
+                exif,
             )
         }
     }
@@ -2031,7 +2057,8 @@ pub fn write_rendered(job: &Job, framed: &[u8]) -> Result<Outcome, String> {
         options.still_chroma = Chroma::Yuv444;
     }
     let mut outcome = Outcome::default();
-    write(coded, header.width, header.height, target, &options, header.rotation, &mut outcome)?;
+    let exif = exif_block(job, None);
+    write(coded, header.width, header.height, target, &options, header.rotation, exif.as_deref(), &mut outcome)?;
     outcome.photo_analysis = header.photo_analysis;
     Ok(outcome)
 }
@@ -2095,13 +2122,14 @@ fn write(
     target: &Target,
     options: &EncodeOptions,
     rotate: u16,
+    exif: Option<&[u8]>,
     outcome: &mut Outcome,
 ) -> Result<(), String> {
     // The transfer already ran, in the same dispatch as the grade (`frame.slang::encode`), so
     // there is nothing left here but handing the bytes to an encoder.
     match coded {
         Coded::Pq(frame) => {
-            hdr::encode_pq_frame_rotated(frame, width, height, options, rotate)?;
+            hdr::encode_pq_frame_rotated(frame, width, height, options, rotate, exif)?;
         }
         Coded::Srgb(data) => {
             let image = crate::rgb::RgbRef {
@@ -2109,7 +2137,7 @@ fn write(
                 height,
                 data: &data,
             };
-            save_avif(image, target, rotate)?;
+            save_avif(image, target, rotate, exif)?;
             describe_if_grid(image, target, outcome);
         }
     }

@@ -365,7 +365,11 @@ pub unsafe extern "C" fn bb_transcode_jpeg(
     let encoded = crate::guard("bb_transcode_jpeg", None, || {
         let bytes = std::fs::read(path).ok()?;
         let decoded = crate::image::decode(&bytes, long_edge as usize).ok()?;
-        crate::jpeg::encode(decoded.as_ref(), quality).ok()
+        let jpeg = crate::jpeg::encode(decoded.as_ref(), quality).ok()?;
+        match crate::avif::exif(&bytes) {
+            Some(exif) => crate::jpeg::with_exif(&jpeg, &exif),
+            None => Some(jpeg),
+        }
     });
     let Some(encoded) = encoded else { return -1 };
     unsafe { reply(&encoded, out, out_cap) }
@@ -448,16 +452,18 @@ pub unsafe extern "C" fn bb_export_still(
     };
     let encoded = crate::guard("bb_export_still", None, || {
         let bytes = std::fs::read(path).ok()?;
+        let exif = crate::avif::exif(&bytes);
+        let exif = exif.as_deref();
         match format {
             // Twelve bits of PQ into a sixteen-bit container, which is the whole point: the
             // samples are the ones the AVIF holds rather than a tone map of them.
             "png-hdr" => {
                 let (samples, width, height) = crate::avif::decode_at(&bytes, 16).ok()?;
-                crate::png_write::encode_hdr(&samples, width, height).ok()
+                crate::png_write::encode_hdr(&samples, width, height, exif).ok()
             }
             "jxl-hdr" => {
                 let (samples, width, height) = crate::avif::decode_at(&bytes, 16).ok()?;
-                crate::jxl_write::encode_hdr(&samples, width, height, quality).ok()
+                crate::jxl_write::encode_hdr(&samples, width, height, quality, exif).ok()
             }
             "png" => {
                 let decoded = crate::image::decode(&bytes, 0).ok()?;
@@ -465,13 +471,14 @@ pub unsafe extern "C" fn bb_export_still(
                     decoded.as_ref().data,
                     decoded.as_ref().width,
                     decoded.as_ref().height,
+                    exif,
                 )
                 .ok()
             }
             "jxl" => {
                 let decoded = crate::image::decode(&bytes, 0).ok()?;
                 let frame = decoded.as_ref();
-                crate::jxl_write::encode_sdr(frame.data, frame.width, frame.height, quality).ok()
+                crate::jxl_write::encode_sdr(frame.data, frame.width, frame.height, quality, exif).ok()
             }
             "tiff" => {
                 let decoded = crate::image::decode(&bytes, 0).ok()?;
@@ -479,6 +486,7 @@ pub unsafe extern "C" fn bb_export_still(
                     decoded.as_ref().data,
                     decoded.as_ref().width,
                     decoded.as_ref().height,
+                    exif,
                 )
                 .ok()
             }
@@ -840,7 +848,8 @@ mod tests {
         let path = dir.join("rendition.avif");
         let (width, height) = (64usize, 48usize);
         let frame: Vec<u8> = (0..width * height * 3).map(|i| (i % 251) as u8).collect();
-        crate::avif::encode_rendition(
+        let exif = crate::exif::tests::block();
+        crate::avif::encode_rendition_rotated(
             std::borrow::Cow::Borrowed(&frame),
             width,
             height,
@@ -848,6 +857,8 @@ mod tests {
             10,
             true,
             path.to_str().expect("a path"),
+            0,
+            Some(&exif),
         )
         .expect("the rendition");
 
@@ -868,6 +879,50 @@ mod tests {
 
         let decoded = crate::jpeg::decode(&out[..written as usize], 0).expect("the JPEG decodes");
         assert_eq!((decoded.width, decoded.height), (width, height));
+        let probe = crate::decode_rendered::probe(&out).expect("the JPEG's header");
+        assert_eq!(probe.exif, Some(exif), "the rendition's EXIF rides across");
+    }
+
+    /// Every format an export transcodes to carries the EXIF of the rendition it came from.
+    #[test]
+    fn every_exported_still_carries_the_renditions_exif() {
+        let dir = std::env::temp_dir().join(format!("bb-export-still-exif-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("rendition.avif");
+        let exif = crate::exif::tests::block();
+        crate::avif::encode_rendition_rotated(
+            vec![128u8; 16 * 8 * 3].into(),
+            16,
+            8,
+            20,
+            10,
+            true,
+            path.to_str().expect("a path"),
+            0,
+            Some(&exif),
+        )
+        .expect("the rendition");
+        let c_path = std::ffi::CString::new(path.to_str().expect("a path")).expect("nul");
+
+        for format in ["png", "png-hdr", "jxl", "jxl-hdr", "tiff"] {
+            let c_format = std::ffi::CString::new(format).expect("nul");
+            let mut out = vec![0u8; 1 << 20];
+            #[expect(unsafe_code)]
+            let written = unsafe {
+                bb_export_still(c_path.as_ptr(), c_format.as_ptr(), 1.0, out.as_mut_ptr(), out.len())
+            };
+            assert!(written > 0, "{format} exports");
+            out.truncate(written as usize);
+
+            let carried = match format {
+                // The file's own directories rather than a block inside it, so read back as tags.
+                "tiff" => crate::exif::Recorded::parse(&out)
+                    .and_then(|recorded| recorded.block(crate::exif::NON_IDENTIFYING)),
+                _ => out.windows(exif.len()).any(|window| window == exif).then(|| exif.clone()),
+            };
+            assert_eq!(carried.as_ref(), Some(&exif), "{format} carries the EXIF");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The bound is honoured whichever format the file is, which is the half of

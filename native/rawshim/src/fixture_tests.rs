@@ -2393,6 +2393,10 @@ mod camera_match {
                 .expect("the bytes render");
             crate::job::write_rendered(&client, &framed).expect("the frame is written");
 
+            let exif = |file: &std::path::Path| crate::avif::exif(&std::fs::read(file).expect("a rendition"));
+            let carried = exif(&served).expect("the server's rendition carries the camera's EXIF");
+            assert_eq!(Some(carried), exif(&rendered), "and the client's carries the same");
+
             if output == "srgb" {
                 assert!(
                     std::fs::read(&served).expect("the server wrote")

@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn different_orientations_are_refused_before_computing_a_gain_map() {
         let (sdr, _) = arms();
-        let base = crate::avif::encode_rgb8_rotated(sdr.into(), W, H, 20, 10, true, 180)
+        let base = crate::avif::encode_rgb8_rotated(sdr.into(), W, H, 20, 10, true, 180, None)
             .expect("rotated SDR arm");
         let (_, alternate) = encoded();
         assert_eq!(combine(&base, &alternate, 20, 10).err().as_deref(),
@@ -321,7 +321,9 @@ mod tests {
     #[test]
     fn combined_gain_map_keeps_base_orientation() {
         let (sdr, hdr) = arms();
-        let base = crate::avif::encode_rgb8_rotated(sdr.into(), W, H, 20, 10, true, 90).expect("SDR arm");
+        let exif = crate::exif::tests::block();
+        let base = crate::avif::encode_rgb8_rotated(sdr.into(), W, H, 20, 10, true, 90, Some(&exif))
+            .expect("SDR arm");
         let alternate = crate::avif::encode_still_rotated(
             hdr.into(),
             W,
@@ -333,12 +335,14 @@ mod tests {
                 speed: 10,
             },
             90,
+            Some(&exif),
         ).expect("HDR arm");
         let combined = combine(&base, &alternate, 20, 10).expect("combined gain map");
         let decoded = decode(&combined).expect("decoded combined image");
         assert_eq!(orientation_tag(&decoded.image).expect("orientation"), 6);
         let file = crate::heif::read(&combined).expect("combined AVIF");
         assert_eq!(file.primary.turn, rawler::decoders::Orientation::Rotate90);
+        assert_eq!(crate::avif::exif(&combined), Some(exif));
     }
 }
 

@@ -260,6 +260,7 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
         // before the first band starts.
         .allowlist_function("avifImageAllocatePlanes")
         .allowlist_function("avifImageSetViewRect")
+        .allowlist_function("avifImageSetMetadataExif")
         .allowlist_type("avifCropRect")
         .allowlist_type("avifPlanesFlag")
         .allowlist_function("avifEncoderCreate")
@@ -280,6 +281,9 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .allowlist_function("avifDecoderCreate")
         .allowlist_function("avifDecoderDestroy")
         .allowlist_function("avifDecoderReadMemory")
+        // The container alone, for the EXIF an export carries from the rendition it transcodes.
+        .allowlist_function("avifDecoderSetIOMemory")
+        .allowlist_function("avifDecoderParse")
         .allowlist_function("avifImageYUVToRGB")
         // The gain map beside a picture, which is a second image and the terms that apply it.
         // Stable since 1.2 (`libavif` below is what makes sure this is that).

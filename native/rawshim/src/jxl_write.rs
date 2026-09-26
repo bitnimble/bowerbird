@@ -24,19 +24,38 @@ const JXL_TRANSFER_FUNCTION_SRGB: raw::JxlTransferFunction = 13;
 const JXL_TRANSFER_FUNCTION_PQ: raw::JxlTransferFunction = 16;
 const JXL_RENDERING_INTENT_RELATIVE: raw::JxlRenderingIntent = 1;
 
-/// Eight-bit sRGB, which is what the SDR render holds.
-pub fn encode_sdr(samples: &[u8], width: usize, height: usize, distance: f32) -> Result<Vec<u8>, String> {
-    encode(samples, width, height, distance, false)
+/// Eight-bit sRGB, which is what the SDR render holds. `exif` is a TIFF block (`crate::exif`).
+pub fn encode_sdr(
+    samples: &[u8],
+    width: usize,
+    height: usize,
+    distance: f32,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
+    encode(samples, width, height, distance, false, exif)
 }
 
 /// The PQ Rec.2020 samples at sixteen bits, taken from the AVIF rather than tone mapped.
-pub fn encode_hdr(samples: &[u16], width: usize, height: usize, distance: f32) -> Result<Vec<u8>, String> {
+pub fn encode_hdr(
+    samples: &[u16],
+    width: usize,
+    height: usize,
+    distance: f32,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     // A reinterpret rather than a conversion: the bytes are the samples in this machine's order,
     // which is what `JXL_NATIVE_ENDIAN` says the buffer is in.
-    encode(bytemuck::cast_slice(samples), width, height, distance, true)
+    encode(bytemuck::cast_slice(samples), width, height, distance, true, exif)
 }
 
-fn encode(samples: &[u8], width: usize, height: usize, distance: f32, hdr: bool) -> Result<Vec<u8>, String> {
+fn encode(
+    samples: &[u8],
+    width: usize,
+    height: usize,
+    distance: f32,
+    hdr: bool,
+    exif: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     let depth = match hdr {
         true => 16,
         false => 8,
@@ -61,6 +80,18 @@ fn encode(samples: &[u8], width: usize, height: usize, distance: f32, hdr: bool)
                 != JXL_ENC_SUCCESS
         {
             return Err("libjxl would not take a parallel runner".to_string());
+        }
+
+        if let Some(exif) = exif {
+            // The offset to the TIFF header, which follows directly.
+            let contents = [&[0u8; 4][..], exif].concat();
+            if raw::JxlEncoderUseContainer(encoder.0, 1) != JXL_ENC_SUCCESS
+                || raw::JxlEncoderUseBoxes(encoder.0) != JXL_ENC_SUCCESS
+                || raw::JxlEncoderAddBox(encoder.0, b"Exif".as_ptr().cast(), contents.as_ptr(), contents.len(), 0)
+                    != JXL_ENC_SUCCESS
+            {
+                return Err("libjxl would not take the EXIF".to_string());
+            }
         }
 
         let mut info = std::mem::zeroed::<raw::JxlBasicInfo>();
@@ -210,7 +241,7 @@ mod tests {
 
     #[test]
     fn an_sdr_frame_encodes() {
-        let file = encode_sdr(&ramp8(), W, H, 1.0).expect("the encode");
+        let file = encode_sdr(&ramp8(), W, H, 1.0, None).expect("the encode");
         assert!(is_jxl(&file), "not a codestream: {:02x?}", &file[..8.min(file.len())]);
     }
 
@@ -219,7 +250,7 @@ mod tests {
     #[test]
     fn an_hdr_frame_encodes_at_sixteen_bits() {
         let samples: Vec<u16> = (0..W * H * 3).map(|i| (i * 17 % 65536) as u16).collect();
-        let file = encode_hdr(&samples, W, H, 1.0).expect("the encode");
+        let file = encode_hdr(&samples, W, H, 1.0, None).expect("the encode");
         assert!(is_jxl(&file));
     }
 
@@ -231,13 +262,38 @@ mod tests {
     #[test]
     fn lossless_costs_more_than_the_default_distance() {
         let noise: Vec<u8> = (0..W * H * 3).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
-        let lossy = encode_sdr(&noise, W, H, 1.5).expect("the lossy encode");
-        let lossless = encode_sdr(&noise, W, H, 0.0).expect("the lossless encode");
+        let lossy = encode_sdr(&noise, W, H, 1.5, None).expect("the lossy encode");
+        let lossless = encode_sdr(&noise, W, H, 0.0, None).expect("the lossless encode");
         assert!(lossless.len() > lossy.len(), "{} against {}", lossless.len(), lossy.len());
     }
 
     #[test]
     fn a_short_buffer_is_refused() {
-        assert!(encode_sdr(&[0; 8], W, H, 1.0).is_err());
+        assert!(encode_sdr(&[0; 8], W, H, 1.0, None).is_err());
+    }
+
+    fn exif_box(file: &[u8]) -> Option<&[u8]> {
+        let mut at = 0;
+        while at + 8 <= file.len() {
+            let size = u32::from_be_bytes(file[at..at + 4].try_into().ok()?) as usize;
+            if size < 8 || at + size > file.len() {
+                return None;
+            }
+            if &file[at + 4..at + 8] == b"Exif" {
+                return Some(&file[at + 8..at + size]);
+            }
+            at += size;
+        }
+        None
+    }
+
+    #[test]
+    fn a_jxl_carries_its_exif_in_a_box() {
+        let exif = crate::exif::tests::block();
+        let file = encode_sdr(&ramp8(), W, H, 1.0, Some(&exif)).expect("the encode");
+        assert!(is_jxl(&file));
+        let contents = exif_box(&file).expect("an Exif box");
+        assert_eq!(&contents[..4], &[0; 4], "the TIFF header follows directly");
+        assert_eq!(&contents[4..], &exif[..]);
     }
 }
