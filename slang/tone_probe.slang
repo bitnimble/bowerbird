@@ -15,18 +15,32 @@ void curve_draw(uint3 id : SV_DispatchThreadID)
         answers[id.x] = float4(original, 1.0);
         return;
     }
-    let undone = camera_undone(measured<Graded>(original));
+    Colour<Graded> undone;
+    camera_undone(measured<Graded>(original), undone);
     let exposed = times(undone, gain_of(stops(edit.exposure)));
     let luma = luma_of(exposed).v;
     if (luma <= 0.0) {
-        let lifted = curve_light(curve_evaluated(CurveCode(0.0), false)).g;
-        answers[id.x] = float4(float3(lifted), 1.0);
+        CurveCode black;
+        black.v = 0.0;
+        CurveCode lifted;
+        Gain light;
+        curve_evaluated(black, false, lifted);
+        curve_light(lifted, light);
+        answers[id.x] = float4(float3(light.g), 1.0);
         return;
     }
-    let toned = tone_adjusted(luma, 0.0, 0.0, tone_pivot().v);
-    let curved = curve_light(curve_evaluated(curve_code(gain(toned)), false)).g;
-    let residual = camera_floor_residual(measured<Graded>(original));
-    answers[id.x] = float4(exposed.v * (curved / luma) * residual.g, 1.0);
+    Light<Scene> pivot;
+    tone_pivot(pivot);
+    let toned = tone_adjusted(luma, 0.0, 0.0, pivot.v);
+    CurveCode code;
+    CurveCode curved;
+    Gain light;
+    curve_code(gain(toned), code);
+    curve_evaluated(code, false, curved);
+    curve_light(curved, light);
+    Gain residual;
+    camera_floor_residual(measured<Graded>(original), residual);
+    answers[id.x] = float4(exposed.v * (light.g / luma) * residual.g, 1.0);
 }
 
 [numthreads(64, 1, 1)]

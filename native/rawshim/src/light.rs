@@ -584,7 +584,7 @@ mod tests {
     #[test]
     fn curve_code_and_monotone_tangents_match_the_shader_contract() {
         assert!(include_str!("../../../slang/light.slang")
-            .contains("public static const Stops CURVE_TOP = { 3.0 };"));
+            .contains(&format!("public static const float CURVE_TOP_STOPS = {:?};", CURVE_TOP.raw())));
         let pivot: f64 = include_str!("../../../slang/adjust.slang")
             .split_once("PIVOT = {").unwrap().1
             .split_once('}').unwrap().0.trim().parse().unwrap();

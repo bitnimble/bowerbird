@@ -534,38 +534,38 @@ uint curve_count(bool camera)
     return camera ? edit.camera_curve_count : edit.reader_curve_count;
 }
 
-public CurveCode curve_evaluated(CurveCode code, bool camera)
+public void curve_evaluated(CurveCode code, bool camera, out CurveCode value)
 {
     let count = curve_count(camera);
     let first = curve_point(0, camera);
-    if (code.v <= first.x) { return CurveCode(first.y); }
+    if (code.v <= first.x) { value.v = first.y; return; }
     let last = curve_point(count - 1, camera);
-    if (code.v >= last.x) { return CurveCode(last.y + (code.v - last.x) * last.z); }
-    CurveCode value;
+    if (code.v >= last.x) { value.v = last.y + (code.v - last.x) * last.z; return; }
     for (uint i = 0; i + 1 < CURVE_POINTS; i++) {
         if (i + 1 >= count) { break; }
         let left = curve_point(i, camera);
         let right = curve_point(i + 1, camera);
         if (code.v > right.x) { continue; }
         curve_segment(code, left, right, value);
-        return value;
+        return;
     }
-    return CurveCode(last.y);
+    value.v = last.y;
 }
 
-static const CurveCode INVERSE_MIN_CODE = { 1e-6 };
+static const float INVERSE_MIN_CODE = 1e-6;
 static const float INVERSE_MIN_TANGENT = 1e-6;
 
-CurveCode camera_curve_inverse(CurveCode code)
+void camera_curve_inverse(CurveCode code, out CurveCode inverse)
 {
     let first = curve_point(0, true);
     if (code.v <= first.y) {
-        return CurveCode(max(INVERSE_MIN_CODE.v,
-            first.x + (code.v - first.y) / max(first.z, INVERSE_MIN_TANGENT)));
+        inverse.v = max(INVERSE_MIN_CODE,
+            first.x + (code.v - first.y) / max(first.z, INVERSE_MIN_TANGENT));
+        return;
     }
     let last = curve_point(curve_count(true) - 1, true);
-    if (code.v >= last.y && last.z > 0.0) { return CurveCode(last.x + (code.v - last.y) / last.z); }
-    if (code.v >= last.y) { return CurveCode(last.x); }
+    if (code.v >= last.y && last.z > 0.0) { inverse.v = last.x + (code.v - last.y) / last.z; return; }
+    if (code.v >= last.y) { inverse.v = last.x; return; }
     CurveCode sample;
     CurveCode value;
     for (uint i = 0; i + 1 < CURVE_POINTS; i++) {
@@ -588,27 +588,39 @@ CurveCode camera_curve_inverse(CurveCode code)
         sample.v = high;
         curve_segment(sample, left, right, value);
         let upper_error = abs(value.v - code.v);
-        sample.v = lower_error < upper_error ? low : high;
-        return sample;
+        inverse.v = lower_error < upper_error ? low : high;
+        return;
     }
-    return CurveCode(last.x);
+    inverse.v = last.x;
 }
 
-public Colour<D> camera_undone<D : IWhiteAtOne>(Colour<D> colour)
+public void camera_undone<D : IWhiteAtOne>(Colour<D> colour, out Colour<D> undone)
 {
     let luma = dot(LUMA, colour.v);
-    if (luma <= 0.0) { return colour; }
-    let code = curve_code(gain(luma));
-    let untoned = curve_light(camera_curve_inverse(code)).g / gain_of(stops(edit.camera_exposure)).g;
-    return measured<D>(colour.v * (untoned / luma));
+    if (luma <= 0.0) { undone.v = colour.v; return; }
+    CurveCode code;
+    CurveCode inverse;
+    Gain light;
+    Gain ratio;
+    ratio.g = luma;
+    curve_code(ratio, code);
+    camera_curve_inverse(code, inverse);
+    curve_light(inverse, light);
+    Gain exposure;
+    exposure.g = exp2(edit.camera_exposure);
+    let untoned = light.g / exposure.g;
+    undone.v = colour.v * (untoned / luma);
 }
 
-public Gain camera_floor_residual<D : IWhiteAtOne>(Colour<D> colour)
+public void camera_floor_residual<D : IWhiteAtOne>(Colour<D> colour, out Gain residual)
 {
-    let luma = luma_of(colour).v;
-    let floor = curve_light(CurveCode(edit.camera_curve[0].y)).g;
-    if (luma <= 0.0 || luma >= floor) { return gain(1.0); }
-    return gain(luma / floor);
+    let luma = dot(LUMA, colour.v);
+    CurveCode code;
+    code.v = edit.camera_curve[0].y;
+    Gain light;
+    curve_light(code, light);
+    let floor = light.g;
+    residual.g = luma <= 0.0 || luma >= floor ? 1.0 : luma / floor;
 }
 
 public bool sliders_at_rest()
@@ -626,9 +638,11 @@ public bool reader_curve_is_identity()
         && edit.reader_curve[1].y == 1.0;
 }
 
-public Light<Scene> tone_pivot()
+public void tone_pivot(out Light<Scene> pivot)
 {
-    return measured<Scene>(PIVOT.v * gain_of(stops(edit.camera_exposure)).g);
+    Gain exposure;
+    exposure.g = exp2(edit.camera_exposure);
+    pivot.v = PIVOT.v * exposure.g;
 }
 
 /// Every adjustment, on a scene-relative colour where 1.0 is diffuse white.
@@ -641,7 +655,7 @@ public Light<Scene> tone_pivot()
 ///
 /// Returns the colour untouched where nothing is set, which is the common case: a photo with no
 /// camera match, nobody's edits on it, and nothing in a library nobody has opened the editor on.
-public Colour<D> adjusted<D : IWhiteAtOne>(Colour<D> colour, Light<Scene> base_luma, float2 at)
+public void adjusted<D : IWhiteAtOne>(Colour<D> colour, Light<Scene> base_luma, float2 at, out Colour<D> result)
 {
     // The neighbourhood is read for the middle pair of the tone group as well now, not only for
     // the presence three: `tone_adjusted` weights highlights and shadows by how bright the region
@@ -649,7 +663,8 @@ public Colour<D> adjusted<D : IWhiteAtOne>(Colour<D> colour, Light<Scene> base_l
     let local = edit.texture_adjust != 0.0 || edit.clarity != 0.0 || edit.dehaze != 0.0
         || edit.highlights != 0.0 || edit.shadows != 0.0;
     if (sliders_at_rest() && reader_curve_is_identity()) {
-        return colour;
+        result.v = colour.v;
+        return;
     }
 
     // Fetched once for all of them, and only where one is set: the exposure is far commoner and
@@ -708,8 +723,14 @@ public Colour<D> adjusted<D : IWhiteAtOne>(Colour<D> colour, Light<Scene> base_l
     let luma = dot(LUMA, out);
     if (luma <= 0.0) {
         // Black has no colour ratios; a lifted black is grey.
-        let lifted = curve_light(curve_evaluated(CurveCode(0.0), false)).g;
-        return measured<D>(float3(lifted));
+        CurveCode black;
+        black.v = 0.0;
+        CurveCode lifted;
+        Gain light;
+        curve_evaluated(black, false, lifted);
+        curve_light(lifted, light);
+        result.v = float3(light.g);
+        return;
     }
 
     // Texture and clarity with the dehaze, ahead of the light group rather than after it.
@@ -739,12 +760,21 @@ public Colour<D> adjusted<D : IWhiteAtOne>(Colour<D> colour, Light<Scene> base_l
     // apart as the slider moves.
     let scene_around = zone_around + edit.exposure;
 
-    let pivot = tone_pivot().v;
-    let toned_luma = tone_adjusted(lit, scene_at, scene_around, pivot);
-    let curved_luma = curve_light(curve_evaluated(curve_code(gain(toned_luma)), false)).g;
+    Light<Scene> pivot;
+    tone_pivot(pivot);
+    let toned_luma = tone_adjusted(lit, scene_at, scene_around, pivot.v);
+    CurveCode code;
+    CurveCode curved;
+    Gain light;
+    Gain ratio;
+    ratio.g = toned_luma;
+    curve_code(ratio, code);
+    curve_evaluated(code, false, curved);
+    curve_light(curved, light);
+    let curved_luma = light.g;
     // Against the luma this pixel arrived with, not the lit one: the ratio has to carry the whole
     // of what the two groups did, and dividing by `lit` would hand the colour the light group's
     // work alone and drop the detail back out of it.
     let held = out * (curved_luma / luma);
-    return measured<D>(chroma_adjusted(held, curved_luma));
+    result.v = chroma_adjusted(held, curved_luma);
 }

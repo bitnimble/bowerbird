@@ -464,9 +464,12 @@ public Colour<DisplayNits> matched_nits(Colour<SceneNits> nits, float2 at)
     if (edit.curve_is_camera != 0 && edit.exposure == edit.camera_exposure && sliders_at_rest()) {
         graded = rendered;
     } else {
-        let untoned = camera_undone(rendered);
-        graded = times(adjusted(times(untoned, gain_of(stops(edit.exposure))), base_luma(nits), at),
-            camera_floor_residual(rendered));
+        Colour<Graded> untoned;
+        camera_undone(rendered, untoned);
+        Gain residual;
+        camera_floor_residual(rendered, residual);
+        adjusted(times(untoned, gain_of(stops(edit.exposure))), base_luma(nits), at, graded);
+        graded.v *= residual.g;
     }
     // Last, on the colour a still will code: the matrix and the lattice are free to send a colour
     // past the floor, and this is the one place it is brought back before anything quantises it.
@@ -568,7 +571,8 @@ public Colour<DisplayNits> neutral_unrolled(Colour<SceneNits> nits, float2 at)
     // catches that is `display_nits`' clamp - the top of the range rather than a curve into
     // it. Worth knowing before reaching for a big lift on a frame whose fit declined.
     let exposed = lit_by_reader(nits).v * gain_of(stops(edit.exposure)).g / edit.reference;
-    let scene = adjusted(measured<Scene>(exposed), base_luma(nits), at);
+    Colour<Scene> scene;
+    adjusted(measured<Scene>(exposed), base_luma(nits), at, scene);
     // **Scene nits taken as display nits, which is what having no tone curve means.** This arm's
     // whole rendering is `neutral_nits`' roll-off, so the reference is multiplied back in and the
     // result is handed to a display without a camera's own answer in between.
