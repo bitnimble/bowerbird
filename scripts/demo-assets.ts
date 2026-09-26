@@ -173,7 +173,7 @@ function target(slug: string): JobTarget {
     source: 'render',
     sdrQuantizer: encoderQuality('avif-sdr', SETTINGS.full_rendition_quality),
     hdrQuantizer: encoderQuality('avif-hdr', SETTINGS.full_rendition_quality),
-    preset: SETTINGS.hdr_preset,
+    preset: SETTINGS.avif_speed,
     stillFullChroma: SETTINGS.hdr_still_full_chroma,
     sdrFullChroma: SETTINGS.sdr_full_chroma,
   };

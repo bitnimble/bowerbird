@@ -341,7 +341,7 @@ const compositesService: CompositesService = new CompositesService(
 compositesService.onProgress((progress) => eventsApi.announce('composite', progress));
 const compositesApi = new CompositesApi(compositesService, photoReadService);
 const assembliesApi = new AssembliesApi(compositesService);
-const exportService = new ExportService(photoRenditionService, processingService, originals, compositesService);
+const exportService = new ExportService(photoRenditionService, processingService, originals, settingsRepo, compositesService);
 const shareService = new ShareService(photoRenditionService, originals, photoReadService, exportService);
 const frameTvService = new FrameTvService(
   settingsRepo,

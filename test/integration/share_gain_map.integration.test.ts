@@ -61,7 +61,12 @@ async function shared(lib: Library): Promise<{ rendition: string; jpeg: Uint8Arr
   const service = processing();
   const rendition = getRenditionPath(lib, PHOTO, 'full', lib.rendition_hdr);
   await service.renderOne(FIXTURE, PHOTO, lib, 'full', lib.rendition_hdr);
-  const jpeg = await new ExportService({} as never, service, localOriginals()).shareable(PHOTO, rendition, lib.rendition_hdr);
+  const jpeg = await new ExportService(
+    {} as never,
+    service,
+    localOriginals(),
+    { get: () => DEFAULT_SETTINGS } as SettingsRepository,
+  ).shareable(PHOTO, rendition, lib.rendition_hdr);
   return { rendition, jpeg };
 }
 

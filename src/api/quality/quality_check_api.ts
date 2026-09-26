@@ -14,14 +14,11 @@ import type { PhotoRenditionService } from '../../services/photos/renditions/pho
 import { encoderQuality } from '../../services/processing/analysis/quality';
 import { runJob } from '../../services/processing/rawshim/rawshim_job';
 import { AS_METERED } from '../../services/processing/pipeline/developed';
-import { AVIF_EFFORT } from '../../services/processing/renditions/renditions';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 
 // Which quantizer to ship renditions at. A diagnostic, like the HDR check
 // (§10.7): the trade is speed against artefacts, and only an eye at 1:1 settles
-// where it stops mattering. Effort is pinned at 0 because that is where the
-// speed is - 0.59s against 13.6s at the encoder's default on a 3840px frame - so
-// quality is the only variable left.
+// where it stops mattering.
 //
 // **Perceived quality, 0-100 and higher is better**, spanning the shipping default of 80 -
 // the same numbers `full_rendition_quality` takes, so what this page shows is what setting
@@ -46,12 +43,12 @@ export class QualityCheckApi {
   ) {
     const app = new Hono();
 
-    app.get(route(), (c) => c.html(page(this.firstPhotoId())));
+    app.get(route(), (c) => c.html(page(this.firstPhotoId(), this.settings.get().avif_speed)));
     // Through the catalogue, not straight from the URL: the id is interpolated
     // into the page's markup and script, so reflecting the parameter verbatim
     // would be reflected XSS. What gets rendered is the id the database holds,
     // and an unknown one is a 404 rather than a page that fails on every image.
-    app.get(route(PathSegment.param('photoId')), (c) => c.html(page(this.photoRenditions.locate(c.req.param('photoId') ?? '').photo.id)));
+    app.get(route(PathSegment.param('photoId')), (c) => c.html(page(this.photoRenditions.locate(c.req.param('photoId') ?? '').photo.id, this.settings.get().avif_speed)));
 
     app.get(route(PathSegment.img(), PathSegment.param('photoId'), PathSegment.param('quality')), async (c) => {
       const quality = Number(c.req.param('quality'));
@@ -68,7 +65,8 @@ export class QualityCheckApi {
       const rawFilePath = await this.originals.open(library, photo);
       if (rawFilePath == null) throw new AppError('VALIDATION_ERROR', `${photo.id} has no file to decode`);
 
-      const file = path.join(CACHE, `${photo.id}-${quality}.avif`);
+      const settings = this.settings.get();
+      const file = path.join(CACHE, `${photo.id}-${quality}-${settings.avif_speed}.avif`);
       let encodeMs = 0;
 
       if (!(await Bun.file(file).exists())) {
@@ -80,7 +78,6 @@ export class QualityCheckApi {
         // compared. Going through the same call the import does is also what keeps
         // the page honest - a setting that changed the renditions and not this
         // would make it a picture of something nobody ships.
-        const settings = this.settings.get();
         const started = Bun.nanoseconds();
         runJob({
           rawFilePath,
@@ -117,7 +114,7 @@ export class QualityCheckApi {
               source: 'render',
               sdrQuantizer: encoderQuality('avif-sdr', quality),
               hdrQuantizer: encoderQuality('avif-hdr', quality),
-              preset: settings.hdr_preset,
+              preset: settings.avif_speed,
               stillFullChroma: settings.hdr_still_full_chroma,
               sdrFullChroma: settings.sdr_full_chroma,
             },
@@ -153,7 +150,7 @@ export class QualityCheckApi {
   }
 }
 
-function page(photoId: string): string {
+function page(photoId: string, speed: number): string {
   const cells = QUALITIES.map(
     (q) => `
       <figure>
@@ -180,7 +177,7 @@ function page(photoId: string): string {
   code { color: #7fd; }
   label { color: #ddd; }
 </style>
-<h1>AVIF quality, effort ${AVIF_EFFORT}, at the full rendition size</h1>
+<h1>AVIF quality, speed ${speed}, at the full rendition size</h1>
 <p>
   Shown at <strong>1:1</strong>, not scaled: artefacts vanish in a downscaled view.
   Drag any panel to pan them all. <code id="note"></code>

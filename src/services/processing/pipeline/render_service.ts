@@ -101,6 +101,7 @@ export abstract class RenderService {
     return {
       size: settings.grid_rendition_size,
       quantizer: encoderQuality('avif-sdr', settings.grid_rendition_quality),
+      speed: settings.avif_speed,
     };
   }
 

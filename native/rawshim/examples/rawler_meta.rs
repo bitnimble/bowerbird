@@ -3,9 +3,12 @@
 
 fn main() {
     for path in std::env::args().skip(1) {
-        let Ok(image) = rawler::decode_file(&path) else {
-            println!("{path}: would not decode");
-            continue;
+        let image = match rawler::decode_file(&path) {
+            Ok(image) => image,
+            Err(why) => {
+                println!("{path}: would not decode: {why}");
+                continue;
+            }
         };
         let name = std::path::Path::new(&path).file_name().map_or_else(String::new, |s| s.to_string_lossy().into_owned());
         println!("== {name}  {}x{}  cpp {}", image.width, image.height, image.cpp);

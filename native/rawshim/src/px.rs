@@ -52,11 +52,16 @@ pub enum Sensor {}
 /// tile, the frame a stored analysis describes.
 pub enum Photograph {}
 
-/// The frame a decode actually produced, which [`crate::view::Scale::Half`] halves.
+/// The frame the corrections run on: what a decode produced, which [`crate::view::Scale::Half`]
+/// halves, or that resized to a size neither resolution gives ([`Decoded`]).
 ///
 /// Equal to [`Photograph`] whenever the scale is `Full`, which is most of the time and is exactly
 /// what made the two so easy to confuse.
 pub enum Drawn {}
+
+/// What a decode produced, where a render resizes it before correcting it
+/// (`tile::TileRequest::drawn`). Everywhere nothing resizes, the decode's frame *is* [`Drawn`].
+pub enum Decoded {}
 
 /// What the grade writes, once the reader's crop and straighten have been applied.
 ///
@@ -153,6 +158,7 @@ impl Absolute for PrintUnit {}
 impl Absolute for Millimetre {}
 impl Absolute for Photograph {}
 impl Absolute for Drawn {}
+impl Absolute for Decoded {}
 impl Absolute for FitPlane {}
 impl Absolute for Stored {}
 impl Absolute for Composite {}

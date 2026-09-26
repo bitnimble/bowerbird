@@ -402,10 +402,6 @@ impl From<crate::header::BbHeader> for HeaderFields {
     }
 }
 
-/// libvips' AVIF effort, inverted into libavif's speed at the encode (10.1).
-#[cfg(feature = "renditions")]
-const AVIF_EFFORT: i32 = 0;
-
 /// The largest size any of these targets asks for.
 ///
 /// 0 (native) beats any bounded size, being the whole frame. One number rather than one per
@@ -444,6 +440,30 @@ fn encode_options(job: &Job, target: &Target, output_path: &str) -> EncodeOption
             0 => f64::INFINITY,
             size => f64::from(size),
         },
+    }
+}
+
+/// The frame a target cuts from `photograph`, before the reader's geometry: `hdr_args::target_size`,
+/// shrunk until what the geometry writes of it still opens in every AVIF reader. A straighten's
+/// bounding box is larger than the frame it turns, so a frame at the limit can write past it.
+fn drawn_size(
+    job: &Job,
+    photograph: (usize, usize),
+    options: &EncodeOptions,
+) -> hdr_args::Size {
+    let mut options = options.clone();
+    loop {
+        let size = hdr_args::target_size(photograph.0 as u32, photograph.1 as u32, &options);
+        let (width, height) =
+            hdr::cropped_size(size.width as usize, size.height as usize, job.pixel_geometry());
+        let written = hdr_args::Size { width: width as u32, height: height as u32 };
+        let fits = hdr_args::decodable(written);
+        if fits == written {
+            return size;
+        }
+        let long = size.width.max(size.height);
+        let shrunk = f64::from(long) * f64::from(fits.width) / f64::from(written.width);
+        options.max_edge = shrunk.floor().min(f64::from(long - 1));
     }
 }
 
@@ -497,7 +517,7 @@ fn save_avif(image: crate::rgb::RgbRef<'_>, target: &Target, rotate: u16) -> Res
     crate::save_avif_frame(
         image,
         target.sdr_quantizer,
-        AVIF_EFFORT,
+        target.preset,
         target.sdr_full_chroma,
         &target.output_path,
         rotate,
@@ -916,11 +936,7 @@ impl Base {
         // resized on its own lands on a grid the whole frame's resize never had. That case is worth
         // having and is not this one: it needs a tolerance rather than the equality below.
         let sized = |target: &Target| {
-            let size = hdr_args::target_size(
-                photograph.0 as u32,
-                photograph.1 as u32,
-                &encode_options(job, target, &target.output_path),
-            );
+            let size = drawn_size(job, photograph, &encode_options(job, target, &target.output_path));
             (size.width as usize, size.height as usize)
         };
         let out = sized(rendered.first()?);
@@ -1003,6 +1019,7 @@ impl Base {
                 // reads the field's picture where it stands.
                 scale,
                 repairs: job.repairs.clone(),
+                drawn: None,
             },
         )
         .await;
@@ -1134,6 +1151,7 @@ fn tile_request(job: &Job, asked: [usize; 4]) -> crate::tile::TileRequest {
         // A loupe is showing the reader the export's own pixels, so it never halves.
         scale: crate::view::Scale::Full,
         repairs: job.repairs.clone(),
+        drawn: None,
     }
 }
 
@@ -1332,30 +1350,259 @@ pub fn run(job: &Job) -> Result<Outcome, String> {
         return Ok(outcome);
     }
 
-    // The three waits a caller can be told about: the decode, the cut, and an encode per
-    // rendition. Only where it asked, because the cell is one for the whole process
-    // (`crate::progress`) - a rendition built in the background would otherwise count over a
-    // merge somebody is watching.
+    let (banded, whole): (Vec<&Target>, Vec<&Target>) =
+        rendered.iter().partition(|target| is_banded(job, target));
+    // A band cannot measure its own levels or peak; the 3840px target measures the photograph.
+    let measuring = banded.first().map(|target| Target {
+        rendition: target.rendition,
+        output: target.output,
+        output_path: String::new(),
+        size: MEASURED_LONG_EDGE,
+        source: Source::Render,
+        sdr_quantizer: target.sdr_quantizer,
+        hdr_quantizer: target.hdr_quantizer,
+        preset: target.preset,
+        still_full_chroma: true,
+        sdr_full_chroma: true,
+        intent: target.intent,
+    });
+    let mut first = whole.clone();
+    if let Some(measuring) = &measuring {
+        first.push(measuring);
+    }
+
+    // The waits a caller can be told about: the decode, the cut, and an encode per rendition.
+    // Only where it asked, because the cell is one for the whole process (`crate::progress`) - a
+    // rendition built in the background would otherwise count over a merge somebody is watching.
     if job.report_progress {
-        crate::progress::begin(2 + rendered.len());
+        crate::progress::begin(2 + first.len() + banded.len());
     }
 
     // Asked for below the loop above, so a job that renders nothing needs no adapter: a scan that
     // read a header, or one whose only target was lifted whole out of the camera's JPEG, is not a
     // photograph this refuses to catalogue on a machine with no Vulkan.
     crate::gpu::device().ok_or(NO_ADAPTER)?;
-    let base = assembled(job, largest_size(&rendered), &rendered, None, &[])?;
+    let base = assembled(job, largest_size(&first), &first, None, &[])?;
     lap("decode, open");
     step(job);
-    outcome.photo_analysis = pollster::block_on(render(
-        job,
-        base,
-        &rendered,
-        |target, coded, width, height, options| {
-            write(coded, width, height, target, options, output_rotation, &mut outcome)
-        },
-    ))?;
+    let measured = pollster::block_on(render(job, base, &first, |target, coded, width, height, options| {
+        if measuring.as_ref().is_some_and(|value| std::ptr::eq(target, value)) {
+            return Ok(());
+        }
+        write(coded, width, height, target, options, output_rotation, &mut outcome)
+    }))?;
+    outcome.photo_analysis = measured.owed;
+    if banded.is_empty() {
+        return Ok(outcome);
+    }
+    let held = match job.preserve_source_orientation {
+        true => crate::decode::hold_path_unturned(&job.raw_file_path)?,
+        false => pollster::block_on(crate::decode::hold_path(&job.raw_file_path))?,
+    };
+    lap("hold");
+    for target in banded {
+        pollster::block_on(bands(job, target, &held, &measured.known, measured.peak, output_rotation, &mut outcome))?;
+        lap("bands, encode, write");
+        step(job);
+    }
     Ok(outcome)
+}
+
+/// The long edge a photograph is measured at where only windows of it are wanted: the bands of a
+/// render, or a window of a level too large to decode whole (`picture::prepared`).
+#[cfg(feature = "renditions")]
+pub(crate) const MEASURED_LONG_EDGE: u32 = 3840;
+
+/// Pixels past which a target is rendered a band at a time, of the frame it is drawn at or of the
+/// decode it is drawn from: the whole-frame chain holds several frames of each on the device at
+/// once.
+#[cfg(feature = "renditions")]
+pub(crate) const BANDED_PIXELS: usize = 128 << 20;
+
+/// Output pixels in one band, before the margins its window grows by.
+#[cfg(feature = "renditions")]
+const BAND_PIXELS: usize = 16 << 20;
+
+/// Whether `target` is rendered a band at a time ([`bands`]).
+///
+/// A photograph's own, and only where the chain would be over [`BANDED_PIXELS`]: a composite has
+/// a tiled assembly and a size cap of its own.
+#[cfg(feature = "renditions")]
+fn is_banded(job: &Job, target: &Target) -> bool {
+    if job.composite.is_some() {
+        return false;
+    }
+    let header = match crate::decode_rendered::is_rendered(&job.raw_file_path) {
+        true => crate::header::read_rendered(&job.raw_file_path),
+        false => crate::header::read_path(&job.raw_file_path),
+    };
+    let Some(header) = header else {
+        return false;
+    };
+    let photograph = (header.width as usize, header.height as usize);
+    let drawn = drawn_size(job, photograph, &encode_options(job, target, &target.output_path));
+    let scale = crate::view::Scale::for_long_edge(photograph, drawn.width.max(drawn.height));
+    let decoded = scale.of(photograph.0) * scale.of(photograph.1);
+    let (drawn_width, drawn_height) = (drawn.width as usize, drawn.height as usize);
+    // A straighten's bounding box is larger than the frame it turns.
+    let (out_width, out_height) = hdr::cropped_size(drawn_width, drawn_height, job.pixel_geometry());
+    [drawn_width * drawn_height, decoded, out_width * out_height].into_iter().any(|pixels| pixels > BANDED_PIXELS)
+}
+
+/// Output rows in a band of `pixels`, within what a grid of them may be (`avif::encode_grid`): at
+/// least 64 rows, at most 256 bands. A multiple of 64, so no tile the chroma leak is counted over
+/// straddles two bands.
+#[cfg(feature = "renditions")]
+fn band_rows(width: usize, height: usize, pixels: usize) -> usize {
+    let budget = (pixels / width.max(1)) / 64 * 64;
+    budget.max(64).max(height.div_ceil(256).next_multiple_of(64))
+}
+
+/// One target, rendered a band of output rows at a time and written as a grid of them.
+#[cfg(feature = "renditions")]
+async fn bands(
+    job: &Job,
+    target: &Target,
+    held: &crate::decode::Held,
+    known: &crate::photo_analysis::PhotoAnalysis,
+    scene_peak: Light<DisplayNits>,
+    rotate: u16,
+    outcome: &mut Outcome,
+) -> Result<(), String> {
+    let graded = graded_bands(job, target, held, known, scene_peak, BAND_PIXELS).await?;
+    let (width, height) = graded.size;
+    // A grid at 4:2:0 has no odd edge, where a single frame pads one itself.
+    let odd = width % 2 == 1 || height % 2 == 1;
+    let mut options = encode_options(job, target, &target.output_path);
+    match target.output {
+        Output::Pq => {
+            if odd || graded.leak > CHROMA_LEAK_TILE_FRACTION {
+                options.still_chroma = Chroma::Yuv444;
+            }
+            let bands = graded.bands.into_iter().filter_map(|band| match band {
+                Coded::Pq(samples) => Some(samples),
+                Coded::Srgb(_) => None,
+            });
+            hdr::encode_bands(bands.collect(), width, &options, rotate)
+        }
+        Output::Srgb => {
+            let bands: Vec<Vec<u8>> = graded.bands.into_iter().filter_map(|band| match band {
+                Coded::Srgb(samples) => Some(samples),
+                Coded::Pq(_) => None,
+            }).collect();
+            if target.rendition == Rendition::Grid {
+                let samples = bands.concat();
+                describe_if_grid(
+                    crate::rgb::RgbRef { width, height, data: &samples },
+                    target,
+                    outcome,
+                );
+            }
+            crate::avif::save_rendition_bands(
+                bands,
+                width,
+                target.sdr_quantizer,
+                target.preset,
+                target.sdr_full_chroma || odd,
+                &target.output_path,
+                rotate,
+            )
+        }
+    }
+}
+
+#[cfg(feature = "renditions")]
+pub(crate) struct Graded {
+    pub(crate) size: (usize, usize),
+    pub(crate) bands: Vec<Coded>,
+    /// The worst 64-pixel tile's chroma leak over every band (`base::chroma_leak`), where the
+    /// target is a PQ still that may be written 4:2:0.
+    pub(crate) leak: f64,
+}
+
+/// [`bands`] up to the encode, in bands of about `pixels` output pixels.
+#[cfg(feature = "renditions")]
+pub(crate) async fn graded_bands(
+    job: &Job,
+    target: &Target,
+    held: &crate::decode::Held,
+    known: &crate::photo_analysis::PhotoAnalysis,
+    scene_peak: Light<DisplayNits>,
+    pixels: usize,
+) -> Result<Graded, String> {
+    let gpu = crate::gpu::device().ok_or(NO_ADAPTER)?;
+    let base = crate::base::device(gpu).ok_or("the device the pipelines were built on")?;
+    let photograph = held.size().raw();
+    let options = encode_options(job, target, &target.output_path);
+    let size = drawn_size(job, photograph, &options);
+    let drawn = crate::px::Size::<crate::px::Drawn>::exact(size.width as usize, size.height as usize);
+    let geometry = job.pixel_geometry();
+    let out = hdr::cropped_out(drawn, geometry);
+    let (out_width, out_height) = out.raw();
+    let rows = band_rows(out_width, out_height, pixels);
+    let analysis = with_camera_match(&crate::photo_analysis::encode(known), job.camera_match);
+    let scale = crate::view::Scale::for_long_edge(photograph, size.width.max(size.height));
+    let output = match target.output {
+        Output::Pq => crate::gpu::Output::Pq,
+        Output::Srgb => crate::gpu::Output::Srgb,
+    };
+    let peak = gpu.given_peak(scene_peak.raw() as f32);
+    let mut leak: f64 = 0.0;
+    let mut bands = Vec::with_capacity(out_height.div_ceil(rows));
+    for top in (0..out_height).step_by(rows) {
+        let rows = rows.min(out_height - top);
+        let band = crate::gpu::Band { top: crate::px::Place::measured(top), rows: crate::px::Span::measured(rows) };
+        let (left, top_read, width, height) = crate::image::rows_footprint(drawn, out, geometry, band).raw();
+        let request = crate::tile::TileRequest {
+            tile: [left, top_read, width, height],
+            frame: [photograph.0, photograph.1],
+            grade: job.grade,
+            strengths: job.strengths(),
+            denoise_luminance: job.denoise_luminance,
+            denoise_colour: job.denoise_colour,
+            denoiser: job.denoiser,
+            dust: job.dust,
+            adjust: job.adjust,
+            levels: None,
+            noise_fit: None,
+            capture_sigma: None,
+            sensor_long: None,
+            defocus: crate::base::Defringe::Measure,
+            photo_analysis: Some(analysis.clone()),
+            scale,
+            repairs: job.repairs.clone(),
+            drawn: Some([drawn.width.raw(), drawn.height.raw()]),
+        };
+        let (frame, window) =
+            crate::tile::prepared_on_device(crate::tile::Source::Held(held), &request).await?;
+        let scene = window.scene(job.exposure, job.adjust);
+        let grade = crate::gpu::Grade {
+            intent: target.intent,
+            ..scene.gpu_grade(window.width, window.height, peak_nits(job, target), output)
+        }
+        .showing(geometry)
+        .windowed(drawn, crate::px::At::exact(window.origin.0, window.origin.1))
+        .banded(band);
+        let frame = frame.into_frame();
+        let up = gpu.upload_resident(&frame, &grade, &peak);
+        let unread = "a band of the graded frame could not be read back";
+        match target.output {
+            Output::Pq => {
+                bands.push(Coded::Pq(up.coded(&grade).await.ok_or(unread)?));
+                if !target.still_full_chroma {
+                    let coded = up.encoded_frame().ok_or("the encode left no frame on the device")?;
+                    let band = crate::base::chroma_leak(gpu, base, coded, out_width, rows)
+                        .await
+                        .ok_or("the chroma leak could not be measured")?;
+                    leak = leak.max(band);
+                }
+            }
+            Output::Srgb => bands.push(Coded::Srgb(up.coded_bytes(&grade).await.ok_or(unread)?)),
+        }
+        drop(up);
+        frame.reclaim();
+    }
+    Ok(Graded { size: (out_width, out_height), bands, leak })
 }
 
 /// One step of a job somebody is watching (`Job::report_progress`).
@@ -1371,12 +1618,12 @@ fn step(job: &Job) {
 /// **The half of a job a browser runs too.** Everything here is the device's; what differs between
 /// the hosts is where the base came from and what `wrote` does with the pixels, which is an encode
 /// and a file on a server and a frame sent to one from a page (`render_bytes`).
-async fn render(
+pub(crate) async fn render(
     job: &Job,
     base: Base,
     rendered: &[&Target],
     mut wrote: impl FnMut(&Target, Coded, usize, usize, &EncodeOptions) -> Result<(), String>,
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<Rendered, String> {
     let mut lap = crate::clock::laps("  job ");
     let gpu = crate::gpu::device().ok_or(NO_ADAPTER)?;
 
@@ -1414,10 +1661,7 @@ async fn render(
             let options = encode_options(job, target, &target.output_path);
             // The *photograph's* size, which a rendition's own is a bound on - not the frame's,
             // which for a cropped render is only the part of it the crop reads.
-            (
-                *target,
-                hdr_args::target_size(photograph.0 as u32, photograph.1 as u32, &options),
-            )
+            (*target, drawn_size(job, photograph, &options))
         })
         .collect();
     order
@@ -1590,6 +1834,14 @@ async fn render(
         step(job);
     }
 
+    // Dropped first: it borrows `scene_peak`, and the readback wants the buffer to itself.
+    drop(uploaded);
+    let peak: Light<DisplayNits> = match known_peak {
+        Some(nits) => nits,
+        None => Light::measured(f64::from(
+            gpu.peak_of(&scene_peak).await.ok_or("the scene peak could not be read back")?,
+        )),
+    };
     // The peak the frames above rolled off against, kept so no later render of this photograph
     // measures its own - and so a rendition and the editor put the knee in the same place. Only
     // from a job at rest: `peak.slang` reads after the exposure, so a gain would store a peak that
@@ -1598,23 +1850,32 @@ async fn render(
     // And only from a base that measured *this* photograph: a composite of the cameras' own
     // pictures did not (`Base::describes_the_photograph`).
     if known_peak.is_none() && keeps_peak {
-        // Dropped first: it borrows `scene_peak`, and the readback wants the buffer to itself.
-        drop(uploaded);
-        let nits = Light::measured(f64::from(
-            gpu.peak_of(&scene_peak).await.ok_or("the scene peak could not be read back")?,
-        ));
-        if nits.is_a_peak() {
+        if peak.is_a_peak() {
             analysis.from_render.scene_peak = Some(crate::photo_analysis::MeasuredPeak {
-                nits,
+                nits: peak,
                 reference_white_nits: job.grade.reference_white_nits,
                 white_quantile: job.grade.white_quantile,
             });
         }
         lap("scene peak");
     }
-    Ok(analysis
-        .adds_to(&stored)
-        .then(|| crate::photo_analysis::encode(&analysis.filled_from(&stored))))
+    let adds = analysis.adds_to(&stored);
+    let known = analysis.filled_from(&stored);
+    Ok(Rendered {
+        owed: adds.then(|| crate::photo_analysis::encode(&known)),
+        #[cfg(feature = "renditions")]
+        known,
+        #[cfg(feature = "renditions")]
+        peak,
+    })
+}
+
+pub(crate) struct Rendered {
+    owed: Option<Vec<u8>>,
+    #[cfg(feature = "renditions")]
+    pub(crate) known: crate::photo_analysis::PhotoAnalysis,
+    #[cfg(feature = "renditions")]
+    pub(crate) peak: Light<DisplayNits>,
 }
 
 /// A graded frame off the device, in the depth its output is written at.
@@ -1660,7 +1921,8 @@ pub async fn render_bytes(job: &Job, bytes: &[u8]) -> Result<Vec<u8>, String> {
         graded = Some((coded, width, height, options.still_chroma == Chroma::Yuv444));
         Ok(())
     })
-    .await?;
+    .await?
+    .owed;
     let (coded, width, height, full_chroma) = graded.ok_or("the job rendered nothing")?;
     framed(
         &RenderedHeader {
@@ -1729,6 +1991,10 @@ pub fn write_rendered(job: &Job, framed: &[u8]) -> Result<Outcome, String> {
     }
     if target.size != 0 && header.width.max(header.height) > target.size as usize {
         return Err("this picture exceeds the requested rendition size".into());
+    }
+    let size = hdr_args::Size { width: header.width as u32, height: header.height as u32 };
+    if hdr_args::decodable(size) != size {
+        return Err("this picture is larger than an AVIF can hold".into());
     }
     let mut options = encode_options(job, target, &target.output_path);
     if header.full_chroma {
@@ -1823,6 +2089,40 @@ fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_straightened_target_fits_the_avif_limit() {
+        let mut job: Job = serde_json::from_str(
+            r#"{
+                "rawFilePath": "",
+                "cameraMatch": "none",
+                "sharpen": 0,
+                "defringe": 0,
+                "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+                "targets": [{
+                    "rendition": "max", "output": "pq", "outputPath": "",
+                    "size": 0, "source": "render", "sdrQuantizer": 20,
+                    "hdrQuantizer": 20, "preset": 6,
+                    "stillFullChroma": true, "sdrFullChroma": true
+                }]
+            }"#,
+        )
+        .expect("the target parses");
+        let options = encode_options(&job, &job.targets[0], "");
+        let in_limit = drawn_size(&job, (4000, 2000), &options);
+        assert_eq!((in_limit.width, in_limit.height), (4000, 2000));
+
+        job.geometry.angle_degrees = 5.0;
+        let capped = drawn_size(&job, (32768, 8192), &options);
+        assert!(capped.width < 32768);
+        let (width, height) = hdr::cropped_size(
+            capped.width as usize,
+            capped.height as usize,
+            job.pixel_geometry(),
+        );
+        let written = hdr_args::Size { width: width as u32, height: height as u32 };
+        assert_eq!(hdr_args::decodable(written), written);
+    }
 
     fn rendered(output: Output, width: usize, height: usize, samples: usize) -> Vec<u8> {
         let coded = match output {

@@ -16,8 +16,8 @@ export interface ProcessingTrigger {
    * How this library's grid tiles are encoded, for a scan to build them while it holds each
    * RAW open (§10.4), or undefined where it should leave them to the rendition pass.
    *
-   * Asked of the service that owns the answer rather than read here: the size and the
-   * quantizer are settings, and a scan encoding to its own idea of them would fill a library
+   * Asked of the service that owns the answer rather than read here: size, quantizer and
+   * speed are settings, and a scan encoding to its own idea of them would fill a library
    * with tiles that do not match the ones built any other way.
    */
   tileEncoding?(): TileEncoding;

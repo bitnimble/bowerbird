@@ -697,40 +697,51 @@ pub async fn prepare(
     Some((warped, defocus))
 }
 
-/// Two `vec2u` and a `vec2f` are 24 bytes and a uniform block is a multiple of 16, so the tail is
+/// Four `vec2u` and a `vec2f` are 40 bytes and a uniform block is a multiple of 16, so the tail is
 /// padding the shader never names.
-pub const REDUCTION_BYTES: usize = 32;
+pub const REDUCTION_BYTES: usize = 48;
 
-/// What `Reduction` in `reduce.slang` holds: two sizes and the ratio between them, as the bytes the
-/// shader reads.
+/// `Reduction` in `reduce.slang`.
 ///
 /// The ratio is given rather than divided out of the sizes because a pyramid level is a *floored*
 /// half - at an odd width the ratio the level wants is two and the quotient of the sizes is not.
-///
-/// Public because the browser builds this same block for its own pyramid, and
-/// `reduction-words.txt` holds the two spellings together - the block is only eight words, and a
-/// pair transposed in one of them is a canvas sampling a level of a different picture.
-pub fn reduction_bytes(source: (usize, usize), out: (usize, usize), scale: (f64, f64)) -> Vec<u8> {
-    let mut params: Vec<u8> = Vec::with_capacity(REDUCTION_BYTES);
-    for word in [source.0 as u32, source.1 as u32, out.0 as u32, out.1 as u32] {
-        params.extend_from_slice(&word.to_le_bytes());
-    }
-    for value in [scale.0 as f32, scale.1 as f32] {
-        params.extend_from_slice(&value.to_le_bytes());
-    }
-    params.resize(REDUCTION_BYTES, 0);
-    params
+#[derive(Clone, Copy)]
+pub struct Reduction {
+    pub source: (usize, usize),
+    pub out: (usize, usize),
+    pub scale: (f64, f64),
+    pub out_origin: (usize, usize),
+    pub source_origin: (usize, usize),
 }
 
-fn reduction(
-    recording: &mut crate::gpu::Recording<'_>,
-    source: (usize, usize),
-    out: (usize, usize),
-    scale: (f64, f64),
-) -> crate::gpu::Buffer {
+impl Reduction {
+    /// A whole frame to a whole output, which is every reduction but a band's.
+    pub fn whole(source: (usize, usize), out: (usize, usize), scale: (f64, f64)) -> Reduction {
+        Reduction { source, out, scale, out_origin: (0, 0), source_origin: (0, 0) }
+    }
+
+    /// `reduction-words.txt` pins these: a pair transposed here is a canvas sampling a pyramid level
+    /// of a different picture.
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut params: Vec<u8> = Vec::with_capacity(REDUCTION_BYTES);
+        for word in [self.source.0, self.source.1, self.out.0, self.out.1] {
+            params.extend_from_slice(&(word as u32).to_le_bytes());
+        }
+        for value in [self.scale.0 as f32, self.scale.1 as f32] {
+            params.extend_from_slice(&value.to_le_bytes());
+        }
+        for word in [self.out_origin.0, self.out_origin.1, self.source_origin.0, self.source_origin.1] {
+            params.extend_from_slice(&(word as u32).to_le_bytes());
+        }
+        params.resize(REDUCTION_BYTES, 0);
+        params
+    }
+}
+
+fn reduction(recording: &mut crate::gpu::Recording<'_>, block: &Reduction) -> crate::gpu::Buffer {
     recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("reduction"),
-        contents: &reduction_bytes(source, out, scale),
+        contents: &block.bytes(),
         usage: wgpu::BufferUsages::UNIFORM,
     })
 }
@@ -750,7 +761,60 @@ pub fn resize(
     frame: &crate::resident::Resident,
     out: (usize, usize),
 ) -> Option<crate::resident::Resident> {
-    resized_through(gpu, base, frame, out, &base.light_of_code)
+    let source = frame.size();
+    if out == source || out.0 > source.0 || out.1 > source.1 || out.0 == 0 || out.1 == 0 {
+        return None;
+    }
+    Some(resized_through(gpu, base, frame, &Reduction::whole(source, out, resize_scale(source, out)), &base.light_of_code))
+}
+
+/// A rectangle of what [`resize`] makes of a whole `whole` frame at `whole_out`, from `region` of
+/// that frame starting at `region_at` - which has to hold every pixel [`resize_footprint`] names.
+///
+/// **The whole frame's footprints**, so the rectangle is those pixels of the whole resize to the
+/// bit: a band that divided its own sizes would sit on a grid of its own.
+pub fn resize_window(
+    gpu: &'static crate::gpu::Gpu,
+    base: &'static Base,
+    region: &crate::resident::Resident,
+    region_at: crate::px::At<crate::px::Decoded>,
+    whole: crate::px::Size<crate::px::Decoded>,
+    out: crate::px::Rect<crate::px::Drawn>,
+    whole_out: crate::px::Size<crate::px::Drawn>,
+) -> crate::resident::Resident {
+    let block = Reduction {
+        source: region.size(),
+        out: out.size.raw(),
+        scale: resize_scale(whole.raw(), whole_out.raw()),
+        out_origin: out.at.raw(),
+        source_origin: region_at.raw(),
+    };
+    resized_through(gpu, base, region, &block, &base.light_of_code)
+}
+
+/// The rectangle of a `whole` frame that `out` of its resize to `whole_out` reads.
+///
+/// A pixel wider than the footprints on each side: the shader walks them in `f32` and this in
+/// `f64`, and a pixel the two round to different sides of is a weight a band would drop.
+pub fn resize_footprint(
+    whole: crate::px::Size<crate::px::Decoded>,
+    out: crate::px::Rect<crate::px::Drawn>,
+    whole_out: crate::px::Size<crate::px::Drawn>,
+) -> crate::px::Rect<crate::px::Decoded> {
+    let (sx, sy) = resize_scale(whole.raw(), whole_out.raw());
+    let near = |at: crate::px::Place<crate::px::Drawn>, scale: f64| {
+        ((at.raw() as f64 * scale).floor() as usize).saturating_sub(1)
+    };
+    let far = |at: crate::px::Place<crate::px::Drawn>, scale: f64, limit: crate::px::Span<crate::px::Decoded>| {
+        (((at.raw() as f64 * scale).ceil() as usize) + 1).min(limit.raw())
+    };
+    let past = out.past();
+    let (left, top) = (near(out.at.x, sx), near(out.at.y, sy));
+    crate::px::Rect::exact(left, top, far(past.x, sx, whole.width) - left, far(past.y, sy, whole.height) - top)
+}
+
+fn resize_scale(source: (usize, usize), out: (usize, usize)) -> (f64, f64) {
+    (source.0 as f64 / out.0 as f64, source.1 as f64 / out.1 as f64)
 }
 
 /// The same over a frame the coding has not reached yet, whose samples are already light.
@@ -769,33 +833,28 @@ pub fn resize_scene(
     frame: &crate::resident::Resident,
     out: (usize, usize),
 ) -> Option<crate::resident::Resident> {
-    resized_through(gpu, base, frame, out, &base.light_of_level)
+    let source = frame.size();
+    if out == source || out.0 > source.0 || out.1 > source.1 || out.0 == 0 || out.1 == 0 {
+        return None;
+    }
+    Some(resized_through(gpu, base, frame, &Reduction::whole(source, out, resize_scale(source, out)), &base.light_of_level))
 }
 
 fn resized_through(
     gpu: &'static crate::gpu::Gpu,
     base: &'static Base,
     frame: &crate::resident::Resident,
-    out: (usize, usize),
+    block: &Reduction,
     light_of_sample: &crate::gpu::Buffer,
-) -> Option<crate::resident::Resident> {
-    let source = frame.size();
-    let (sw, sh) = source;
-    if out == source || out.0 > sw || out.1 > sh || out.0 == 0 || out.1 == 0 {
-        return None;
-    }
+) -> crate::resident::Resident {
+    let out = block.out;
     let pixels = out.0 * out.1;
 
     let smaller = crate::resident::Resident::empty(gpu, out.0, out.1);
     let mut recording = gpu.record();
     recording.holding(frame.buffer());
     recording.holding(smaller.buffer());
-    let uniform = reduction(
-        &mut recording,
-        source,
-        out,
-        (sw as f64 / out.0 as f64, sh as f64 / out.1 as f64),
-    );
+    let uniform = reduction(&mut recording, block);
     let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
         label: Some("resize"),
         layout: &base.resize_layout,
@@ -827,7 +886,7 @@ fn resized_through(
         pass.dispatch_workgroups(x, y, 1);
     }
     recording.submit();
-    Some(smaller)
+    smaller
 }
 
 /// What the editor's draw averages a zoomed-out canvas with: the frame halved, and halved again,
@@ -907,7 +966,7 @@ pub fn pyramid_of(
     let mut recording = gpu.record();
     recording.holding(frame.buffer());
     recording.holding_texture(&texture);
-    let uniform = reduction(&mut recording, source, half, (2.0, 2.0));
+    let uniform = reduction(&mut recording, &Reduction::whole(source, half, (2.0, 2.0)));
     for level in 0..levels {
         let (coarser, finer) = (one_level(level.saturating_sub(1)), one_level(level));
         let mut entries = if level == 0 {
@@ -1920,6 +1979,56 @@ pub fn warp_lens(
     // The jacobian outlives this recording: the caller sharpens through it, and its own recording
     // is what frees it.
     Some((warped, jacobian))
+}
+
+/// The lens gather and then the sharpen, over a frame already coded and defringed: what a rendition
+/// runs after its resize, over the whole frame or a window of it.
+pub fn gather_and_sharpen(
+    gpu: &'static crate::gpu::Gpu,
+    base: &'static Base,
+    frame: crate::resident::Resident,
+    gather: Gather,
+    lens: Option<&crate::fit::Lens>,
+    sharpen: f64,
+    sharpen_sigma: crate::image::SharpenSigma,
+    sharpen_noise: crate::image::SharpenNoise,
+) -> crate::resident::Resident {
+    let correcting = lens.is_some_and(|lens| !lens.is_identity());
+    let warped = lens
+        .filter(|_| correcting)
+        .and_then(|lens| warp_lens(gpu, base, &frame, gather, lens));
+    // Refused rather than skipped: the frame is the right size either way, so an uncorrected
+    // rendition looks like a rendition and only a straight edge near a corner gives it away.
+    assert!(!(correcting && warped.is_none()), "{}", without_a_device("the lens correction"));
+    let (cut, jacobian) = match warped {
+        Some((warped, jacobian)) => {
+            frame.reclaim();
+            (warped, Some(jacobian))
+        }
+        None => (frame, None),
+    };
+    // After the warp, which is the resample whose blur it deconvolves, and *before* the colour
+    // transform, which the shader does per tick and cannot be asked for at open. Deconvolving before a per-pixel non-linearity is
+    // also the better-posed inversion: the blur was applied in this domain, not in the graded one.
+    let (width, height) = cut.size();
+    if sharpens(cut.samples(), width, height, sharpen) {
+        let mut recording = gpu.record();
+        recording.holding(cut.buffer());
+        sharpen_into(
+            gpu,
+            base,
+            &mut recording,
+            cut.buffer(),
+            width,
+            height,
+            sharpen,
+            sharpen_sigma,
+            sharpen_noise,
+            jacobian.as_ref(),
+        );
+        recording.submit();
+    }
+    cut
 }
 
 /// Nothing to gather for an identity lens, and nothing to tap below two pixels a side: the shader
@@ -3379,6 +3488,53 @@ mod tests {
         let gathered = super::warp_lens(gpu, base, &frame, gather, lens);
         frame.reclaim();
         pollster::block_on(gathered?.0.into_host())
+    }
+
+    /// A rectangle resized on its own, from only the rows and columns its footprint names, is that
+    /// rectangle of the whole frame resized: what lets a render too large to hold be cut in bands.
+    #[test]
+    fn a_band_resized_on_its_own_is_those_rows_of_the_whole() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let Some(base) = super::device(gpu) else {
+            return;
+        };
+        let whole = (97usize, 61usize);
+        let samples: Vec<u16> = (0..whole.0 * whole.1 * 3)
+            .map(|i| ((i * 7919 + (i / 3) * 104729) % 65536) as u16)
+            .collect();
+        let whole_out = (41usize, 29usize);
+        let resized = resized(gpu, base, &samples, whole, whole_out).expect("a smaller frame");
+        for (x, y, width, height) in [(0, 0, 41, 29), (0, 7, 41, 11), (13, 18, 20, 11), (40, 28, 1, 1)] {
+            let out = crate::px::Rect::exact(x, y, width, height);
+            let reads = super::resize_footprint(
+                crate::px::Size::exact(whole.0, whole.1),
+                out,
+                crate::px::Size::exact(whole_out.0, whole_out.1),
+            );
+            let (left, top, right) = (reads.at.x.raw(), reads.at.y.raw(), reads.past().x.raw());
+            let region: Vec<u16> = (top..reads.past().y.raw())
+                .flat_map(|y| samples[(y * whole.0 + left) * 3..(y * whole.0 + right) * 3].iter().copied())
+                .collect();
+            let (region_w, region_h) = reads.size.raw();
+            let held = Resident::upload(gpu, &region, region_w, region_h);
+            let band = super::resize_window(
+                gpu,
+                base,
+                &held,
+                reads.at,
+                crate::px::Size::exact(whole.0, whole.1),
+                out,
+                crate::px::Size::exact(whole_out.0, whole_out.1),
+            );
+            held.reclaim();
+            let band = pollster::block_on(band.into_host()).expect("the band maps");
+            let expected: Vec<u16> = (y..y + height)
+                .flat_map(|row| resized[(row * whole_out.0 + x) * 3..(row * whole_out.0 + x + width) * 3].iter().copied())
+                .collect();
+            assert_eq!(band, expected, "the band at {out:?} is not those pixels of the whole");
+        }
     }
 
     /// The coding, against ST 2084 itself, over every level a sample can hold.

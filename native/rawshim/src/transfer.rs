@@ -392,25 +392,34 @@ impl Coding {
     }
 
     /// The level reference white lands on, which is full scale unless the picture can go above it.
-    pub fn white_level(&self, gain_mapped: bool) -> f64 {
-        match self.curve.carries_highlights() || gain_mapped {
+    ///
+    /// `lifted` is what can take a picture past its transfer's white: a gain map, or a DNG's
+    /// floating-point samples.
+    pub fn white_level(&self, lifted: bool) -> f64 {
+        match self.curve.carries_highlights() || lifted {
             true => FULL_SCALE / HDR_HEADROOM,
             false => FULL_SCALE,
         }
     }
 
-    /// The table `linearise.slang` indexes by code value: every code this depth can take, as the
-    /// light it stands for with diffuse white at 1.0.
+    /// The table `linearise.slang` indexes by code value and channel, `code * 3 + channel`: every
+    /// code this depth can take, as the light it stands for with diffuse white at 1.0.
+    ///
+    /// **A run per channel although a transfer is the same for all three**, because the kernel is
+    /// shared with a linear DNG, whose black level and white balance are each channel's own
+    /// (`decode_rawler::linear`).
     ///
     /// **Relative rather than on the frame's scale**, because the gain map is applied between the
     /// two and ISO 21496-1's offsets are in units of diffuse white. The shader's one multiply by
     /// [`Coding::white_level`] is what puts it on the scale.
     ///
-    /// Sized to the depth rather than to 65536 always: a JPEG's table is 256 floats, and the
-    /// alternative is a quarter of a megabyte uploaded per photograph to hold 255 answers.
+    /// Sized to the depth rather than to 65536 always: a JPEG's table is 768 floats, and the
+    /// alternative is three quarters of a megabyte uploaded per photograph to hold 255 answers.
     pub fn table(&self) -> Vec<f32> {
         let last = ((1u32 << self.depth.clamp(1, 16)) - 1) as f64;
-        (0..=last as u32).map(|code| self.curve.light(f64::from(code) / last).raw() as f32).collect()
+        (0..=last as u32)
+            .flat_map(|code| [self.curve.light(f64::from(code) / last).raw() as f32; 3])
+            .collect()
     }
 }
 
@@ -598,17 +607,18 @@ mod tests {
     #[test]
     fn the_table_is_the_depth_and_ends_at_diffuse_white() {
         let eight = Coding::srgb(8).table();
-        assert_eq!(eight.len(), 256);
+        assert_eq!(eight.len(), 256 * 3);
         assert_eq!(eight[0], 0.0);
-        assert!((eight[255] - 1.0).abs() < 1e-6);
+        assert_eq!(&eight[255 * 3..], &[eight[255 * 3]; 3], "every channel reads one transfer");
+        assert!((eight[255 * 3] - 1.0).abs() < 1e-6);
 
         let pq = Coding::of(Primaries::REC2020, Curve::Pq, 10);
         let table = pq.table();
-        assert_eq!(table.len(), 1024);
+        assert_eq!(table.len(), 1024 * 3);
         let nits: crate::light::Light<crate::light::SceneNits> = crate::light::Light::exactly(203.0);
-        let white = table[(crate::tone::pq(nits).raw() * 1023.0).round() as usize];
+        let white = table[(crate::tone::pq(nits).raw() * 1023.0).round() as usize * 3];
         assert!((f64::from(white) - 1.0).abs() < 2e-3, "white landed at {white}");
-        assert!(table[1023] > 40.0, "and PQ's own peak is far above it");
+        assert!(table[1023 * 3] > 40.0, "and PQ's own peak is far above it");
     }
 
     /// A profile's colorants and the same space's chromaticities have to reach the same matrix,

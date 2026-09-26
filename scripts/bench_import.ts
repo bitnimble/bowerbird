@@ -85,7 +85,7 @@ function gridTarget(dataPath: string, photoId: string) {
     source: 'embedded' as const,
     sdrQuantizer: encoderQuality('avif-sdr', settings.grid_rendition_quality),
     hdrQuantizer: encoderQuality('avif-hdr', settings.grid_rendition_quality),
-    preset: settings.hdr_preset,
+    preset: settings.avif_speed,
     stillFullChroma: settings.hdr_still_full_chroma,
     sdrFullChroma: false,
   };

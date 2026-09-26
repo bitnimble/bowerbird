@@ -203,7 +203,7 @@ export const SettingsSchema = z.object({
   hdr_reference_white_nits: z.number().min(1).default(203),
   hdr_white_quantile: z.number().min(0).max(1).default(0.9),
   // libavif's encoder speed, 0 slowest and 10 fastest.
-  hdr_preset: z.number().int().min(0).max(10).default(8),
+  avif_speed: z.number().int().min(0).max(10).default(8),
   // Chroma for the HDR still. On is 4:4:4 for every still. Off, the default, is 4:2:0
   // unless the frame itself says a 4:2:0 decode would come back wrong - measured before
   // the encode, per rendition, by `chroma_leak.slang` - in which case that still is

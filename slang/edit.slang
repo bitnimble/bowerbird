@@ -230,6 +230,10 @@ public struct Edit {
     /// How far, in output pixels, one printed mark reaches: the printer's own resolution and its
     /// ink's spread into the paper (`print::Scene::ink_blur`). Zero everywhere but a print.
     public float print_blur;
+    /// The output rows `encode` writes, from `band_top`: all of them unless a picture too large to
+    /// grade whole is graded a band at a time.
+    public uint band_top;
+    public uint band_rows;
 };
 
 [vk::binding(0, 0)] public ConstantBuffer<Edit> edit;

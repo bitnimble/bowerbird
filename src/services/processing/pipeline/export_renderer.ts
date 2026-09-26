@@ -105,7 +105,7 @@ export class ExportRenderer {
           size: 0,
           sdrQuantizer: encoderQuality('avif-sdr', quality),
           hdrQuantizer: encoderQuality('avif-hdr', quality),
-          preset: settings.hdr_preset,
+          preset: settings.avif_speed,
           // Full chroma whatever the library stores its renditions at: this file is read
           // straight back into the encoder that builds the map, and the JPEG it ends up in
           // does not subsample either (`jpeg::encode`, `F_1_1`), so subsampling here would

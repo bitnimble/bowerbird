@@ -265,9 +265,14 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .allowlist_function("avifEncoderCreate")
         .allowlist_function("avifEncoderDestroy")
         .allowlist_function("avifEncoderWrite")
+        .allowlist_function("avifEncoderAddImageGrid")
+        .allowlist_function("avifEncoderFinish")
+        .allowlist_type("avifAddImageFlag")
         .allowlist_function("avifEncoderSetCodecSpecificOption")
         .allowlist_function("avifRWDataFree")
         .allowlist_function("avifResultToString")
+        .allowlist_var("AVIF_DEFAULT_IMAGE_DIMENSION_LIMIT")
+        .allowlist_var("AVIF_DEFAULT_IMAGE_SIZE_LIMIT")
         // The decode half reads renditions back for a JPEG download, which is what libvips
         // was kept for.
         .allowlist_type("avifDecoder")

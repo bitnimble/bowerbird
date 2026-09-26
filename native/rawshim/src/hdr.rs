@@ -591,53 +591,16 @@ impl Cut {
         // not cost a re-prepare. What that costs is a second resample of an already resampled
         // frame, measured at mean 0.38 counts of 65535 against one fused gather
         // (`the_pipeline_places_a_pixel_where_one_fused_gather_would`).
-        let correcting = lens.is_some_and(|lens| !lens.is_identity());
-        let warped = lens.filter(|_| correcting).and_then(|lens| {
-            crate::base::warp_lens(
-                gpu,
-                base,
-                &frame,
-                crate::base::Gather::frame(crate::px::Size::exact(width, height)),
-                lens,
-            )
-        });
-        // Refused rather than skipped: the frame is the right size either way, so an uncorrected
-        // rendition looks like a rendition and only a straight edge near a corner gives it away.
-        assert!(
-            !(correcting && warped.is_none()),
-            "{}",
-            crate::base::without_a_device("the lens correction"),
+        let cut = crate::base::gather_and_sharpen(
+            gpu,
+            base,
+            frame,
+            crate::base::Gather::frame(crate::px::Size::exact(width, height)),
+            lens,
+            sharpen,
+            sharpen_sigma,
+            sharpen_noise,
         );
-        let (cut, jacobian) = match warped {
-            Some((warped, jacobian)) => {
-                frame.reclaim();
-                (warped, Some(jacobian))
-            }
-            None => (frame, None),
-        };
-        // The sharpen, once, on the frame every rendition is cut from. After the warp, which
-        // is the resample whose blur it deconvolves, and *before* the colour transform -
-        // which is where the editor has always had it, because the shader does the colour per
-        // tick and cannot be asked for it at open. Deconvolving before a per-pixel
-        // non-linearity is also the better-posed inversion: the blur was applied in this
-        // domain, not in the graded one.
-        if crate::base::sharpens(cut.samples(), width, height, sharpen) {
-            let mut recording = gpu.record();
-            recording.holding(cut.buffer());
-            crate::base::sharpen_into(
-                gpu,
-                base,
-                &mut recording,
-                cut.buffer(),
-                width,
-                height,
-                sharpen,
-                sharpen_sigma,
-                sharpen_noise,
-                jacobian.as_ref(),
-            );
-            recording.submit();
-        }
         // No transfer at all: the grade reads this same buffer through
         // `gpu::upload_resident`, so the frame never leaves the device between the decode
         // and the graded readback.
@@ -764,27 +727,36 @@ pub fn encode_frame(
     options: &EncodeOptions,
     rotate: u16,
 ) -> Result<(), String> {
+    crate::avif::save_still(frame, width, height, &still_options(options), &options.output_path, rotate)
+}
+
+/// [`encode_frame`] for a frame graded a band of whole rows at a time, written as a grid of them.
+#[cfg(feature = "renditions")]
+pub fn encode_bands(
+    bands: Vec<Vec<u16>>,
+    width: usize,
+    options: &EncodeOptions,
+    rotate: u16,
+) -> Result<(), String> {
+    crate::avif::save_still_bands(bands, width, &still_options(options), &options.output_path, rotate)
+}
+
+#[cfg(feature = "renditions")]
+fn still_options(options: &EncodeOptions) -> crate::avif::StillOptions {
     // The transfer is already applied and PQ's output gamut is Rec.2020, which the grade
     // already works in, so all that is left between here and a file is the YCbCr matrix,
     // which libavif does.
     let (primaries, transfer, matrix) = hdr_args::cicp();
-    crate::avif::save_still(
-        frame,
-        width,
-        height,
-        &crate::avif::StillOptions {
-            cicp: crate::avif::Cicp {
-                primaries,
-                transfer,
-                matrix,
-            },
-            format: options.still_chroma.avif_format(),
-            quantizer: options.crf,
-            speed: options.preset.min(10),
+    crate::avif::StillOptions {
+        cicp: crate::avif::Cicp {
+            primaries,
+            transfer,
+            matrix,
         },
-        &options.output_path,
-        rotate,
-    )
+        format: options.still_chroma.avif_format(),
+        quantizer: options.crf,
+        speed: options.preset.min(10),
+    }
 }
 
 /// The whole of one HDR still, from a scene-linear decode this takes ownership of.

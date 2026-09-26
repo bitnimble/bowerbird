@@ -7,6 +7,7 @@ import { ExportOptionsSchema } from '../../../../schemas/export';
 import { fileRecipe } from '../../../../schemas/recipes';
 import { localOriginals } from '../../../blobs/originals_for_testing';
 import type { PhotoRenditionService } from '../../../photos/renditions/photo_rendition_service';
+import type { SettingsRepository } from '../../../settings/settings_repository';
 import type { ProcessingService } from '../../pipeline/processing_service';
 import { ExportService } from '../export_service';
 
@@ -25,6 +26,7 @@ function service(renderExport: ProcessingService['renderExport']): ExportService
     }) } as unknown as PhotoRenditionService,
     { renderExport } as unknown as ProcessingService,
     localOriginals(),
+    { get: () => ({ avif_speed: 8 }) } as unknown as SettingsRepository,
   );
 }
 

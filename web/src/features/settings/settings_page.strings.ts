@@ -145,8 +145,8 @@ export const SettingsStrings = {
   sdrFullChroma: () => 'Always encode SDR in 4:4:4',
   hdrFullChroma: () => 'Always encode HDR in 4:4:4',
   hdrFullChromaHint: () => 'When off, Bowerbird uses 4:4:4 if colour loss would be visible.',
-  hdrPreset: () => 'HDR encoder speed',
-  hdrPresetHint: () => 'Faster makes larger files',
+  avifSpeed: () => 'Encoder speed',
+  avifSpeedHint: () => '10 is fastest',
 
   groupMaintenance: () => 'Maintenance',
   watchDebounce: () => 'Scan delay after a change',

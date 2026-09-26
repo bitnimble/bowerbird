@@ -45,6 +45,11 @@ struct Reduction {
     /// a pyramid level is a *floored* half, so at an odd width the ratio it wants is two and the
     /// quotient of the sizes is not.
     float2 scale;
+    /// Where `size` starts in the whole output and `source` in the whole frame, for a band resized
+    /// on its own. Its footprints are the whole frame's, in the whole frame's coordinates, and only
+    /// the fetch subtracts - so a band is the same pixels as the rows of the whole it stands for.
+    uint2 out_origin;
+    uint2 source_origin;
 };
 
 [vk::binding(0, 0)] ConstantBuffer<Reduction> reduction;
@@ -89,11 +94,11 @@ uint code_at(uint index)
 /// mean of PQ codes is not a mean of light, and PQ is quasi-logarithmic, so a specular tap is
 /// weighted as though it were far darker than it is. On a 4000-nit highlight against a 200-nit
 /// surround at 2x, averaging codes gives 427 nits where the light gives 1150.
-float3 averaged_light(float2 at, float2 scale, uint2 source)
+float3 averaged_light(float2 at, float2 scale, uint2 source, uint2 origin)
 {
     let box = covers(at, scale);
-    let first = uint2(box.xy);
-    let last = uint2(min(ceil(box.zw), float2(source)));
+    let first = max(uint2(box.xy), origin);
+    let last = uint2(min(ceil(box.zw), float2(origin + source)));
 
     float3 acc = float3(0.0);
     float total = 0.0;
@@ -103,7 +108,7 @@ float3 averaged_light(float2 at, float2 scale, uint2 source)
         for (uint sx = first.x; sx < last.x; sx = sx + 1) {
             let weight = overlap(box.x, box.z, sx) * wy;
             if (weight <= 0.0) { continue; }
-            let base = ((sy * source.x) + sx) * 3;
+            let base = (((sy - origin.y) * source.x) + (sx - origin.x)) * 3;
             acc = acc + weight * float3(
                 light_of_code[code_at(base)],
                 light_of_code[code_at(base + 1)],
@@ -156,11 +161,14 @@ void resize(uint3 id : SV_DispatchThreadID)
     let first = pair * 2;
     if (first >= pixels) { return; }
 
-    let a = averaged_light(placed(first, reduction.size.x), reduction.scale, reduction.source);
+    let origin = float2(reduction.out_origin);
+    let a = averaged_light(placed(first, reduction.size.x) + origin, reduction.scale,
+        reduction.source, reduction.source_origin);
     float3 b = float3(0.0);
     let paired = first + 1 < pixels;
     if (paired) {
-        b = averaged_light(placed(first + 1, reduction.size.x), reduction.scale, reduction.source);
+        b = averaged_light(placed(first + 1, reduction.size.x) + origin, reduction.scale,
+            reduction.source, reduction.source_origin);
     }
 
     store_pair(
@@ -180,7 +188,7 @@ void halve(uint3 id : SV_DispatchThreadID)
     uint2 size;
     finer.GetDimensions(size.x, size.y);
     if (id.x >= size.x || id.y >= size.y) { return; }
-    let level = averaged_light(float2(id.xy), float2(2.0), reduction.source);
+    let level = averaged_light(float2(id.xy), float2(2.0), reduction.source, uint2(0));
     finer.Store(
         int2(int(id.x), int(id.y)),
         uint4(codes_of_light(light_of_code, level), 65535));

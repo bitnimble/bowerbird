@@ -18,7 +18,7 @@ use crate::px::{Photograph, Rect, Size};
 pub enum Held {
     /// A RAW, at the conditioned mosaic.
     Mosaic(crate::decode_rawler::Held),
-    /// A finished picture, at its code values.
+    /// A finished picture, or a linear DNG, at its code values: neither has a mosaic.
     Rendered(crate::decode_rendered::Held),
 }
 
@@ -26,11 +26,18 @@ pub enum Held {
 pub async fn hold_bytes(bytes: &[u8]) -> Result<Held, String> {
     match crate::decode_rendered::is_rendered_bytes(bytes) {
         true => crate::decode_rendered::hold(bytes).map(Held::Rendered),
-        false => crate::decode_rawler::hold_bytes(bytes)
-            .await
-            .map(Held::Mosaic)
-            .ok_or_else(|| "no decoder read these bytes".to_string()),
+        false => crate::decode_rawler::open_bytes(bytes).await,
     }
+}
+
+/// Opens the photograph at `path`, as far as the device.
+#[cfg(feature = "renditions")]
+pub async fn hold_path(path: &str) -> Result<Held, String> {
+    if !crate::decode_rendered::is_rendered(path) {
+        return crate::decode_rawler::open_path(path).await;
+    }
+    let bytes = std::fs::read(path).map_err(|why| format!("could not read {path}: {why}"))?;
+    crate::decode_rendered::hold(&bytes).map(Held::Rendered)
 }
 
 /// The whole photograph as a scene-linear frame, from bytes a caller already holds.
@@ -76,15 +83,26 @@ pub fn frame_from_path(
 
 #[cfg(feature = "renditions")]
 pub fn frame_from_path_unturned(path: &str, at_least_long_edge: u32) -> Option<crate::frame::Frame> {
-    let bytes = std::fs::read(path).ok()?;
-    let mut read = crate::decode_rendered::read(&bytes).ok()?;
-    read.turn = rawler::decoders::Orientation::Normal;
-    let held = crate::decode_rendered::holding(read).ok()?;
+    let held = held_unturned(path).ok()?;
     pollster::block_on(whole(&held, at_least_long_edge))
 }
 
+/// The finished picture at `path` held as it is stored, ignoring the turn it asks a reader for.
+#[cfg(feature = "renditions")]
+pub fn hold_path_unturned(path: &str) -> Result<Held, String> {
+    held_unturned(path).map(Held::Rendered)
+}
+
+#[cfg(feature = "renditions")]
+fn held_unturned(path: &str) -> Result<crate::decode_rendered::Held, String> {
+    let bytes = std::fs::read(path).map_err(|why| format!("could not read {path}: {why}"))?;
+    let mut read = crate::decode_rendered::read(&bytes)?;
+    read.turn = rawler::decoders::Orientation::Normal;
+    crate::decode_rendered::holding(read)
+}
+
 /// A held finished picture as its whole self, halved where the caller's floor allows it.
-async fn whole(
+pub(crate) async fn whole(
     held: &crate::decode_rendered::Held,
     at_least_long_edge: u32,
 ) -> Option<crate::frame::Frame> {
@@ -215,10 +233,6 @@ impl Held {
     /// four - which is the same thing a RAW does when the reader has left every Detail slider at
     /// rest, so there is nothing here for a caller to branch on.
     ///
-    /// **`scale` is the rendered arm's, and the mosaic arm answers at full whatever it is asked**,
-    /// which is what it has always done: a window of a held mosaic is cut at the sensor's own
-    /// resolution and only a whole decode takes the halving fork. What holds a caller to that is
-    /// `tile::prepared_on_device`, which checks the size it got against the size it asked for.
     pub async fn window(
         &self,
         window: Rect<Photograph>,
@@ -236,7 +250,7 @@ impl Held {
                     width: window.size.width.raw(),
                     height: window.size.height.raw(),
                 };
-                held.window(tile, detail, fit, halo, dust).await
+                held.window(tile, scale, detail, fit, halo, dust).await
             }
             Held::Rendered(held) => held.window(window, scale),
         }

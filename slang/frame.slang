@@ -576,14 +576,15 @@ void encode(uint3 id : SV_DispatchThreadID)
 {
     let first = linear(id) * 2;
     // The *output's* pixels, not the frame's: a crop writes fewer than it reads.
-    let pixels = edit.output_width * edit.output_height;
+    let pixels = edit.output_width * edit.band_rows;
     if (first >= pixels) { return; }
+    let skipped = edit.band_top * edit.output_width;
 
-    let a = coded_at(first);
+    let a = coded_at(skipped + first);
     // The odd pixel out of an odd frame writes zeroes into a half-word nothing reads. The
     // buffer is sized for it, so this is padding rather than an overrun.
     var b = float3(0.0);
-    if (first + 1 < pixels) { b = coded_at(first + 1); }
+    if (first + 1 < pixels) { b = coded_at(skipped + first + 1); }
 
     let base = first + first / 2;
     counts[base] = uint(a.r) | (uint(a.g) << 16);

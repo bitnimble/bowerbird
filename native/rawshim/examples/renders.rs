@@ -421,14 +421,13 @@ fn graded(
     }
     // Through the rendition's own encoder and back, so a pattern at the pixel's scale can be
     // laid at the encoder's door or taken away from it. `max`'s settings: `lossless_quantizer`
-    // and `hdr_preset`, 4:2:0 as `hdr_still_full_chroma` defaults.
+    // and `avif_speed`, 4:2:0 as `hdr_still_full_chroma` defaults.
     if let (Domain::Pq, Some((quantizer, chroma))) = (stages.domain, stages.encode) {
         let (primaries, transfer, matrix) = rawshim::hdr_args::cicp();
         let still = rawshim::avif::StillOptions {
             cicp: rawshim::avif::Cicp { primaries, transfer, matrix },
             format: chroma.avif_format(),
             quantizer,
-            // `hdr_preset`'s default.
             speed: 8,
         };
         let started = std::time::Instant::now();

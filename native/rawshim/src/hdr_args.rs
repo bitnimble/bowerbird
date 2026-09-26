@@ -64,24 +64,52 @@ pub fn fitted(width: u32, height: u32, max_edge: f64) -> Size {
     Size { width: even(f64::from(width) * scale), height: even(f64::from(height) * scale) }
 }
 
-/// What this rendition ends up as: the requested edge, rounded to what the chroma can
-/// carry.
+/// libavif's `AVIF_DEFAULT_IMAGE_DIMENSION_LIMIT` and `AVIF_DEFAULT_IMAGE_SIZE_LIMIT`, which a
+/// decoder may lower and never raise: past either, no libavif reader opens the file, grid or not.
+pub const AVIF_MAX_EDGE: u32 = 32768;
+pub const AVIF_MAX_PIXELS: u64 = 16384 * 16384;
+
+/// The largest size inside what every AVIF reader will open, at the frame's own aspect.
+pub fn decodable(size: Size) -> Size {
+    let (width, height) = (f64::from(size.width), f64::from(size.height));
+    let scale = (f64::from(AVIF_MAX_EDGE) / width.max(height))
+        .min((AVIF_MAX_PIXELS as f64 / (width * height)).sqrt())
+        .min(1.0);
+    if scale == 1.0 {
+        return size;
+    }
+    // Floored, but past the last bit of `scale`'s error, which otherwise leaves the edge that bound
+    // at 32767. The area can then only be over by that same rounding, a row or a column.
+    let side = |edge: f64| ((edge * scale + 1e-6) as u32).clamp(1, AVIF_MAX_EDGE);
+    let mut fitted = Size { width: side(width), height: side(height) };
+    while u64::from(fitted.width) * u64::from(fitted.height) > AVIF_MAX_PIXELS {
+        match fitted.width >= fitted.height {
+            true => fitted.width -= 1,
+            false => fitted.height -= 1,
+        }
+    }
+    fitted
+}
+
+/// What this rendition ends up as: the requested edge, inside what an AVIF reader will open, and
+/// rounded to what the chroma can carry.
 ///
 /// `fitted` hands back the frame untouched when nothing needs shrinking, and a decode
 /// can arrive odd - the masked-border crop takes asymmetric insets off it - so a
 /// native-resolution 4:2:0 encode could be asked for an odd width and refuse outright.
-/// Which makes the rounding a native-resolution concern alone: nothing else here can
-/// produce an odd number.
+/// `decodable` can leave one odd too, shrinking to the reader's limit.
 pub fn target_size(width: u32, height: u32, options: &EncodeOptions) -> Size {
-    let size = fitted(width, height, options.max_edge);
+    let size = decodable(fitted(width, height, options.max_edge));
     if !options.still_chroma.subsampled() {
         return size;
     }
     // Down to even, never up. `even` rounds to nearest, which is right inside `fitted`
     // where the number is already below the source, and wrong here: a 533-row frame
     // would be asked for 534 and the encoder would be upscaling to invent a row. Losing
-    // one is the only direction available.
-    Size { width: size.width & !1, height: size.height & !1 }
+    // one is the only direction available. A 1 stays 1: `decodable` can shrink a sliver to it,
+    // and 0 is no picture at all.
+    let even = |v: u32| if v >= 2 { v & !1 } else { v };
+    Size { width: even(size.width), height: even(size.height) }
 }
 
 /// The still's chroma, which is the `hdr_still_full_chroma` setting.
@@ -164,6 +192,40 @@ mod tests {
         // 4:4:4 keeps every pixel it was given.
         let full = options_with(f64::INFINITY, Chroma::Yuv444);
         assert_eq!(target_size(801, 533, &full), Size { width: 801, height: 533 });
+
+        // A sliver the reader's limit shrinks to 1 pixel keeps it.
+        assert_eq!(target_size(2, 65536, &subsampled), Size { width: 1, height: 32768 });
+    }
+
+    /// Whichever of libavif's two limits binds first is the one the frame is fitted to, and the
+    /// aspect survives both.
+    #[test]
+    fn a_frame_past_what_avif_opens_is_fitted_inside_it() {
+        let wide = decodable(Size { width: 36564, height: 10562 });
+        assert!(u64::from(wide.width) * u64::from(wide.height) <= AVIF_MAX_PIXELS);
+        assert!(wide.width > 30000, "the area bound first, at {wide:?}");
+        assert!((f64::from(wide.width) / f64::from(wide.height) - 36564.0 / 10562.0).abs() < 1e-3);
+
+        for width in [40_000, 49_999, 60_000, 65_537, 99_991] {
+            let long = decodable(Size { width, height: 1000 });
+            assert_eq!(long.width, AVIF_MAX_EDGE, "the edge bound first, from {width}");
+        }
+        for (width, height) in [(20_000, 15_000), (31_111, 9_871), (17_000, 16_999)] {
+            let area = decodable(Size { width, height });
+            let pixels = u64::from(area.width) * u64::from(area.height);
+            assert!(pixels <= AVIF_MAX_PIXELS, "{area:?} from {width}x{height}");
+            assert!(pixels > AVIF_MAX_PIXELS - 2 * 16384, "{area:?} gave away more than a row");
+        }
+
+        let inside = Size { width: 16384, height: 16384 };
+        assert_eq!(decodable(inside), inside);
+    }
+
+    #[cfg(feature = "renditions")]
+    #[test]
+    fn the_limits_are_libavifs() {
+        assert_eq!(AVIF_MAX_EDGE, crate::raw::AVIF_DEFAULT_IMAGE_DIMENSION_LIMIT);
+        assert_eq!(AVIF_MAX_PIXELS, u64::from(crate::raw::AVIF_DEFAULT_IMAGE_SIZE_LIMIT));
     }
 
     /// The triple whose loss is invisible until a browser refuses to treat a file as HDR.

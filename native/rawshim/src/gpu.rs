@@ -1406,20 +1406,17 @@ impl Gpu {
     /// `u32` per component made the output the larger of the two and this the only one asked
     /// about.
     ///
-    /// **Measured, it does not bite on real hardware.** RADV on an integrated Radeon
-    /// reports 2047MiB for both `max_storage_buffer_binding_size` and `max_buffer_size`,
-    /// which is six times what the largest sensor here needs. So the banding this would
-    /// otherwise force is unwritten on purpose - it would be complexity for a case no
-    /// machine with a GPU reaches. Where it could bite is the software adapter, which is
-    /// already the path that is very slow and not expected to be hit.
-    ///
     /// A caller that gets `false` therefore has to band the frame or grade it another way;
     /// what it must not do is dispatch and find out, since a binding over the limit is a
     /// validation error and `on_uncaptured_error` makes those fatal.
     pub fn fits(&self, pixels: usize) -> bool {
+        Self::binding_bytes(pixels) <= self.most_bound()
+    }
+
+    /// The largest buffer this device can both create and bind whole, in bytes.
+    pub fn most_bound(&self) -> u64 {
         let limits = self.device.limits();
-        let needed = Self::binding_bytes(pixels);
-        needed <= u64::from(limits.max_storage_buffer_binding_size) && needed <= limits.max_buffer_size
+        u64::from(limits.max_storage_buffer_binding_size).min(limits.max_buffer_size)
     }
 }
 
@@ -1845,6 +1842,15 @@ pub struct Grade<'a> {
     pub intent: Intent,
     /// How far one printed mark reaches (`print::Scene::ink_blur`); zero everywhere but a print.
     pub print_blur: crate::px::Extent<crate::px::Output>,
+    /// The output rows an encode writes. None writes every row.
+    pub band: Option<Band>,
+}
+
+/// A run of whole output rows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Band {
+    pub top: crate::px::Place<crate::px::Output>,
+    pub rows: crate::px::Span<crate::px::Output>,
 }
 
 /// How a picture is brought inside what its target can show, as ICC's rendering intents promise.
@@ -1923,7 +1929,13 @@ impl<'a> Grade<'a> {
             canvas: None,
             intent: Intent::Perceptual,
             print_blur: crate::px::Extent::measured(0.0),
+            band: None,
         }
+    }
+
+    /// The same grade, writing only `band` of its output.
+    pub fn banded(self, band: Band) -> Grade<'a> {
+        Grade { band: Some(band), ..self }
     }
 
     /// The same grade showing the reader's crop, straighten and turn.
@@ -1995,6 +2007,19 @@ impl<'a> Grade<'a> {
     /// The same, as the two numbers a dispatch and a buffer size want.
     pub fn output_size(&self) -> (usize, usize) {
         self.output().raw()
+    }
+
+    /// The rows of that output an encode writes: all of them, or its band.
+    pub fn written(&self) -> Band {
+        self.band.unwrap_or(Band {
+            top: crate::px::Place::ORIGIN,
+            rows: self.output().height,
+        })
+    }
+
+    /// What an encode writes, as the two numbers a buffer wants.
+    pub fn written_size(&self) -> (usize, usize) {
+        (self.output().width.raw(), self.written().rows.raw())
     }
 }
 
@@ -2334,14 +2359,13 @@ impl Gpu {
     ) -> Uploaded<'a> {
         // The larger of what is read and what is written: a straighten's bounding box writes about
         // half again what an uncropped frame reads.
-        let (out_width, out_height) = grade.output_size();
+        let (out_width, out_height) = grade.written_size();
         let pixels = (grade.width * grade.height).max(out_width * out_height);
         assert!(
             self.fits(pixels),
             "a {}x{} frame graded to {}x{} needs a {}MiB storage binding and this adapter allows \
-             {}MiB - the grade would have to be dispatched in bands, which it is not. Hardware \
-             adapters report far more than any sensor needs, so this is a software one: lavapipe \
-             binds 128MiB, and SwiftShader (`bun run get:swiftshader`) binds 1GiB",
+             {}MiB - a render that large is graded in bands (`job::banded`), so this caller skipped \
+             them",
             grade.width,
             grade.height,
             out_width,
@@ -3386,7 +3410,8 @@ impl Uploaded<'_> {
         // The pair is built on the first encode and kept, so a second one asking for a larger
         // output would copy past the end of a readback sized for the first. `output_size` moves
         // with the geometry and the window, neither of which the asserts above cover.
-        let wanted = Gpu::binding_bytes(grade.output_size().0 * grade.output_size().1);
+        let (out_width, out_height) = grade.written_size();
+        let wanted = Gpu::binding_bytes(out_width * out_height);
         let (counts, readback) = self.encoded.get_or_init(|| {
             let bytes = wanted;
             (
@@ -3473,7 +3498,6 @@ impl Uploaded<'_> {
 
         // The output's pixels, not the frame's: the dispatch writes one per pixel of what the crop
         // and the turn produce, and reads the frame wherever the geometry sends it.
-        let (out_width, out_height) = grade.output_size();
         let pixels = out_width * out_height;
         let out_bytes = Gpu::binding_bytes(pixels);
         {
@@ -3923,6 +3947,8 @@ const EDIT_FIELDS: &[&str] = &[
     "tone_anchor",
     "black_floor",
     "print_blur",
+    "band_top",
+    "band_rows",
 ];
 
 /// `struct Edit`, field for field, in the order the shader declares them.
@@ -4102,6 +4128,9 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
         _ => 0.0,
     });
     f(&mut w, grade.print_blur.raw());
+    let written = grade.written();
+    w.push(written.top.raw() as u32);
+    w.push(written.rows.raw() as u32);
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. Here it was implicit in the field count until a field was
@@ -4173,6 +4202,51 @@ mod tests {
         keystone: Option<[f64; 8]>,
     ) -> crate::image::Geometry {
         crate::image::Geometry { crop, angle_degrees, rotate, keystone }
+    }
+
+    /// An encode written a band of rows at a time is the whole encode, through a geometry that
+    /// sends each output row somewhere across the frame.
+    #[test]
+    fn a_grade_written_in_bands_is_the_grade_written_whole() {
+        let Some(gpu) = super::device() else {
+            return;
+        };
+        let (width, height) = (53usize, 37usize);
+        let frame: Vec<u16> = (0..width * height * 3)
+            .map(|i| (20_000 + (i * 7919) % 30_000) as u16)
+            .collect();
+        let levels = crate::tone::Levels {
+            white: Light::measured(40_000.0),
+            peak: Light::measured(60_000.0),
+            floor: None,
+        };
+        let grade = super::Grade::new(
+            width,
+            height,
+            levels,
+            Light::exactly(203.0),
+            Light::exactly(1000.0),
+        )
+        .showing(geometry([0.05, 0.1, 0.9, 0.95], 3.5, 90, None));
+        let peak = gpu.given_peak(4000.0);
+        let up = gpu.upload(&frame, &grade, &peak);
+        let whole = up.encode(&grade);
+
+        let (out_width, out_height) = grade.output_size();
+        let mut stitched = Vec::with_capacity(whole.len());
+        for top in (0..out_height).step_by(7) {
+            let rows = 7.min(out_height - top);
+            let band = super::Grade {
+                band: Some(super::Band {
+                    top: crate::px::Place::measured(top),
+                    rows: crate::px::Span::measured(rows),
+                }),
+                ..grade
+            };
+            assert_eq!(band.written_size(), (out_width, rows));
+            stitched.extend(up.encode(&band));
+        }
+        assert_eq!(stitched, whole);
     }
 
     /// The device is opened at the adapter's texture limit rather than WebGPU's default of 8192.
