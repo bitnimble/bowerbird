@@ -1,0 +1,26 @@
+name: wasm-pkg
+description: Waits for this run's `wasm` job and puts its package at native/rawshim/pkg.
+
+runs:
+  using: composite
+  steps:
+    # Polled rather than reached through `needs`, which would hold the whole job back until the
+    # wasm job ends instead of overlapping it with everything before the web build.
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -eu
+        while :; do
+          state=$(gh run view "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" --json jobs \
+            -q '.jobs[] | select(.name == "wasm") | "\(.status) \(.conclusion)"')
+          case "$state" in
+            "completed success") break ;;
+            completed*) echo "::error::the wasm job ended $state"; exit 1 ;;
+          esac
+          sleep 10
+        done
+    - uses: actions/download-artifact@v7
+      with:
+        name: wasm-pkg
+        path: native/rawshim/pkg

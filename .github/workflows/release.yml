@@ -188,10 +188,50 @@ jobs:
           name: dist-docker-x86_64-payload
           path: dist/
 
+  # The editor's decoder, which every app's web build imports by path. Wasm, so one build serves
+  # every platform.
+  wasm:
+    needs: plan
+    if: needs.plan.outputs.desktop != '[]' || needs.plan.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          workspaces: native/rawshim
+      - run: bun install --frozen-lockfile
+      - name: The pinned trees, from last time
+        id: pinned-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/bowerbird
+          key: pinned-${{ runner.os }}-wasm-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+      - run: bun run get:shell
+      - if: steps.pinned-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/bowerbird
+          key: pinned-${{ runner.os }}-wasm-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
+      - run: bun run build:wasm
+      - uses: actions/upload-artifact@v6
+        with:
+          name: wasm-pkg
+          path: native/rawshim/pkg/
+
   # One row per platform, from `plan`, which is where the rows are written.
   desktop:
     needs: plan
     if: needs.plan.outputs.desktop != '[]'
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -205,7 +245,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }},wasm32-unknown-unknown
+          targets: ${{ matrix.target }}
       # `cache-on-failure`, because the default saves only from a job that passed, and a job
       # that fails in its last minute has still compiled every dependency - which the next run
       # then compiles again, for as many runs as it takes to get one green.
@@ -287,11 +327,6 @@ jobs:
           path: ${{ runner.temp }}/vcpkg-archives
           key: vcpkg-${{ runner.os }}-${{ hashFiles('native/rawshim/vcpkg/**', 'scripts/vcpkg.ts') }}
 
-      # The editor's decoder, which the web build imports by path - so it has to exist
-      # before vite resolves anything.
-      - run: bun run build:wasm
-        shell: bash
-
       # The server the app carries, and the pixel library behind it. One triple on every
       # platform: the shell, the library and the Bun runtime beside them are all the same build.
       - name: The bundled server
@@ -304,6 +339,7 @@ jobs:
           bun run build:sidecar --target ${{ matrix.target }}
         shell: bash
 
+      - uses: ./.github/actions/wasm-pkg
       - name: Build the app
         run: bun run build:app --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         shell: bash
@@ -340,6 +376,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.android == 'true'
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -352,7 +391,7 @@ jobs:
       - uses: android-actions/setup-android@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,wasm32-unknown-unknown
+          targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -374,7 +413,7 @@ jobs:
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
-      - run: bun run build:wasm
+      - uses: ./.github/actions/wasm-pkg
       # `NDK_HOME` is left to the script, which takes the highest under `$ANDROID_HOME/ndk` -
       # the one installed above, there being only one.
       - run: bun run android:build
