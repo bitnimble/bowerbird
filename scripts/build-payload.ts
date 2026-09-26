@@ -11,8 +11,8 @@ const ROOT = join(import.meta.dir, '..');
 /** What Rust calls a machine, against what a release names its files by. */
 const PLATFORMS: Record<string, string> = {
   'x86_64-unknown-linux-gnu': 'linux-x86_64',
-  'aarch64-unknown-linux-gnu': 'linux-aarch64',
-  'aarch64-apple-darwin': 'macos-aarch64',
+  'aarch64-unknown-linux-gnu': 'linux-arm64',
+  'aarch64-apple-darwin': 'macos-arm64',
   'x86_64-pc-windows-msvc': 'windows-x86_64',
 };
 

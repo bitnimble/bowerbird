@@ -1,10 +1,9 @@
 // `release.yml`, which is the only thing a client has to read to find its own download.
 //
-// The binaries carry versions and bundler-chosen suffixes - `Bowerbird_0.2.0_amd64.deb`,
-// `Bowerbird_0.2.0_x64-setup.exe` - so a client that built the name itself would be one
-// bundler upgrade away from 404ing every platform at once. This maps the platform to
-// whatever they actually came out called, and is generated from the files that are about
-// to be uploaded rather than from a list somebody maintains.
+// An installer's name ends in whichever bundle its platform ships - `.dmg`, `-setup.exe` -
+// so a client that built the name itself would 404 the day a platform changed bundler. This
+// maps the platform to whatever they actually came out called, and is generated from the
+// files that are about to be uploaded rather than from a list somebody maintains.
 //
 //   bun run scripts/write-release-manifest.ts --dist dist [--image-repo ghcr.io/…]
 //

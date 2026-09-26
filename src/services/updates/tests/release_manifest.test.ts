@@ -7,11 +7,11 @@ const MANIFEST: ReleaseManifest = {
   tag: 'v0.2.0',
   assets: {
     'linux-x86_64': {
-      installer: 'Bowerbird_0.2.0_amd64.AppImage',
+      installer: 'Bowerbird_0.2.0_linux-x86_64.AppImage',
       payload: 'bowerbird-payload-linux-x86_64.tar.gz',
       payload_sha256: 'a'.repeat(64),
     },
-    'android-aarch64': { installer: 'Bowerbird_0.2.0.apk' },
+    'android-arm64': { installer: 'Bowerbird_0.2.0_android-arm64.apk' },
     // Deliberately not this project's own image: what is being round-tripped is a string,
     // and one that looks like configuration invites being kept in step with it.
     'docker-x86_64': { image: 'ghcr.io/example/app:0.2.0' },

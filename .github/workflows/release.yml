@@ -74,7 +74,7 @@ jobs:
           # for a `dmg` alone the bundler deletes the `.app` it made one from.
           DESKTOP: |
             [
-              {"name": "macos", "platform": "macos-aarch64", "runs-on": "macos-14", "target": "aarch64-apple-darwin", "bundles": "app,dmg"},
+              {"name": "macos", "platform": "macos-arm64", "runs-on": "macos-14", "target": "aarch64-apple-darwin", "bundles": "app,dmg"},
               {"name": "windows", "platform": "windows-x86_64", "runs-on": "windows-latest", "target": "x86_64-pc-windows-msvc", "bundles": "nsis"}
             ]
         run: |
@@ -344,14 +344,28 @@ jobs:
         run: bun run build:app --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         shell: bash
 
+      # Renamed to `Bowerbird_<version>_<platform><kind>`: the bundler names its files by
+      # architecture alone (`_aarch64.dmg`, `_x64-setup.exe`), which says nothing about the OS
+      # and spells it its own way.
       - name: Assemble the payload and collect the installer
         run: |
           set -eu
           bun run scripts/build-payload.ts --target ${{ matrix.target }} --out dist/payload
-          mkdir -p dist/installer/${{ matrix.platform }}
-          find src-tauri/target/${{ matrix.target }}/release/bundle -type f \
-            \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*-setup.exe' \) \
-            -exec cp {} dist/installer/${{ matrix.platform }}/ \;
+          version=$(tr -d '[:space:]' < VERSION)
+          dest=dist/installer/${{ matrix.platform }}
+          mkdir -p "$dest"
+          # Matched on the version too, so an installer an earlier build left in the cached
+          # target directory cannot be renamed over this one.
+          find src-tauri/target/${{ matrix.target }}/release/bundle -type f -name "*_${version}_*" \
+            \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' -o -name '*-setup.exe' \) |
+          while IFS= read -r file; do
+            case "$file" in
+              *-setup.exe) kind=-setup.exe ;;
+              *) kind=".${file##*.}" ;;
+            esac
+            cp "$file" "$dest/Bowerbird_${version}_${{ matrix.platform }}$kind"
+          done
+          ls "$dest"
         shell: bash
 
       # Two artifacts, each holding `<platform>/<file>`, so one can be fetched without the other and
@@ -428,12 +442,10 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -eu
-          mkdir -p dist/android-aarch64
+          mkdir -p dist/android-arm64
           apk=$(find src-tauri/gen/android -name '*release*.apk' | head -n1)
-          # The bare version, like every bundler-produced installer beside it: this is the
-          # one filename the build does not choose, so it is the one that can drift.
           version=$(tr -d '[:space:]' < VERSION)
-          out="dist/android-aarch64/Bowerbird_$version.apk"
+          out="dist/android-arm64/Bowerbird_${version}_android-arm64.apk"
           if [ -z "${KEYSTORE:-}" ]; then
             echo "no ANDROID_KEYSTORE_BASE64 secret: publishing the unsigned APK"
             cp "$apk" "$out"
@@ -447,7 +459,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: dist-android-aarch64-installer
+          name: dist-android-arm64-installer
           path: dist/
 
   # One release, made once everything that could fail has. The manifest is written from
