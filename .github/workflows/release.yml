@@ -74,7 +74,7 @@ jobs:
           # for a `dmg` alone the bundler deletes the `.app` it made one from.
           DESKTOP: |
             [
-              {"name": "macos", "platform": "macos-aarch64", "runs-on": "macos-14", "target": "aarch64-apple-darwin", "bundles": "app,dmg"},
+              {"name": "macos", "platform": "macos-arm64", "runs-on": "macos-14", "target": "aarch64-apple-darwin", "bundles": "app,dmg"},
               {"name": "windows", "platform": "windows-x86_64", "runs-on": "windows-latest", "target": "x86_64-pc-windows-msvc", "bundles": "nsis"}
             ]
         run: |
@@ -309,7 +309,8 @@ jobs:
         shell: bash
 
       # Renamed to `Bowerbird_<version>_<platform><kind>`: the bundler names its files by
-      # architecture alone (`_aarch64.dmg`, `_x64-setup.exe`), which says nothing about the OS.
+      # architecture alone (`_aarch64.dmg`, `_x64-setup.exe`), which says nothing about the OS
+      # and spells it its own way.
       - name: Assemble the payload and collect the installer
         run: |
           set -eu
@@ -402,10 +403,10 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -eu
-          mkdir -p dist/android-aarch64
+          mkdir -p dist/android-arm64
           apk=$(find src-tauri/gen/android -name '*release*.apk' | head -n1)
           version=$(tr -d '[:space:]' < VERSION)
-          out="dist/android-aarch64/Bowerbird_${version}_android-aarch64.apk"
+          out="dist/android-arm64/Bowerbird_${version}_android-arm64.apk"
           if [ -z "${KEYSTORE:-}" ]; then
             echo "no ANDROID_KEYSTORE_BASE64 secret: publishing the unsigned APK"
             cp "$apk" "$out"
@@ -419,7 +420,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: dist-android-aarch64-installer
+          name: dist-android-arm64-installer
           path: dist/
 
   # One release, made once everything that could fail has. The manifest is written from

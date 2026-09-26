@@ -76,12 +76,12 @@ function detectPlatform(): Platform {
   // same Linux as a desktop build and installs an entirely different file.
   const declared = process.env.BOWERBIRD_PLATFORM;
   if (declared != null && declared !== '') return PlatformSchema.parse(declared);
-  const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
-  if (process.platform === 'darwin') return arch === 'aarch64' ? 'macos-aarch64' : 'macos-x86_64';
+  const arm = process.arch === 'arm64';
+  if (process.platform === 'darwin') return arm ? 'macos-arm64' : 'macos-x86_64';
   if (process.platform === 'win32') return 'windows-x86_64';
-  // `linux-aarch64` is a platform no release builds for, which is the point: a NAS on
+  // `linux-arm64` is a platform no release builds for, which is the point: a NAS on
   // ARM reports what it is and is offered nothing, rather than being handed x86 bytes.
-  return arch === 'aarch64' ? 'linux-aarch64' : 'linux-x86_64';
+  return arm ? 'linux-arm64' : 'linux-x86_64';
 }
 
 /** What is on GitHub, what this install is, and how to get from one to the other (§23.5). */

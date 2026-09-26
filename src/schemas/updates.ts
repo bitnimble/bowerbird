@@ -5,11 +5,11 @@ import { z } from 'zod';
 // runs both, and what they install is not the same file.
 export const PLATFORMS = [
   'linux-x86_64',
-  'linux-aarch64',
-  'macos-aarch64',
+  'linux-arm64',
+  'macos-arm64',
   'macos-x86_64',
   'windows-x86_64',
-  'android-aarch64',
+  'android-arm64',
   'docker-x86_64',
 ] as const;
 export const PlatformSchema = z.enum(PLATFORMS);
