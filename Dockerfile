@@ -321,6 +321,51 @@ ARG VITE_SENTRY_DSN=
 ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN cd web && bun run build
 
+# The release workflow's `android` job, for building the APK before a tag does
+# (`bun run release:check:android`). Nothing in `runtime` reads it.
+FROM base AS android
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends build-essential ca-certificates curl git unzip \
+  && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /opt/jdk \
+  && curl -sSfLo /tmp/jdk.tar.gz https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse \
+  && tar -xzf /tmp/jdk.tar.gz -C /opt/jdk --strip-components=1 \
+  && rm /tmp/jdk.tar.gz
+ENV JAVA_HOME=/opt/jdk
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV PATH="/opt/jdk/bin:/opt/android-sdk/cmdline-tools/latest/bin:/root/.cargo/bin:${PATH}"
+RUN curl -sSfo /tmp/tools.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+  && unzip -q /tmp/tools.zip -d /tmp/tools \
+  && mkdir -p "$ANDROID_HOME/cmdline-tools" \
+  && mv /tmp/tools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest" \
+  && rm -rf /tmp/tools.zip /tmp/tools \
+  && yes | sdkmanager --licenses > /dev/null \
+  && sdkmanager --install platform-tools "ndk;27.2.12479018"
+RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
+  && sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable \
+     --target aarch64-linux-android --target wasm32-unknown-unknown \
+  && rm /tmp/rustup.sh
+COPY package.json bun.lock ./
+COPY packages/samsung-frame-art ./packages/samsung-frame-art
+RUN bun install --frozen-lockfile
+COPY web/package.json web/bun.lock ./web/
+RUN cd web && bun install --frozen-lockfile
+COPY . .
+COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
+COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
+ARG VITE_SENTRY_DSN=
+ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.gradle \
+    --mount=type=cache,target=/app/native/rawshim/target \
+    --mount=type=cache,target=/app/src-tauri/target \
+  bun run build:wasm \
+  && BOWERBIRD_ANDROID_DIST_DIR=/out bun run android:build
+
+FROM scratch AS android-apk
+COPY --from=android /out/ /
+
 FROM base AS runtime
 # **No `image.source` label here, deliberately.** GHCR reads it to attach the package to
 # the repository, and a package with no repository behind it inherits none of its

@@ -17,6 +17,7 @@ backups
 data
 **/.bowerbird
 coverage
+core.[0-9]*
 # Rust build artefacts, several GB of them per tree. The image builds the crate
 # itself, so a host-built `librawshim.so` sitting at the path the loader checks
 # first would shadow the image's own.
@@ -28,7 +29,14 @@ coverage
 # and `COPY web ./web` lands host-built assets on top of the ones vite just wrote.
 native/rawshim/.slangc
 native/rawshim/.codecs
+native/rawshim/.pmrid
+native/rawshim/.swiftshader
 native/rawshim/pkg
+# Generated with this machine's SDK paths baked in (`android-build.ts`), and the build
+# outputs a desktop build leaves beside it.
+src-tauri/gen/android
+src-tauri/binaries
+src-tauri/resources
 web/dist
 web/test-results
 # Agent worktrees, a full checkout of this repo apiece.

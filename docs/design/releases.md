@@ -324,6 +324,16 @@ job refuses a tag that names anything else, because a build that ships calling i
 other than its tag is the failure that leaves an update check offering a version that is already
 installed, forever.
 
+**`bun run release:check` builds what a tag would, before there is one.** It builds HEAD in a
+detached worktree, since a tag releases the commit and an uncommitted edit would otherwise decide
+the answer. The container is `docker build` on the same Dockerfile, and the APK is that
+Dockerfile's `android` stage, which repeats the workflow's `android` job and writes the APK to
+`dist/android-aarch64/`. macOS and
+Windows have no container that builds them faithfully - the one needs Apple's SDK and bundler,
+the other MSVC and a Windows checkout - so `release:check:remote` pushes HEAD to the
+`release-check` branch and runs the workflow there for those two, which builds without
+releasing.
+
 Comparison is dotted-numeric with a suffix ranked below its own release, so `1.2.0` beats
 `1.2.0-rc1` and shipping `1.2.0` does not leave every release candidate thinking it is
 current. It is deliberately not a semver implementation: every version it compares is one
