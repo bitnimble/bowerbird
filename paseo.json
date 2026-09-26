@@ -9,5 +9,10 @@
       "bun run build:native",
       "cd web && bun install"
     ]
+  },
+  "scripts": {
+    "release": {
+      "command": "bun run release"
+    }
   }
 }
