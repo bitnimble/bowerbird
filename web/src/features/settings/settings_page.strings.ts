@@ -11,7 +11,9 @@ export const SettingsStrings = {
     `${rootPath} · ${photoCount} ${photoCount === 1 ? 'photo' : 'photos'} · ${scanned}`,
   neverScanned: () => 'never scanned',
   scannedAt: (relative: string) => `scanned ${relative}`,
-  librarySettings: () => 'Library settings',
+  /** Opens one library's settings; `settings` names the whole page. */
+  openLibrarySettings: () => 'Settings',
+  librarySettingsTitle: (libraryName: string) => `Settings for ${libraryName}`,
   /** What a library is called, asked for here and when one is added. */
   libraryName: () => 'Library name',
 
@@ -84,6 +86,8 @@ export const SettingsStrings = {
   renditionModeLastUsed: () => 'Last used',
   renditionModeLastUsedPerPhoto: () => 'Last used per photo',
   renditionModeBestAvailable: () => 'Best available',
+  groupPhotoViewer: () => 'Photo viewer',
+  groupFrameTv: () => 'Samsung Frame TV',
   defaultRendition: () => 'Default viewer rendition',
   hideSidebarInViewer: () => 'Hide sidebar automatically in photo viewer',
   frameTvEnabled: () => 'Enable Samsung Frame TV integration',
@@ -113,6 +117,8 @@ export const SettingsStrings = {
   renderOnThisDeviceHint: () => "Builds photo viewer renditions on this device",
 
   groupScanning: () => 'Scanning',
+  groupWatching: () => 'Watching for changes',
+  groupSchedule: () => 'Schedule',
   watchEnabled: () => 'Watch libraries for changes',
   dailyFullScanAt: () => 'Daily full scan at',
   dailyFullScanAtPlaceholder: () => '03:00',

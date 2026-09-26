@@ -40,11 +40,13 @@ export const PanelsInPopup = createContext(false);
 export function Panel({
   title,
   flush = false,
+  role = 'group',
   style,
   titleStyle,
   children,
 }: {
   title?: ReactNode;
+  role?: 'group' | 'listitem';
   titleStyle?: stylex.StyleXStyles;
   /**
    * For a panel ending in a row that holds the space under itself: the panel's own would land
@@ -59,7 +61,7 @@ export function Panel({
   return (
     <div
       {...stylex.props(styles.panel, flush && styles.flush, bare && styles.bare, style)}
-      role="group"
+      role={role}
       aria-labelledby={title == null ? undefined : titleId}
     >
       {title != null && (

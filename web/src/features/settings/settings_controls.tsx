@@ -45,6 +45,12 @@ const styles = stylex.create({
     marginTop: '18px',
     marginBottom: '8px',
   },
+  columns: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
+    columnGap: '24px',
+    alignItems: 'start',
+  },
 });
 
 export const settingStyles = stylex.create({
@@ -123,6 +129,15 @@ export function SettingRow({
 
 export function GroupTitle({ children }: { children: ReactNode }): JSX.Element {
   return <PanelTitle style={styles.group}>{children}</PanelTitle>;
+}
+
+export function SettingsColumns({ left, right }: { left: ReactNode; right: ReactNode }): JSX.Element {
+  return (
+    <div {...stylex.props(styles.columns)}>
+      <div>{left}</div>
+      <div>{right}</div>
+    </div>
+  );
 }
 
 export type SettingOf<T> = { [K in keyof Settings]: Settings[K] extends T ? K : never }[keyof Settings];

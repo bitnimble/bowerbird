@@ -27,7 +27,8 @@ const styles = stylex.create({
     borderRadius: '8px',
     padding: '16px',
     minWidth: '320px',
-    zIndex: 51,
+    // The backdrop's, so order decides: a dialog opened from inside another dims that one too.
+    zIndex: 50,
     // A dialog taller than the window would otherwise put its own buttons off-screen, out of reach.
     maxHeight: 'calc(100dvh - 32px)',
     overflowY: 'auto',

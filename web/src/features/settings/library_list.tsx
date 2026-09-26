@@ -1,7 +1,16 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
-import { CircleStop, HardDriveUpload, Image, Layers, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import {
+  CircleStop,
+  HardDriveUpload,
+  Image,
+  Layers,
+  RefreshCw,
+  Settings as SettingsIcon,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
 import { type Library } from '../../../../src/schemas/libraries';
 import {
   useBackupStore,
@@ -20,12 +29,13 @@ import { SyncedDevicesPanel } from '../replication/synced_devices_panel';
 import { SyncedDevicesStrings } from '../replication/synced_devices_panel.strings';
 import { ScanStrip } from '../scan/scan_strip';
 import { Button } from '../../ui/button';
+import { DialogBody, DialogColumns } from '../../ui/dialog_layout';
 import { focusRing } from '../../ui/focus_ring';
 import { relativeTime } from '../../ui/format';
 import { ICON } from '../../ui/icon';
-import { List, ListBody, ListMeta, ListName, ListRow } from '../../ui/list';
+import { Modal } from '../../ui/modal';
 import { Panel } from '../../ui/panel';
-import { Row, Spacer } from '../../ui/row';
+import { Row } from '../../ui/row';
 import { Select } from '../../ui/select';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
@@ -35,9 +45,33 @@ import { resetTo, SettingRow, settingStyles, showNumber } from './settings_contr
 import { SettingsStrings } from './settings_page.strings';
 
 const styles = stylex.create({
-  advanced: {
-    marginTop: '12px',
-    marginBottom: '4px',
+  tiles: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 380px), 1fr))',
+    gap: '12px',
+  },
+  tile: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    paddingTop: '12px',
+    paddingInline: '12px',
+    paddingBottom: '12px',
+    marginBottom: 0,
+  },
+  name: {
+    width: '100%',
+  },
+  meta: {
+    overflowWrap: 'anywhere',
+  },
+  actions: {
+    marginTop: 'auto',
+    justifyContent: 'flex-end',
+  },
+  jobs: {
+    marginTop: '8px',
+    marginBottom: 0,
   },
   summary: {
     cursor: 'pointer',
@@ -68,70 +102,92 @@ const styles = stylex.create({
 // library, and the gallery is for looking at photos.
 export const LibraryList = observer(function LibraryList(): JSX.Element {
   const store = useLibrariesStore();
-  const scan = useScanStore();
-  const { libraries, scan: scanPresenter } = usePresenters();
 
   return (
-    <List label={SettingsStrings.libraries()}>
+    <div {...stylex.props(styles.tiles)} role="list" aria-label={SettingsStrings.libraries()}>
       {store.libraries.map((library) => (
-        <ListRow key={library.id}>
-          <ListBody>
-            <Row>
-              <LibraryName library={library} />
-              <Spacer />
+        <LibraryTile key={library.id} library={library} />
+      ))}
+    </div>
+  );
+});
 
-              {/* The same slot, because stopping is what you want from a run in
-                  flight and starting another is not on offer anyway. */}
-              {scan.isBusy && scan.libraryId === library.id ? (
-                <Button onClick={() => void scanPresenter.cancel(library.id)}>
-                  <CircleStop size={ICON} />
-                  {SettingsStrings.stop()}
-                </Button>
-              ) : (
-                <Button onClick={() => void scanPresenter.scanLibrary(library.id)}>
-                  <RefreshCw size={ICON} />
-                  {SettingsStrings.scanNow()}
-                </Button>
-              )}
+const LibraryTile = observer(function LibraryTile({ library }: { library: Library }): JSX.Element {
+  const scan = useScanStore();
+  const { libraries, scan: scanPresenter } = usePresenters();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
-              <Button
-                variant="danger"
-                onClick={() => {
-                  // Removing a library cascades away every rating, note, verdict,
-                  // album membership and shoot assignment. The RAW files survive,
-                  // the catalogue does not, and there is no undo.
-                  const warning = SettingsStrings.removeLibraryWarning(libraryLabel(library), library.photo_count);
-                  if (window.confirm(warning)) void libraries.remove(library.id);
-                }}
-              >
-                <Trash2 size={ICON} />
-                {SettingsStrings.remove()}
-              </Button>
-            </Row>
+  return (
+    <Panel role="listitem" style={styles.tile}>
+      <LibraryName library={library} />
+      <Text variant="mono" as="div" style={styles.meta}>
+        {SettingsStrings.libraryMeta(
+          library.root_path,
+          library.photo_count,
+          library.last_synced_at == null ?
+            SettingsStrings.neverScanned()
+          : SettingsStrings.scannedAt(relativeTime(library.last_synced_at)),
+        )}
+      </Text>
+      <ScanStrip library={library} />
+      <LibraryJobs library={library} />
 
-            <ListMeta>
-              {SettingsStrings.libraryMeta(
-                library.root_path,
-                library.photo_count,
-                library.last_synced_at == null ?
-                  SettingsStrings.neverScanned()
-                : SettingsStrings.scannedAt(relativeTime(library.last_synced_at)),
-              )}
-            </ListMeta>
-            <ScanStrip library={library} />
-            <Advanced summary={SettingsStrings.librarySettings()}>
+      <Row style={styles.actions}>
+        <Button onClick={() => setSettingsOpen(true)}>
+          <SettingsIcon size={ICON} />
+          {SettingsStrings.openLibrarySettings()}
+        </Button>
+
+        {/* The same slot, because stopping is what you want from a run in
+            flight and starting another is not on offer anyway. */}
+        {scan.isBusy && scan.libraryId === library.id ? (
+          <Button onClick={() => void scanPresenter.cancel(library.id)}>
+            <CircleStop size={ICON} />
+            {SettingsStrings.stop()}
+          </Button>
+        ) : (
+          <Button onClick={() => void scanPresenter.scanLibrary(library.id)}>
+            <RefreshCw size={ICON} />
+            {SettingsStrings.scanNow()}
+          </Button>
+        )}
+
+        <Button
+          variant="danger"
+          onClick={() => {
+            // Removing a library cascades away every rating, note, verdict,
+            // album membership and shoot assignment. The RAW files survive,
+            // the catalogue does not, and there is no undo.
+            const warning = SettingsStrings.removeLibraryWarning(libraryLabel(library), library.photo_count);
+            if (window.confirm(warning)) void libraries.remove(library.id);
+          }}
+        >
+          <Trash2 size={ICON} />
+          {SettingsStrings.remove()}
+        </Button>
+      </Row>
+
+      <Modal
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        title={SettingsStrings.librarySettingsTitle(libraryLabel(library))}
+      >
+        <DialogBody wide>
+          <DialogColumns>
+            <div>
               <FolderSettings library={library} />
               <RenditionSettings library={library} />
-              <RenderStagesPanel library={library} />
               <StackSettings library={library} />
               <SyncedDevicesPanel library={library} />
+            </div>
+            <div>
+              <RenderStagesPanel library={library} />
               <BackupPanel library={library} />
-            </Advanced>
-            <LibraryJobs library={library} />
-          </ListBody>
-        </ListRow>
-      ))}
-    </List>
+            </div>
+          </DialogColumns>
+        </DialogBody>
+      </Modal>
+    </Panel>
   );
 });
 
@@ -151,15 +207,14 @@ const LibraryName = observer(function LibraryName({ library }: { library: Librar
   }
 
   return (
-    <ListName>
-      <TextField
-        label={SettingsStrings.libraryName()}
-        value={draft}
-        onChange={setDraft}
-        onBlur={commit}
-        onKeyDown={(e) => e.key === 'Enter' && commit()}
-      />
-    </ListName>
+    <TextField
+      style={styles.name}
+      label={SettingsStrings.libraryName()}
+      value={draft}
+      onChange={setDraft}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === 'Enter' && commit()}
+    />
   );
 });
 
@@ -482,9 +537,9 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
   const backingUp = backupStore.running === library.id;
 
   return (
-    <Advanced summary={SettingsStrings.libraryJobs()}>
-
-      <Panel flush>
+    <details>
+      <summary {...stylex.props(styles.summary, focusRing.ring)}>{SettingsStrings.libraryJobs()}</summary>
+      <Panel flush style={styles.jobs}>
         {replication.hasPeers(library.id) && (
           <SettingRow
             label={SettingsStrings.syncLibrary()}
@@ -558,15 +613,6 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           </Button>
         </SettingRow>
       </Panel>
-    </Advanced>
-  );
-});
-
-function Advanced({ summary, children }: { summary: string; children: ReactNode }): JSX.Element {
-  return (
-    <details {...stylex.props(styles.advanced)}>
-      <summary {...stylex.props(styles.summary, focusRing.ring)}>{summary}</summary>
-      {children}
     </details>
   );
-}
+});

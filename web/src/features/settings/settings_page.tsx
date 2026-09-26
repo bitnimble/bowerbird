@@ -48,6 +48,7 @@ import {
   GroupTitle,
   NumberSetting,
   SettingRow,
+  SettingsColumns,
   settingStyles,
   TextSetting,
   ToggleSetting,
@@ -57,6 +58,9 @@ import {
 import { SettingsStrings } from './settings_page.strings';
 
 const styles = stylex.create({
+  page: {
+    maxWidth: '1280px',
+  },
   tabs: {
     marginBottom: '16px',
   },
@@ -84,28 +88,41 @@ const ViewingSettings = observer(function ViewingSettings(): JSX.Element {
   const mode = settings.viewerRenditionMode;
 
   return (
-    <Panel flush>
-      <SettingRow
-        label={SettingsStrings.defaultRendition()}
-        onReset={resetTo(mode, settings.defaults?.viewer_rendition_mode, (v) =>
-          void appSettings.setViewerRenditionMode(v),
-        )}
-      >
-        <Select
-          label={SettingsStrings.defaultRendition()}
-          options={RENDITION_MODES}
-          value={mode}
-          onChange={(next) => void appSettings.setViewerRenditionMode(next)}
-        />
-      </SettingRow>
-
-      <ToggleSetting field="hide_sidebar_in_viewer" label={SettingsStrings.hideSidebarInViewer()} />
-      <ToggleSetting
-        field="frame_tv_enabled"
-        label={SettingsStrings.frameTvEnabled()}
-        hint={SettingsStrings.frameTvEnabledHint()}
-      />
-    </Panel>
+    <SettingsColumns
+      left={
+        <>
+          <GroupTitle>{SettingsStrings.groupPhotoViewer()}</GroupTitle>
+          <Panel flush>
+            <SettingRow
+              label={SettingsStrings.defaultRendition()}
+              onReset={resetTo(mode, settings.defaults?.viewer_rendition_mode, (v) =>
+                void appSettings.setViewerRenditionMode(v),
+              )}
+            >
+              <Select
+                label={SettingsStrings.defaultRendition()}
+                options={RENDITION_MODES}
+                value={mode}
+                onChange={(next) => void appSettings.setViewerRenditionMode(next)}
+              />
+            </SettingRow>
+            <ToggleSetting field="hide_sidebar_in_viewer" label={SettingsStrings.hideSidebarInViewer()} />
+          </Panel>
+        </>
+      }
+      right={
+        <>
+          <GroupTitle>{SettingsStrings.groupFrameTv()}</GroupTitle>
+          <Panel flush>
+            <ToggleSetting
+              field="frame_tv_enabled"
+              label={SettingsStrings.frameTvEnabled()}
+              hint={SettingsStrings.frameTvEnabledHint()}
+            />
+          </Panel>
+        </>
+      }
+    />
   );
 });
 
@@ -141,114 +158,121 @@ const RenderingTab = observer(function RenderingTab(): JSX.Element | null {
   const hdrOff = noHdr ? SettingsStrings.hdrOff() : undefined;
 
   return (
-    <>
-      <GroupTitle>{SettingsStrings.groupProcessing()}</GroupTitle>
-      <Panel flush>
-        <RenderOnThisDevice />
-        <ToggleSetting
-          field="match_embedded_jpeg"
-          label={SettingsStrings.matchEmbeddedJpeg()}
-          hint={SettingsStrings.matchEmbeddedJpegHint()}
-        />
-        <NumberSetting
-          field="raw_defringe"
-          label={SettingsStrings.rawDefringe()}
-          hint={SettingsStrings.rawDefringeHint()}
-          min={0}
-          max={1}
-          step={0.05}
-        />
-      </Panel>
+    <SettingsColumns
+      left={
+        <>
+          <GroupTitle>{SettingsStrings.groupProcessing()}</GroupTitle>
+          <Panel flush>
+            <RenderOnThisDevice />
+            <ToggleSetting
+              field="match_embedded_jpeg"
+              label={SettingsStrings.matchEmbeddedJpeg()}
+              hint={SettingsStrings.matchEmbeddedJpegHint()}
+            />
+            <NumberSetting
+              field="raw_defringe"
+              label={SettingsStrings.rawDefringe()}
+              hint={SettingsStrings.rawDefringeHint()}
+              min={0}
+              max={1}
+              step={0.05}
+            />
+          </Panel>
 
-      <GroupTitle>{SettingsStrings.groupHdr()}</GroupTitle>
-      <Panel flush>
-        <NumberSetting
-          field="hdr_reference_white_nits"
-          label={SettingsStrings.hdrReferenceWhite()}
-          suffix="nits"
-          hint={SettingsStrings.hdrReferenceWhiteHint()}
-          min={1}
-          disabledReason={hdrOff}
-        />
-        <NumberSetting
-          field="hdr_white_quantile"
-          label={SettingsStrings.hdrWhiteQuantile()}
-          hint={SettingsStrings.hdrWhiteQuantileHint()}
-          min={0}
-          max={1}
-          step={0.01}
-          disabledReason={hdrOff}
-        />
-        <NumberSetting
-          field="hdr_peak_nits"
-          label={SettingsStrings.hdrPeakNits()}
-          suffix="nits"
-          hint={SettingsStrings.hdrPeakNitsHint()}
-          min={1}
-          disabledReason={hdrOff}
-        />
-      </Panel>
+          <GroupTitle>{SettingsStrings.groupHdr()}</GroupTitle>
+          <Panel flush>
+            <NumberSetting
+              field="hdr_reference_white_nits"
+              label={SettingsStrings.hdrReferenceWhite()}
+              suffix="nits"
+              hint={SettingsStrings.hdrReferenceWhiteHint()}
+              min={1}
+              disabledReason={hdrOff}
+            />
+            <NumberSetting
+              field="hdr_white_quantile"
+              label={SettingsStrings.hdrWhiteQuantile()}
+              hint={SettingsStrings.hdrWhiteQuantileHint()}
+              min={0}
+              max={1}
+              step={0.01}
+              disabledReason={hdrOff}
+            />
+            <NumberSetting
+              field="hdr_peak_nits"
+              label={SettingsStrings.hdrPeakNits()}
+              suffix="nits"
+              hint={SettingsStrings.hdrPeakNitsHint()}
+              min={1}
+              disabledReason={hdrOff}
+            />
+          </Panel>
 
-      <GroupTitle>{SettingsStrings.groupResolution()}</GroupTitle>
-      <Panel flush>
-        <NumberSetting field="grid_rendition_size" label={SettingsStrings.gridRenditionSize()} suffix="px" min={1} />
-        <NumberSetting field="full_rendition_size" label={SettingsStrings.fullRenditionSize()} suffix="px" min={1} />
-        <NumberSetting
-          field="panorama_full_rendition_size"
-          label={SettingsStrings.panoramaFullRenditionSize()}
-          suffix="px"
-          hint={SettingsStrings.panoramaFullRenditionSizeHint()}
-          min={1}
-        />
-      </Panel>
+          <GroupTitle>{SettingsStrings.groupWorkers()}</GroupTitle>
+          <Panel flush>
+            <NumberSetting
+              field="scan_concurrency"
+              label={SettingsStrings.scanConcurrency()}
+              hint={SettingsStrings.scanConcurrencyHint()}
+              min={1}
+            />
+            <NumberSetting
+              field="processing_concurrency"
+              label={SettingsStrings.processingConcurrency()}
+              hint={SettingsStrings.processingConcurrencyHint()}
+              min={1}
+            />
+          </Panel>
+        </>
+      }
+      right={
+        <>
+          <GroupTitle>{SettingsStrings.groupResolution()}</GroupTitle>
+          <Panel flush>
+            <NumberSetting field="grid_rendition_size" label={SettingsStrings.gridRenditionSize()} suffix="px" min={1} />
+            <NumberSetting field="full_rendition_size" label={SettingsStrings.fullRenditionSize()} suffix="px" min={1} />
+            <NumberSetting
+              field="panorama_full_rendition_size"
+              label={SettingsStrings.panoramaFullRenditionSize()}
+              suffix="px"
+              hint={SettingsStrings.panoramaFullRenditionSizeHint()}
+              min={1}
+            />
+          </Panel>
 
-      <GroupTitle>{SettingsStrings.groupQuality()}</GroupTitle>
-      <Panel flush>
-        <NumberSetting field="grid_rendition_quality" label={SettingsStrings.gridRenditionQuality()} min={0} max={100} />
-        <NumberSetting
-          field="full_rendition_quality"
-          label={SettingsStrings.fullRenditionQuality()}
-          hint={SettingsStrings.fullRenditionQualityHint()}
-          min={0}
-          max={100}
-        />
-        <NumberSetting field="max_rendition_quality" label={SettingsStrings.maxRenditionQuality()} min={0} max={100} />
-      </Panel>
+          <GroupTitle>{SettingsStrings.groupQuality()}</GroupTitle>
+          <Panel flush>
+            <NumberSetting field="grid_rendition_quality" label={SettingsStrings.gridRenditionQuality()} min={0} max={100} />
+            <NumberSetting
+              field="full_rendition_quality"
+              label={SettingsStrings.fullRenditionQuality()}
+              hint={SettingsStrings.fullRenditionQualityHint()}
+              min={0}
+              max={100}
+            />
+            <NumberSetting field="max_rendition_quality" label={SettingsStrings.maxRenditionQuality()} min={0} max={100} />
+          </Panel>
 
-      <GroupTitle>{SettingsStrings.groupEncoding()}</GroupTitle>
-      <Panel flush>
-        <ToggleSetting field="sdr_full_chroma" label={SettingsStrings.sdrFullChroma()} />
-        <ToggleSetting
-          field="hdr_still_full_chroma"
-          label={SettingsStrings.hdrFullChroma()}
-          hint={SettingsStrings.hdrFullChromaHint()}
-          disabledReason={hdrOff}
-        />
-        <NumberSetting
-          field="avif_speed"
-          label={SettingsStrings.avifSpeed()}
-          hint={SettingsStrings.avifSpeedHint()}
-          min={0}
-          max={10}
-        />
-      </Panel>
-
-      <GroupTitle>{SettingsStrings.groupWorkers()}</GroupTitle>
-      <Panel flush>
-        <NumberSetting
-          field="scan_concurrency"
-          label={SettingsStrings.scanConcurrency()}
-          hint={SettingsStrings.scanConcurrencyHint()}
-          min={1}
-        />
-        <NumberSetting
-          field="processing_concurrency"
-          label={SettingsStrings.processingConcurrency()}
-          hint={SettingsStrings.processingConcurrencyHint()}
-          min={1}
-        />
-      </Panel>
-    </>
+          <GroupTitle>{SettingsStrings.groupEncoding()}</GroupTitle>
+          <Panel flush>
+            <ToggleSetting field="sdr_full_chroma" label={SettingsStrings.sdrFullChroma()} />
+            <ToggleSetting
+              field="hdr_still_full_chroma"
+              label={SettingsStrings.hdrFullChroma()}
+              hint={SettingsStrings.hdrFullChromaHint()}
+              disabledReason={hdrOff}
+            />
+            <NumberSetting
+              field="avif_speed"
+              label={SettingsStrings.avifSpeed()}
+              hint={SettingsStrings.avifSpeedHint()}
+              min={0}
+              max={10}
+            />
+          </Panel>
+        </>
+      }
+    />
   );
 });
 
@@ -257,31 +281,45 @@ const ScanningTab = observer(function ScanningTab(): JSX.Element | null {
   if (store.settings == null) return null;
 
   return (
-    <Panel flush>
-      <ToggleSetting field="watch_enabled" label={SettingsStrings.watchEnabled()} />
-      <TextSetting
-        field="full_sync_at"
-        label={SettingsStrings.dailyFullScanAt()}
-        placeholder={SettingsStrings.dailyFullScanAtPlaceholder()}
-        hint={SettingsStrings.dailyFullScanAtHint()}
-      />
-      <NumberSetting
-        field="watch_debounce_ms"
-        label={SettingsStrings.watchDebounce()}
-        suffix="s"
-        hint={SettingsStrings.watchDebounceHint()}
-        scale={1000}
-        min={0}
-      />
-      <NumberSetting
-        field="watch_poll_interval_ms"
-        label={SettingsStrings.watchPollInterval()}
-        suffix="s"
-        hint={SettingsStrings.watchPollIntervalHint()}
-        scale={1000}
-        min={1}
-      />
-    </Panel>
+    <SettingsColumns
+      left={
+        <>
+          <GroupTitle>{SettingsStrings.groupWatching()}</GroupTitle>
+          <Panel flush>
+            <ToggleSetting field="watch_enabled" label={SettingsStrings.watchEnabled()} />
+            <NumberSetting
+              field="watch_debounce_ms"
+              label={SettingsStrings.watchDebounce()}
+              suffix="s"
+              hint={SettingsStrings.watchDebounceHint()}
+              scale={1000}
+              min={0}
+            />
+            <NumberSetting
+              field="watch_poll_interval_ms"
+              label={SettingsStrings.watchPollInterval()}
+              suffix="s"
+              hint={SettingsStrings.watchPollIntervalHint()}
+              scale={1000}
+              min={1}
+            />
+          </Panel>
+        </>
+      }
+      right={
+        <>
+          <GroupTitle>{SettingsStrings.groupSchedule()}</GroupTitle>
+          <Panel flush>
+            <TextSetting
+              field="full_sync_at"
+              label={SettingsStrings.dailyFullScanAt()}
+              placeholder={SettingsStrings.dailyFullScanAtPlaceholder()}
+              hint={SettingsStrings.dailyFullScanAtHint()}
+            />
+          </Panel>
+        </>
+      }
+    />
   );
 });
 
@@ -469,73 +507,83 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
   const store = useAppSettingsStore();
   const write = useSettingWriter();
 
+  const settings = store.settings;
+
   return (
-    <>
-      <ThisApp />
-      <UpdateSettings />
-
-      {store.settings != null && (
+    <SettingsColumns
+      left={
         <>
-          <GroupTitle>{SettingsStrings.groupMaintenance()}</GroupTitle>
-          <Panel flush>
-            <NumberSetting
-              field="prune_every_days"
-              label={SettingsStrings.pruneEveryDays()}
-              suffix="days"
-              hint={SettingsStrings.zeroTurnsItOff()}
-              min={0}
-            />
-            <NumberSetting
-              field="backup_every_days"
-              label={SettingsStrings.backupEveryDays()}
-              suffix="days"
-              hint={SettingsStrings.zeroTurnsItOff()}
-              min={0}
-            />
-            <NumberSetting
-              field="backup_keep"
-              label={SettingsStrings.backupKeep()}
-              min={1}
-              disabledReason={store.settings.backup_every_days > 0 ? undefined : SettingsStrings.backupsOff()}
-            />
-            <NumberSetting
-              field="export_history_limit"
-              label={SettingsStrings.exportHistoryLimit()}
-              hint={SettingsStrings.exportHistoryLimitHint()}
-              min={1}
-            />
-            <AppDataFolder />
-          </Panel>
-
-          <GroupTitle>{SettingsStrings.groupServer()}</GroupTitle>
-          <Panel>
-            <SettingRow
-              label={SettingsStrings.logLevel()}
-              onReset={resetTo(store.settings.log_level, store.defaults?.log_level, (v) =>
-                void write({ log_level: v }),
-              )}
-            >
-              <Select
-                label={SettingsStrings.logLevel()}
-                options={LOG_LEVELS}
-                value={store.settings.log_level}
-                onChange={(level) => void write({ log_level: level })}
-              />
-            </SettingRow>
-            <TextSetting
-              field="cors_origins"
-              label={SettingsStrings.corsOrigins()}
-              placeholder={SettingsStrings.corsOriginsPlaceholder()}
-              hint={SettingsStrings.corsOriginsHint()}
-              wide
-            />
-            <Text variant="mono" as="p">
-              {SettingsStrings.environmentNote()}
-            </Text>
-          </Panel>
+          <ThisApp />
+          <UpdateSettings />
+          {settings != null && (
+            <>
+              <GroupTitle>{SettingsStrings.groupServer()}</GroupTitle>
+              <Panel>
+                <SettingRow
+                  label={SettingsStrings.logLevel()}
+                  onReset={resetTo(settings.log_level, store.defaults?.log_level, (v) =>
+                    void write({ log_level: v }),
+                  )}
+                >
+                  <Select
+                    label={SettingsStrings.logLevel()}
+                    options={LOG_LEVELS}
+                    value={settings.log_level}
+                    onChange={(level) => void write({ log_level: level })}
+                  />
+                </SettingRow>
+                <TextSetting
+                  field="cors_origins"
+                  label={SettingsStrings.corsOrigins()}
+                  placeholder={SettingsStrings.corsOriginsPlaceholder()}
+                  hint={SettingsStrings.corsOriginsHint()}
+                  wide
+                />
+                <Text variant="mono" as="p">
+                  {SettingsStrings.environmentNote()}
+                </Text>
+              </Panel>
+            </>
+          )}
         </>
-      )}
-    </>
+      }
+      right={
+        settings != null && (
+          <>
+            <GroupTitle>{SettingsStrings.groupMaintenance()}</GroupTitle>
+            <Panel flush>
+              <NumberSetting
+                field="prune_every_days"
+                label={SettingsStrings.pruneEveryDays()}
+                suffix="days"
+                hint={SettingsStrings.zeroTurnsItOff()}
+                min={0}
+              />
+              <NumberSetting
+                field="backup_every_days"
+                label={SettingsStrings.backupEveryDays()}
+                suffix="days"
+                hint={SettingsStrings.zeroTurnsItOff()}
+                min={0}
+              />
+              <NumberSetting
+                field="backup_keep"
+                label={SettingsStrings.backupKeep()}
+                min={1}
+                disabledReason={settings.backup_every_days > 0 ? undefined : SettingsStrings.backupsOff()}
+              />
+              <NumberSetting
+                field="export_history_limit"
+                label={SettingsStrings.exportHistoryLimit()}
+                hint={SettingsStrings.exportHistoryLimitHint()}
+                min={1}
+              />
+              <AppDataFolder />
+            </Panel>
+          </>
+        )
+      }
+    />
   );
 });
 
@@ -573,7 +621,7 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
   }, [libraries, appSettings, backup]);
 
   return (
-    <Page>
+    <Page style={styles.page}>
       <PageHead withSidebarButton>
         <Heading>{SettingsStrings.settings()}</Heading>
       </PageHead>

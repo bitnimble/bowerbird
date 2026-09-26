@@ -58,7 +58,7 @@ import { Tooltip } from '../ui/tooltip';
 import { ShowSidebar } from '../ui/page';
 import { ProgressBar } from '../ui/progress_bar';
 import { Text } from '../ui/text';
-import { DRAGS_WINDOW } from '../ui/title_bar';
+import { DRAGS_WINDOW, HAS_TRAFFIC_LIGHTS } from '../ui/title_bar';
 import { color, derivedSize, font, size } from '../ui/tokens.stylex';
 import { AppStrings } from './app.strings';
 import { CollectionListStrings } from './collection_list.strings';
@@ -162,9 +162,14 @@ const styles = stylex.create({
     borderBottomStyle: 'solid',
     borderBottomColor: color.slate,
     display: 'flex',
+    alignItems: 'flex-start',
     justifyContent: 'flex-end',
+    gap: '8px',
   },
-  brand: {
+  headWithBrand: {
+    justifyContent: 'space-between',
+  },
+  foot: {
     paddingTop: '10px',
     paddingInline: '12px',
     paddingBottom: '12px',
@@ -691,7 +696,8 @@ export function Sidebar({
       {...stylex.props(styles.sidebar, shown && styles.sidebarShown, following && styles.following)}
       aria-label={AppStrings.sidebar()}
     >
-      <div {...DRAGS_WINDOW} {...stylex.props(styles.head)}>
+      <div {...DRAGS_WINDOW} {...stylex.props(styles.head, !HAS_TRAFFIC_LIGHTS && styles.headWithBrand)}>
+        {!HAS_TRAFFIC_LIGHTS && <Brand />}
         <Button iconOnly aria-label={AppStrings.hideSidebar()} aria-expanded onClick={onCollapse}>
           <PanelLeftClose size={ICON} />
         </Button>
@@ -730,16 +736,26 @@ export function Sidebar({
           <UpdateBadge />
         </div>
 
-        <div {...stylex.props(styles.brand)}>
-          <div {...stylex.props(styles.brandMark)}>{AppStrings.brand()}</div>
-          <div {...stylex.props(styles.bower)} aria-hidden="true">
-            <i {...stylex.props(styles.bowerBlue)} />
-            <i {...stylex.props(styles.bowerGlass)} />
-            <i {...stylex.props(styles.bowerSlate)} />
+        {HAS_TRAFFIC_LIGHTS && (
+          <div {...stylex.props(styles.foot)}>
+            <Brand />
           </div>
-        </div>
+        )}
       </div>
     </nav>
+  );
+}
+
+function Brand(): JSX.Element {
+  return (
+    <div>
+      <div {...stylex.props(styles.brandMark)}>{AppStrings.brand()}</div>
+      <div {...stylex.props(styles.bower)} aria-hidden="true">
+        <i {...stylex.props(styles.bowerBlue)} />
+        <i {...stylex.props(styles.bowerGlass)} />
+        <i {...stylex.props(styles.bowerSlate)} />
+      </div>
+    </div>
   );
 }
 
