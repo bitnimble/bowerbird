@@ -311,15 +311,20 @@ than anything this arrangement is in the way of.
 
 ### 23.8 Versions
 
-**The tag is the version, and `scripts/set-version.ts` is what makes the four manifests
-agree with it** - `package.json`, `web/package.json`, `tauri.conf.json` and `src-tauri`'s
-`Cargo.toml`. Every release job runs it before it builds anything, so a tagged build cannot
-ship calling itself something else, which is the failure that leaves an update check
-offering a version that is already installed, forever. What is committed in those files is
-a placeholder between releases, and `src/version.ts` - `package.json`'s, imported, which is
-what the server reports - is a placeholder with it.
+**The version is written once, in `VERSION` at the root, and everything reads it from
+there.** `src/version.ts` imports it, which is what the server reports and what an update
+check compares against; `bundle-app.ts`, `android-build.ts` and `mac-build.ts` hand it to the
+Tauri CLI as `--config`, so no manifest carries a version of its own; `write-release-manifest.ts`
+names the release after it, and the APK is named after it.
+
+**`bun run release` cuts one**: on a clean tree it writes the next patch version into
+`VERSION` - or the semver version it is given, or `0.0.0-<hash>` for a commit hash - commits it,
+and tags the commit `v<VERSION>`; `git push --follow-tags` then starts the workflow. Its first
+job refuses a tag that names anything else, because a build that ships calling itself something
+other than its tag is the failure that leaves an update check offering a version that is already
+installed, forever.
 
 Comparison is dotted-numeric with a suffix ranked below its own release, so `1.2.0` beats
 `1.2.0-rc1` and shipping `1.2.0` does not leave every release candidate thinking it is
 current. It is deliberately not a semver implementation: every version it compares is one
-`set-version.ts` wrote.
+written in `VERSION`.

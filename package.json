@@ -1,6 +1,5 @@
 {
   "name": "bowerbird",
-  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +7,7 @@
     "dev": "bun run dev.ts",
     "dev:landing": "bun install --cwd web && bun install --cwd landing && bun run --cwd landing dev",
     "restore": "bun run scripts/restore-backup.ts",
+    "release": "bun run scripts/release.ts",
     "dev:docker": "bun run build:native && bun run build:wasm && docker rm -f bowerbird-dev bowerbird-web-dev; docker compose -f docker-compose.dev.yml up --build",
     "lint": "oxlint",
     "test": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test ./src/ ./scripts/ ./packages/samsung-frame-art/ --path-ignore-patterns=landing/scripts/screenshots.spec.ts",

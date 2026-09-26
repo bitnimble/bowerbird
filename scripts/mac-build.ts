@@ -10,6 +10,7 @@
 // `BOWERBIRD_MAC_DIST_DIR` says where to leave the bundle; the target dir otherwise.
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
+import { VERSION } from '../src/version.ts';
 import {
   chmodSync,
   copyFileSync,
@@ -75,7 +76,8 @@ const env: Record<string, string> = {
 // bare binary and assembles the bundle below. A `.app` is a directory with a plist in it.
 ensureIcons();
 
-const args = ['build', '--target', TARGET, '--no-bundle', ...process.argv.slice(2)];
+const config = JSON.stringify({ version: VERSION });
+const args = ['build', '--target', TARGET, '--no-bundle', '--config', config, ...process.argv.slice(2)];
 const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
 
@@ -101,8 +103,8 @@ function infoPlist(): string {
 \t<key>CFBundleName</key><string>${conf.productName}</string>
 \t<key>CFBundleDisplayName</key><string>${conf.productName}</string>
 \t<key>CFBundlePackageType</key><string>APPL</string>
-\t<key>CFBundleShortVersionString</key><string>${conf.version}</string>
-\t<key>CFBundleVersion</key><string>${conf.version}</string>
+\t<key>CFBundleShortVersionString</key><string>${VERSION}</string>
+\t<key>CFBundleVersion</key><string>${VERSION}</string>
 \t<key>CFBundleIconFile</key><string>icon.icns</string>
 \t<key>LSMinimumSystemVersion</key><string>${MAC_MIN_VERSION}</string>
 \t<key>NSHighResolutionCapable</key><true/>

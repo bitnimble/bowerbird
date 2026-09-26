@@ -6,7 +6,7 @@
 // whatever they actually came out called, and is generated from the files that are about
 // to be uploaded rather than from a list somebody maintains.
 //
-//   bun run scripts/write-release-manifest.ts --dist dist --tag v0.2.0 [--image-repo ghcr.io/…]
+//   bun run scripts/write-release-manifest.ts --dist dist [--image-repo ghcr.io/…]
 //
 // `--dist` holds one directory per platform: the payload tarball, and whatever installer
 // that platform ships.
@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path';
 import { PlatformSchema, type ReleaseAsset, type ReleaseManifest } from '../src/schemas/updates';
 import { writeReleaseManifest } from '../src/services/updates/release_manifest';
 import { GITHUB_REPO } from '../src/services/updates/update_source';
+import { VERSION as version } from '../src/version';
 
 function flag(name: string): string | undefined {
   const at = process.argv.indexOf(`--${name}`);
@@ -22,9 +23,7 @@ function flag(name: string): string | undefined {
 }
 
 const dist = resolve(flag('dist') ?? 'dist');
-const tag = flag('tag');
-if (tag == null) throw new Error('--tag is required, and is the git tag the release is being cut from');
-const version = tag.replace(/^v/, '');
+const tag = `v${version}`;
 
 // What a reader downloads and runs, in the order a platform prefers them. An AppImage
 // before a deb because it needs no package manager; the NSIS installer before a bare
@@ -62,9 +61,8 @@ for (const entry of readdirSync(dist, { withFileTypes: true })) {
   // pull` is what somebody does by hand when the in-place update is not on offer.
   //
   // The repository is named and the tag is not: `docker/metadata-action`'s `{{version}}`
-  // strips the `v` off a tag push, so a caller passing the whole reference would have to
-  // strip it too - and a caller that forgot would publish a manifest naming
-  // `…:v0.2.0`, which is a tag that was never pushed and a `docker pull` that 404s.
+  // strips the `v` off a tag push, so the image is `…:0.2.0` - `…:v0.2.0` is a tag that
+  // was never pushed and a `docker pull` that 404s.
   if (platform === 'docker-x86_64') asset.image = `${flag('image-repo') ?? `ghcr.io/${GITHUB_REPO}`}:${version}`;
 
   if (Object.keys(asset).length > 0) assets[platform] = asset;

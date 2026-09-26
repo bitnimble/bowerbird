@@ -69,7 +69,7 @@ function unquote(value: string): string {
  *
  * Deliberately not a semver implementation: a prerelease suffix sorting *below* its
  * own release is the one rule that matters, and every version this compares is one
- * `scripts/set-version.ts` wrote.
+ * written in `VERSION`.
  */
 export function compareVersions(a: string, b: string): number {
   const parts = (v: string): number[] => v.replace(/^v/, '').split(/[.+-]/).map((p) => Number.parseInt(p, 10));

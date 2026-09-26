@@ -1,7 +1,7 @@
 name: release
 
 # A tag push builds every distributable and cuts a release; the button builds every
-# distributable without stamping a version or cutting a release.
+# distributable without cutting a release.
 on:
   push:
     tags: ["v*"]
@@ -37,6 +37,21 @@ jobs:
       docker: ${{ steps.pick.outputs.docker }}
       android: ${{ steps.pick.outputs.android }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: VERSION
+          sparse-checkout-cone-mode: false
+      # Every build reads its version from VERSION, so a tag naming anything else would
+      # publish binaries under one number that report another.
+      - name: The tag names the version in VERSION
+        if: env.TAG != ''
+        run: |
+          version=$(tr -d '[:space:]' < VERSION)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::$TAG does not match VERSION ($version): tag v$version, or bump VERSION and tag again"
+            exit 1
+          fi
+
       - id: pick
         env:
           ONLY: ${{ inputs.only }}
@@ -108,11 +123,6 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /usr/local/share/boost /opt/hostedtoolcache
           df -h /
-
-      - uses: oven-sh/setup-bun@v2
-      - name: Stamp the version the tag names
-        if: env.TAG != ''
-        run: bun run scripts/set-version.ts "$TAG"
 
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
@@ -277,11 +287,6 @@ jobs:
           path: ${{ runner.temp }}/vcpkg-archives
           key: vcpkg-${{ runner.os }}-${{ hashFiles('native/rawshim/vcpkg/**', 'scripts/vcpkg.ts') }}
 
-      - name: Stamp the version the tag names
-        if: env.TAG != ''
-        run: bun run scripts/set-version.ts "$TAG"
-        shell: bash
-
       # The editor's decoder, which the web build imports by path - so it has to exist
       # before vite resolves anything.
       - run: bun run build:wasm
@@ -369,9 +374,6 @@ jobs:
         with:
           path: ~/.cache/bowerbird
           key: pinned-${{ runner.os }}-android-${{ hashFiles('scripts/get-*.ts', 'scripts/pinned.ts', 'scripts/vcpkg.ts', 'native/rawshim/vcpkg/**') }}
-      - name: Stamp the version the tag names
-        if: env.TAG != ''
-        run: bun run scripts/set-version.ts "$TAG"
       - run: bun run build:wasm
       # `NDK_HOME` is left to the script, which takes the highest under `$ANDROID_HOME/ndk` -
       # the one installed above, there being only one.
@@ -391,8 +393,8 @@ jobs:
           apk=$(find src-tauri/gen/android -name '*release*.apk' | head -n1)
           # The bare version, like every bundler-produced installer beside it: this is the
           # one filename the build does not choose, so it is the one that can drift.
-          version="${TAG#v}"
-          out="dist/android-aarch64/Bowerbird_${version:-manual}.apk"
+          version=$(tr -d '[:space:]' < VERSION)
+          out="dist/android-aarch64/Bowerbird_$version.apk"
           if [ -z "${KEYSTORE:-}" ]; then
             echo "no ANDROID_KEYSTORE_BASE64 secret: publishing the unsigned APK"
             cp "$apk" "$out"
@@ -432,9 +434,7 @@ jobs:
           path: dist
           pattern: dist-*
           merge-multiple: true
-      # The repository, not the whole reference: the script pairs it with the version it
-      # already stripped the `v` off, which is the tag `docker/metadata-action` pushed.
-      - run: bun run scripts/write-release-manifest.ts --dist dist --tag "${{ github.ref_name }}" --image-repo "ghcr.io/${{ github.repository }}"
+      - run: bun run scripts/write-release-manifest.ts --dist dist --image-repo "ghcr.io/${{ github.repository }}"
       - uses: softprops/action-gh-release@v3
         with:
           # The description of this release is the changelog the app shows (DESIGN §23.1),

@@ -1,7 +1,6 @@
 {
   "$schema": "../web/node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Bowerbird",
-  "version": "0.1.0",
   "identifier": "dev.kumo.bowerbird",
   "build": {
     "frontendDist": "../web/dist",

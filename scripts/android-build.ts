@@ -10,6 +10,7 @@
 // irreproducible.
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
+import { VERSION } from '../src/version.ts';
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -57,7 +58,8 @@ if (!existsSync(join(repoRoot, 'src-tauri', 'gen', 'android'))) {
   if (started.status !== 0) process.exit(started.status ?? 1);
 }
 
-const args = ['android', 'build', '--target', 'aarch64', '--apk', ...process.argv.slice(2)];
+const config = JSON.stringify({ version: VERSION });
+const args = ['android', 'build', '--target', 'aarch64', '--apk', '--config', config, ...process.argv.slice(2)];
 const built = spawnSync('bun', ['x', '@tauri-apps/cli', ...args], { stdio: 'inherit', env });
 if (built.status !== 0) process.exit(built.status ?? 1);
 

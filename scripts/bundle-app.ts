@@ -6,6 +6,7 @@
 // through, so `--target` and `--bundles` read as the CLI's own.
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
+import { VERSION } from '../src/version.ts';
 
 // `generate_context!` reads them at compile time and they are generated, not committed, so a
 // clean checkout fails inside a proc macro naming a missing file rather than at a build step.
@@ -21,7 +22,8 @@ ensureIcons();
 //
 // const runtime = process.platform === 'linux' ? ['--features', 'cef'] : [];
 
-const built = spawnSync('bun', ['x', '@tauri-apps/cli', 'build', ...process.argv.slice(2)], {
+const config = JSON.stringify({ version: VERSION });
+const built = spawnSync('bun', ['x', '@tauri-apps/cli', 'build', '--config', config, ...process.argv.slice(2)], {
   stdio: 'inherit',
 });
 if (built.status !== 0) process.exit(built.status ?? 1);

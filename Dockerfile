@@ -356,7 +356,7 @@ COPY --from=native --chown=bun:bun /build/x86-64-v4/librawshim.so ./payload/nati
 # it picked into it on every start.
 COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts native/report_gpu.ts ./payload/native/
 RUN chmod +x ./payload/native/entrypoint.sh
-COPY --chown=bun:bun package.json bun.lock tsconfig.json ./payload/
+COPY --chown=bun:bun package.json bun.lock tsconfig.json VERSION ./payload/
 COPY --chown=bun:bun src ./payload/src
 COPY --chown=bun:bun assets/reference_frame.ARW ./payload/assets/reference_frame.ARW
 RUN bun -e 'import { assertReferenceFrame } from "./payload/src/services/processing/renditions/reference_frame.ts"; assertReferenceFrame("./payload/assets/reference_frame.ARW")'
