@@ -46,6 +46,8 @@ export type DecoderStart = { module: WebAssembly.Module };
 
 /** Past this, an abort tears the decoder down rather than waiting out a decode already running. */
 const TEARDOWN_PIXELS = 20_000_000;
+/** A decode running this long has a thread that trapped holding a lock, and never answers. */
+const DECODE_DEADLINE_MS = 10_000;
 
 /**
  * Whether this page can run the decoder: its threads share memory, which a browser allows only a
@@ -74,6 +76,7 @@ class AvifPlanes {
   private readonly pending = new Map<number, Pending>();
   private worker = this.start();
   private running: number | null = null;
+  private deadline: ReturnType<typeof setTimeout> | undefined;
   private asked = 0;
   private uncompiled = false;
 
@@ -104,9 +107,16 @@ class AvifPlanes {
       const reply = event.data;
       if ('started' in reply) {
         this.running = reply.id;
+        clearTimeout(this.deadline);
+        this.deadline = setTimeout(() => {
+          if (this.running === reply.id) this.restart({ id: reply.id, failed: 'the decoder stopped answering' });
+        }, DECODE_DEADLINE_MS);
         return;
       }
-      if (this.running === reply.id) this.running = null;
+      if (this.running === reply.id) {
+        this.running = null;
+        clearTimeout(this.deadline);
+      }
       this.settle(reply);
     };
     // Replaced as well as reported: every later ask posted to a dead worker would wait forever.
@@ -132,7 +142,7 @@ class AvifPlanes {
   private cancel(id: number): void {
     const asked = this.pending.get(id);
     if (asked == null) return;
-    if (this.running === id && asked.large) this.restart(id);
+    if (this.running === id && asked.large) this.restart({ id, declined: 'cancelled' });
     else this.worker.postMessage({ id, cancel: true } satisfies DecodeAsk);
   }
 
@@ -144,13 +154,15 @@ class AvifPlanes {
   }
 
   /**
-   * A fresh decoder in place of one busy with a picture nobody wants: terminating its worker takes
-   * the thread pool and the shared memory with it. Everything still waiting is asked again.
+   * A fresh decoder in place of one busy with a picture nobody wants, or stuck: terminating its
+   * worker takes the thread pool and the shared memory with it. Everything still waiting is asked
+   * again, and the running decode ends as `answer`.
    */
-  private restart(cancelled: number): void {
+  private restart(answer: DecodeAnswer): void {
     this.worker.terminate();
     this.running = null;
-    this.settle({ id: cancelled, declined: 'cancelled' });
+    clearTimeout(this.deadline);
+    this.settle(answer);
     this.worker = this.start();
     for (const [id, { file, urgent }] of this.pending) this.worker.postMessage({ id, file, urgent } satisfies DecodeAsk);
   }

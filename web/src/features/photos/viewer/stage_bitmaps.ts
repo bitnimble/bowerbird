@@ -186,6 +186,8 @@ async function decodePicture(
   if (WebCodecs == null && blob.type === 'image/avif' && fitsATexture && navigator.gpu != null && canDecodeAvifPlanes()) {
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const planes = await decodeAvifPlanes(bytes, { signal, ...priority, pixels: natural.width * natural.height });
+    // Null for an abort as well, which the bitmap decode below would only repeat for nobody.
+    signal.throwIfAborted();
     if (planes != null) {
       const rotation = avifRotation(bytes.buffer, blob.type);
       const sideways = rotation === 90 || rotation === 270;
