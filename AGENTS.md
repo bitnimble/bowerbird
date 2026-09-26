@@ -520,6 +520,12 @@ them - "Colour" the denoise slider is not "Colour" the panel of vibrance and sat
 **What is data is not copy.** The default bin folder name, the white balance modes that
 round-trip through XMP, and the single letters naming physical keys stay as literals.
 
+**A page that is mostly prose is an MDX file beside its component instead**, as
+`hdr_page.mdx` is. The component draws it through the `components` it passes in, so its
+figures stay in TypeScript and take their labels from the strings file as usual. The
+landing site's copy is MDX in the same way, under `landing/src/copy/`. Lint never reads
+MDX, so its words are held to `COPYWRITING.md` by review alone.
+
 `bun run lint` enforces it, through the oxlint plugin in `scripts/oxlint-plugin-strings.ts`.
 `no-jsx-text` covers JSX: a text node, a literal a brace only wraps, and one reached
 through a ternary, a `&&`, a `+`, a template or a cast. `no-literal-props` covers the props

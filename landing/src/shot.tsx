@@ -23,14 +23,14 @@ const styles = stylex.create({
   },
 });
 
-export function Shot({ shot }: { shot: ShotSpec }): JSX.Element {
-  const { width, height } = SHOT_SIZE[shot.frame];
+export function Shot({ src, alt, frame }: ShotSpec): JSX.Element {
+  const { width, height } = SHOT_SIZE[frame];
   return (
-    <figure {...stylex.props(styles.shot, shot.frame === 'phone' && styles.phone)}>
+    <figure {...stylex.props(styles.shot, frame === 'phone' && styles.phone)}>
       <img
         {...stylex.props(styles.image)}
-        src={`${import.meta.env.BASE_URL}shots/${shot.src}`}
-        alt={shot.alt}
+        src={`${import.meta.env.BASE_URL}shots/${src}`}
+        alt={alt}
         width={width}
         height={height}
         loading="lazy"

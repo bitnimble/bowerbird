@@ -5,7 +5,7 @@
     "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": ["vite/client", "mdx"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

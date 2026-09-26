@@ -1,0 +1,78 @@
+import { FeatureRows } from '../feature_row';
+import { Columns } from '../prose';
+import { Card, Cards, Halves, Intro, Section } from '../sections';
+import { Speed } from '../speed';
+
+<Intro>
+
+# Features
+
+Try most of them here on sample photos.
+
+</Intro>
+
+<Speed />
+
+<FeatureRows />
+
+<Section>
+
+## Also included
+
+<Cards>
+  <Card id="lens" title="Lens distortion matching">Bowerbird corrects each lens's distortion without a lens profile, by working it out from your own photos.</Card>
+  <Card id="sync" title="Sync">Take Bowerbird with you on a laptop. Import and edit while you travel, then sync everything to your NAS when you get home.</Card>
+  <Card id="read-only" title="Read-only libraries">Bowerbird never deletes your originals. Make a library read-only and it cannot move them either.</Card>
+</Cards>
+
+</Section>
+
+<Section id="coming-soon">
+
+## Coming soon
+
+<Columns>
+
+- Local hosting with network backup
+- AI noise reduction, sharpening, and object removal
+- Print soft proofs in 3D lighting
+- Custom colour grading across photos
+- Scheduled Instagram posts
+- Exposure and focus bracket merging
+- Sony 4× and 16× pixel shift
+- Live shared triage and editing
+
+</Columns>
+
+</Section>
+
+<Section id="stability">
+<Halves>
+<div>
+
+## Stability
+
+Bowerbird is still early, and some parts are more settled than others.
+
+Your photos are safe. Bowerbird never deletes originals. The most it does is move them to the Bin, and a read-only library prevents that too.
+
+The catalogue, which holds your albums, Picks, and edits, is still changing. An update may mean importing a library again.
+
+Updates also change how edits are drawn, mostly to fix bugs, so an edited photo may look a little different afterwards.
+
+Editing a large RAW on a phone isn't reliable yet.
+
+</div>
+<div>
+
+## Requirements
+
+- Viewing and triage need a web browser, or the app.
+- Editing works in any recent browser apart from Firefox.
+- Editing needs graphics hardware on the device you edit on. Integrated graphics is enough, which covers most laptops and phones.
+- The NAS or server that runs Bowerbird needs graphics hardware as well.
+- Bowerbird uses 2 to 4 GB of memory and 2 to 4 GB of graphics memory.
+
+</div>
+</Halves>
+</Section>

@@ -1,13 +1,23 @@
 import { fileURLToPath } from 'node:url';
+import mdx from '@mdx-js/rollup';
 import stylex from '@stylexjs/unplugin';
 import react from '@vitejs/plugin-react';
+import remarkFrontmatter from 'remark-frontmatter';
+import remarkMdxFrontmatter from 'remark-mdx-frontmatter';
 import { defineConfig } from 'vite';
 
 const page = (name: string): string => fileURLToPath(new URL(name, import.meta.url));
 
 export default defineConfig({
   base: '/',
-  plugins: [stylex.vite(), react()],
+  plugins: [
+    {
+      enforce: 'pre',
+      ...mdx({ providerImportSource: '@mdx-js/react', remarkPlugins: [remarkFrontmatter, remarkMdxFrontmatter] }),
+    },
+    stylex.vite(),
+    react({ include: /\.(mdx|tsx?)$/ }),
+  ],
   // Pre-bundled, the dev server deadlocks: StyleX's transform `load`s each import, which for an
   // optimized dep waits on the optimizer, which waits on that transform. No page ever loads.
   optimizeDeps: { exclude: ['@stylexjs/stylex'] },

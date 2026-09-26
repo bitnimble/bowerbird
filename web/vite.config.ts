@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import mdx from '@mdx-js/rollup';
 import { type ViteDevServer, defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin';
@@ -37,7 +38,7 @@ const shaders = {
 // /image to the API, which VITE_API_URL / VITE_API_PORT locate. Nothing in the
 // browser knows the API's address, so it need not be reachable from one.
 export default defineConfig({
-  plugins: [shaders, stylex.vite(), react()],
+  plugins: [shaders, { enforce: 'pre', ...mdx() }, stylex.vite(), react({ include: /\.(mdx|tsx?)$/ })],
   // Pre-bundled, the dev server deadlocks: StyleX's transform `load`s each import, which for an
   // optimized dep waits on the optimizer, which waits on that transform. No page ever loads.
   optimizeDeps: { exclude: ['@stylexjs/stylex'] },

@@ -1,3 +1,4 @@
+import { MDXProvider } from '@mdx-js/react';
 import * as stylex from '@stylexjs/stylex';
 import { StrictMode, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -7,6 +8,7 @@ import { Text } from '../../web/src/ui/text';
 import { color, font } from '../../web/src/ui/tokens.stylex';
 import { REPO_URL, RELEASES_URL, SITE } from './features';
 import { layout } from './layout.stylex';
+import { PROSE } from './prose';
 
 const HOME_URL = import.meta.env.BASE_URL;
 export const FEATURES_URL = `${import.meta.env.BASE_URL}features.html`;
@@ -108,7 +110,9 @@ export function mount(page: Page, content: ReactNode): void {
   createRoot(root).render(
     <StrictMode>
       <Header page={page} />
-      <main {...stylex.props(styles.page)}>{content}</main>
+      <main {...stylex.props(styles.page)}>
+        <MDXProvider components={PROSE}>{content}</MDXProvider>
+      </main>
       <Footer />
     </StrictMode>,
   );
