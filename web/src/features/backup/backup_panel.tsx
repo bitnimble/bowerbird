@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
-import { FolderOpen, HardDrive } from 'lucide-react';
+import { FolderOpen, HardDrive, X } from 'lucide-react';
 import { type BackupStatus, type FetchBackProgress } from '../../../../src/schemas/backup';
 import { type Library } from '../../../../src/schemas/libraries';
 import { canRevealFile } from '../../api/transport';
@@ -32,6 +32,10 @@ const styles = stylex.create({
     display: 'grid',
     gap: '6px',
   },
+  summary: {
+    minWidth: 0,
+    overflowWrap: 'anywhere',
+  },
 });
 
 // What a drive says it holds, not what the filesystem counts: a reader comparing this with their
@@ -48,7 +52,7 @@ export const BackupPanel = observer(function BackupPanel({ library }: { library:
   const status = store.statusOf(library.id);
 
   return (
-    <Panel title={BackupStrings.heading()}>
+    <Panel title={BackupStrings.heading()} flush={status != null}>
       {status == null ?
         <>
           <Text variant="muted" as="p">
@@ -83,7 +87,7 @@ const ConfiguredBackup = observer(function ConfiguredBackup({
 }): JSX.Element {
   const { backup } = usePresenters();
   const [limit, setLimit] = useState('');
-  const [stopping, setStopping] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   // The field is a draft of the server's answer, so a pass that culls - and so changes nothing
   // about the limit - must not overwrite what is half typed into it.
@@ -102,7 +106,16 @@ const ConfiguredBackup = observer(function ConfiguredBackup({
   return (
     <>
       <Row>
-        <Text variant="mono">{status.path}</Text>
+        <Text variant="muted" style={styles.summary}>
+          {BackupStrings.summary({
+            backedUp: status.backed_up,
+            owed: status.owed,
+            used: inGb(status.local_bytes),
+            limit: status.local_budget_bytes == null ? null : inGb(status.local_budget_bytes),
+            offloaded: status.offloaded,
+            path: status.path,
+          })}
+        </Text>
         <Spacer />
         {canRevealFile() && (
           <Button variant="ghost" onClick={() => void backup.openFolder(status.path)}>
@@ -110,6 +123,10 @@ const ConfiguredBackup = observer(function ConfiguredBackup({
             {SettingsStrings.openFolder()}
           </Button>
         )}
+        <Button variant="danger" onClick={() => setRemoving(true)}>
+          <X size={ICON} />
+          {BackupStrings.remove()}
+        </Button>
       </Row>
       {!status.available ?
         <ErrorBanner>{BackupStrings.unavailable()}</ErrorBanner>
@@ -117,15 +134,6 @@ const ConfiguredBackup = observer(function ConfiguredBackup({
         // something else, a file that would not copy. Nothing else revisits it, so a backup that has
         // quietly stopped working is the failure worth showing (§8.6).
       : status.last_error != null && <ErrorBanner>{status.last_error}</ErrorBanner>}
-      <Text variant="muted" as="p">
-        {BackupStrings.summary({
-          backedUp: status.backed_up,
-          owed: status.owed,
-          used: inGb(status.local_bytes),
-          limit: status.local_budget_bytes == null ? null : inGb(status.local_budget_bytes),
-          offloaded: status.offloaded,
-        })}
-      </Text>
 
       <SettingRow
         label={BackupStrings.storageLimit()}
@@ -147,18 +155,12 @@ const ConfiguredBackup = observer(function ConfiguredBackup({
         />
       </SettingRow>
 
-      <Row>
-        <Spacer />
-        <Button variant="danger" onClick={() => setStopping(true)}>
-          {BackupStrings.stop()}
-        </Button>
-      </Row>
-      <StopBackupDialog library={library} status={status} open={stopping} onOpenChange={setStopping} />
+      <RemoveBackupDialog library={library} status={status} open={removing} onOpenChange={setRemoving} />
     </>
   );
 });
 
-const StopBackupDialog = observer(function StopBackupDialog({
+const RemoveBackupDialog = observer(function RemoveBackupDialog({
   library,
   status,
   open,
@@ -173,16 +175,16 @@ const StopBackupDialog = observer(function StopBackupDialog({
   const { backup } = usePresenters();
   const fetching = store.fetchingBack === library.id;
 
-  async function stop(fetchFirst: boolean): Promise<void> {
+  async function remove(fetchFirst: boolean): Promise<void> {
     await backup.remove(library.id, fetchFirst);
     onOpenChange(false);
   }
 
   return (
-    <Modal open={open} onOpenChange={(next) => !fetching && onOpenChange(next)} title={BackupStrings.stopTitle(status.name)}>
+    <Modal open={open} onOpenChange={(next) => !fetching && onOpenChange(next)} title={BackupStrings.removeTitle(status.name)}>
       <DialogBody>
         <Text as="p">
-          {status.offloaded > 0 ? BackupStrings.stopStrandsPhotos(status.offloaded) : BackupStrings.stopKeepsFiles()}
+          {status.offloaded > 0 ? BackupStrings.removeStrandsPhotos(status.offloaded) : BackupStrings.removeKeepsFiles()}
         </Text>
         {fetching && <FetchBackProgressView progress={store.fetchBackProgress} />}
         <DialogActions>
@@ -191,15 +193,15 @@ const StopBackupDialog = observer(function StopBackupDialog({
           </Button>
           {status.offloaded > 0 ?
             <>
-              <Button variant="danger" disabled={fetching} onClick={() => void stop(false)}>
-                {BackupStrings.stopWithoutFetching()}
+              <Button variant="danger" disabled={fetching} onClick={() => void remove(false)}>
+                {BackupStrings.removeWithoutFetching()}
               </Button>
-              <Button variant="primary" disabled={fetching} aria-busy={fetching} onClick={() => void stop(true)}>
-                {fetching ? BackupStrings.fetching() : BackupStrings.fetchAndStop()}
+              <Button variant="primary" disabled={fetching} aria-busy={fetching} onClick={() => void remove(true)}>
+                {fetching ? BackupStrings.fetching() : BackupStrings.fetchAndRemove()}
               </Button>
             </>
-          : <Button variant="danger" onClick={() => void stop(false)}>
-              {BackupStrings.stop()}
+          : <Button variant="danger" onClick={() => void remove(false)}>
+              {BackupStrings.remove()}
             </Button>
           }
         </DialogActions>

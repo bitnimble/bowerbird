@@ -4,8 +4,8 @@ import { type Library } from '../../../../src/schemas/libraries';
 import { usePresenters, useReplicationStore } from '../../app/stores_context';
 import { focusRing } from '../../ui/focus_ring';
 import { Panel } from '../../ui/panel';
-import { Row } from '../../ui/row';
 import { Text } from '../../ui/text';
+import { SettingRow } from '../settings/settings_controls';
 import { ReplicationStrip } from './replication_strip';
 import { SyncedDevicesStrings } from './synced_devices_panel.strings';
 
@@ -19,7 +19,7 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
   const { replication } = usePresenters();
 
   return (
-    <Panel title={SyncedDevicesStrings.heading()}>
+    <Panel title={SyncedDevicesStrings.heading()} flush={store.hasPeers(library.id)}>
       <ReplicationStrip library={library} store={store} presenter={replication} />
 
       {store.peersOf(library.id).length === 0 && (
@@ -32,7 +32,12 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
           nobody else has, "don't keep the RAWs" names nowhere for them to be. */}
       {store.hasPeers(library.id) && (
         <>
-          <Row as="label">
+          <SettingRow
+            label={SyncedDevicesStrings.keepOriginalsOnThisDevice()}
+            // What is true now, in the same words the add dialog uses: a hint that
+            // describes the *other* state reads as a description of this one.
+            hint={store.syncsOriginals(library.id) ? SyncedDevicesStrings.keepsOriginals() : SyncedDevicesStrings.catalogueOnly()}
+          >
             <input
               {...stylex.props(focusRing.ring)}
               type="checkbox"
@@ -40,14 +45,8 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
               checked={store.syncsOriginals(library.id)}
               onChange={(e) => void replication.setSyncOriginals(library.id, e.currentTarget.checked)}
             />
-            <Text as="span">{SyncedDevicesStrings.keepOriginalsOnThisDevice()}</Text>
-            {/* What is true now, in the same words the add dialog uses: a hint that
-                describes the *other* state reads as a description of this one. */}
-            <Text variant="muted" as="span">
-              {store.syncsOriginals(library.id) ? SyncedDevicesStrings.keepsOriginals() : SyncedDevicesStrings.catalogueOnly()}
-            </Text>
-          </Row>
-          <Row as="label">
+          </SettingRow>
+          <SettingRow label={SyncedDevicesStrings.autoTransferOriginals()}>
             <input
               {...stylex.props(focusRing.ring)}
               type="checkbox"
@@ -55,8 +54,7 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
               checked={store.autoTransfersOriginals(library.id)}
               onChange={(e) => void replication.setAutoTransferOriginals(library.id, e.currentTarget.checked)}
             />
-            <Text as="span">{SyncedDevicesStrings.autoTransferOriginals()}</Text>
-          </Row>
+          </SettingRow>
         </>
       )}
     </Panel>
