@@ -1,14 +1,14 @@
 import { useCallback } from 'react';
-import { settingsApi } from '../../../api/settings';
-import { displayIsHdr } from '../../../app/device';
+import { displayPeakNits } from '../../../app/device';
 import { gpuThread } from '../../../gpu/gpu_thread';
 import { PaintedSchema, type LayerPicture, type Painted } from '../../../gpu/gpu_protocol';
+import { drawsOnThePage, readbackCanvases } from '../../../gpu/readback_canvas';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import type { Decoded } from './stage_bitmaps';
 import { SDR_WHITE_NITS, type Region } from './stage_gpu';
 
-/** `hdr_peak_nits`'s own default, for the draw that cannot wait for the settings to arrive. */
-const DEFAULT_PEAK_NITS = 1000;
+/** ST 2084's ceiling: what a PQ file that names no brightest pixel may reach. */
+const PQ_CEILING_NITS = 10000;
 
 /**
  * The canvas took a WebGPU context and then could not be drawn into.
@@ -43,36 +43,45 @@ export interface MaskedLayer {
  * **Handed over on the first paint, for good.** `transferControlToOffscreen` moves the backing
  * store and the element can never take a context on this thread again, so from then on its size
  * is set over there and every paint names it by number.
+ *
+ * Unless it is one the page draws itself (`readback_canvas.ts`), which is settled at the same
+ * first paint and never changes: the GPU thread then hands back what it drew.
  */
 class StageCanvases {
-  private readonly numbered = new WeakMap<HTMLCanvasElement, number>();
+  private readonly numbered = new WeakMap<HTMLCanvasElement, Numbered>();
   /** Let go while a paint was still waiting to send, which then has nothing to draw into. */
   private readonly released = new WeakSet<HTMLCanvasElement>();
   private counted = 0;
-  private peak: Promise<number> | null = null;
 
   /** A decoded frame, or `region` of it, drawn into `canvas` at `size`. */
-  async paint(
-    canvas: HTMLCanvasElement,
-    size: CanvasSize,
-    frame: Decoded,
-    region?: Region,
-    proof: RenderingIntent | null = null,
-  ): Promise<void> {
-    const [headroom, sourcePeak] = await Promise.all([this.displayHeadroom(), this.renditionHeadroom()]);
+  async paint(canvas: HTMLCanvasElement, size: CanvasSize, frame: Decoded, shown: Shown): Promise<void> {
     if (this.released.has(canvas)) return;
-    const { id, handed } = this.handOver(canvas);
-    const common = { kind: 'paint', canvas: id, ...size, region: region ?? null, proof, headroom, sourcePeak } as const;
+    const { id, handed, readback } = this.handOver(canvas, drawsOnThePage(shown.devicePeakNits));
+    const common = {
+      kind: 'paint',
+      canvas: id,
+      ...size,
+      region: shown.region ?? null,
+      proof: shown.proof ?? null,
+      headroom: headroomOf(shown.devicePeakNits),
+      sourcePeak: (frame.maxCll ?? PQ_CEILING_NITS) / SDR_WHITE_NITS,
+      readback,
+    } as const;
     const painted = await gpuThread().ask(
       PaintedSchema,
       { to: 'stage', ask: { ...common, handed, picture: frame.picture, rotation: frame.rotation } },
       handed == null ? [] : [handed],
     );
+    if (await shownOnThePage(canvas, painted)) return;
     lostIf(painted);
     if (painted !== 'declined' || frame.flat == null) return;
     // Planes only WebGPU can draw, on a thread that could not: the same file as a bitmap, in SDR,
     // which is where any other declined frame ends up too.
     const bitmap = await createImageBitmap(frame.flat, { imageOrientation: 'from-image' });
+    if (readback) {
+      await readbackCanvases.showBitmap(canvas, bitmap);
+      return;
+    }
     lostIf(
       await gpuThread().ask(
         PaintedSchema,
@@ -86,14 +95,19 @@ class StageCanvases {
    * Draws a base layer, then a set of masked layers over it, onto one canvas - the merge page's
    * hover preview. False where the GPU thread declined it.
    */
-  async paintMasked(canvas: HTMLCanvasElement, size: CanvasSize, base: LayerPicture, layers: readonly MaskedLayer[]): Promise<boolean> {
-    const [headroom, masks] = await Promise.all([
-      this.displayHeadroom(),
-      Promise.all(layers.map((layer) => createImageBitmap(layer.mask))),
-    ]);
+  async paintMasked(
+    canvas: HTMLCanvasElement,
+    size: CanvasSize,
+    base: LayerPicture,
+    layers: readonly MaskedLayer[],
+    devicePeakNits: number,
+  ): Promise<boolean> {
+    const headroom = headroomOf(devicePeakNits);
+    const masks = await Promise.all(layers.map((layer) => createImageBitmap(layer.mask)));
     try {
       if (this.released.has(canvas)) return false;
-      const { id, handed } = this.handOver(canvas);
+      // Always transferred: RGB9E5 carries no alpha for the layers to be composited with.
+      const { id, handed } = this.handOver(canvas, false);
       const painted = await gpuThread().ask(
         PaintedSchema,
         {
@@ -106,6 +120,7 @@ class StageCanvases {
             base,
             layers: layers.map((layer, at) => ({ picture: layer.picture, mask: masks[at]!, shift: [...layer.shift], gain: layer.gain })),
             headroom,
+            sourcePeak: PQ_CEILING_NITS / SDR_WHITE_NITS,
           },
         },
         [...masks, ...(handed == null ? [] : [handed])],
@@ -121,56 +136,56 @@ class StageCanvases {
   /** Lets a canvas go with its element. */
   release(canvas: HTMLCanvasElement): void {
     this.released.add(canvas);
-    const id = this.numbered.get(canvas);
-    if (id == null) return;
+    const numbered = this.numbered.get(canvas);
+    if (numbered == null) return;
     this.numbered.delete(canvas);
     void gpuThread()
-      .ask(PaintedSchema.nullable(), { to: 'stage', ask: { kind: 'releaseCanvas', canvas: id } })
+      .ask(PaintedSchema.nullable(), { to: 'stage', ask: { kind: 'releaseCanvas', canvas: numbered.id } })
       .catch(() => undefined);
   }
 
-  private handOver(canvas: HTMLCanvasElement): { id: number; handed: OffscreenCanvas | null } {
-    const id = this.numbered.get(canvas);
-    if (id != null) return { id, handed: null };
-    const numbered = ++this.counted;
-    this.numbered.set(canvas, numbered);
-    return { id: numbered, handed: canvas.transferControlToOffscreen() };
+  private handOver(canvas: HTMLCanvasElement, readback: boolean): Numbered & { handed: OffscreenCanvas | null } {
+    const numbered = this.numbered.get(canvas);
+    if (numbered != null) return { ...numbered, handed: null };
+    const fresh = { id: ++this.counted, readback };
+    this.numbered.set(canvas, fresh);
+    return { ...fresh, handed: readback ? null : canvas.transferControlToOffscreen() };
   }
+}
 
-  /**
-   * How far above SDR white this draw may go.
-   *
-   * **One above white on an SDR screen, and that is not a detail.** The roll-off holds a
-   * colour's ratios while it compresses, so aiming at a peak the display cannot reach leaves
-   * the brightest pixels above what it shows and the *compositor* does the clipping - per
-   * channel, which is the mauve `prelude.slang` records through a cloud top. A window dragged
-   * between two screens changes the answer, so it is asked per draw rather than cached.
-   *
-   * The peak itself is a setting because the platform will not say: Chrome 151 exposes no
-   * headroom on `screen`, and `dynamic-range` is a boolean.
-   */
-  private async displayHeadroom(): Promise<number> {
-    if (!displayIsHdr()) return 1;
-    return this.renditionHeadroom();
-  }
+interface Numbered {
+  id: number;
+  /** Drawn on the page from what the GPU thread hands back, rather than transferred to it. */
+  readback: boolean;
+}
 
-  /**
-   * How far over SDR white a rendition was graded to reach, whatever this display can show: the
-   * peak the roll-off aims at, `hdr_peak_nits`.
-   *
-   * The editor's ceiling and not a second opinion on it (`frame.slang`'s `display_nits`), which
-   * is what makes a rendition and the edit it came from agree about a highlight. Aiming lower
-   * than the display can show is not merely dim: the roll-off holds a colour's ratios while it
-   * compresses, so a 6x blue sky squeezed into 2x arrives as a hugely saturated blue at the
-   * ceiling, and the compositor maps that to pink.
-   */
-  private async renditionHeadroom(): Promise<number> {
-    this.peak ??= settingsApi
-      .get()
-      .then((settings) => settings.hdr_peak_nits)
-      .catch(() => DEFAULT_PEAK_NITS);
-    return (await this.peak) / SDR_WHITE_NITS;
-  }
+/** Whether `painted` was a frame handed back, which is then shown on the page's own canvas. */
+async function shownOnThePage(canvas: HTMLCanvasElement, painted: Painted): Promise<boolean> {
+  if (typeof painted === 'string') return false;
+  if ('words' in painted) await readbackCanvases.show(canvas, painted);
+  else await readbackCanvases.showBitmap(canvas, painted.bitmap);
+  return true;
+}
+
+/** Where and how one paint shows its frame. */
+export interface Shown {
+  /** `DeviceSettingsStore.displayPeakNits`. */
+  devicePeakNits: number;
+  region?: Region;
+  proof?: RenderingIntent | null;
+}
+
+/**
+ * How far above SDR white a draw may go.
+ *
+ * **One above white on an SDR screen, and that is not a detail.** The roll-off holds a colour's
+ * ratios while it compresses, so aiming at a peak the display cannot reach leaves the brightest
+ * pixels above what it shows and the *compositor* does the clipping - per channel, which is the
+ * mauve `prelude.slang` records through a cloud top. A window dragged between two screens changes
+ * the answer, so it is asked per draw rather than cached.
+ */
+function headroomOf(devicePeakNits: number): number {
+  return (displayPeakNits(devicePeakNits) ?? SDR_WHITE_NITS) / SDR_WHITE_NITS;
 }
 
 function lostIf(painted: Painted): void {

@@ -179,8 +179,7 @@ impl Prepared {
         peak_nits: crate::light::Light<crate::light::DisplayNits>,
         output: crate::gpu::Output,
     ) -> crate::gpu::Grade<'a> {
-        scene
-            .gpu_grade(self.width, self.height, peak_nits, output)
+        crate::gpu::Grade { peak_nits, ..scene.gpu_grade(self.width, self.height, output) }
             .within(self.photograph)
             .surrounded(
                 Size::exact(self.photograph.0, self.photograph.1),
@@ -890,7 +889,6 @@ mod tests {
             tile,
             frame: [6000, 4000],
             grade: crate::hdr::Grade {
-                peak_nits: crate::light::Light::exactly(1000.0),
                 reference_white_nits: crate::light::Light::exactly(203.0),
                 white_quantile: 0.995,
             },

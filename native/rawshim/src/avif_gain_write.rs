@@ -190,6 +190,7 @@ pub fn combine(base: &[u8], alternate: &[u8], quality: i32, speed: i32) -> Resul
                 said(&diagnostics),
             ));
         }
+        (*gain_map.0).altCLLI = (*alternate.image.0).clli;
 
         // Hung off the base rather than encoded separately: `avifEncoderWrite` writes the
         // pair and the `tmap` item that binds them when the field is set.
@@ -239,6 +240,7 @@ mod tests {
                 format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 20,
                 speed: 10,
+                light: None,
             },
         )
         .expect("the HDR arm");
@@ -288,6 +290,7 @@ mod tests {
                 format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 10,
                 speed: 10,
+                light: None,
             },
         )
         .expect("the HDR arm");
@@ -331,6 +334,7 @@ mod tests {
                 format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 20,
                 speed: 10,
+                light: None,
             },
             90,
             Some(&exif),

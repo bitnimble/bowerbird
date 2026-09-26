@@ -14,12 +14,14 @@ import {
   PointsSchema,
   RectSchema,
   ShownSchema,
+  TickedSchema,
   TileKeepSchema,
   type LocalOpen,
   type LocalPrepare,
   type LocalTileRequest,
   type OpenAsk,
   type OpenStage,
+  type Ticked,
   type TileKeep,
 } from './local_open';
 import { gpuThread } from '../../../gpu/gpu_thread';
@@ -153,14 +155,16 @@ export class LocalDecoder {
    * **Transferred, not shared.** `transferControlToOffscreen` moves the backing store for good -
    * the element can never take a context on this thread again, and transferring the same element
    * twice throws - so the presenter transfers each canvas once and remembers that it did.
+   *
+   * Null keeps the canvas on the page, and every tick hands back what it drew there.
    */
   attach(
     which: 'stage' | 'loupe',
-    canvas: OffscreenCanvas,
+    canvas: OffscreenCanvas | null,
     width: number,
     height: number,
   ): Promise<void> {
-    return this.nothing({ kind: 'attach', which, canvas, width, height }, [canvas]);
+    return this.nothing({ kind: 'attach', which, canvas, width, height }, canvas == null ? [] : [canvas]);
   }
 
   releaseLoupe(): Promise<void> {
@@ -328,8 +332,8 @@ export class LocalDecoder {
     print: PrintScene | null;
     printerProfile?: Uint8Array<ArrayBuffer> | null;
     stage: { width: number; height: number } | null;
-  }): Promise<void> {
-    return this.nothing({
+  }): Promise<Ticked> {
+    return this.ask(TickedSchema, {
       kind: 'tick',
       ev: tick.ev,
       drawStage: tick.drawStage,

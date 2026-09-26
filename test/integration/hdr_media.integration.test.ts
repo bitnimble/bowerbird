@@ -41,7 +41,7 @@ async function encoded(run: (file: string) => void, fullChroma = false): Promise
   const dir = mkdtempSync(path.join(tmpdir(), 'bb-hdr-'));
   try {
     const outputPath = path.join(dir, 'pq.avif');
-    _for_testing_encodeHdr(FIXTURE, { outputPath, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: fullChroma }, { decodeSize: MAX_EDGE });
+    _for_testing_encodeHdr(FIXTURE, { outputPath, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: fullChroma }, { decodeSize: MAX_EDGE });
     run(outputPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -66,7 +66,7 @@ test('the sharpen and the defringe reach the HDR encode', () => {
       const still = path.join(dir, `${name}.avif`);
       _for_testing_encodeHdr(
         FIXTURE,
-        { outputPath: still, peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, defringe, sharpen },
+        { outputPath: still, referenceWhiteNits: 203, whiteQuantile: 0.99, crf: 40, preset: 12, maxEdge: MAX_EDGE, stillFullChroma: false, defringe, sharpen },
         { decodeSize: MAX_EDGE },
       );
       return still;

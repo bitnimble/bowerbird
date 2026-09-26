@@ -15,7 +15,7 @@ afterEach(cleanup);
 const PICTURE = [{ key: 'p1', sources: ['p1.avif'] }];
 
 function stage(status: { label: string; busy: boolean } | null): JSX.Element {
-  return <PhotoStage photoKey="p1" pictures={PICTURE} status={status} alt="" filename="" onImageLoad={() => {}} />;
+  return <PhotoStage photoKey="p1" pictures={PICTURE} status={status} alt="" filename="" devicePeakNits={1000} onImageLoad={() => {}} />;
 }
 
 test('nothing to say, nothing on screen', () => {

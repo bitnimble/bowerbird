@@ -98,7 +98,7 @@ test('a rendition opened in the browser draws from the tiles it is served', asyn
     try {
       const opened = await decoder.holdRendition(avif, {
         longEdge: 0,
-        grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
+        grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
         defringe: 0,
         statedWhite: true,
       });

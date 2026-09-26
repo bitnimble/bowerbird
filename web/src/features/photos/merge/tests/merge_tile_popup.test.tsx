@@ -49,6 +49,7 @@ function show(box = NO_SIZE): { store: InstanceType<typeof MergeStore>; calls: C
       presenter,
       tile: 0,
       zoom: { view: FITTED, box } as never,
+      devicePeakNits: 1000,
       onClose: () => (calls.closed = true),
     }),
   );
@@ -99,6 +100,7 @@ test('each swatch is drawn from its own decoded layer, clipped to the tile', () 
       presenter: build().presenter,
       tile: 0,
       zoom: { view: FITTED, box: NO_SIZE } as never,
+      devicePeakNits: 1000,
       onClose: () => undefined,
     }),
   );
@@ -125,6 +127,7 @@ test('a swatch is clipped to its frame grown, once that is solved', () => {
         presenter,
         tile: 0,
         zoom: { view: FITTED, box: NO_SIZE } as never,
+        devicePeakNits: 1000,
         onClose: () => undefined,
       }),
     );

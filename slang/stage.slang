@@ -41,7 +41,8 @@ struct Colour {
     /// Zero draws the frame as it is. Otherwise an sRGB proof of it, brought inside the file's gamut
     /// by the intent numbered one less (`gamut_map.slang`).
     float proof;
-    /// The rendition's own peak over diffuse white, which is what a proof fits down from.
+    /// The rendition's own peak over diffuse white, its `clli`, which is what the roll-off and a
+    /// proof both fit down from.
     float source_peak;
 };
 
@@ -61,31 +62,19 @@ Drawn vertex(uint at: SV_VertexID)
     return drawn_at(at);
 }
 
-/// An HDR render carries highlights above diffuse white, and a display with two stops of headroom
-/// clips whatever is past them into a flat sheet. So they are rolled into the headroom there is, on
-/// an exponential that starts at white and never reaches the ceiling.
+/// A scene-referred render fitted to this display: the file's brightest pixel (its `clli`) rolled
+/// onto the display's peak by the grade's own BT.2390, which is the curve the editor draws with.
+/// A file that fits the display is left alone.
 ///
-/// **Not `prelude::rolled`, and the difference is the question each answers.** That one takes a
-/// scene's peak to a mastering peak, both known in nits, and is what the grade applies once. This
-/// one takes an already-graded frame to whatever headroom *this display* reports, which is a
-/// property of the window rather than of the picture and changes when it is dragged between
-/// screens.
-///
-/// Below white nothing happens at all: that is most of the picture, it is already where it should
-/// be, and it is what leaves an SDR photograph untouched by this path.
-float3 rolled_to_headroom(float3 light, float headroom)
+/// No room above white at all - an SDR screen - still rolls rather than returning: left alone,
+/// everything past one is clipped by the compositor a channel at a time, and a blown highlight
+/// comes back mauve.
+float3 rolled_to_headroom(float3 light)
 {
-    let brightest = max(max(light.r, light.g), light.b);
-    if (brightest <= 1.0) { return light; }
-    // No room above white at all - an SDR screen - still scales rather than returning: left alone,
-    // everything past one is clipped by the compositor a channel at a time, and a blown highlight
-    // comes back mauve.
-    let above = max(headroom - 1.0, 0.0);
-    var fitted = 1.0;
-    if (above > 0.0) {
-        fitted = 1.0 + above * (1.0 - exp(-(brightest - 1.0) / above));
-    }
-    return light * (fitted / brightest);
+    let white = measured<DisplayNits>(colour.reference);
+    let peak = measured<DisplayNits>(colour.headroom * white.v);
+    let knee = rolloff(measured<DisplayNits>(colour.source_peak * white.v), peak, white);
+    return within(rolled(measured<DisplayNits>(light * white.v), knee), peak).v / white.v;
 }
 
 /// One of a rendition's PQ codes back to the nits it was written with.
@@ -144,8 +133,7 @@ float3 stage_light(float2 position, Gain gain)
     // commute: the curve keys on the largest channel, and the rotation makes a saturated red's
     // largest channel a third larger than it was - so rolling afterwards takes such a highlight
     // into the knee earlier and darkens it against a white one of the same brightness.
-    let rolled = rolled_to_headroom(light, colour.headroom);
-    return srgb_oetf_signed(mul(R2020_TO_P3, rolled));
+    return srgb_oetf_signed(mul(R2020_TO_P3, rolled_to_headroom(light)));
 }
 
 [shader("fragment")]

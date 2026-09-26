@@ -187,10 +187,6 @@ export const SettingsSchema = z.object({
   // 0.0008 - and that is the rendition every photo gets (§10.1).
   sdr_full_chroma: z.boolean().default(false),
 
-  // Display peak the BT.2390 roll-off targets, and what the file declares as its
-  // mastering peak. No longer the exposure control: the grade anchors diffuse
-  // white independently, so this only sets how much headroom sits above it.
-  hdr_peak_nits: z.number().min(1).default(1000),
   // ITU-R BT.2408 HDR Reference White, and the quantile of the frame taken to be
   // diffuse white. Between them these decide how bright a photo renders, so they
   // are the pair to reach for if a library comes out consistently dark or hot.

@@ -35,7 +35,6 @@ export function toCommand(job: RenditionJob, onAnalysis?: (cache: ProcessingStar
     adjust: job.adjust,
     geometry: job.geometry,
     grade: {
-      peakNits: job.grade.peakNits,
       referenceWhiteNits: job.grade.referenceWhiteNits,
       whiteQuantile: job.grade.whiteQuantile,
     },

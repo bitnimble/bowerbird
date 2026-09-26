@@ -60,11 +60,6 @@ pub fn match_preview_from_bytes(bytes: &[u8]) -> Option<crate::rgb::Rgb> {
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Grade {
-    /// Display peak the grade rolls highlights into, and the declared mastering peak.
-    ///
-    /// The library's HDR figure. What a *target* rolls into is `job::peak_nits`, which is this
-    /// for a PQ output and diffuse white for an sRGB one.
-    pub peak_nits: crate::light::Light<crate::light::DisplayNits>,
     /// Nits diffuse white maps to (BT.2408 HDR Reference White).
     pub reference_white_nits: crate::light::Light<crate::light::SceneNits>,
     /// Quantile of the frame taken as diffuse white.
@@ -401,7 +396,7 @@ pub fn graded_under(
     let graded = encode_cut(
         gpu,
         &cut,
-        &crate::gpu::Grade { intent, ..scene.gpu_grade(cut.width, cut.height, options.grade.peak_nits, output) },
+        &crate::gpu::Grade { intent, ..scene.gpu_grade(cut.width, cut.height, output) },
     );
     cut.release();
     (graded, cut.width, cut.height)
@@ -767,6 +762,7 @@ fn still_options(options: &EncodeOptions) -> crate::avif::StillOptions {
         format: options.still_chroma.avif_format(),
         quantizer: options.crf,
         speed: options.preset.min(10),
+        light: options.content_light,
     }
 }
 
@@ -800,12 +796,7 @@ pub fn encode_still(
     let frame = encode_cut(
         gpu,
         &cut,
-        &scene.gpu_grade(
-            cut.width,
-            cut.height,
-            options.grade.peak_nits,
-            crate::gpu::Output::Pq,
-        ),
+        &scene.gpu_grade(cut.width, cut.height, crate::gpu::Output::Pq),
     );
     cut.release();
     encode_pq_frame(frame, cut.width, cut.height, options)

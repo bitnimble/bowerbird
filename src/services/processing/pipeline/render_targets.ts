@@ -185,7 +185,6 @@ export class RenderTargets {
   grade(): HdrGrade {
     const settings = this.settings.get();
     return {
-      peakNits: settings.hdr_peak_nits,
       referenceWhiteNits: settings.hdr_reference_white_nits,
       whiteQuantile: settings.hdr_white_quantile,
     };

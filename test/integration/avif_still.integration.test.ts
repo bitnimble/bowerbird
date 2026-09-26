@@ -37,7 +37,7 @@ for (const [chroma, pixFmt] of [
       try {
         const out = path.join(dir, 'still.avif');
         _for_testing_encodeHdr(FIXTURE, {
-          outputPath: out, peakNits: 1000, referenceWhiteNits: 203,
+          outputPath: out, referenceWhiteNits: 203,
           whiteQuantile: 0.9, crf: 30, preset: 10, maxEdge: 640,
           stillFullChroma: chroma === '444',
         }, { decodeSize: 640 });

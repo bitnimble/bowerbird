@@ -80,7 +80,7 @@ fn tile_job(raw: &str, out_path: &str, scan: bool) -> job::Job {
             "denoiseColour": 30,
             "sharpen": 1,
             "defringe": 1,
-            "grade": {{ "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
+            "grade": {{ "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
             "targets": [{{
                 "rendition": "grid",
                 "output": "srgb",

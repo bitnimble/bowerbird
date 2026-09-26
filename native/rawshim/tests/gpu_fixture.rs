@@ -31,10 +31,12 @@ const HEIGHT: usize = 64;
 
 /// The grade every fixture here is pinned at, which is the library's own.
 const SHIPPED: hdr::Grade = hdr::Grade {
-    peak_nits: Light::exactly(1000.0),
     reference_white_nits: Light::exactly(203.0),
     white_quantile: 0.995,
 };
+
+/// The display the editor's draws are pinned against.
+const DISPLAY: Light<rawshim::light::DisplayNits> = Light::exactly(1000.0);
 
 const STRENGTHS: Strengths = Strengths {
     sharpen: 0.3,
@@ -652,7 +654,7 @@ fn the_encode_pass_reproduces_the_recorded_frame() {
                         prepared.height,
                         levels,
                         grade.reference_white_nits,
-                        grade.peak_nits,
+                        rawshim::gpu::Output::Pq.mastered(grade.reference_white_nits),
                     )
                 },
             );
@@ -707,12 +709,12 @@ fn the_rolled_arm_reproduces_the_recorded_grade() {
                         prepared.height,
                         levels,
                         grade.reference_white_nits,
-                        grade.peak_nits,
+                        rawshim::gpu::Output::Rolled.mastered(grade.reference_white_nits),
                     )
                 },
             );
 
-            Snapshot::signal(&got, frame_size(), grade.peak_nits)
+            Snapshot::signal(&got, frame_size(), rawshim::gpu::Output::Rolled.mastered(grade.reference_white_nits))
                 .check(&format!("grade/{name}-ev{ev}-rolled"), GRADED);
         }
     }
@@ -925,7 +927,7 @@ fn graded_frame(
                 tint: 12.0,
             }),
             output: rawshim::gpu::Output::Rolled,
-            ..rawshim::gpu::Grade::new(width, height, levels, grade.reference_white_nits, grade.peak_nits)
+            ..rawshim::gpu::Grade::new(width, height, levels, grade.reference_white_nits, DISPLAY)
         },
     )
 }
@@ -1790,7 +1792,7 @@ fn texture_is_worth_the_same_whatever_the_contrast() {
 
 /// The same dispatch's SDR arm, against its committed answer.
 ///
-/// An SDR rendition is not a second pipeline - `job::peak_nits` puts its peak at diffuse
+/// An SDR rendition is not a second pipeline - `gpu::Output::mastered` puts its peak at diffuse
 /// white and the same grade rolls the highlights into it - so what needs checking is only
 /// the end: the sRGB primaries and transfer at 8 bits, where the still writes PQ at 16.
 /// Its own test because the peak differs, and with it every value in the frame.
@@ -1801,12 +1803,7 @@ fn the_encode_pass_reproduces_the_recorded_sdr_frame() {
         return;
     };
 
-    // `peak_nits` at the reference white, which is the whole of what `job::peak_nits` does
-    // for an SDR target.
-    let grade = hdr::Grade {
-        peak_nits: Light::exactly(203.0),
-        ..SHIPPED
-    };
+    let grade = SHIPPED;
     let strengths = Strengths {
         sharpen: 0.3,
         defringe: 1.0,
@@ -1831,7 +1828,7 @@ fn the_encode_pass_reproduces_the_recorded_sdr_frame() {
                 prepared.height,
                 levels,
                 grade.reference_white_nits,
-                grade.peak_nits,
+                rawshim::gpu::Output::Srgb.mastered(grade.reference_white_nits),
             )
         };
         let peak = gpu.scene_peak();
@@ -1898,7 +1895,7 @@ fn a_crop_on_a_pixel_boundary_is_the_rectangle_it_names() {
     let grading = |geometry: rawshim::image::Geometry| rawshim::gpu::Grade {
         output: rawshim::gpu::Output::Rolled,
         geometry,
-        ..rawshim::gpu::Grade::new(width, height, levels, settings.reference_white_nits, settings.peak_nits)
+        ..rawshim::gpu::Grade::new(width, height, levels, settings.reference_white_nits, DISPLAY)
     };
 
     let whole = gpu.encode(&coded, &grading(rawshim::image::Geometry::none()));

@@ -191,7 +191,7 @@ describe('the loupe', () => {
         decoder,
         open: {
           longEdge: 0,
-          grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
+          grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
           defringe: 0.5,
         },
         photoAnalysis: [7, 7, 7],

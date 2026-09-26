@@ -28,7 +28,6 @@ fn main() -> Result<(), String> {
         &rawshim::edit::EditRequest {
             long_edge: long as u32,
             grade: rawshim::hdr::Grade {
-                peak_nits: Light::exactly(1000.0),
                 reference_white_nits: Light::exactly(203.0),
                 white_quantile: 0.995,
             },

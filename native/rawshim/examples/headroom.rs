@@ -4,7 +4,7 @@
 //! headroom <raw> [out.avif]
 //! ```
 //!
-//! **A number where `examples/renders` writes a picture.** This grades to PQ at 1000 nits and
+//! **A number where `examples/renders` writes a picture.** This grades to PQ as a rendition does and
 //! reports what the brightest pixels of the scene became - their nits, their saturation, and how
 //! much of the frame sits each stop over white - which is where a highlight losing its colour
 //! shows up as a figure rather than as a frame nobody looked at.
@@ -142,7 +142,6 @@ fn main() {
         still_chroma: Chroma::Yuv444,
         output_path: out.clone().unwrap_or_default(),
         grade: Grade {
-            peak_nits: rawshim::light::Light::exactly(1000.0),
             reference_white_nits: REFERENCE_NITS,
             white_quantile: QUANTILE,
         },
@@ -153,6 +152,7 @@ fn main() {
         strengths: Strengths { sharpen: 1.0, defringe: 1.0 },
         sharpen_sigma: None,
         max_edge: 100_000.0,
+        content_light: None,
     };
     let source = Source { samples: &samples, width: frame.width, height: frame.height };
     let (graded, width, height) =

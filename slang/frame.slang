@@ -541,24 +541,14 @@ float3 coded_at(uint pixel)
         return round(float3(srgb_oetf(clamped.r), srgb_oetf(clamped.g), srgb_oetf(clamped.b)) * 255.0);
     }
     let nits = display_nits(measured<SceneNits>(scene), at);
-    // Through the `u16` the CPU writes between the grade and the transfer. Not incidental:
-    // both of its output stages read that integer - the PQ one as a 65536-entry table keyed
-    // by it, the sRGB one as the value it takes the primaries of - so a frame that skipped
-    // the quantisation would not be the frame the fixture pins.
-    //
-    // **`Signal`, so 1.0 is the target's peak and not a brightness.** `job::peak_nits` puts an SDR
-    // target's at diffuse white and a PQ target's at the mastering peak, which is why the branches
-    // below multiply it back before coding rather than treating this as a light.
-    let quantised =
-        measured<Signal>(round(min(nits.v / edit.peak, float3(1.0)) * 65535.0) / 65535.0);
-
     if (edit.output == OUTPUT_ROLLED) {
-        return quantised.v * 65535.0;
+        // `Signal`: 1.0 is the target's peak, not a brightness.
+        return round(min(nits.v / edit.peak, float3(1.0)) * 65535.0);
     }
-    return round(float3(
-        pq(measured<DisplayNits>(quantised.v.r * edit.peak)).v,
-        pq(measured<DisplayNits>(quantised.v.g * edit.peak)).v,
-        pq(measured<DisplayNits>(quantised.v.b * edit.peak)).v) * 65535.0);
+    // Coded straight from the nits, with no linear `u16` between: a PQ target's peak is PQ's own
+    // ceiling (`gpu::Output::mastered`), where a linear step is 0.15 nits and bands every shadow.
+    return round(float3(pq(measured<DisplayNits>(nits.v.r)).v, pq(measured<DisplayNits>(nits.v.g)).v,
+        pq(measured<DisplayNits>(nits.v.b)).v) * 65535.0);
 }
 
 /// The same frame as a rendition would hold it, at full resolution whatever the canvas is

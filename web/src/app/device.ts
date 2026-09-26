@@ -39,3 +39,8 @@ export function pointerIsCoarse(): boolean {
 export function displayIsHdr(): boolean {
   return globalThis.matchMedia != null && globalThis.matchMedia('(dynamic-range: high)').matches;
 }
+
+/** The brightest this display shows, in nits, or null where it shows nothing past SDR white. */
+export function displayPeakNits(configured: number): number | null {
+  return displayIsHdr() ? configured : null;
+}

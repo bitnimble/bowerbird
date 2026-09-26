@@ -280,7 +280,6 @@ pub enum Command {
 pub struct GradeSpec {
     #[serde(default)]
     pub output_path: String,
-    pub peak_nits: crate::light::Light<crate::light::DisplayNits>,
     pub reference_white_nits: crate::light::Light<crate::light::SceneNits>,
     pub white_quantile: f64,
     pub crf: i32,
@@ -310,7 +309,6 @@ impl GradeSpec {
 
     fn grade(&self) -> crate::hdr::Grade {
         crate::hdr::Grade {
-            peak_nits: self.peak_nits,
             reference_white_nits: self.reference_white_nits,
             white_quantile: self.white_quantile,
         }
@@ -329,6 +327,7 @@ impl GradeSpec {
             strengths: self.strengths(),
             sharpen_sigma: None,
             max_edge: self.max_edge.unwrap_or(f64::INFINITY),
+            content_light: None,
         }
     }
 }
@@ -391,7 +390,7 @@ fn hdr_match(path: &str, linear: &Frame, spec: &GradeSpec) -> Result<Option<crat
 
 /// Luma quantiles of a graded frame, in nits.
 ///
-/// BT.2020 luma of the PQ-coded samples, which is what the assertion means by "how
+/// BT.2020 luma of the rolled samples, which is what the assertion means by "how
 /// bright": the anchor is measured on the brightest component, so a luma quantile
 /// lands under the reference rather than on it, and it is the drift that is read.
 #[cfg(all(test, feature = "fixtures"))]

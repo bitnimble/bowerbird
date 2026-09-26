@@ -61,7 +61,6 @@ fn main() {
         tile: [x, y, side, side],
         frame: [frame.width, frame.height],
         grade: rawshim::hdr::Grade {
-            peak_nits: rawshim::light::Light::exactly(1000.0),
             reference_white_nits: rawshim::light::Light::exactly(203.0),
             white_quantile: 0.9,
         },

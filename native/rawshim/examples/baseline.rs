@@ -27,7 +27,6 @@ const CROP: usize = 512;
 
 fn grade() -> Grade {
     Grade {
-        peak_nits: Light::exactly(1000.0),
         reference_white_nits: Light::exactly(203.0),
         white_quantile: 0.995,
     }
@@ -45,6 +44,7 @@ fn options() -> EncodeOptions {
         // No reduction: the crop is taken at 1:1 and a resize would hide exactly the differences
         // this harness exists to measure.
         max_edge: 100_000.0,
+        content_light: None,
     }
 }
 

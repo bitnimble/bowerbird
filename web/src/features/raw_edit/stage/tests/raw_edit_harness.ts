@@ -5,13 +5,14 @@ import { CropStore } from '../../crop/crop_store';
 import { EditStore } from '../../edit/edit_store';
 import type { EditAdjust, EditGeometry, Proof, Region } from '../../edits';
 import { KeystoneStore } from '../../keystone/keystone_store';
-import type { LocalPrepare, LocalTileRequest, TileKeep } from '../../local_decode/local_open';
+import type { LocalPrepare, LocalTileRequest, Ticked, TileKeep } from '../../local_decode/local_open';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
 import type { PrinterProfileSource } from '../../print/print_presenter';
 import { PrintStore } from '../../print/print_store';
 import type { PrintScene } from '../../print/print_scene';
 import { StageStore } from '../stage_store';
+import { DeviceSettingsStore } from '../../../settings/device_settings_store';
 import { neutralEdits } from '../../../../../../src/schemas/photo_edits';
 import { readPreparedHeader } from '../../../../../../src/schemas/prepared';
 import type { Repair } from '../../../../../../src/schemas/stored_grid';
@@ -21,7 +22,7 @@ import { MemoryStorage } from '../../../../test_storage';
 export const KEEP: TileKeep = { left: 44, top: 44, width: 512, height: 512 };
 
 /** The library's grade, as an open carries it. */
-export const GRADE = { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 };
+export const GRADE = { referenceWhiteNits: 203, whiteQuantile: 0.995 };
 
 /**
  * What the presenter tells the module, and nothing else.
@@ -75,6 +76,9 @@ export class FakeDecoder {
   readonly tiles: LocalTileRequest[] = [];
   holding = false;
 
+  /** Whether each tick hands the stage back, as a stage attached without a canvas is. */
+  handsBack = false;
+
   /** A GPU that answers the instant it is asked, which is what a fake one is. */
   landed: () => Promise<void> = () => Promise.resolve();
 
@@ -89,7 +93,7 @@ export class FakeDecoder {
     print: PrintScene | null;
     printerProfile?: Uint8Array<ArrayBuffer> | null;
     stage: { width: number; height: number } | null;
-  }): Promise<void> {
+  }): Promise<Ticked> {
     if (tick.adjust != null) this.adjust = tick.adjust;
     if (tick.geometry != null) this.geometry = tick.geometry;
     if (tick.proof != null) this.proof = tick.proof;
@@ -114,7 +118,9 @@ export class FakeDecoder {
       this.loupeRegion = tick.loupe;
       this.loupeDraws += 1;
     }
-    return this.landed();
+    const words = this.stage.width * this.stage.height;
+    const stage = this.handsBack && tick.drawStage ? new Uint8Array(words * Uint32Array.BYTES_PER_ELEMENT) : null;
+    return this.landed().then(() => ({ stage, loupe: null }));
   }
 
   attach(): Promise<void> {
@@ -337,6 +343,7 @@ export type Editor = {
   repair: RepairStore;
   loupe: LoupeStore;
   print: PrintStore;
+  device: DeviceSettingsStore;
   presenter: RawEditPresenter;
   decoder: FakeDecoder;
 };
@@ -372,6 +379,7 @@ export function openEditor(): Editor {
   const repair = new RepairStore(edit, keystone);
   const loupe = new LoupeStore(crop, keystone, repair);
   const print = new PrintStore();
+  const device = new DeviceSettingsStore();
   edit.doc = neutralEdits();
   stage.width = 4000;
   stage.height = 3000;
@@ -386,7 +394,8 @@ export function openEditor(): Editor {
     repair,
     loupe,
     print,
-    presenter: new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print, PRINTER_PROFILES),
+    device,
+    presenter: new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print, device, PRINTER_PROFILES),
     decoder: new FakeDecoder(keystone),
   };
   // The presenter builds all of this when a photo opens, which needs a worker holding the RAW
@@ -429,6 +438,6 @@ export function runFrames(): void {
  */
 export async function drawnBy({ decoder }: Editor): Promise<number> {
   runFrames();
-  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   return decoder.draws;
 }

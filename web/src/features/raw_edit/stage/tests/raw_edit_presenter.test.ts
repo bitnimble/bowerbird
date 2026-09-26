@@ -21,6 +21,7 @@ import { neutralEdits, TONE_CURVE_KIND } from '../../../../../../src/schemas/pho
 import { type EditCheckpoint, type EditState } from '../../../../../../src/schemas/photo_edits';
 import { photoEditsApi } from '../../../../api/photo_edits';
 import { ApiError } from '../../../../api/request';
+import { readbackCanvases } from '../../../../gpu/readback_canvas';
 import { pictureLevel } from '../../../../../../src/services/processing/workers/prepare_pool';
 import {
   drawnBy,
@@ -308,24 +309,25 @@ describe('a slider reaching the picture', () => {
     // than one the setter has just been handed.
     presenter.settle({ exposure: 0.25 });
     const drew = await drawn();
-    expect(decoder.proof).toEqual({ output: 'hdr', intent: 'perceptual', displayHdr: false });
+    expect(decoder.proof).toEqual({ output: 'hdr', intent: 'perceptual', displayPeakNits: null });
 
     presenter.setSoftProof('srgb');
     await drawn();
 
-    expect(decoder.proof).toEqual({ output: 'srgb', intent: 'perceptual', displayHdr: false });
+    expect(decoder.proof).toEqual({ output: 'srgb', intent: 'perceptual', displayPeakNits: null });
     // The picture is what moved, so a tick has to have been asked for: the edits are untouched
     // and nothing else on this path would go and get one.
     expect(decoder.draws).toBeGreaterThan(drew);
   });
 
-  test('tells the module whether the display shows past SDR white, asked on every tick', async () => {
+  test("tells the module this device's display peak where the display shows past SDR white, asked on every tick", async () => {
     const asked: string[] = [];
     const original = globalThis.matchMedia;
     globalThis.matchMedia = ((query: string) => {
       asked.push(query);
       return { matches: query === '(dynamic-range: high)' };
     }) as typeof matchMedia;
+    editor.device.displayPeakNits = 1600;
     try {
       presenter.settle({ exposure: 0.25 });
       await drawn();
@@ -333,7 +335,7 @@ describe('a slider reaching the picture', () => {
       globalThis.matchMedia = original;
     }
     expect(asked).toContain('(dynamic-range: high)');
-    expect(decoder.proof?.displayHdr).toBe(true);
+    expect(decoder.proof?.displayPeakNits).toBe(1600);
   });
 
   test('sends the perspective correction the guides produced', async () => {
@@ -406,6 +408,31 @@ describe('the window each frame is drawn at', () => {
     expect(last.stage.width / last.stage.height).toBeCloseTo(1200 / 675, 2);
   });
 
+  test('shows a stage the page kept at the size each tick drew it', async () => {
+    const kept = { id: 'the stage canvas' };
+    const shown: { canvas: unknown; width: number; height: number; words: number }[] = [];
+    const show = readbackCanvases.show;
+    readbackCanvases.show = async (canvas, frame) => {
+      shown.push({ canvas, width: frame.width, height: frame.height, words: frame.words.length });
+    };
+    try {
+      Object.assign(presenter, { onPage: { stage: { canvas: kept, width: 1, height: 1 } } });
+      decoder.handsBack = true;
+      for (const angle of [0, 3, 6]) {
+        presenter.previewStraighten(angle);
+        await drawn();
+        expect(shown.at(-1)).toEqual({
+          canvas: kept,
+          ...decoder.stage,
+          words: decoder.stage.width * decoder.stage.height,
+        });
+      }
+      expect(new Set(shown.map(({ width, height }) => `${width}x${height}`)).size).toBeGreaterThan(1);
+    } finally {
+      readbackCanvases.show = show;
+    }
+  });
+
   test('follows a shape that changed, and leaves a zoom that did not alone', async () => {
     presenter.showRegion({ x: 100, y: 100, width: 1000, height: 750 });
     await drawn();
@@ -445,8 +472,7 @@ describe('the window each frame is drawn at', () => {
 
     // And the last of them - not the four - the moment the GPU comes back.
     landed!();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     runFrames();
     expect(decoder.draws).toBe(2);
     expect(decoder.exposure).toBe(0.9);

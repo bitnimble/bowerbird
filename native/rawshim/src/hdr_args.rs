@@ -32,6 +32,45 @@ pub struct EncodeOptions {
     pub sharpen_sigma: Option<f32>,
     /// Longest edge of the output. Infinite means "whatever the frame is".
     pub max_edge: f64,
+    /// What the graded frame measured, written as the still's `clli`; none where nothing measured it.
+    pub content_light: Option<ContentLight>,
+}
+
+/// A PQ still's `clli` (CTA-861.3), in the whole nits the box holds.
+///
+/// The viewer fits a still to a display against `max_cll`, which is why it is rounded up: a
+/// `clli` below the brightest pixel is a display told to clip it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentLight {
+    pub max_cll: u16,
+    pub max_fall: u16,
+}
+
+/// What `content_light.slang` summed over a frame, or over the bands of one so far.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LightTally {
+    pub brightest: f64,
+    pub sum: f64,
+    pub pixels: usize,
+}
+
+impl LightTally {
+    pub fn and(self, more: LightTally) -> LightTally {
+        LightTally {
+            brightest: self.brightest.max(more.brightest),
+            sum: self.sum + more.sum,
+            pixels: self.pixels + more.pixels,
+        }
+    }
+
+    pub fn content_light(self) -> ContentLight {
+        let nits = |value: f64| value.clamp(0.0, f64::from(u16::MAX)) as u16;
+        ContentLight {
+            max_cll: nits(self.brightest.ceil()),
+            max_fall: nits((self.sum / self.pixels.max(1) as f64).round()),
+        }
+    }
 }
 
 /// Primaries, transfer and matrix as CICP numbers (AV1 spec 6.4.2, and the same values
@@ -149,7 +188,6 @@ mod tests {
 
     /// The library's own defaults, which is what the recorded rows were captured with.
     const SHIPPING_GRADE: crate::hdr::Grade = crate::hdr::Grade {
-        peak_nits: crate::light::Light::exactly(1000.0),
         reference_white_nits: crate::light::Light::exactly(203.0),
         white_quantile: 0.9,
     };
@@ -164,7 +202,16 @@ mod tests {
             strengths: crate::image::Strengths::default(),
             sharpen_sigma: None,
             max_edge,
+            content_light: None,
         }
+    }
+
+    #[test]
+    fn a_tally_rounds_its_brightest_up_and_averages_over_every_band() {
+        let first = LightTally { brightest: 1200.2, sum: 300.0, pixels: 3 };
+        let second = LightTally { brightest: 80.0, sum: 100.0, pixels: 1 };
+        assert_eq!(first.and(second).content_light(), ContentLight { max_cll: 1201, max_fall: 100 });
+        assert_eq!(LightTally::default().content_light(), ContentLight { max_cll: 0, max_fall: 0 });
     }
 
     #[test]

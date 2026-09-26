@@ -2,7 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { Eye } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef } from 'react';
-import { usePresenters, useStackTriageStore } from '../../../app/stores_context';
+import { useDeviceSettingsStore, usePresenters, useStackTriageStore } from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
 import { ICON } from '../../../ui/icon';
 import { Row } from '../../../ui/row';
@@ -48,6 +48,7 @@ export const Flip = observer(function Flip({
   onDecoded: (source: string) => void;
 }): JSX.Element {
   const store = useStackTriageStore();
+  const device = useDeviceSettingsStore();
   const { stackTriage } = usePresenters();
   const boxRef = useStageBox();
   const slot = store.showing === 'a' ? 0 : 1;
@@ -88,6 +89,7 @@ export const Flip = observer(function Flip({
           step="fade"
           alt={onScreen == null ? '' : nameOf(onScreen)}
           filename={onScreen == null ? '' : nameOf(onScreen)}
+          devicePeakNits={device.displayPeakNits}
           onImageLoad={(source, width, height) => {
             onDecoded(source);
             stackTriage.noteFrame(source === sources[0] ? sides[0] : sides[1], width, height);
@@ -146,6 +148,7 @@ export const ViewSwitch = observer(function ViewSwitch({
 // makes that area largest.
 export const Split = observer(function Split({ onDecoded }: { onDecoded: (source: string) => void }): JSX.Element {
   const store = useStackTriageStore();
+  const device = useDeviceSettingsStore();
   const { stackTriage } = usePresenters();
   const boxRef = useStageBox();
 
@@ -186,6 +189,7 @@ export const Split = observer(function Split({ onDecoded }: { onDecoded: (source
               step="fade"
               alt={nameOf(photo)}
               filename={nameOf(photo)}
+              devicePeakNits={device.displayPeakNits}
               // One stage owns the window-level fullscreen key, or both toggle on
               // a single press.
               keyboard={index === 0}

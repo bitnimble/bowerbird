@@ -437,7 +437,6 @@ the bounds; the reasoning behind each number lives beside it there.
 | `full_rendition_quality` | `80` | Perceived quality for the full rendition, 0-100; higher is better (§10.1) |
 | `max_rendition_quality` | `88` | Perceived quality for the native-resolution rendition (§10.5) |
 | `sdr_full_chroma` | `false` | 4:4:4 rather than 4:2:0 for the SDR renditions. Roughly twice the encode time and three times the size, for chroma detail on saturated edges (§10.1) |
-| `hdr_peak_nits` | `1000` | Display peak the BT.2390 roll-off targets, and the declared mastering peak (§10.7.1) |
 | `hdr_reference_white_nits` | `203` | ITU-R BT.2408 HDR Reference White; what diffuse white is graded to (§10.7.1) |
 | `hdr_white_quantile` | `0.90` | Quantile of the frame taken as diffuse white (§10.7.1) |
 | `avif_speed` | `8` | libavif encoder speed for every AVIF, 0 slowest and 10 fastest |

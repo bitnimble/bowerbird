@@ -3,7 +3,7 @@ import { Eraser, Redo2, TriangleAlert, Undo2 } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { usePresenters } from '../../../app/stores_context';
+import { useDeviceSettingsStore, usePresenters } from '../../../app/stores_context';
 import { MOST_FEATHER } from '../../../../../src/schemas/assembly';
 import { Button } from '../../../ui/button';
 import { EmptyState } from '../../../ui/empty_state';
@@ -115,6 +115,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
   // One or the other, by route: an analysis job, or a finished assembly being picked again.
   const { jobId = '', photoId } = useParams();
   const { toasts } = usePresenters();
+  const device = useDeviceSettingsStore();
   const location = useLocation();
   const navigate = useNavigate();
   const source = useMemo(() => sourceOfPath(location.pathname), [location.pathname]);
@@ -153,11 +154,11 @@ export const MergePage = observer(function MergePage(): JSX.Element {
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     const size = (): CanvasSize => ({ width: store.layerSize?.width ?? 0, height: store.layerSize?.height ?? 0 });
-    session.stage.current = canvas == null ? null : new MergeStage(canvas, size, layers);
+    session.stage.current = canvas == null ? null : new MergeStage(canvas, size, layers, () => device.displayPeakNits);
     // The analysis lands before this canvas exists, so without a draw from here the picture stays
     // black until the reader happens to press something.
     if (canvas != null) session.presenter.redraw();
-  }, [session, layers, store]);
+  }, [session, layers, store, device]);
 
   // §2.8's `[` and `]`. On the window rather than the stage: the reader's focus is wherever they
   // last clicked, and the picture is not a focusable element to put this on.
@@ -407,6 +408,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
               presenter={presenter}
               tile={store.openTile}
               zoom={zoom}
+              devicePeakNits={device.displayPeakNits}
               onClose={() => presenter.openTile(null)}
             />
           )}

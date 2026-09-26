@@ -107,7 +107,6 @@ async function preparedThere(
     const open: LocalOpen = {
       longEdge: 0,
       grade: {
-        peakNits: settings.hdr_peak_nits,
         referenceWhiteNits: settings.hdr_reference_white_nits,
         whiteQuantile: settings.hdr_white_quantile,
       },
@@ -193,7 +192,6 @@ async function preparedHere(
     longEdge: Math.round(longEdge),
     photoAnalysis,
     grade: {
-      peakNits: settings.hdr_peak_nits,
       referenceWhiteNits: settings.hdr_reference_white_nits,
       whiteQuantile: settings.hdr_white_quantile,
     },

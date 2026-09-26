@@ -13,7 +13,7 @@ use rawshim::edit::EditRequest;
 fn request(long_edge: u32) -> EditRequest {
     serde_json::from_str(&format!(
         r#"{{"longEdge":{long_edge},
-            "grade":{{"peakNits":1000,"referenceWhiteNits":203,"whiteQuantile":0.9}},
+            "grade":{{"referenceWhiteNits":203,"whiteQuantile":0.9}},
             "defringe":0.5,"denoiseLuminance":40,"denoiseColour":40}}"#,
     ))
     .expect("the request parses")
@@ -87,7 +87,7 @@ fn the_detail_sliders_do_nothing_to_a_picture_with_no_mosaic() {
     }
     let file = png(160, 120);
     let quiet: EditRequest = serde_json::from_str(
-        r#"{"longEdge":0,"grade":{"peakNits":1000,"referenceWhiteNits":203,"whiteQuantile":0.9},
+        r#"{"longEdge":0,"grade":{"referenceWhiteNits":203,"whiteQuantile":0.9},
             "defringe":0.5,"denoiseLuminance":0,"denoiseColour":0}"#,
     )
     .expect("the request parses");

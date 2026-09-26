@@ -18,24 +18,24 @@ use rawshim::image::Strengths;
 use rawshim::light::{DisplayNits, Gain, Light};
 
 /// The library's shipped grade.
-fn grade(peak: Light<DisplayNits>) -> hdr::Grade {
+fn grade() -> hdr::Grade {
     hdr::Grade {
-        peak_nits: peak,
         reference_white_nits: Light::exactly(203.0),
         white_quantile: 0.9,
     }
 }
 
-fn options(edge: usize, peak: Light<DisplayNits>) -> EncodeOptions {
+fn options(edge: usize) -> EncodeOptions {
     EncodeOptions {
         still_chroma: Chroma::Yuv420,
         output_path: String::new(),
-        grade: grade(peak),
+        grade: grade(),
         crf: 10,
         preset: 8,
         strengths: Strengths { sharpen: 1.0, defringe: 1.0 },
         sharpen_sigma: None,
         max_edge: edge as f64,
+        content_light: None,
     }
 }
 
@@ -134,21 +134,8 @@ fn main() {
     let resident = frame.on_device(gpu).expect("the frame reaches the device");
     let matched = rawshim::fit_hdr_for(&resident, &path, 0.9);
 
-    // `job::peak_nits`: an SDR target rolls into diffuse white where an HDR one rolls into the
-    // display peak, which is the whole of what a rendition's dynamic range reaches.
-    let nits = Light::exactly;
-    let (pq, w, h) = hdr::graded_as(
-        &source,
-        &options(edge, nits(1000.0)),
-        matched.as_ref(),
-        rawshim::gpu::Output::Pq,
-    );
-    let (srgb, _, _) = hdr::graded_as(
-        &source,
-        &options(edge, nits(203.0)),
-        matched.as_ref(),
-        rawshim::gpu::Output::Srgb,
-    );
+    let (pq, w, h) = hdr::graded_as(&source, &options(edge), matched.as_ref(), rawshim::gpu::Output::Pq);
+    let (srgb, _, _) = hdr::graded_as(&source, &options(edge), matched.as_ref(), rawshim::gpu::Output::Srgb);
     let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
 
     println!("{w}x{h}");
@@ -166,14 +153,15 @@ fn main() {
                 format: chroma.avif_format(),
                 quantizer: q,
                 speed: 8,
+                light: None,
             },
         )
         .expect("the still")
     };
 
     // **Each path against its own uncompressed frame, never against the other's.** The two are
-    // different pictures - one rolls into the display peak where the other rolls into diffuse
-    // white - so the only thing they can be held to is the distortion each encode adds.
+    // different pictures - one scene-referred where the other rolls into diffuse white - so the
+    // only thing they can be held to is the distortion each encode adds.
     //
     // The HDR side is read back at 16 bits. At 8 the readback is the floor: a step of a PQ signal
     // there is four of the ten the file carries, which is more error than any shipping quantizer
@@ -225,8 +213,8 @@ fn main() {
         );
     }
 
-    // **The control the two columns above are not.** They encode different pictures - one rolls
-    // into the display peak where the other rolls into diffuse white, and their black points are
+    // **The control the two columns above are not.** They encode different pictures - one
+    // scene-referred where the other rolls into diffuse white, and their black points are
     // a factor of sixteen apart in nits - measured with a metric that is at its most sensitive
     // near black. So a difference between them is not attributable to the container.
     //
@@ -249,6 +237,7 @@ fn main() {
                 format: Chroma::Yuv420.avif_format(),
                 quantizer: q,
                 speed: 8,
+                light: None,
             },
         )
         .expect("the still");

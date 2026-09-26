@@ -412,7 +412,7 @@ fn render(recipe: &rawshim::composition::Composition, to: &str) {
         // with its modelling flattened out of it. `settings.ts` calls this `hdr_white_quantile` and
         // `renders` takes the same number, so a picture out of this probe is one a rendition would
         // have written rather than one only the probe ever sees.
-        "grade": { "peakNits": 1000.0, "referenceWhiteNits": 203.0, "whiteQuantile": 0.9 },
+        "grade": { "referenceWhiteNits": 203.0, "whiteQuantile": 0.9 },
         "geometry": { "crop": crop, "angleDegrees": 0.0, "rotate": 0, "keystone": null },
         "targets": [{
             "rendition": "full",

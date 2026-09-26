@@ -4,6 +4,7 @@ import { EditStore } from '../../edit/edit_store';
 import { LoupeStore } from '../../loupe/loupe_store';
 import { RepairStore } from '../../repair/repair_store';
 import { PrintStore } from '../../print/print_store';
+import { DeviceSettingsStore } from '../../../settings/device_settings_store';
 import { RawEditPresenter } from '../../stage/raw_edit_presenter';
 import { StageStore } from '../../stage/stage_store';
 import { drawnBy, FakeDecoder, openEditor, type Editor } from '../../stage/tests/raw_edit_harness';
@@ -287,6 +288,7 @@ describe('cropping to what the geometry left', () => {
       reopenedRepair,
       reopenedLoupe,
       new PrintStore(),
+      new DeviceSettingsStore(),
     );
     Object.assign(after, {
       local: { decoder: new FakeDecoder(reopenedKeystone), open: {} },

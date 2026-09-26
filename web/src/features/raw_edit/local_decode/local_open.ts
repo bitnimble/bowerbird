@@ -122,6 +122,10 @@ export const NothingSchema = z.null();
 
 export const ShownSchema = z.object({ missing: z.array(RectSchema).nullable() });
 
+/** A tick's draws of the canvases the page draws itself, as RGB9E5 words; null for the rest. */
+export const TickedSchema = z.object({ stage: BytesSchema.nullable(), loupe: BytesSchema.nullable() });
+export type Ticked = z.infer<typeof TickedSchema>;
+
 /** `open_stage::Stage`, as the module reports each one beginning. */
 export const OpenStageSchema = z.enum([
   'decoding',
@@ -161,7 +165,8 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('attach'),
     which: z.enum(['stage', 'loupe']),
-    canvas: CanvasSchema,
+    /** Null for a canvas the page draws itself, from what each tick hands back. */
+    canvas: CanvasSchema.nullable(),
     width: z.number(),
     height: z.number(),
   }),

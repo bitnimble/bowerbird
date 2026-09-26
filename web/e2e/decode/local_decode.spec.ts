@@ -45,7 +45,7 @@ test('decodes a RAW in the tab, at the sensor it was shot on', async ({ page }) 
     const header = await decoder.prepare(
       {
         longEdge: 0,
-        grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
+        grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
         defringe: 1,
       },
       // The dust switch off: what this asks is whether a decode reaches the sensor's own size and
@@ -111,7 +111,7 @@ test('denoises in the tab with PMRID, off weights fetched beside the module', as
     const header = await decoder.prepare(
       {
         longEdge: 0,
-        grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.995 },
+        grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
         defringe: 1,
       },
       {

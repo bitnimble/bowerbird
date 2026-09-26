@@ -39,7 +39,7 @@ const of = (id: string): StagePicture => ({ key: id, sources: [src(id)], alt: id
 
 function stage(photoKey: string, pictures: StagePicture[], showing: number, step: 'next' | 'prev' | 'fade' | null): JSX.Element {
   return (
-    <PhotoStage photoKey={photoKey} pictures={pictures} showing={showing} step={step} alt="" filename="" onImageLoad={() => {}} />
+    <PhotoStage photoKey={photoKey} pictures={pictures} showing={showing} step={step} alt="" filename="" devicePeakNits={1000} onImageLoad={() => {}} />
   );
 }
 

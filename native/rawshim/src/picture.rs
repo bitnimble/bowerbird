@@ -319,7 +319,7 @@ mod tests {
             "cameraMatch": "lensAndColour",
             "sharpen": 0.5,
             "defringe": 1.0,
-            "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.99 },
+            "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.99 },
             "targets": []
         }))
         .expect("the prepare job parses");

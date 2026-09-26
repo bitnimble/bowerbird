@@ -70,6 +70,7 @@ export function StageDetail({
   hidden,
   shown,
   proof,
+  devicePeakNits,
   onSharp,
 }: {
   source: string;
@@ -81,6 +82,7 @@ export function StageDetail({
   shown: boolean;
   /** As `StageFrame`'s: the patch has to be the picture it lies over. */
   proof: RenderingIntent | null;
+  devicePeakNits: number;
   /** Whether what this lays over the frame is as sharp as the view asks for, including having nothing to add. */
   onSharp: (source: string, sharp: boolean) => void;
 }): JSX.Element | null {
@@ -135,7 +137,7 @@ export function StageDetail({
       releaseDetail(source);
     }
   }, [wanted, source]);
-  useEffect(() => setCovered(null), [proof]);
+  useEffect(() => setCovered(null), [proof, devicePeakNits]);
 
   // Through a ref: the region is a fresh object every render, and as a dependency it would
   // restart the decode below on every frame of a pan.
@@ -164,7 +166,8 @@ export function StageDetail({
         // fitted to what a canvas will hold, which a long thin region of a panorama reaches
         // on its own axis while sitting well inside the area cap.
         const scale = Math.min(1, Math.sqrt(DETAIL_PIXELS / (cropped.width * cropped.height)));
-        await stageCanvases.paint(canvas, canvasSizeFor(cropped.width * scale, cropped.height * scale), frame, cropped, proof);
+        const size = canvasSizeFor(cropped.width * scale, cropped.height * scale);
+        await stageCanvases.paint(canvas, size, frame, { devicePeakNits, region: cropped, proof });
         if (live) setCovered({ region: drawing, density });
       })
       // Nothing covered rather than the last thing that was: what is held is a rectangle of a
@@ -183,7 +186,7 @@ export function StageDetail({
     return () => {
       live = false;
     };
-  }, [source, wanted, enough, key, density, attempt, proof]);
+  }, [source, wanted, enough, key, density, attempt, proof, devicePeakNits]);
 
   if (!wanted || region == null) return null;
   // **Laid out at the rectangle it is being drawn for, and shown only once that is what it

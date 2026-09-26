@@ -29,7 +29,7 @@ public struct Edit {
     /// Which transfer `encode` writes: 0 is PQ at 16 bits, 1 is sRGB at 8.
     ///
     /// This is the whole of what SDR means to the pipeline. The grade is the same either way
-    /// - `job::peak_nits` puts an SDR target's peak at diffuse white, so its highlights roll
+    /// - `gpu::Output::mastered` puts an SDR target's peak at diffuse white, so its highlights roll
     /// into white through the same BT.2390 curve rather than clipping - and the two diverge
     /// only here, at the primaries and the transfer. A second entry point would have been a
     /// second copy of the grade to keep in step.

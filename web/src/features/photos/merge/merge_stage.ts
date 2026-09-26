@@ -21,6 +21,8 @@ export class MergeStage implements Compositor {
     /** The analysis plane's, which the canvas is drawn at. */
     private readonly size: () => CanvasSize,
     private readonly layers: ReadonlyMap<number, Decoded>,
+    /** `DeviceSettingsStore.displayPeakNits`, read at each paint. */
+    private readonly devicePeakNits: () => number,
   ) {}
 
   draw(base: number, layers: DrawnLayer[]): void {
@@ -56,7 +58,7 @@ export class MergeStage implements Compositor {
     const settled = await decodeFrame(url);
     const size = this.size();
     if (this.waiting != null || settled.closed || !isLayer(settled.picture) || isEmpty(size)) return;
-    await stageCanvases.paintMasked(this.canvas, size, settled.picture, []);
+    await stageCanvases.paintMasked(this.canvas, size, settled.picture, [], this.devicePeakNits());
   }
 
   private async paint(base: number, layers: DrawnLayer[]): Promise<void> {
@@ -75,7 +77,7 @@ export class MergeStage implements Compositor {
         },
       ];
     });
-    await stageCanvases.paintMasked(this.canvas, size, baseLayer.picture, masked);
+    await stageCanvases.paintMasked(this.canvas, size, baseLayer.picture, masked, this.devicePeakNits());
   }
 }
 

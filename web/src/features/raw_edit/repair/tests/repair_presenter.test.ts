@@ -13,6 +13,7 @@ import { FakeDecoder, GRADE, openEditor, openedWith, type Editor } from '../../s
 import { MOVED_SOLVE_QUIET_MS } from '../repair_presenter';
 import { RepairStore } from '../repair_store';
 import { PrintStore } from '../../print/print_store';
+import { DeviceSettingsStore } from '../../../settings/device_settings_store';
 
 let editor: Editor;
 let stage: StageStore;
@@ -70,7 +71,7 @@ function rememberedRepair(): RepairStore {
   const nextKeystone = new KeystoneStore(nextStage, nextEdit, nextCrop);
   const nextRepair = new RepairStore(nextEdit, nextKeystone);
   const nextLoupe = new LoupeStore(nextCrop, nextKeystone, nextRepair);
-  new RawEditPresenter(nextEdit, nextStage, nextCrop, nextKeystone, nextRepair, nextLoupe, new PrintStore());
+  new RawEditPresenter(nextEdit, nextStage, nextCrop, nextKeystone, nextRepair, nextLoupe, new PrintStore(), new DeviceSettingsStore());
   return nextRepair;
 }
 

@@ -46,6 +46,7 @@ function stage(photoKey: string, sources: string[], frame: string, step: 'next' 
       step={step}
       alt=""
       filename=""
+      devicePeakNits={1000}
       onImageLoad={() => {}}
     />
   );

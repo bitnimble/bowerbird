@@ -135,8 +135,8 @@ const LANDING_OUT = join(ROOT, 'landing', 'public', 'samples');
 /** Every rendition setting at its shipped default, so the page shows the shipped look. */
 const SETTINGS = SettingsSchema.parse({});
 
-/** How far above diffuse white the mastering peak sits: 1000 nits over 203, 2.3 stops. */
-const PEAK_OVER_WHITE = SETTINGS.hdr_peak_nits / SETTINGS.hdr_reference_white_nits;
+/** How far above diffuse white a 1000-nit display reaches: 2.3 stops. */
+const PEAK_OVER_WHITE = 1000 / SETTINGS.hdr_reference_white_nits;
 
 /** A target's size is the long edge of the whole frame, so a crop asks for what it is about to take away. */
 function croppedSize(crop: [number, number, number, number]): number {
@@ -463,7 +463,6 @@ async function buildPanorama(): Promise<void> {
     defringe: SETTINGS.raw_defringe,
     ...AS_METERED,
     grade: {
-      peakNits: SETTINGS.hdr_peak_nits,
       referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
       whiteQuantile: SETTINGS.hdr_white_quantile,
     },
@@ -532,7 +531,6 @@ async function buildDust(): Promise<void> {
       dust,
       geometry: { ...AS_METERED.geometry, crop: DUST_CROP },
       grade: {
-        peakNits: SETTINGS.hdr_peak_nits,
         referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
         whiteQuantile: SETTINGS.hdr_white_quantile,
       },
@@ -558,7 +556,6 @@ function renderSrgb(
     exposure,
     adjust: { ...AS_METERED.adjust, colourProfile },
     grade: {
-      peakNits: SETTINGS.hdr_peak_nits,
       referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
       whiteQuantile: SETTINGS.hdr_white_quantile,
     },
@@ -578,7 +575,6 @@ async function build(scene: string): Promise<void> {
       ...AS_METERED,
       geometry: crop == null ? AS_METERED.geometry : { ...AS_METERED.geometry, crop },
       grade: {
-        peakNits: SETTINGS.hdr_peak_nits,
         referenceWhiteNits: SETTINGS.hdr_reference_white_nits,
         whiteQuantile: SETTINGS.hdr_white_quantile,
       },

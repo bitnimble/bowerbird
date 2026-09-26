@@ -217,10 +217,12 @@ function SwatchCanvas({
   frame,
   loop,
   label,
+  devicePeakNits,
 }: {
   frame: Decoded;
   loop: readonly (readonly [number, number])[];
   label: string;
+  devicePeakNits: number;
 }): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const handCanvas = useStageCanvas(canvasRef);
@@ -237,10 +239,10 @@ function SwatchCanvas({
     const canvas = canvasRef.current;
     if (canvas == null || frame.closed) return;
     const size = { width: backingWidth, height: backingHeight };
-    void stageCanvases.paint(canvas, size, frame, { x, y, width, height }).catch((err: unknown) => {
+    void stageCanvases.paint(canvas, size, frame, { devicePeakNits, region: { x, y, width, height } }).catch((err: unknown) => {
       if (err instanceof CanvasLost) setAttempt((was) => was + 1);
     });
-  }, [frame, x, y, width, height, backingWidth, backingHeight, attempt]);
+  }, [frame, x, y, width, height, backingWidth, backingHeight, attempt, devicePeakNits]);
 
   return (
     <canvas
@@ -259,12 +261,14 @@ export const MergeTilePopup = observer(function MergeTilePopup({
   presenter,
   tile,
   zoom,
+  devicePeakNits,
   onClose,
 }: {
   store: MergeStore;
   presenter: MergePresenter;
   tile: number;
   zoom: ZoomPan;
+  devicePeakNits: number;
   onClose: () => void;
 }): JSX.Element | null {
   const swatches = store.swatches;
@@ -396,7 +400,7 @@ export const MergeTilePopup = observer(function MergeTilePopup({
           >
             <span {...stylex.props(styles.crop, current && styles.cropCurrent)}>
               {grown.length > 0 && frame != null && (
-                <SwatchCanvas frame={frame} loop={grown} label={MergePageStrings.swatchAlt(index)} />
+                <SwatchCanvas frame={frame} loop={grown} label={MergePageStrings.swatchAlt(index)} devicePeakNits={devicePeakNits} />
               )}
             </span>
             <Tooltip label={swatch.name}>

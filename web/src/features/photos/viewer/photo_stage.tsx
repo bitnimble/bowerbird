@@ -194,6 +194,8 @@ interface Props {
   style?: stylex.StyleXStyles;
   /** The operator HDR frames are proofed to sRGB with, or null to draw them as they are. */
   proof?: RenderingIntent | null;
+  /** `DeviceSettingsStore.displayPeakNits`, which an HDR frame is rolled onto. */
+  devicePeakNits: number;
 }
 
 function noop(): void {
@@ -223,6 +225,7 @@ export function PhotoStage({
   frameColor,
   style,
   proof = null,
+  devicePeakNits,
 }: Props): JSX.Element {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -896,6 +899,7 @@ export function PhotoStage({
                   requested={source === chosen}
                   whole={zoomed && group.key === shownKey}
                   proof={proof}
+                  devicePeakNits={devicePeakNits}
                   onDecoded={promote}
                   // Only a frame still being asked for. A retiring one is on its
                   // way off the stage, and building a rendition nobody is looking
@@ -920,6 +924,7 @@ export function PhotoStage({
                     hidden={!zoomed}
                     shown={source === visible}
                     proof={proof}
+                    devicePeakNits={devicePeakNits}
                     onSharp={noteSharp}
                   />
                 ))}

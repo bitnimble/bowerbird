@@ -209,7 +209,7 @@ export class ExportService {
    * The same photograph twice, written as one file with the map between them.
    *
    * **The SDR arm is a second render rather than a tone map of the first.** It is the same
-   * grade with its peak at diffuse white, which is what `job::peak_nits` does for every SDR
+   * grade with its peak at diffuse white, which is what `gpu::Output::mastered` does for every SDR
    * rendition - so the base a reader without gain map support sees is the picture this app
    * would have given them anyway, rather than something derived here to a different rule.
    *

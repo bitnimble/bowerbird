@@ -129,7 +129,6 @@ fn measure(path: &str) -> Option<Report> {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),
         grade: Grade {
-            peak_nits: Light::exactly(203.0),
             reference_white_nits: Light::exactly(203.0),
             white_quantile: 0.99,
         },
@@ -138,6 +137,7 @@ fn measure(path: &str) -> Option<Report> {
         strengths: Strengths::default(),
         sharpen_sigma: None,
         max_edge: 100_000.0,
+        content_light: None,
     };
     let camera = rawshim::decode_embedded_rgb(path, 0)?;
     let relative = against_camera(gpu, &source, &options, &matched, &camera, Intent::RelativeColorimetric)?;

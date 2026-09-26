@@ -35,6 +35,7 @@ export function StageFrame({
   requested,
   whole,
   proof,
+  devicePeakNits,
   onDecoded,
   onMissing,
 }: {
@@ -57,6 +58,7 @@ export function StageFrame({
   requested: boolean;
   /** The operator an HDR frame is proofed to sRGB with, or null to draw it as it is. */
   proof: RenderingIntent | null;
+  devicePeakNits: number;
   onDecoded: (source: string, width: number, height: number) => void;
   onMissing: (source: string) => void;
 }): JSX.Element {
@@ -112,7 +114,7 @@ export function StageFrame({
       if (!live || frame.closed) return;
       // Reported after the draw, not beside it: the picture is up once the frame is in the
       // canvas, and everything that waits on a picture being up waits on this.
-      void stageCanvases.paint(element, fittedCanvasSize(frame), frame, undefined, proof).then(
+      void stageCanvases.paint(element, fittedCanvasSize(frame), frame, { devicePeakNits, proof }).then(
         () => {
           if (!live) return;
           // The file's own shape, not the decoded one's: what is decoded is capped at what this
@@ -157,7 +159,7 @@ export function StageFrame({
     // frame carried into the next round - which every decisive verdict does, the winner
     // keeping its slot - would otherwise never report again, and the round would show one
     // photo whichever slot was asked for. Redrawing it costs the blit and no decode.
-  }, [source, photoKey, hold, attempt, proof]);
+  }, [source, photoKey, hold, attempt, proof, devicePeakNits]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const handCanvas = useStageCanvas(canvasRef);

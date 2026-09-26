@@ -9,7 +9,6 @@ import { RenderingIntentSchema } from './rendering_intent';
 
 /** How a scene-linear decode is graded to display-referred (§10.7). */
 export const JobGradeSchema = z.object({
-  peakNits: z.number(),
   referenceWhiteNits: z.number(),
   whiteQuantile: z.number(),
 });

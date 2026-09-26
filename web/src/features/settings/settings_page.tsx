@@ -56,6 +56,7 @@ import {
   useSettingWriter,
 } from './settings_controls';
 import { SettingsStrings } from './settings_page.strings';
+import { DEFAULT_DISPLAY_PEAK_NITS } from './device_settings_store';
 
 const styles = stylex.create({
   page: {
@@ -147,6 +148,39 @@ const RenderOnThisDevice = observer(function RenderOnThisDevice(): JSX.Element {
   );
 });
 
+// Committed on blur or Enter, like every other number here: "1" on the way to "1600" is a
+// brightness the viewer would redraw at.
+const DisplayPeak = observer(function DisplayPeak(): JSX.Element {
+  const device = useDeviceSettingsStore();
+  const { deviceSettings } = usePresenters();
+  const label = SettingsStrings.displayPeakNits();
+  const [draft, setDraft] = useState(String(device.displayPeakNits));
+  useEffect(() => setDraft(String(device.displayPeakNits)), [device.displayPeakNits]);
+  const commit = (): void => {
+    deviceSettings.setDisplayPeakNits(Number(draft));
+    setDraft(String(device.displayPeakNits));
+  };
+  return (
+    <SettingRow
+      label={label}
+      hint={SettingsStrings.displayPeakNitsHint()}
+      onReset={resetTo(device.displayPeakNits, DEFAULT_DISPLAY_PEAK_NITS, deviceSettings.setDisplayPeakNits)}
+    >
+      <TextField
+        style={settingStyles.field}
+        type="number"
+        min={1}
+        label={label}
+        suffix="nits"
+        value={draft}
+        onChange={setDraft}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && commit()}
+      />
+    </SettingRow>
+  );
+});
+
 const RenderingTab = observer(function RenderingTab(): JSX.Element | null {
   const store = useAppSettingsStore();
   const libraries = useLibrariesStore();
@@ -198,14 +232,7 @@ const RenderingTab = observer(function RenderingTab(): JSX.Element | null {
               step={0.01}
               disabledReason={hdrOff}
             />
-            <NumberSetting
-              field="hdr_peak_nits"
-              label={SettingsStrings.hdrPeakNits()}
-              suffix="nits"
-              hint={SettingsStrings.hdrPeakNitsHint()}
-              min={1}
-              disabledReason={hdrOff}
-            />
+            <DisplayPeak />
           </Panel>
 
           <GroupTitle>{SettingsStrings.groupWorkers()}</GroupTitle>

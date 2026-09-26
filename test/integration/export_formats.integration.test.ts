@@ -22,7 +22,6 @@ function rendered(directory: string): string {
     FIXTURE,
     {
       outputPath: out,
-      peakNits: 1000,
       referenceWhiteNits: 203,
       whiteQuantile: 0.999,
       crf: 20,

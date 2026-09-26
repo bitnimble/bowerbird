@@ -78,15 +78,15 @@ describe('opening a catalogue', () => {
       expect(keys.has(key)).toBe(value != null);
     }
     expect(keys.has('last_viewer_rendition')).toBe(false);
-    expect(seeded.find((row) => row.key === 'hdr_peak_nits')?.value).toBe('1000');
+    expect(seeded.find((row) => row.key === 'hdr_reference_white_nits')?.value).toBe('203');
     expect(seeded.find((row) => row.key === 'watch_enabled')?.value).toBe('true');
     expect(seeded.find((row) => row.key === 'cors_origins')?.value).toBe('');
 
     // `OR IGNORE`, so a re-run cannot put a tuned value back to the default, which is every
     // restart rather than an edge case.
-    db.exec("UPDATE settings SET value = '4000' WHERE key = 'hdr_peak_nits'");
+    db.exec("UPDATE settings SET value = '250' WHERE key = 'hdr_reference_white_nits'");
     runMigrations(db);
-    expect(settingsFor(db, ['hdr_peak_nits'])).toEqual({ hdr_peak_nits: '4000' });
+    expect(settingsFor(db, ['hdr_reference_white_nits'])).toEqual({ hdr_reference_white_nits: '250' });
   });
 
   it('mints one replication identity and keeps it across restarts', () => {

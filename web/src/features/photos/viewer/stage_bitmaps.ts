@@ -15,7 +15,7 @@ import { planarLayout } from './planar_layout';
 import { WebCodecs } from './image_decoder';
 import { canDecodeAvifPlanes, decodeAvifPlanes, type DecodeOptions } from '../../../avif/avif_planes';
 import type { StagePicture } from '../../../gpu/gpu_protocol';
-import { orientationOfAvif } from 'avif-hdr-video';
+import { contentLightOfAvif, orientationOfAvif } from 'avif-hdr-video';
 import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../../../src/schemas/request_activity';
 
 /** The longest edge a frame is decoded to: a 4K stage at 2x, which is past any display we draw on. */
@@ -59,6 +59,15 @@ function avifRotation(bytes: ArrayBuffer, type: string): 0 | 90 | 180 | 270 {
   }
 }
 
+function avifMaxCll(bytes: ArrayBuffer, type: string): number | null {
+  if (type !== 'image/avif') return null;
+  try {
+    return contentLightOfAvif(new Uint8Array(bytes))?.maxCll ?? null;
+  } catch {
+    return null;
+  }
+}
+
 
 export interface Decoded {
   /**
@@ -78,6 +87,8 @@ export interface Decoded {
   rotation: 0 | 90 | 180 | 270;
   /** The file behind planes, drawn as a bitmap where a paint cannot take planes. */
   flat?: Blob;
+  /** The brightest pixel the file's `clli` names, in nits; null where it names none. */
+  maxCll: number | null;
 }
 
 /** A decode in flight, and how to move it ahead of the neighbours once its photo is on screen. */
@@ -139,7 +150,7 @@ async function decodePicture(
   cap = DECODE_CAP,
   cropped = false,
   priority: Pick<DecodeOptions, 'urgent' | 'promoted'> = {},
-): Promise<Pick<Decoded, 'picture' | 'close' | 'width' | 'height' | 'rotation' | 'flat'>> {
+): Promise<Pick<Decoded, 'picture' | 'close' | 'width' | 'height' | 'rotation' | 'flat' | 'maxCll'>> {
   const longest = Math.max(natural.width, natural.height);
   const scale = longest === 0 || longest <= cap ? 1 : cap / longest;
   const width = Math.round(natural.width * scale);
@@ -166,7 +177,14 @@ async function decodePicture(
       // ones and whose rects therefore mean what they say.
       const turned = rotation !== 0 || image.codedWidth !== image.displayWidth || image.codedHeight !== image.displayHeight;
       if (!cropped || !turned || planarLayout(image, rotation) != null) {
-        return { picture: image, close: () => image.close(), width: image.displayWidth, height: image.displayHeight, rotation };
+        return {
+          picture: image,
+          close: () => image.close(),
+          width: image.displayWidth,
+          height: image.displayHeight,
+          rotation,
+          maxCll: avifMaxCll(bytes, blob.type),
+        };
       }
       image.close();
     } catch (err) {
@@ -199,6 +217,7 @@ async function decodePicture(
         height: sideways ? width : height,
         rotation,
         flat: blob,
+        maxCll: avifMaxCll(bytes.buffer, blob.type),
       };
     }
   }
@@ -207,7 +226,7 @@ async function decodePicture(
     imageOrientation: 'from-image',
     ...(scale === 1 ? {} : { resizeWidth: width, resizeQuality: 'high' }),
   });
-  return { picture: bitmap, close: () => bitmap.close(), width: bitmap.width, height: bitmap.height, rotation: 0 };
+  return { picture: bitmap, close: () => bitmap.close(), width: bitmap.width, height: bitmap.height, rotation: 0, maxCll: null };
 }
 
 /**

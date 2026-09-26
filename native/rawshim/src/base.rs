@@ -54,6 +54,8 @@ pub struct Base {
     edge_spread: wgpu::ComputePipeline,
     chroma_leak_layout: wgpu::BindGroupLayout,
     chroma_leak: wgpu::ComputePipeline,
+    content_light_layout: wgpu::BindGroupLayout,
+    content_light: wgpu::ComputePipeline,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -371,6 +373,32 @@ impl Base {
             cache: None,
         });
 
+        let content_light_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("content_light"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/wgsl/content_light.wgsl")).into(),
+            ),
+        });
+        let content_light_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("content_light"),
+                entries: &[uniform_entry(0), storage_entry(1), storage_entry(2)],
+            });
+        let content_light = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("content_light"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("content_light"),
+                    bind_group_layouts: &[Some(&content_light_layout)],
+                    immediate_size: 0,
+                }),
+            ),
+            module: &content_light_module,
+            entry_point: Some("content_light"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
         Some(Base {
             light_of_code: light_of_code(gpu),
             light_of_level: light_of_level(gpu),
@@ -402,6 +430,8 @@ impl Base {
             edge_spread,
             chroma_leak_layout,
             chroma_leak,
+            content_light_layout,
+            content_light,
         })
     }
 
@@ -2405,6 +2435,62 @@ pub async fn chroma_leak(
     Some(fractions.first().map_or(0.0, |(f, _, _)| *f))
 }
 
+/// The brightest pixel of a PQ frame on the device and the sum of its pixels, each at its largest
+/// channel, in nits: `content_light.slang` per 16x16 tile, and the host folds the tiles.
+pub async fn content_light(
+    gpu: &crate::gpu::Gpu,
+    base: &Base,
+    frame: &crate::gpu::Buffer,
+    width: usize,
+    height: usize,
+) -> Option<crate::hdr_args::LightTally> {
+    const SIDE: usize = 16;
+    if width == 0 || height == 0 {
+        return Some(crate::hdr_args::LightTally::default());
+    }
+    let (tiles_w, tiles_h) = (width.div_ceil(SIDE), height.div_ceil(SIDE));
+    let bytes = tiles_w * tiles_h * 2 * 4;
+
+    let mut recording = gpu.record();
+    recording.holding(frame);
+    let tiles = recording.buffer(&wgpu::BufferDescriptor {
+        label: Some("content light"),
+        size: bytes as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let mut params: Vec<u8> = Vec::with_capacity(16);
+    for word in [width as u32, height as u32, tiles_w as u32, 0] {
+        params.extend_from_slice(&word.to_le_bytes());
+    }
+    let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("content light params"),
+        contents: &params,
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("content light"),
+        layout: &base.content_light_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: frame.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: tiles.as_entire_binding() },
+        ],
+    });
+    {
+        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        pass.set_pipeline(&base.content_light);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(tiles_w as u32, tiles_h as u32, 1);
+    }
+    let [mapped] = read_all(&mut recording, [(&tiles, bytes)]).await?;
+    let (brightest, sum) = mapped.chunks_exact(8).fold((0.0f64, 0.0f64), |(brightest, sum), tile| {
+        let word = |at: usize| f64::from(f32::from_le_bytes([tile[at], tile[at + 1], tile[at + 2], tile[at + 3]]));
+        (brightest.max(word(0)), sum + word(4))
+    });
+    Some(crate::hdr_args::LightTally { brightest, sum, pixels: width * height })
+}
+
 /// [`chroma_leak`] over a frame on the host, for the harness and the pins.
 pub async fn chroma_leak_of(
     gpu: &'static crate::gpu::Gpu,
@@ -3160,6 +3246,31 @@ mod tests {
         }
         let leak = pollster::block_on(super::chroma_leak_of(gpu, base, &corner, w, h));
         assert_eq!(leak, Some(1.0), "one wholly leaking tile reads as one");
+    }
+
+    /// The brightest pixel and the frame's sum, each at its largest channel, over tiles the frame's
+    /// edges cut short.
+    #[test]
+    fn the_content_light_is_the_brightest_channel_of_every_pixel() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let base = super::device(gpu).expect("the pipelines");
+        let (w, h) = (40usize, 20usize);
+        let code = |nits: f64| {
+            let nits: crate::light::Light<crate::light::DisplayNits> = crate::light::Light::exactly(nits);
+            (crate::tone::pq(nits).raw() * 65535.0).round() as u16
+        };
+        let mut samples: Vec<u16> = (0..w * h).flat_map(|_| [code(20.0), code(100.0), code(50.0)]).collect();
+        let hot = (h - 1) * w + w - 1;
+        samples[hot * 3..hot * 3 + 3].copy_from_slice(&[code(4000.0), code(10.0), code(10.0)]);
+        let frame = crate::resident::Resident::upload(gpu, &samples, w, h);
+        let tally = pollster::block_on(super::content_light(gpu, base, frame.buffer(), w, h)).expect("the readback");
+        frame.reclaim();
+        assert_eq!(tally.pixels, w * h);
+        assert!((tally.brightest / 4000.0 - 1.0).abs() < 0.005, "brightest {}", tally.brightest);
+        let sum = 100.0 * (w * h - 1) as f64 + 4000.0;
+        assert!((tally.sum / sum - 1.0).abs() < 0.005, "sum {} of {sum}", tally.sum);
     }
 
     #[test]

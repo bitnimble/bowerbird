@@ -18,12 +18,10 @@ export function isRenditionSource(value: string): value is RenditionSource {
   return (RENDITION_SOURCES as readonly string[]).includes(value);
 }
 
-// How a scene-linear decode is graded to display-referred (§10.7). The three
-// travel together because none of them means anything alone: the quantile picks
-// diffuse white, the reference says what it is worth in nits, and the peak is
-// where the roll-off above it lands.
+// How a scene-linear decode is anchored (§10.7). The two travel together because
+// neither means anything alone: the quantile picks diffuse white, and the reference
+// says what it is worth in nits.
 export interface HdrGrade {
-  peakNits: number;
   referenceWhiteNits: number;
   whiteQuantile: number;
 }

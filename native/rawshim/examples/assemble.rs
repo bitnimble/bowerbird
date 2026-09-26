@@ -526,7 +526,6 @@ fn write_avif(path: &str, samples: &[u16], width: usize, height: usize) {
         still_chroma: rawshim::hdr_args::Chroma::Yuv444,
         output_path: path.to_string(),
         grade: rawshim::hdr::Grade {
-            peak_nits: rawshim::light::Light::exactly(1000.0),
             reference_white_nits: rawshim::light::Light::exactly(203.0),
             white_quantile: 0.9,
         },
@@ -539,6 +538,7 @@ fn write_avif(path: &str, samples: &[u16], width: usize, height: usize) {
         },
         sharpen_sigma: None,
         max_edge: f64::INFINITY,
+        content_light: None,
     };
     rawshim::hdr::encode_pq_frame(samples.to_vec(), width, height, &options).expect("the still");
     println!("  wrote {path} at {width}x{height}");

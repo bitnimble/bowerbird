@@ -17,7 +17,7 @@
 // tuning if a library renders consistently dark or hot.
 
 use crate::hdr_fit::HdrColour;
-use crate::light::{DisplayNits, Gain, Level, Light, Nits, Pq, SceneNits, Stops};
+use crate::light::{Gain, Level, Light, Nits, Pq, SceneNits, Stops};
 
 const MAX: usize = 65535;
 
@@ -40,9 +40,8 @@ const PQ_MAX_NITS: f64 = 10000.0;
 /// to ST 2084. The *grade's* transfer is `frame.slang`'s, not this one.
 ///
 /// PQ's range ends at 10000 nits, so a level past 49x the frame's own diffuse white saturates
-/// rather than being carried. That is BT.2408's own headroom above a 203-nit white, and five and a
-/// half stops above diffuse white is far past where the roll-off has compressed everything into
-/// the display's peak anyway.
+/// rather than being carried. That is BT.2408's own headroom above a 203-nit white, and the one
+/// clamp a scene-referred rendition takes (`gpu::Output::mastered`).
 ///
 /// **The domain is the caller's to name**, as it is in `prelude.slang`: the curve is absolute, so
 /// `base::coding_curve` codes the *scene's* nits with it and the roll-off compresses the
@@ -353,20 +352,14 @@ impl<'a> SceneGrade<'a> {
     /// No scene peak: the matched arm's is measured on the GPU off the uploaded frame, and
     /// the neutral arm's is `source_level / white` scaled by the reference, which the shader
     /// does for itself from the two fields below.
-    pub fn gpu_grade(
-        &'a self,
-        width: usize,
-        height: usize,
-        peak_nits: Light<DisplayNits>,
-        output: crate::gpu::Output,
-    ) -> crate::gpu::Grade<'a> {
+    pub fn gpu_grade(&'a self, width: usize, height: usize, output: crate::gpu::Output) -> crate::gpu::Grade<'a> {
         crate::gpu::Grade {
             colour: self.colour,
             exposure: self.exposure,
             adjust: self.adjust.clone(),
             as_shot: self.as_shot,
             output,
-            ..crate::gpu::Grade::new(width, height, self.levels, self.reference, peak_nits)
+            ..crate::gpu::Grade::new(width, height, self.levels, self.reference, output.mastered(self.reference))
         }
     }
 }
@@ -374,6 +367,7 @@ impl<'a> SceneGrade<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::light::DisplayNits;
 
     /// PQ is absolute and its range runs to 10000 nits, so a 1000-nit peak encodes at about
     /// 0.752 of the code range and must not be stretched to fill it - the file would then

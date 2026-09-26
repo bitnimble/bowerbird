@@ -208,7 +208,7 @@ describe('print viewing', () => {
 
     editor.decoder.landed = () => Promise.resolve();
     release();
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await drawnBy(editor);
     expect(editor.decoder.print?.framed).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, REWINDOW_QUIET_MS + 30));
@@ -304,7 +304,7 @@ describe('print viewing', () => {
     editor.presenter.setSoftProof('print');
     await drawnBy(editor);
     expect(editor.decoder.print?.presentation).toBe('flat');
-    expect(editor.decoder.proof).toEqual({ output: 'hdr', intent: 'perceptual', displayHdr: false });
+    expect(editor.decoder.proof).toEqual({ output: 'hdr', intent: 'perceptual', displayPeakNits: null });
     expect(editor.decoder.stage).toEqual(photo);
     editor.presenter.print.beginDrag(1, 100, 100, 200);
     expect(editor.print.dragging).toBe(false);
@@ -328,7 +328,7 @@ describe('print viewing', () => {
     editor.presenter.setSoftProof('srgb');
     editor.presenter.print.setRenderingIntent('relativeColorimetric');
     await drawnBy(editor);
-    expect(editor.decoder.proof).toEqual({ output: 'srgb', intent: 'relativeColorimetric', displayHdr: false });
+    expect(editor.decoder.proof).toEqual({ output: 'srgb', intent: 'relativeColorimetric', displayPeakNits: null });
     expect(editor.decoder.print).toBeNull();
   });
 

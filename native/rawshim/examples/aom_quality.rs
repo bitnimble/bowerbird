@@ -27,12 +27,11 @@ const SDR_QUANTIZERS: [i32; 15] = [0, 2, 4, 6, 8, 10, 13, 16, 20, 24, 28, 32, 40
 const HDR_SPEED: i32 = 8;
 const SDR_SPEED: i32 = 10;
 
-fn options(edge: usize, peak: Light<DisplayNits>) -> EncodeOptions {
+fn options(edge: usize) -> EncodeOptions {
     EncodeOptions {
         still_chroma: Chroma::Yuv420,
         output_path: String::new(),
         grade: hdr::Grade {
-            peak_nits: peak,
             reference_white_nits: Light::exactly(203.0),
             white_quantile: 0.9,
         },
@@ -41,6 +40,7 @@ fn options(edge: usize, peak: Light<DisplayNits>) -> EncodeOptions {
         strengths: Strengths { sharpen: 1.0, defringe: 1.0 },
         sharpen_sigma: None,
         max_edge: edge as f64,
+        content_light: None,
     }
 }
 
@@ -117,6 +117,7 @@ fn still(pq: &[u16], w: usize, h: usize, q: i32) -> (Vec<u8>, f64) {
             },
             quantizer: q,
             speed: std::env::var("AOMQ_SPEED").map_or(HDR_SPEED, |s| s.parse().expect("a speed")),
+            light: None,
         },
     )
     .expect("the still");
@@ -199,14 +200,14 @@ fn main() {
         let matched = rawshim::fit_hdr_for(&resident, path, 0.9);
 
         let (pq, w, h) =
-            hdr::graded_as(&source, &options(3840, Light::exactly(1000.0)), matched.as_ref(), rawshim::gpu::Output::Pq);
+            hdr::graded_as(&source, &options(3840), matched.as_ref(), rawshim::gpu::Output::Pq);
         hdr_rows(&name, &pq, w, h);
         if std::env::var("AOMQ_HDR_ONLY").is_ok() {
             continue;
         }
         for (edge, label) in [(3840, "sdr3840"), (800, "sdr800")] {
             let (srgb, w, h) =
-                hdr::graded_as(&source, &options(edge, Light::exactly(203.0)), matched.as_ref(), rawshim::gpu::Output::Srgb);
+                hdr::graded_as(&source, &options(edge), matched.as_ref(), rawshim::gpu::Output::Srgb);
             let srgb8: Vec<u8> = srgb.iter().map(|v| *v as u8).collect();
             sdr_rows(&name, label, &srgb8, w, h);
         }

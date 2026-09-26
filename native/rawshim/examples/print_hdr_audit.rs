@@ -10,7 +10,7 @@ fn main() -> Result<(), String> {
     let prepared = rawshim::edit::prepare_bytes(&bytes, &rawshim::edit::EditRequest {
         long_edge: 1600,
         grade: rawshim::hdr::Grade {
-            peak_nits: Light::exactly(1000.0), reference_white_nits: Light::exactly(203.0), white_quantile: 0.995,
+            reference_white_nits: Light::exactly(203.0), white_quantile: 0.995,
         },
         defringe: 1.0, photo_analysis: None, denoise_luminance: None, denoise_colour: None,
         denoiser: rawshim::galosh::Denoiser::Galosh, dust: Default::default(), repairs: Vec::new(),

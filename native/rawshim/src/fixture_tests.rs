@@ -218,7 +218,6 @@ fn tile_job(path: &str, tile: Option<[usize; 4]>, levels: Option<crate::tone::Le
         geometry: crate::image::Geometry::none(),
         preserve_source_orientation: false,
         grade: crate::hdr::Grade {
-            peak_nits: crate::light::Light::exactly(1000.0),
             reference_white_nits: crate::light::Light::exactly(203.0),
             white_quantile: 0.9,
         },
@@ -273,9 +272,7 @@ fn rendition(
     };
     let cut = crate::hdr::Cut::from_base(frame, lens.as_ref(), size, job.sharpen, sigma, noise);
     let gpu = crate::gpu::device().expect("an adapter");
-    let grade = scene
-        .gpu_grade(cut.width, cut.height, job.grade.peak_nits, crate::gpu::Output::Pq)
-        .showing(job.pixel_geometry());
+    let grade = scene.gpu_grade(cut.width, cut.height, crate::gpu::Output::Pq).showing(job.pixel_geometry());
     let (out_width, out_height) = grade.output_size();
     let peak = gpu.scene_peak();
     let resident = cut.resident().expect("from_base leaves the cut on the device");
@@ -882,7 +879,6 @@ mod decode_geometry {
         let request = crate::edit::EditRequest {
             long_edge: 0,
             grade: crate::hdr::Grade {
-                peak_nits: crate::light::Light::exactly(1000.0),
                 reference_white_nits: crate::light::Light::exactly(203.0),
                 white_quantile: 0.995,
             },
@@ -1499,7 +1495,7 @@ mod loupe_tile {
 
     /// A dark corner of the Sony fixture, which is where the difference is worth measuring: its
     /// own diffuse white is a third of the frame's, so a tile coded against it is lifted by that
-    /// factor and rolls its highlights into a peak barely above white.
+    /// factor.
     const DARK: crate::Tile = crate::Tile { left: 500, top: 4500, width: 512, height: 512 };
 
     /// A tile is the export's pixels for that rectangle, and nothing about the crop leaks in.
@@ -1519,7 +1515,7 @@ mod loupe_tile {
     /// photograph's.
     #[test]
     fn a_tile_is_graded_as_the_rendition_is() {
-        // Each frame's brightest block, for the roll-off: a crop of shadow reaches nowhere near
+        // Each frame's brightest block, for the scene peak: a crop of shadow reaches nowhere near
         // the photograph's top end, and a crop of highlight reaches most of the way to it.
         for (path, bright) in [
             (sony(), crate::Tile { left: 1536, top: 2048, width: 512, height: 512 }),
@@ -1537,7 +1533,7 @@ mod loupe_tile {
         let kept = crate::photo_analysis::encode(&base.analysis);
         drop(base);
 
-        let edits: [(&str, fn(&mut crate::job::Job)); 5] = [
+        let edits: [(&str, fn(&mut crate::job::Job)); 4] = [
             // The grade alone, which is the levels and nothing else.
             ("as metered", |_| {}),
             // The deconvolution, which the tile skipped entirely and which is the whole reason a
@@ -1567,13 +1563,6 @@ mod loupe_tile {
                     texture: 60.0,
                     ..crate::gpu::Adjust::none()
                 };
-            }),
-            // Diffuse white far above the display peak, so the roll-off is compressing most of
-            // the picture rather than only its speculars - a peak read off the crop cannot hide
-            // there, where at the shipping grade this frame never reaches the knee at all.
-            ("rolled hard", |job| {
-                job.grade.reference_white_nits = crate::light::Light::exactly(1000.0);
-                job.grade.peak_nits = crate::light::Light::exactly(50.0);
             }),
         ];
         for (what, edit) in edits {
@@ -1740,9 +1729,7 @@ mod loupe_tile {
                 base.as_shot,
             );
             let gpu = crate::gpu::device().expect("an adapter");
-            let mut grade = scene
-                .gpu_grade(cut.width, cut.height, job.grade.peak_nits, crate::gpu::Output::Pq)
-                .showing(pixel_geometry);
+            let mut grade = scene.gpu_grade(cut.width, cut.height, crate::gpu::Output::Pq).showing(pixel_geometry);
             if let Some(window) = base.window {
                 grade = grade.windowed(window.photograph, window.origin);
             }
@@ -2013,34 +2000,21 @@ mod loupe_tile {
             from_raw: crate::photo_analysis::decode(&kept).expect("it reads back").from_raw,
             ..Default::default()
         });
-        let a_peak = crate::light::Light::measured(4000.0);
-        let built = |levels: Option<crate::tone::Levels>,
-                     peak: Option<crate::light::Light<crate::light::DisplayNits>>| {
+        let built = |levels: Option<crate::tone::Levels>| {
             let mut job = tile_job(path, Some([DARK.left, DARK.top, DARK.width, DARK.height]), levels);
             job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
             job.photo_analysis = Some(from_raw.clone());
-            job.scene_peak = peak;
-            // The roll-off has to be compressing something for the peak to be readable in the
-            // picture at all; `a_tile_is_graded_as_the_rendition_is` says why.
-            job.grade.reference_white_nits = crate::light::Light::exactly(1000.0);
-            job.grade.peak_nits = crate::light::Light::exactly(50.0);
             job
         };
-        let (given, width, height) = crate::job::graded(&built(Some(levels), Some(a_peak)))
-            .expect("the tile");
-        for (what, job) in [
-            ("levels", built(None, Some(a_peak))),
-            ("scene peak", built(Some(levels), None)),
-        ] {
-            let (own, _, _) = crate::job::graded(&job).expect("the tile");
-            let mean: f64 = given
-                .iter()
-                .zip(&own)
-                .map(|(a, b)| f64::from(a.abs_diff(*b)))
-                .sum::<f64>()
-                / (width * height * 3) as f64;
-            assert!(mean > 100.0, "the crop's own {what} graded it {mean:.1} counts away");
-        }
+        let (given, width, height) = crate::job::graded(&built(Some(levels))).expect("the tile");
+        let (own, _, _) = crate::job::graded(&built(None)).expect("the tile");
+        let mean: f64 = given
+            .iter()
+            .zip(&own)
+            .map(|(a, b)| f64::from(a.abs_diff(*b)))
+            .sum::<f64>()
+            / (width * height * 3) as f64;
+        assert!(mean > 100.0, "the crop's own levels graded it {mean:.1} counts away");
     }
 
     /// Levels that describe no photograph are refused, and the tile measures its own.
@@ -2297,7 +2271,7 @@ mod camera_match {
                 "denoiseColour": 0,
                 "sharpen": 0,
                 "defringe": 0,
-                "grade": {{ "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
+                "grade": {{ "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
                 "targets": []
             }}"#,
             sony().to_string_lossy(),
@@ -2338,7 +2312,7 @@ mod camera_match {
                     "denoiseColour": 0,
                     "sharpen": 0.5,
                     "defringe": 1,
-                    "grade": {{ "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
+                    "grade": {{ "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
                     "targets": [{{
                         "rendition": "full",
                         "output": "{output}",
@@ -2789,28 +2763,21 @@ mod hdr_grade {
     const QUANTILE: f64 = 0.9;
     const REFERENCE: crate::light::Light<crate::light::SceneNits> =
         crate::light::Light::exactly(203.0);
-    const PEAK: crate::light::Light<crate::light::DisplayNits> =
-        crate::light::Light::exactly(1000.0);
+    /// What a rolled frame's `Signal` is a share of (`gpu::Output::mastered`).
+    const CEILING: crate::light::Light<crate::light::DisplayNits> = crate::light::Light::PQ_CEILING;
 
-    fn options(
-        peak_nits: crate::light::Light<crate::light::DisplayNits>,
-        max_edge: f64,
-        output_path: &str,
-    ) -> EncodeOptions {
+    fn options(max_edge: f64, output_path: &str) -> EncodeOptions {
         EncodeOptions {
             still_chroma: Chroma::Yuv420,
             output_path: output_path.to_string(),
-            grade: crate::hdr::Grade {
-                peak_nits,
-                reference_white_nits: REFERENCE,
-                white_quantile: QUANTILE,
-            },
+            grade: crate::hdr::Grade { reference_white_nits: REFERENCE, white_quantile: QUANTILE },
             crf: 40,
             preset: 8,
             // The grade is what is pinned here, and all of these run after it.
             strengths: crate::image::Strengths::default(),
             sharpen_sigma: None,
             max_edge,
+            content_light: None,
         }
     }
 
@@ -2985,8 +2952,8 @@ mod hdr_grade {
         let frame = linear();
         let fitted = matched(&frame);
         let (graded, _, _) =
-            graded(&frame,&options(PEAK, f64::INFINITY, "/dev/null"), fitted.as_ref());
-        let at = crate::debug::luma_quantiles(&graded, PEAK, &[QUANTILE, 1.0]);
+            graded(&frame,&options(f64::INFINITY, "/dev/null"), fitted.as_ref());
+        let at = crate::debug::luma_quantiles(&graded, CEILING, &[QUANTILE]);
 
         // The anchor is measured on the brightest component and this is luma, so the
         // quantile lands under the reference rather than on it - but nowhere near the
@@ -2996,8 +2963,6 @@ mod hdr_grade {
         };
         assert!(at[0] > of_reference(0.25), "diffuse white at {:?}", at[0]);
         assert!(at[0] < of_reference(1.5), "diffuse white at {:?}", at[0]);
-        // Nothing may exceed the display peak the file will declare.
-        assert!(at[1] <= PEAK + crate::light::Light::exactly(1.0), "peak luma {:?}", at[1]);
     }
 
     #[test]
@@ -3006,7 +2971,7 @@ mod hdr_grade {
         // grades agree, which no amount of resolution makes truer.
         let frame = linear();
         let digest = |m: Option<&crate::hdr_fit::HdrMatch>| {
-            let (graded, _, _) = graded(&frame,&options(PEAK, 800.0, "/dev/null"), m);
+            let (graded, _, _) = graded(&frame,&options(800.0, "/dev/null"), m);
             crate::debug::sha256_hex(&crate::debug::to_bytes(&crate::frame::Pixels::Sixteen(graded)))
         };
         let first = digest(None);
@@ -3027,8 +2992,8 @@ mod hdr_grade {
         let fitted = matched(&frame);
         let median = |max_edge: f64| {
             let (graded, _, _) =
-                graded(&frame,&options(PEAK, max_edge, "/dev/null"), fitted.as_ref());
-            crate::debug::luma_quantiles(&graded, PEAK, &[0.5])[0]
+                graded(&frame,&options(max_edge, "/dev/null"), fitted.as_ref());
+            crate::debug::luma_quantiles(&graded, CEILING, &[0.5])[0]
         };
         let native = median(f64::INFINITY);
         for other in [median(3012.0), median(753.0)] {
@@ -3055,7 +3020,7 @@ mod hdr_grade {
                 source(&frame).samples.to_vec(),
                 frame.width,
                 frame.height,
-                &options(PEAK, 640.0, path.to_str().unwrap()),
+                &options(640.0, path.to_str().unwrap()),
                 m,
             )
             .expect("the encode");
@@ -3088,7 +3053,7 @@ mod hdr_grade {
         let path = dir.join("still.avif");
 
         let frame = linear();
-        let options = options(PEAK, 640.0, path.to_str().unwrap());
+        let options = options(640.0, path.to_str().unwrap());
         let (graded, _, _) = graded(&frame,&options, None);
         crate::hdr::encode_still(
             source(&frame).samples.to_vec(),
@@ -3107,7 +3072,7 @@ mod hdr_grade {
         let pq_mean = graded
             .iter()
             .map(|s| {
-                crate::tone::pq(PEAK * crate::light::Gain::of_ratio(f64::from(*s) / full)).raw()
+                crate::tone::pq(CEILING * crate::light::Gain::of_ratio(f64::from(*s) / full)).raw()
             })
             .sum::<f64>()
             / graded.len() as f64;
@@ -3177,7 +3142,7 @@ mod hdr_grade {
                 crate::hdr_args::target_size(
                     frame.width as u32,
                     frame.height as u32,
-                    &options(PEAK, edge, "/dev/null"),
+                    &options(edge, "/dev/null"),
                 )
             };
             let (large, small) = (sized(1600.0), sized(800.0));
@@ -3204,7 +3169,7 @@ mod hdr_grade {
                 crate::hdr::encode_cut(
                     gpu,
                     cut,
-                    &scene.gpu_grade(cut.width, cut.height, PEAK, crate::gpu::Output::Pq),
+                    &scene.gpu_grade(cut.width, cut.height, crate::gpu::Output::Pq),
                 )
             };
             let (a, b) = (grade(&shared), grade(&own));
@@ -3221,16 +3186,10 @@ mod hdr_grade {
         eprintln!("cut from larger against cut outright: {}", rows.join("; "));
     }
 
-    /// The graded picture, neutral and matched, with and without the roll-off.
-    ///
-    /// `peak_nits` is a case dimension, not a constant, because the roll-off is
-    /// conditional: the EETF returns early when the frame already fits the display, so
-    /// at 1000 nits this fixture never reaches the BT.2390 knee at all. A pin without a
-    /// low-peak case would have covered none of that curve - which is where the subtlest
-    /// arithmetic in the grade lives - and was silently passing a deliberate
-    /// perturbation of it. 203 is also what the SDR reference uses.
+    /// The graded picture, neutral and matched. Scene-referred, so this fixture never reaches the
+    /// BT.2390 knee: `the_encode_pass_reproduces_the_recorded_sdr_frame` is what rolls both arms.
     #[test]
-    fn the_graded_picture_neutral_and_matched_with_and_without_the_roll_off() {
+    fn the_graded_picture_neutral_and_matched() {
         use crate::snapshot::{Frame, Snapshot, Tolerance};
         let frame = linear();
         let fitted = matched(&frame);
@@ -3242,12 +3201,10 @@ mod hdr_grade {
         let matched_arm = Tolerance { worst: 4096, mean: 16.0 };
         let neutral_arm = Tolerance { worst: 256, mean: 1.5 };
 
-        for (label, with_match, max_edge, peak_nits) in [
-            ("neutral-3840", false, 3840.0, 1000.0),
-            ("matched-3840", true, 3840.0, 1000.0),
-            ("matched-800", true, 800.0, 1000.0),
-            ("neutral-rolloff", false, 800.0, 203.0),
-            ("matched-rolloff", true, 800.0, 203.0),
+        for (label, with_match, max_edge) in [
+            ("neutral-3840", false, 3840.0),
+            ("matched-3840", true, 3840.0),
+            ("matched-800", true, 800.0),
         ] {
             let (m, tolerance) = match with_match {
                 true => (fitted.as_ref(), matched_arm),
@@ -3255,7 +3212,7 @@ mod hdr_grade {
             };
             let (graded, width, height) = crate::hdr::graded_as(
                 &source(&frame),
-                &options(crate::light::Light::exactly(peak_nits), max_edge, "/dev/null"),
+                &options(max_edge, "/dev/null"),
                 m,
                 crate::gpu::Output::Pq,
             );
@@ -3569,7 +3526,6 @@ mod pictures {
             &crate::edit::EditRequest {
                 long_edge: SHRUNK,
                 grade: crate::hdr::Grade {
-                    peak_nits: Light::exactly(1000.0),
                     reference_white_nits: Light::exactly(203.0),
                     white_quantile: 0.995,
                 },
@@ -3637,7 +3593,8 @@ mod pictures {
                     header.height,
                     crate::tone::Levels { white: header.white, peak: header.peak, floor: header.floor },
                     header.grade.reference_white_nits,
-                    header.grade.peak_nits,
+                    // A display's, which is what a print is proofed on.
+                    Light::exactly(1000.0),
                 )
             };
             let uploaded = gpu.upload(&prepared.samples, &grade, &peak);
@@ -3676,7 +3633,6 @@ mod one_open_at_a_time {
             // whether two of them overlap, which does not depend on how big each one is.
             long_edge: 1200,
             grade: crate::hdr::Grade {
-                peak_nits: crate::light::Light::exactly(1000.0),
                 reference_white_nits: crate::light::Light::exactly(203.0),
                 white_quantile: 0.9,
             },
@@ -3769,7 +3725,7 @@ mod fused_scan {
                 "denoiseColour": 0,
                 "sharpen": 0,
                 "defringe": 0,
-                "grade": {{ "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
+                "grade": {{ "referenceWhiteNits": 203, "whiteQuantile": 0.9 }},
                 "targets": [{{
                     "rendition": "grid",
                     "output": "srgb",

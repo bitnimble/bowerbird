@@ -23,7 +23,6 @@ fn main() {
         still_chroma: Chroma::Yuv444,
         output_path: String::new(),
         grade: Grade {
-            peak_nits: rawshim::light::Light::exactly(1000.0),
             reference_white_nits: rawshim::light::Light::exactly(203.0),
             white_quantile: 0.99,
         },
@@ -32,6 +31,7 @@ fn main() {
         strengths: Strengths::default(),
         sharpen_sigma: None,
         max_edge: 3840.0,
+        content_light: None,
     };
 
     let _ = hdr::graded(&source, &options, Some(&matched));

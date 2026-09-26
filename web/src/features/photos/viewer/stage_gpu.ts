@@ -24,6 +24,7 @@
 
 import IMPORT_WGSL from '../generated/stage_import.wgsl?raw';
 import PLANAR_WGSL from '../generated/stage.wgsl?raw';
+import READBACK_WGSL from '../generated/readback.wgsl?raw';
 import { planarLayout } from './planar_layout';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import type { LayerPicture, Painted, StageAsk, StagePicture } from '../../../gpu/gpu_protocol';
@@ -87,6 +88,8 @@ interface Drawing {
   planar: GPURenderPipeline;
   /** `planar` again with the mask binding, blended rather than clearing - `paintMasked`'s alone. */
   planarMasked: GPURenderPipeline;
+  /** A drawn texture to RGB9E5 words, for a canvas the page keeps (`readback.slang`); built on first use. */
+  pack: GPUComputePipeline | null;
   sampler: GPUSampler;
   colour: GPUBuffer;
   region: GPUBuffer;
@@ -121,6 +124,7 @@ export function pipelinesFor(device: GPUDevice): Drawing {
         alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
       },
     }),
+    pack: null,
     sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear' }),
   };
   return drawing;
@@ -286,8 +290,8 @@ export class StagePainter {
     const pictures = ask.kind === 'paint' ? [ask.picture] : [ask.base, ...ask.layers.map((layer) => layer.picture)];
     const masks = ask.kind === 'paint' ? [] : ask.layers.map((layer) => layer.mask);
     try {
-      const canvas = this.sized(ask);
-      return ask.kind === 'paint' ? await this.paint(canvas, ask) : await this.paintMasked(canvas, ask);
+      if (ask.kind === 'paintMasked') return await this.paintMasked(this.sized(ask), ask);
+      return ask.readback ? await this.paintReadback(ask) : await this.paint(this.sized(ask), ask);
     } finally {
       // Planes are memory, not a handle: dropping them is closing them.
       for (const picture of [...pictures, ...masks]) if (!isPlanes(picture)) picture.close();
@@ -315,36 +319,21 @@ export class StagePainter {
    * nothing about an ordinary camera JPEG changes.
    */
   private async paint(canvas: OffscreenCanvas, ask: Paint): Promise<Painted> {
-    const extended = await this.paintExtended(canvas, ask);
+    const extended = await this.paintExtended({ canvas }, ask);
     if (extended !== 'declined') return extended;
-    const { picture, region, rotation } = ask;
     // Left to the page, which draws a bitmap of the same file instead (`stage_canvas.ts`).
-    if (isPlanes(picture)) return 'declined';
-    // Otherwise plain and unconfigured, which is what a machine with no WebGPU shows: no colour
-    // space asked for is no colour space converted to, so an SDR photograph comes out as the
-    // `<img>` drew it, and the browser tone maps an HDR rendition on the way in rather than
-    // clipping it - measured on a 1500-nit render, where a clip would blow the 2.9% of samples
-    // above SDR white and this blows 0.04%.
-    const flat = canvas.getContext('2d');
-    // Null once the canvas has been configured for WebGPU, because a canvas holds one kind of
-    // context for its whole life. Reported rather than skipped: `drawImage` silently doing
-    // nothing leaves a blank canvas that the stage goes on to treat as a painted picture.
-    if (flat == null) throw new Error('no drawable context');
-    // To the canvas rather than at the frame's own size: the canvas is capped at what a browser
-    // will allocate (`canvasSizeFor`), and a frame past that would otherwise be drawn corner-first
-    // and cropped to the part that fitted.
-    const bitmap =
-      region != null && rotation !== 0 && isFrame(picture)
-        ? await createImageBitmap(picture, { imageOrientation: 'from-image' })
-        : null;
-    try {
-      const drawn = bitmap ?? picture;
-      if (region == null) flat.drawImage(drawn, 0, 0, canvas.width, canvas.height);
-      else flat.drawImage(drawn, region.x, region.y, region.width, region.height, 0, 0, canvas.width, canvas.height);
-    } finally {
-      bitmap?.close();
-    }
+    if (isPlanes(ask.picture)) return 'declined';
+    await drawFlat(canvas, ask);
     return 'drawn';
+  }
+
+  /** The same, into a texture of this thread's that is handed back for the page to show. */
+  private async paintReadback(ask: Paint): Promise<Painted> {
+    const extended = await this.paintExtended({ readback: { width: ask.width, height: ask.height } }, ask);
+    if (extended !== 'declined' || isPlanes(ask.picture)) return extended;
+    const canvas = new OffscreenCanvas(ask.width, ask.height);
+    await drawFlat(canvas, ask);
+    return { bitmap: canvas.transferToImageBitmap() };
   }
 
   /**
@@ -363,7 +352,7 @@ export class StagePainter {
    * `proof` draws an HDR frame as an sRGB rendition would hold it, its highlights fitted under
    * diffuse white by that operator. A frame that is not HDR is already that, and ignores it.
    */
-  private async paintExtended(canvas: OffscreenCanvas, ask: Paint): Promise<Painted> {
+  private async paintExtended(onto: Onto, ask: Paint): Promise<Painted> {
     const { device } = this;
     const { picture, rotation } = ask;
     if (this.declined) return 'declined';
@@ -380,15 +369,15 @@ export class StagePainter {
     // region. Neither failure throws - an oversized texture comes back invalid and the draw is
     // silently dropped - so both are checked rather than caught.
     const planar = planarOf(picture, rotation);
-    if (planar != null) return this.paintPlanar(canvas, ask, device, planar);
+    if (planar != null) return this.paintPlanar(onto, ask, device, planar);
     if (!isFrame(picture)) return 'declined';
     if (carriesHdr(picture)) {
       this.warn(`an HDR frame (${described(picture)}) is not one the planar path reads, so it is imported and drawn flat`);
     }
-    return this.paintImported(canvas, ask, device, picture);
+    return this.paintImported(onto, ask, device, picture);
   }
 
-  private async paintPlanar(canvas: OffscreenCanvas, ask: Paint, device: GPUDevice, planar: Planar): Promise<Painted> {
+  private async paintPlanar(onto: Onto, ask: Paint, device: GPUDevice, planar: Planar): Promise<Painted> {
     const { region, rotation, proof } = ask;
     const whole = { x: 0, y: 0, width: planar.displayWidth, height: planar.displayHeight };
     const stored = storedRegion(region ?? whole, rotation, planar.codedWidth, planar.codedHeight);
@@ -408,20 +397,18 @@ export class StagePainter {
       return this.decline(`copying the planes out of ${planar.described} failed`, err);
     }
 
-    const context = canvas.getContext('webgpu');
-    if (context == null) {
-      for (const plane of planes) plane.destroy();
-      return this.decline('the canvas gave no WebGPU context');
-    }
+    let surface: Surface | null = null;
     try {
+      surface = surfaceOf(onto, device);
+      if (surface == null) return this.decline('the canvas gave no WebGPU context');
       const sideways = rotation === 90 || rotation === 270;
       // Region pixels per canvas pixel, which is one unless the canvas was capped below the
       // region it covers.
       const uniform = colourWords(
         ask.headroom,
         [
-          (sideways ? drawnRegion.height : drawnRegion.width) / Math.max(canvas.width, 1),
-          (sideways ? drawnRegion.width : drawnRegion.height) / Math.max(canvas.height, 1),
+          (sideways ? drawnRegion.height : drawnRegion.width) / Math.max(surface.width, 1),
+          (sideways ? drawnRegion.width : drawnRegion.height) / Math.max(surface.height, 1),
         ],
         planar.layout,
         [0, 0],
@@ -432,23 +419,23 @@ export class StagePainter {
       );
       const drawn = pipelinesFor(device);
       device.queue.writeBuffer(drawn.colour, 0, uniform.buffer as ArrayBuffer);
-      configure(context, device);
-      drawOnce(device, context, drawn.planar, [
+      drawOnce(device, surface.view, drawn.planar, [
         { binding: 0, resource: planes[0]!.createView() },
         { binding: 1, resource: planes[1]!.createView() },
         { binding: 2, resource: planes[2]!.createView() },
         { binding: 3, resource: { buffer: drawn.colour } },
       ]);
-      return 'drawn';
+      return await surface.finish();
     } catch (err) {
       this.giveUp(err);
       return 'lost';
     } finally {
       for (const plane of planes) plane.destroy();
+      surface?.dispose();
     }
   }
 
-  private paintImported(canvas: OffscreenCanvas, ask: Paint, device: GPUDevice, frame: VideoFrame): Painted {
+  private async paintImported(onto: Onto, ask: Paint, device: GPUDevice, frame: VideoFrame): Promise<Painted> {
     const limit = device.limits.maxTextureDimension2D;
     if (Math.max(frame.codedWidth, frame.codedHeight) > limit) {
       return this.decline(`${described(frame)} is past this device's ${limit}px texture limit`);
@@ -458,7 +445,7 @@ export class StagePainter {
     // rather than on the browser: `importExternalTexture` throws on a `VideoFrame` the run closed
     // underneath the draw, which a reader on the arrow key produces routinely. Taken after the
     // context, that throw would spend the canvas and read as a browser that cannot do this at all.
-    // It expires at the end of the task that made it, and nothing below awaits.
+    // It expires at the end of the task that made it, and nothing below awaits before the draw.
     let imported: GPUExternalTexture;
     try {
       // In the canvas's own space, not the default `srgb`: the shader is a passthrough, so
@@ -470,9 +457,10 @@ export class StagePainter {
       return this.decline(`importing ${described(frame)} failed`, err);
     }
 
-    const context = canvas.getContext('webgpu');
-    if (context == null) return this.decline('the canvas gave no WebGPU context');
+    let surface: Surface | null = null;
     try {
+      surface = surfaceOf(onto, device);
+      if (surface == null) return this.decline('the canvas gave no WebGPU context');
       const { x, y, width, height } = ask.region ?? { x: 0, y: 0, width: frame.displayWidth, height: frame.displayHeight };
       const span = new Float32Array([
         x / frame.displayWidth,
@@ -482,16 +470,17 @@ export class StagePainter {
       ]);
       const drawn = pipelinesFor(device);
       device.queue.writeBuffer(drawn.region, 0, span.buffer as ArrayBuffer);
-      configure(context, device);
-      drawOnce(device, context, drawn.imported, [
+      drawOnce(device, surface.view, drawn.imported, [
         { binding: 0, resource: drawn.sampler },
         { binding: 1, resource: imported },
         { binding: 2, resource: { buffer: drawn.region } },
       ]);
-      return 'drawn';
+      return await surface.finish();
     } catch (err) {
       this.giveUp(err);
       return 'lost';
+    } finally {
+      surface?.dispose();
     }
   }
 
@@ -549,7 +538,8 @@ export class StagePainter {
         region.width / Math.max(canvas.width, 1),
         region.height / Math.max(canvas.height, 1),
       ] as const;
-      device.queue.writeBuffer(uniform, 0, colourWords(ask.headroom, sample, layout, shift, gain).buffer as ArrayBuffer);
+      const words = colourWords(ask.headroom, sample, layout, shift, gain, 0, 0, ask.sourcePeak);
+      device.queue.writeBuffer(uniform, 0, words.buffer as ArrayBuffer);
       if (source == null) return { planes, uniform, mask: null };
       const mask = device.createTexture({
         size: [canvas.width, canvas.height],
@@ -676,13 +666,119 @@ function configure(context: GPUCanvasContext, device: GPUDevice): void {
   } as GPUCanvasConfiguration);
 }
 
-/** One full-screen triangle through `pipeline`, onto a cleared canvas. */
-function drawOnce(device: GPUDevice, context: GPUCanvasContext, pipeline: GPURenderPipeline, entries: GPUBindGroupEntry[]): void {
+/** Where a paint lands: a canvas the page handed over, or a texture of this thread's the page is sent. */
+type Onto = { canvas: OffscreenCanvas } | { readback: { width: number; height: number } };
+
+/** What a draw writes, what ends the paint once it has, and what frees it either way. */
+interface Surface {
+  view: GPUTextureView;
+  width: number;
+  height: number;
+  finish: () => Promise<Painted>;
+  dispose: () => void;
+}
+
+/** Null where the canvas will not take a WebGPU context. */
+function surfaceOf(onto: Onto, device: GPUDevice): Surface | null {
+  if ('canvas' in onto) {
+    const { canvas } = onto;
+    const context = canvas.getContext('webgpu');
+    if (context == null) return null;
+    configure(context, device);
+    const view = context.getCurrentTexture().createView();
+    return { view, width: canvas.width, height: canvas.height, finish: () => Promise.resolve('drawn'), dispose: () => {} };
+  }
+  const { width, height } = onto.readback;
+  const texture = device.createTexture({
+    size: [width, height],
+    format: 'rgba16float',
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  });
+  return {
+    view: texture.createView(),
+    width,
+    height,
+    finish: () => packed(device, texture),
+    dispose: () => texture.destroy(),
+  };
+}
+
+/** `drawn` as RGB9E5 words, off the device (`readback.slang`). */
+async function packed(device: GPUDevice, drawn: GPUTexture): Promise<Painted> {
+  const { width, height } = drawn;
+  const bytes = width * height * Uint32Array.BYTES_PER_ELEMENT;
+  const words = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const read = device.createBuffer({ size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const size = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  try {
+    device.queue.writeBuffer(size, 0, new Uint32Array([width, height, 0, 0]));
+    const drawing = pipelinesFor(device);
+    const pack = (drawing.pack ??= device.createComputePipeline({
+      layout: 'auto',
+      compute: { module: device.createShaderModule({ code: READBACK_WGSL }), entryPoint: 'pack' },
+    }));
+    const commands = device.createCommandEncoder();
+    const pass = commands.beginComputePass();
+    pass.setPipeline(pack);
+    pass.setBindGroup(
+      0,
+      device.createBindGroup({
+        layout: pack.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: drawn.createView() },
+          { binding: 1, resource: { buffer: words } },
+          { binding: 2, resource: { buffer: size } },
+        ],
+      }),
+    );
+    pass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16));
+    pass.end();
+    commands.copyBufferToBuffer(words, 0, read, 0, bytes);
+    device.queue.submit([commands.finish()]);
+    await read.mapAsync(GPUMapMode.READ);
+    return { words: new Uint32Array(read.getMappedRange().slice(0)), width, height };
+  } finally {
+    words.destroy();
+    read.destroy();
+    size.destroy();
+  }
+}
+
+/**
+ * A frame drawn plain and unconfigured, which is what a machine with no WebGPU shows: no colour
+ * space asked for is no colour space converted to, so an SDR photograph comes out as the `<img>`
+ * drew it, and the browser tone maps an HDR rendition on the way in rather than clipping it -
+ * measured on a 1500-nit render, where a clip would blow the 2.9% of samples above SDR white and
+ * this blows 0.04%.
+ */
+async function drawFlat(canvas: OffscreenCanvas, { picture, region, rotation }: Paint): Promise<void> {
+  const flat = canvas.getContext('2d');
+  // Null once the canvas has been configured for WebGPU, because a canvas holds one kind of
+  // context for its whole life. Reported rather than skipped: `drawImage` silently doing
+  // nothing leaves a blank canvas that the stage goes on to treat as a painted picture.
+  if (flat == null) throw new Error('no drawable context');
+  if (isPlanes(picture)) throw new Error('planes have no 2D drawing');
+  // To the canvas rather than at the frame's own size: the canvas is capped at what a browser
+  // will allocate (`canvasSizeFor`), and a frame past that would otherwise be drawn corner-first
+  // and cropped to the part that fitted.
+  const bitmap =
+    region != null && rotation !== 0 && isFrame(picture)
+      ? await createImageBitmap(picture, { imageOrientation: 'from-image' })
+      : null;
+  try {
+    const drawn = bitmap ?? picture;
+    if (region == null) flat.drawImage(drawn, 0, 0, canvas.width, canvas.height);
+    else flat.drawImage(drawn, region.x, region.y, region.width, region.height, 0, 0, canvas.width, canvas.height);
+  } finally {
+    bitmap?.close();
+  }
+}
+
+/** One full-screen triangle through `pipeline`, onto a cleared target. */
+function drawOnce(device: GPUDevice, view: GPUTextureView, pipeline: GPURenderPipeline, entries: GPUBindGroupEntry[]): void {
   const commands = device.createCommandEncoder();
   const pass = commands.beginRenderPass({
-    colorAttachments: [
-      { view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
-    ],
+    colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
   });
   pass.setPipeline(pipeline);
   pass.setBindGroup(0, device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries }));

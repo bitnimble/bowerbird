@@ -9,7 +9,7 @@ fn job(path: &str) -> Job {
         "cameraMatch": "lensAndColour",
         "sharpen": 0.5,
         "defringe": 1.0,
-        "grade": { "peakNits": 1000.0, "referenceWhiteNits": 203.0, "whiteQuantile": 0.99 },
+        "grade": { "referenceWhiteNits": 203.0, "whiteQuantile": 0.99 },
         "targets": []
     })).expect("a prepare job")
 }

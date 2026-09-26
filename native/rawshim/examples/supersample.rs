@@ -23,7 +23,6 @@ use rawshim::light::Light;
 
 fn grade() -> Grade {
     Grade {
-        peak_nits: Light::exactly(1000.0),
         reference_white_nits: Light::exactly(203.0),
         white_quantile: 0.9,
     }
@@ -49,6 +48,7 @@ fn options(edge: usize) -> EncodeOptions {
             0 => 100_000.0,
             edge => edge as f64,
         },
+        content_light: None,
     }
 }
 
@@ -144,18 +144,7 @@ fn rendition(path: &str, edge: usize) -> (Vec<u8>, usize, usize) {
         rawshim::gpu::Adjust::none(),
         frame.as_shot,
     );
-    let coded = hdr::encode_cut(
-        gpu,
-        &cut,
-        &scene.gpu_grade(
-            cut.width,
-            cut.height,
-            // sRGB, so the peak is diffuse white and everything above it rolls into white -
-            // `job::peak_nits` again, and the crossing is spelled here as it is there.
-            rawshim::light::Light::at_diffuse_white(options.grade.reference_white_nits),
-            rawshim::gpu::Output::Srgb,
-        ),
-    );
+    let coded = hdr::encode_cut(gpu, &cut, &scene.gpu_grade(cut.width, cut.height, rawshim::gpu::Output::Srgb));
     (
         coded.iter().map(|v| *v as u8).collect(),
         cut.width,

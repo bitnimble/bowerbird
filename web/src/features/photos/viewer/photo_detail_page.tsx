@@ -9,6 +9,7 @@ import {
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import {
+  useDeviceSettingsStore,
   useListingStore,
   usePresenters,
   useStacksStore,
@@ -73,6 +74,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const listing = useListingStore();
   const stacks = useStacksStore();
   const { photos, appSettings } = usePresenters();
+  const device = useDeviceSettingsStore();
   const mobile = useIsMobile();
   const touch = useIsTouch();
   // Kept across photos: opened once to read a frame's settings, the reader means
@@ -179,7 +181,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     const repair = new RepairStore(edit, keystone);
     const loupe = new LoupeStore(crop, keystone, repair);
     const print = new PrintStore();
-    const presenter = new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print);
+    const presenter = new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print, device);
     // Before the proof, so a sheet opens as this device's rather than as the desktop's and then turns into it.
     presenter.print.setTouch(touch);
     if (mode === 'print') presenter.setSoftProof(requestedPrint.current);
@@ -196,7 +198,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       // by however much was changed here.
       if (mode === 'edit') photos.forgetEdits(photoId, startingRotation != null && startingRotation !== edit.doc?.rotate);
     };
-  }, [mode, photoId, photos, touch]);
+  }, [mode, photoId, photos, touch, device]);
 
   // Both replace (the Edit row's link too), so opening and closing the editor leaves the history
   // where it found it: one entry for this photograph, and Back goes wherever the photograph was

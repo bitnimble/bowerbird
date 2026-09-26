@@ -161,7 +161,7 @@ fn command(raw: &str, output: &str) -> rawshim::job::Job {
         "dust": { "enabled": true, "sensitivity": 0.25, "intensity": 1.0 },
         "sharpen": 0.6,
         "defringe": 1.0,
-        "grade": { "peakNits": 1000.0, "referenceWhiteNits": 203.0, "whiteQuantile": 0.9 },
+        "grade": { "referenceWhiteNits": 203.0, "whiteQuantile": 0.9 },
         "targets": [{
             "rendition": "full",
             "output": "pq",

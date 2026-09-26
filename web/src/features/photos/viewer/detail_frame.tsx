@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { observer } from 'mobx-react-lite';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
-import { usePresenters, useViewerStore } from '../../../app/stores_context';
+import { useDeviceSettingsStore, usePresenters, useViewerStore } from '../../../app/stores_context';
 import { useHdrVideo } from './hdr_video';
 import { PhotoDetailStrings } from './photo_detail_page.strings';
 import { PhotoStage, type StagePicture } from './photo_stage';
@@ -29,6 +29,7 @@ export const DetailFrame = observer(function DetailFrame({
   fullscreenRef: (element: HTMLDivElement | null) => void;
 }): JSX.Element {
   const store = useViewerStore();
+  const device = useDeviceSettingsStore();
   const { photos } = usePresenters();
   const step = useStep();
   const photo = store.detailFor(photoId);
@@ -174,6 +175,7 @@ export const DetailFrame = observer(function DetailFrame({
       zoomInto={zoomInto}
       fullscreenRef={fullscreenRef}
       proof={proof}
+      devicePeakNits={device.displayPeakNits}
       // No arrow keys on a phone, so the frame itself is the control: the same
       // step the bar's buttons take, taken by dragging the picture aside.
       onSwipe={step}

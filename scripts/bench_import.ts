@@ -182,7 +182,6 @@ async function fused(files: Corpus['files'], libraryId: string): Promise<{ taken
               defringe: settings.raw_defringe,
               ...AS_METERED,
               grade: {
-                peakNits: settings.hdr_peak_nits,
                 referenceWhiteNits: settings.hdr_reference_white_nits,
                 whiteQuantile: settings.hdr_white_quantile,
               },

@@ -340,6 +340,7 @@ mod tests {
                 format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 20,
                 speed: 10,
+                light: None,
             },
             rotate,
             None,

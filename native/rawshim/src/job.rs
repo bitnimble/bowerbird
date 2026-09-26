@@ -60,7 +60,7 @@ pub enum Rendition {
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum Output {
-    /// The grade's `peak_nits`, PQ, at `avif::AVIF_DEPTH`.
+    /// Scene-referred, PQ, at `avif::AVIF_DEPTH`.
     Pq,
     /// Diffuse white, sRGB primaries and transfer, 8-bit.
     Srgb,
@@ -468,6 +468,7 @@ fn encode_options(job: &Job, target: &Target, output_path: &str) -> EncodeOption
             0 => f64::INFINITY,
             size => f64::from(size),
         },
+        content_light: None,
     }
 }
 
@@ -504,20 +505,6 @@ fn drawn_size(
 /// which is what subsampling ordinarily costs and is not this - and the three clean frames read
 /// nothing. Between the two, nearer the frame that does need it than the one that does not.
 const CHROMA_LEAK_TILE_FRACTION: f64 = 0.15;
-
-/// Where the grade rolls this target's highlights into.
-///
-/// The only thing a rendition's dynamic range reaches inside the pipeline. An SDR render is
-/// the same grade with the peak at diffuse white, so everything above it rolls off into
-/// white through the same BT.2390 curve instead of clipping there.
-fn peak_nits(job: &Job, target: &Target) -> Light<DisplayNits> {
-    match target.output {
-        Output::Pq => job.grade.peak_nits,
-        // The one place the scene's anchor becomes the display's, spelled rather than implied:
-        // `at_diffuse_white` is a claim about what the container can hold, not a unit conversion.
-        Output::Srgb => Light::at_diffuse_white(job.grade.reference_white_nits),
-    }
-}
 
 /// Never fatal. A descriptor is what stacking would like, not what the import owes,
 /// and a photo without one is simply not a candidate.
@@ -1122,7 +1109,11 @@ pub fn graded(job: &Job) -> Option<(Vec<u16>, usize, usize)> {
     .ok()?;
     let scene = window.scene(job.exposure, job.adjust.clone());
     let gpu = crate::gpu::device()?;
-    let grade = window.grade(&scene, job.grade.peak_nits, crate::gpu::Output::Pq);
+    let grade = window.grade(
+        &scene,
+        crate::gpu::Output::Pq.mastered(job.grade.reference_white_nits),
+        crate::gpu::Output::Pq,
+    );
     let width = window.width;
     // The editor's, where it sent one: the roll-off's input is a reduction over the frame it is
     // handed, so a tile left to measure its own compresses its highlights into whatever the crop
@@ -1532,6 +1523,7 @@ async fn bands(
             if odd || graded.leak > CHROMA_LEAK_TILE_FRACTION {
                 options.still_chroma = Chroma::Yuv444;
             }
+            options.content_light = Some(graded.light.content_light());
             let bands = graded.bands.into_iter().filter_map(|band| match band {
                 Coded::Pq(samples) => Some(samples),
                 Coded::Srgb(_) => None,
@@ -1572,6 +1564,8 @@ pub(crate) struct Graded {
     /// The worst 64-pixel tile's chroma leak over every band (`base::chroma_leak`), where the
     /// target is a PQ still that may be written 4:2:0.
     pub(crate) leak: f64,
+    /// A PQ target's light over every band; nothing for an sRGB one.
+    pub(crate) light: crate::hdr_args::LightTally,
 }
 
 /// [`bands`] up to the encode, in bands of about `pixels` output pixels.
@@ -1602,6 +1596,7 @@ pub(crate) async fn graded_bands(
     };
     let peak = gpu.given_peak(scene_peak.raw() as f32);
     let mut leak: f64 = 0.0;
+    let mut light = crate::hdr_args::LightTally::default();
     let mut bands = Vec::with_capacity(out_height.div_ceil(rows));
     for top in (0..out_height).step_by(rows) {
         let rows = rows.min(out_height - top);
@@ -1632,7 +1627,7 @@ pub(crate) async fn graded_bands(
         let scene = window.scene(job.exposure, job.adjust.clone());
         let grade = crate::gpu::Grade {
             intent: target.intent,
-            ..scene.gpu_grade(window.width, window.height, peak_nits(job, target), output)
+            ..scene.gpu_grade(window.width, window.height, output)
         }
         .showing(geometry)
         .windowed(drawn, crate::px::At::exact(window.origin.0, window.origin.1))
@@ -1643,20 +1638,24 @@ pub(crate) async fn graded_bands(
         match target.output {
             Output::Pq => {
                 bands.push(Coded::Pq(up.coded(&grade).await.ok_or(unread)?));
+                let coded = up.encoded_frame().ok_or("the encode left no frame on the device")?;
                 if !target.still_full_chroma {
-                    let coded = up.encoded_frame().ok_or("the encode left no frame on the device")?;
                     let band = crate::base::chroma_leak(gpu, base, coded, out_width, rows)
                         .await
                         .ok_or("the chroma leak could not be measured")?;
                     leak = leak.max(band);
                 }
+                let band = crate::base::content_light(gpu, base, coded, out_width, rows)
+                    .await
+                    .ok_or("the content light could not be measured")?;
+                light = light.and(band);
             }
             Output::Srgb => bands.push(Coded::Srgb(up.coded_bytes(&grade).await.ok_or(unread)?)),
         }
         drop(up);
         frame.reclaim();
     }
-    Ok(Graded { size: (out_width, out_height), bands, leak })
+    Ok(Graded { size: (out_width, out_height), bands, leak, light })
 }
 
 /// One step of a job somebody is watching (`Job::report_progress`).
@@ -1820,7 +1819,7 @@ pub(crate) async fn render(
         };
         let mut grade = crate::gpu::Grade {
             intent: target.intent,
-            ..scene.gpu_grade(cut.width, cut.height, peak_nits(job, target), output)
+            ..scene.gpu_grade(cut.width, cut.height, output)
         }.showing(job.pixel_geometry());
         if let Some(window) = window {
             // Which takes the blur's scale with it. A *whole* frame keeps its own even when it has
@@ -1872,6 +1871,14 @@ pub(crate) async fn render(
                 eprintln!("  chroma leak {leak:.4}, {:?}", options.still_chroma);
             }
             lap("chroma leak");
+        }
+        if target.output == Output::Pq {
+            let base = crate::base::device(gpu).ok_or("the device the pipelines were built on")?;
+            let coded = up.encoded_frame().ok_or("the encode left no frame on the device")?;
+            let tally = crate::base::content_light(gpu, base, coded, out_width, out_height)
+                .await
+                .ok_or("the content light could not be measured")?;
+            options.content_light = Some(tally.content_light());
         }
         // **The cut is handed back after the last grade that reads it.** The upload holds its own
         // count on the frame, so this only returns the memory once that goes too - but it is what
@@ -1951,6 +1958,8 @@ struct RenderedHeader {
     /// The chroma leak's verdict (`render`), which only the host holding the frame could measure.
     full_chroma: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_light: Option<crate::hdr_args::ContentLight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     photo_analysis: Option<Vec<u8>>,
 }
 
@@ -1969,12 +1978,12 @@ pub async fn render_bytes(job: &Job, bytes: &[u8]) -> Result<Vec<u8>, String> {
     let base = single(job, Raw::Bytes(bytes), largest_size(&rendered), &rendered).await?;
     let mut graded = None;
     let photo_analysis = render(job, base, &rendered, |_, coded, width, height, options| {
-        graded = Some((coded, width, height, options.still_chroma == Chroma::Yuv444));
+        graded = Some((coded, width, height, options.still_chroma == Chroma::Yuv444, options.content_light));
         Ok(())
     })
     .await?
     .owed;
-    let (coded, width, height, full_chroma) = graded.ok_or("the job rendered nothing")?;
+    let (coded, width, height, full_chroma, content_light) = graded.ok_or("the job rendered nothing")?;
     framed(
         &RenderedHeader {
             width,
@@ -1982,6 +1991,7 @@ pub async fn render_bytes(job: &Job, bytes: &[u8]) -> Result<Vec<u8>, String> {
             output: target.output,
             rotation: job.geometry.rotate,
             full_chroma,
+            content_light,
             photo_analysis,
         },
         &coded,
@@ -2051,6 +2061,7 @@ pub fn write_rendered(job: &Job, framed: &[u8]) -> Result<Outcome, String> {
     if header.full_chroma {
         options.still_chroma = Chroma::Yuv444;
     }
+    options.content_light = header.content_light;
     let mut outcome = Outcome::default();
     let exif = exif_block(job, None);
     write(coded, header.width, header.height, target, &options, header.rotation, exif.as_deref(), &mut outcome)?;
@@ -2151,7 +2162,7 @@ mod tests {
                 "cameraMatch": "none",
                 "sharpen": 0,
                 "defringe": 0,
-                "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+                "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
                 "targets": [{
                     "rendition": "max", "output": "pq", "outputPath": "",
                     "size": 0, "source": "render", "sdrQuantizer": 20,
@@ -2188,6 +2199,7 @@ mod tests {
             output,
             rotation: 0,
             full_chroma: true,
+            content_light: Some(crate::hdr_args::ContentLight { max_cll: 1480, max_fall: 90 }),
             photo_analysis: Some(vec![1, 2, 3]),
         };
         framed(&header, &coded).expect("the frame serialises")
@@ -2210,6 +2222,7 @@ mod tests {
         let (header, coded) = unframed(&rendered(Output::Pq, 3, 2, 18)).expect("the frame reads");
         assert_eq!((header.width, header.height), (3, 2));
         assert!(header.full_chroma);
+        assert_eq!(header.content_light, Some(crate::hdr_args::ContentLight { max_cll: 1480, max_fall: 90 }));
         assert_eq!(header.photo_analysis, Some(vec![1, 2, 3]));
         // 40000 is code 2499.43 of 4095, which crosses as 2499 and comes back as its sixteen bits.
         assert!(matches!(coded, Coded::Pq(samples) if samples == vec![39_993; 18]));
@@ -2245,7 +2258,7 @@ mod tests {
                 "cameraMatch": "lensAndColour",
                 "sharpen": 1,
                 "defringe": 1,
-                "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+                "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
                 "targets": [{
                     "rendition": "full",
                     "output": "srgb",
@@ -2295,7 +2308,6 @@ mod tests {
                 "defringe": 1,
                 "exposure": 0.5,
                 "grade": {
-                    "peakNits": 1000,
                     "referenceWhiteNits": 203,
                     "whiteQuantile": 0.9
                 },
@@ -2324,7 +2336,7 @@ mod tests {
         let mut value = serde_json::json!({
             "rawFilePath": "/library/a.arw", "cameraMatch": "lensAndColour", "targets": [],
             "sharpen": 0, "defringe": 0,
-            "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+            "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
             "exposure": null
         });
         let rest: Job = serde_json::from_value(value.clone()).unwrap();
@@ -2336,7 +2348,7 @@ mod tests {
         let mut value = serde_json::json!({
             "rawFilePath": "/library/a.arw", "cameraMatch": "lensAndColour", "targets": [],
             "sharpen": 0, "defringe": 0,
-            "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+            "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
             "adjust": { "toneCurve": serde_json::to_value(crate::gpu::ToneCurve::PchipCbrt3 {
                 points: crate::light::IDENTITY_CURVE.to_vec()
             }).unwrap() }

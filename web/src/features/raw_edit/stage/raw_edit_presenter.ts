@@ -9,7 +9,10 @@ import type { CropGrip, CropRect } from '../crop/crop_turn';
 import type { AspectKey } from '../crop/crop_aspect';
 import { CropPresenter } from '../crop/crop_presenter';
 import type { CropStore } from '../crop/crop_store';
-import { displayIsHdr } from '../../../app/device';
+import { displayPeakNits } from '../../../app/device';
+import { drawsOnThePage, readbackCanvases } from '../../../gpu/readback_canvas';
+import type { Ticked } from '../local_decode/local_open';
+import type { DeviceSettingsStore } from '../../settings/device_settings_store';
 import { readSetting, writeSetting } from '../../../app/local_setting';
 import { adjustOf } from '../../../../../src/schemas/edit_adjust';
 import type { ColourProfile, Denoiser } from '../../../../../src/schemas/photo_edits';
@@ -102,6 +105,8 @@ export class RawEditPresenter {
    * from throwing on a canvas whose backing store has already gone.
    */
   private readonly handedOver = new WeakSet<HTMLCanvasElement>();
+  /** The canvases kept on the page (`readback_canvas.ts`), at the backing store the worker draws. */
+  private readonly onPage: Partial<Record<'stage' | 'loupe', { canvas: HTMLCanvasElement; width: number; height: number }>> = {};
   /** Whether an open has a frame to draw, which a tick before one would draw nothing of. */
   private drawable = false;
   /** The reader's sliders, as the module's `Adjust`. Sent with the tick that has to show them. */
@@ -141,6 +146,7 @@ export class RawEditPresenter {
     repairStore: RepairStore,
     loupeStore: LoupeStore,
     private readonly printStore: PrintStore,
+    private readonly device: DeviceSettingsStore,
     printerProfiles?: PrinterProfileSource,
   ) {
     this.print = new PrintPresenter(printStore, () => this.showGeometry(), undefined, printerProfiles);
@@ -196,6 +202,8 @@ export class RawEditPresenter {
    * worker and the element can never take a context on this thread again, so a remount that
    * transferred the same element twice would throw - and React remounts the loupe whenever the
    * glass is picked up.
+   *
+   * Unless it is one the page draws itself, which is settled here for as long as the element lives.
    */
   private async handOver(
     canvas: HTMLCanvasElement,
@@ -206,7 +214,9 @@ export class RawEditPresenter {
     this.handedOver.add(canvas);
     const wanted = which === 'stage' ? this.stageSize() : null;
     const size = wanted ?? { width: canvas.width || 1, height: canvas.height || 1 };
-    const offscreen = canvas.transferControlToOffscreen();
+    const onPage = drawsOnThePage(this.device.displayPeakNits);
+    if (onPage) this.onPage[which] = { canvas, ...size };
+    const offscreen = onPage ? null : canvas.transferControlToOffscreen();
     await local.decoder.attach(which, offscreen, size.width, size.height);
     if (which === 'stage') this.drawable = true;
   }
@@ -996,6 +1006,8 @@ export class RawEditPresenter {
       //
       // Both arms, because a worker that died mid-draw rejects too - and a rejection swallowed
       // here would leave the flag set and every later frame waiting on a tick that never lands.
+      const stage = drawStage ? this.stageSize() : null;
+      if (stage != null && this.onPage.stage != null) Object.assign(this.onPage.stage, stage);
       void local.decoder
         .tick({
           ev: this.editStore.exposureEv,
@@ -1007,14 +1019,25 @@ export class RawEditPresenter {
           proof: {
             output: this.stage.softProof === 'srgb' ? 'srgb' : 'hdr',
             intent: this.printStore.scene.renderingIntent,
-            displayHdr: displayIsHdr(),
+            displayPeakNits: displayPeakNits(this.device.displayPeakNits),
           },
           print,
           ...(profileChanged ? { printerProfile: profile?.bytes ?? null } : {}),
-          stage: drawStage ? this.stageSize() : null,
+          stage,
         })
+        .then((ticked) => this.showOnPage(ticked))
         .then(() => landed(), landed);
     });
+  }
+
+  private async showOnPage(ticked: Ticked): Promise<void> {
+    for (const which of ['stage', 'loupe'] as const) {
+      const bytes = ticked[which];
+      const shown = this.onPage[which];
+      if (bytes == null || shown == null) continue;
+      const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+      await readbackCanvases.show(shown.canvas, { words, width: shown.width, height: shown.height });
+    }
   }
 
   @action.bound

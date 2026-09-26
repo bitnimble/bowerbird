@@ -95,7 +95,6 @@ export class QualityCheckApi {
           adjust: AS_METERED.adjust,
           geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },
           grade: {
-            peakNits: settings.hdr_peak_nits,
             referenceWhiteNits: settings.hdr_reference_white_nits,
             whiteQuantile: settings.hdr_white_quantile,
           },

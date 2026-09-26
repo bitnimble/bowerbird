@@ -21,7 +21,6 @@ use rawshim::light::Light;
 
 fn grade() -> Grade {
     Grade {
-        peak_nits: Light::exactly(1000.0),
         reference_white_nits: Light::exactly(203.0),
         white_quantile: 0.9,
     }
@@ -43,6 +42,7 @@ fn options() -> EncodeOptions {
         // frame and not the other would put a second difference in the pair it is evidence for.
         sharpen_sigma: None,
         max_edge: 100_000.0,
+        content_light: None,
     }
 }
 

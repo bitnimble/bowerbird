@@ -435,7 +435,7 @@ brightness slider: **both paths are relative to the same number, so they move
 together.**
 
 Two things follow. The headroom does not need to be readable after all: the EETF
-can keep rolling off to the configured `peak_nits` exactly as it does now, and
+rolls off to the reader's configured display peak (a device setting), and
 whatever the panel cannot show is the compositor's problem on both paths
 equally. And the 203 is *not* `Grade::reference_white_nits`, which is a library
 setting a user can move; it is the browser's fixed constant, so the divisor
@@ -457,13 +457,20 @@ the window rather than to anything script owns.
 
 What bounds it is that the fault only appears with the divisor **below** 203,
 which is a request for more headroom than the window has been granted. The real
-app has no such knob: the divisor is fixed at 203, the grade rolls off to
-`hdr_peak_nits`, and at the shipping default of 1000 that asks for 4.9x SDR
+app has no such knob: the divisor is fixed at 203, the draw rolls off to the
+device's display peak, and at the default of 1000 that asks for 4.9x SDR
 white against the ~12.8x measured on that panel. So on a first paint the editor
 sits comfortably inside the initially granted headroom and never enters the
-failing state. It stops being comfortable if `hdr_peak_nits` is raised well
+failing state. It stops being comfortable if the display peak is raised well
 above 1000, or on a display whose headroom is small because SDR brightness is
 high.
+
+**A transferred canvas is capped at that 4.9x on WebKit**, whatever the panel
+reaches: measured on an XDR panel with its peak raised in the panel's settings,
+the canvas stopped at 1000 nits where a canvas the page configured itself went
+on. So on WebKit with a display peak past 1000, the stage and the loupe stay on
+the page and each tick hands back what it drew, as RGB9E5 words
+(`readback.slang`, `readback_canvas.ts`).
 
 Incidental from the same runs, worth knowing before relying on any of it: on
 that machine `(dynamic-range: high)` is true while `(video-dynamic-range: high)`
@@ -587,7 +594,7 @@ the SDR brightness slider:
 | ~55% | 3000 nits, 4000 and above merged |
 
 So the headroom is roughly 15x SDR white at 55% brightness and under 7x at 100%,
-and the frame's own peak is `hdr_peak_nits / 203`, which is 4.9x at the shipping
+and the drawn peak is the display peak over 203, which is 4.9x at the
 default. The editor is inside it at moderate brightness and approaching it at
 maximum, on both paths equally.
 
@@ -601,11 +608,11 @@ with a canvas does not cost highlight rendition on Safari, it gains a little.
 Two things follow. The canvas path carries **no** clipping risk the current
 media path does not already have, which retires the concern this section was
 opened to record. And what actually governs whether highlights clip is our own
-EETF target: `peak_nits` at 1000 is a reasonable choice against a headroom that
-is 5x to 15x depending on a slider we cannot read. If a headroom API ever lands
-(§7.1: unsupported in both engines today), pointing the EETF at it would be a
-real improvement over a fixed 1000, and it would improve the rendition path at
-the same time.
+EETF target: a display peak of 1000 is a reasonable default against a headroom
+that is 5x to 15x depending on a slider we cannot read, which is why the reader
+can set it per device. If a headroom API ever lands (§7.1: unsupported in both
+engines today), pointing the EETF at it would be a real improvement over a
+setting.
 
 ## 8. Can the editor worker reach a GPU?
 

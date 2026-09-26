@@ -71,8 +71,11 @@ async function answer(message: Message, report: Report): Promise<{ value: unknow
   // wgpu unwraps what a lost device refuses, so past this point every call would panic as `unreachable`.
   if (lost != null && message.to !== 'close') throw new Error(`the GPU was reset (${lost}); reload the page`);
   switch (message.to) {
-    case 'stage':
-      return { value: await (await painter).answer(message.ask) };
+    case 'stage': {
+      const value = await (await painter).answer(message.ask);
+      if (value == null || typeof value === 'string') return { value };
+      return { value, transfer: ['words' in value ? value.words.buffer : value.bitmap] };
+    }
     case 'close':
       opens.get(message.session)?.close();
       opens.delete(message.session);
@@ -142,8 +145,9 @@ class Open {
         return { value: JSON.parse(this.drawing().picturePart(ask.region)) };
       case 'attach': {
         const editor = this.drawing();
-        if (ask.which === 'stage') editor.attachStage(ask.canvas, ask.width, ask.height);
-        else editor.attachLoupe(ask.canvas, ask.width, ask.height);
+        const canvas = ask.canvas ?? undefined;
+        if (ask.which === 'stage') editor.attachStage(canvas, ask.width, ask.height);
+        else editor.attachLoupe(canvas, ask.width, ask.height);
         return { value: null };
       }
       case 'releaseLoupe':
@@ -226,13 +230,19 @@ class Open {
         if (ask.stage != null) editor.resizeStage(ask.stage.width, ask.stage.height);
         if (ask.adjust != null) editor.setAdjust(ask.adjust);
         if (ask.geometry != null) editor.setGeometry(ask.geometry);
-        if (ask.proof != null) editor.setProof(ask.proof.output, ask.proof.intent, ask.proof.displayHdr);
+        if (ask.proof != null) editor.setProof(ask.proof.output, ask.proof.intent, ask.proof.displayPeakNits ?? undefined);
         if (ask.printerProfile !== undefined) editor.setPrinterProfile(ask.printerProfile ?? undefined);
         editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
         if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);
         await finishDraw();
-        return { value: null };
+        // wasm-bindgen copies a returned Vec out into a fresh ArrayBuffer; its d.ts just does not say so.
+        const stage = ask.drawStage ? ((await editor.heldStage()) as Uint8Array<ArrayBuffer> | undefined) : undefined;
+        const loupe = ask.loupe != null ? ((await editor.heldLoupe()) as Uint8Array<ArrayBuffer> | undefined) : undefined;
+        return {
+          value: { stage: stage ?? null, loupe: loupe ?? null },
+          transfer: [stage?.buffer, loupe?.buffer].filter((buffer) => buffer != null),
+        };
       }
     }
   }

@@ -122,7 +122,6 @@ struct File {
 /// answering a question about settings.
 fn grade() -> Grade {
     Grade {
-        peak_nits: Light::exactly(1000.0),
         reference_white_nits: Light::exactly(203.0),
         white_quantile: 0.9,
     }
@@ -149,6 +148,7 @@ fn options(edge: usize, stages: Stages<'_>) -> EncodeOptions {
             0 => 100_000.0,
             edge => edge as f64,
         },
+        content_light: None,
     }
 }
 
@@ -406,18 +406,12 @@ fn graded(
         // against nothing and a render's colour is not the render's.
         frame.as_shot,
     );
-    // `job::peak_nits`, and the crossing is spelled here as it is there: PQ carries the display's
-    // own peak, where sRGB's 1.0 is diffuse white.
-    let (peak, output) = match stages.domain {
-        Domain::Srgb => (
-            Light::at_diffuse_white(options.grade.reference_white_nits),
-            rawshim::gpu::Output::Srgb,
-        ),
-        Domain::Pq => (options.grade.peak_nits, rawshim::gpu::Output::Pq),
-        Domain::Linear => (options.grade.peak_nits, rawshim::gpu::Output::Rolled),
+    let output = match stages.domain {
+        Domain::Srgb => rawshim::gpu::Output::Srgb,
+        Domain::Pq => rawshim::gpu::Output::Pq,
+        Domain::Linear => rawshim::gpu::Output::Rolled,
     };
-    let mut coded =
-        hdr::encode_cut(gpu, &cut, &scene.gpu_grade(cut.width, cut.height, peak, output));
+    let mut coded = hdr::encode_cut(gpu, &cut, &scene.gpu_grade(cut.width, cut.height, output));
     if stages.domain == Domain::Pq {
         // What `job::run` reads to pick this still's chroma, so a render here says which way a
         // rendition of it would have gone.
@@ -436,6 +430,7 @@ fn graded(
             format: chroma.avif_format(),
             quantizer,
             speed: 8,
+            light: None,
         };
         let started = std::time::Instant::now();
         let file = rawshim::avif::encode_still(
@@ -453,10 +448,10 @@ fn graded(
             .expect("the encoded still writes");
         coded = decoded;
     }
-    // The rolled frame's 1.0 is the mastering peak, so a straight byte would put diffuse white at
-    // a twentieth of the range and nothing would be visible at all.
-    let to_white = f32::from(u16::MAX) * (options.grade.reference_white_nits.raw()
-        / options.grade.peak_nits.raw()) as f32;
+    // The rolled frame's 1.0 is PQ's ceiling, so a straight byte would put diffuse white at a
+    // fiftieth of the range and nothing would be visible at all.
+    let to_white = f32::from(u16::MAX)
+        * (options.grade.reference_white_nits.raw() / output.mastered(options.grade.reference_white_nits).raw()) as f32;
     let byte = |v: &u16| match stages.domain {
         Domain::Srgb => *v as u8,
         Domain::Pq => (v >> 8) as u8,

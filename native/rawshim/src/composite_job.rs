@@ -2206,7 +2206,7 @@ mod tests {
             "denoiseColour": 0.0,
             "sharpen": 0.0,
             "defringe": 0.0,
-            "grade": { "peakNits": 1000.0, "referenceWhiteNits": 203.0, "whiteQuantile": 0.99 },
+            "grade": { "referenceWhiteNits": 203.0, "whiteQuantile": 0.99 },
             "targets": [],
             "composite": panorama,
         }))

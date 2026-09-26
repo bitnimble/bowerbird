@@ -67,7 +67,7 @@ async function render(
     rawFilePath: FIXTURE,
     dataPath: root,
     targets: [target(outputPath)],
-    grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.9 },
+    grade: { referenceWhiteNits: 203, whiteQuantile: 0.9 },
     cameraMatch: matchCamera ? 'lensAndColour' : 'none',
     dust: { enabled: false, sensitivity: 0.5, intensity: 1 },
     denoiser: 'galosh',

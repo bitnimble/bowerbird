@@ -93,8 +93,8 @@ pub enum Illuminance {}
 
 /// [`DisplayNits`] over that peak, in 0..1, still Rec.2020 and still linear.
 ///
-/// **Not [`Standard`]: this is where SDR and HDR part.** `job::peak_nits` gives an sRGB target its
-/// peak at diffuse white and a PQ target the mastering peak, so 1.0 here is 203 nits or 1000
+/// **Not [`Standard`]: this is where SDR and HDR part.** `gpu::Output::mastered` gives an sRGB
+/// target its peak at diffuse white and a PQ target PQ's ceiling, so 1.0 here is 203 nits or 10000
 /// depending on which rendition is being written.
 pub enum Signal {}
 
@@ -479,6 +479,9 @@ impl Light<Level> {
 }
 
 impl Light<DisplayNits> {
+    /// The top of ST 2084, `prelude.slang`'s `PQ_MAX_NITS`.
+    pub const PQ_CEILING: Light<DisplayNits> = Light(10000.0, PhantomData);
+
     /// Where a rendition's highlights roll into, given what its transfer can hold.
     ///
     /// **The one crossing between the scene's anchor and the display's, and it is deliberate.** An

@@ -30,6 +30,11 @@ const FROM_FRAME_ID: &str = "0";
 const FRAME_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/frame.wgsl"));
 const PEAK_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/peak.wgsl"));
 const DETAIL_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/detail.wgsl"));
+const READBACK_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/readback.wgsl"));
+
+/// `readback.slang`'s `pack`.
+const PACK_BINDINGS: [(u32, Binding); 3] =
+    [(0, Binding::Drawn), (1, Binding::Storage { read_only: false }), (2, Binding::Uniform)];
 
 /// `DETAIL_LONG` in `detail.slang`, which is the long edge of that blur's working texture.
 ///
@@ -263,6 +268,8 @@ pub struct Gpu {
     print_albedo_tabulate: wgpu::ComputePipeline,
     print_albedo_average: wgpu::ComputePipeline,
     print_light_calibrate: wgpu::ComputePipeline,
+    pack_layout: wgpu::BindGroupLayout,
+    pack: wgpu::ComputePipeline,
     peak_layout: wgpu::BindGroupLayout,
     peak_measure: wgpu::ComputePipeline,
     peak_collect: wgpu::ComputePipeline,
@@ -894,6 +901,52 @@ impl Gpu {
         Recording { gpu: self, encoder: None, held: Vec::new() }
     }
 
+    /// `drawn` as RGB9E5 words, four little-endian bytes a pixel, a row after another: what a
+    /// canvas the page draws itself is sent (`readback.slang`).
+    pub async fn rgb9e5(&self, drawn: &Texture) -> Option<Vec<u8>> {
+        let (width, height) = (drawn.width(), drawn.height());
+        let bytes = u64::from(width) * u64::from(height) * 4;
+        let mut recording = self.record();
+        recording.holding_texture(drawn);
+        let words = recording.buffer(&wgpu::BufferDescriptor {
+            label: Some("rgb9e5"),
+            size: bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let read = recording.buffer(&wgpu::BufferDescriptor {
+            label: Some("rgb9e5 read"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let size: Vec<u8> = [width, height, 0, 0].into_iter().flat_map(u32::to_le_bytes).collect();
+        let size = recording.init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rgb9e5 size"),
+            contents: &size,
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let view = drawn.view();
+        let group = self.bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rgb9e5"),
+            layout: &self.pack_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: words.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: size.as_entire_binding() },
+            ],
+        });
+        {
+            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.pack);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(width.div_ceil(16), height.div_ceil(16), 1);
+        }
+        recording.encoder().copy_buffer_to_buffer(&words, 0, &read, 0, bytes);
+        recording.submit();
+        read_back(self, &read, <[u8]>::to_vec).await
+    }
+
     /// A buffer whose life is its own rather than a submission's: a frame, a mosaic, a pyramid.
     pub fn own_buffer(&self, descriptor: &wgpu::BufferDescriptor<'_>) -> Buffer {
         Buffer(counted(self.device.create_buffer(descriptor), descriptor.size))
@@ -1280,6 +1333,12 @@ impl Gpu {
         let peak_collect = compute("collect", &peak_module, &peak_layout, "collect");
         let peak_remeasure = compute("remeasure", &peak_module, &peak_layout, "remeasure");
         let peak_quantile = compute("quantile", &peak_module, &peak_layout, "quantile");
+        let pack_layout = group_layout("pack", &PACK_BINDINGS);
+        let readback_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("readback"),
+            source: wgpu::ShaderSource::Wgsl(READBACK_WGSL.into()),
+        });
+        let pack = compute("pack", &readback_module, &pack_layout, "pack");
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
@@ -1340,6 +1399,8 @@ impl Gpu {
             print_albedo_tabulate,
             print_albedo_average,
             print_light_calibrate,
+            pack_layout,
+            pack,
             peak_layout,
             peak_measure,
             peak_collect,
@@ -1497,9 +1558,17 @@ const CANVAS_COLOR_SPACE: wgpu::SurfaceColorSpace = wgpu::SurfaceColorSpace::Ext
 /// the panel rather than being clamped, and the gamut is the wide one.
 #[cfg(target_arch = "wasm32")]
 pub struct Stage {
-    surface: wgpu::Surface<'static>,
+    target: StageTarget,
     width: u32,
     height: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+enum StageTarget {
+    Surface(wgpu::Surface<'static>),
+    /// A texture of this module's, which [`Gpu::rgb9e5`] reads back for a canvas the page draws
+    /// itself: WebKit caps what a transferred canvas may show at 1000 nits over 203.
+    Held(Option<Texture>),
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1518,9 +1587,16 @@ impl Stage {
             .instance
             .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas))
             .ok()?;
-        let mut held = Stage { surface, width: 0, height: 0 };
+        let mut held = Stage { target: StageTarget::Surface(surface), width: 0, height: 0 };
         held.resize(gpu, width, height);
         Some(held)
+    }
+
+    /// A stage drawn into a texture rather than a canvas, for the page to be sent ([`Stage::drawn`]).
+    pub fn held(gpu: &Gpu, width: u32, height: u32) -> Stage {
+        let mut held = Stage { target: StageTarget::Held(None), width: 0, height: 0 };
+        held.resize(gpu, width, height);
+        held
     }
 
     /// The backing store the reader's box asks for, which changes with the stage and the density.
@@ -1532,25 +1608,47 @@ impl Stage {
         if (width, height) == (self.width, self.height) {
             return;
         }
-        self.surface.configure(
-            &gpu.device,
-            &wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: CANVAS_FORMAT,
-                color_space: CANVAS_COLOR_SPACE,
-                width,
-                height,
-                present_mode: wgpu::PresentMode::Fifo,
-                desired_maximum_frame_latency: 2,
-                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
-                view_formats: Vec::new(),
-            },
-        );
+        match &mut self.target {
+            StageTarget::Surface(surface) => surface.configure(
+                &gpu.device,
+                &wgpu::SurfaceConfiguration {
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    format: CANVAS_FORMAT,
+                    color_space: CANVAS_COLOR_SPACE,
+                    width,
+                    height,
+                    present_mode: wgpu::PresentMode::Fifo,
+                    desired_maximum_frame_latency: 2,
+                    alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+                    view_formats: Vec::new(),
+                },
+            ),
+            StageTarget::Held(texture) => {
+                *texture = Some(gpu.own_texture(&wgpu::TextureDescriptor {
+                    label: Some("held stage"),
+                    size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: CANVAS_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                }));
+            }
+        }
         (self.width, self.height) = (width, height);
     }
 
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// What the last draw wrote, where this stage is held rather than a canvas.
+    pub fn drawn(&self) -> Option<Texture> {
+        match &self.target {
+            StageTarget::Held(texture) => texture.clone(),
+            StageTarget::Surface(_) => None,
+        }
     }
 }
 
@@ -1568,10 +1666,21 @@ pub fn present(
     print: Option<&crate::print::Scene>,
 ) {
     use wgpu::CurrentSurfaceTexture::{Success, Suboptimal};
+    let surface = match &stage.target {
+        StageTarget::Surface(surface) => surface,
+        StageTarget::Held(texture) => {
+            let Some(texture) = texture else { return };
+            let mut recording = uploaded.gpu.record();
+            recording.holding_texture(texture);
+            uploaded.draw_into(&mut recording, grade, pyramid, &texture.view(), print, false);
+            recording.submit();
+            return;
+        }
+    };
     // Suboptimal draws too: the image is the right one and only its configuration has drifted,
     // which the next `resize` settles. Everything else - a timeout, an occluded tab, a canvas
     // resized under the surface - skips this tick rather than drawing a stale image.
-    let (Success(image) | Suboptimal(image)) = stage.surface.get_current_texture() else {
+    let (Success(image) | Suboptimal(image)) = surface.get_current_texture() else {
         return;
     };
     let target = image.texture.create_view(&Default::default());
@@ -1714,6 +1823,8 @@ enum Binding {
     /// wherever it is read - and it is only ever loaded, never sampled.
     Read32,
     Wrote32,
+    /// A texture a draw wrote, `CANVAS_FORMAT`, loaded a texel at a time.
+    Drawn,
 }
 
 impl Binding {
@@ -1769,7 +1880,7 @@ impl Binding {
                 format: wgpu::TextureFormat::Rgba16Float,
                 view_dimension: wgpu::TextureViewDimension::D2,
             },
-            Binding::Read32 => wgpu::BindingType::Texture {
+            Binding::Read32 | Binding::Drawn => wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: false },
                 view_dimension: wgpu::TextureViewDimension::D2,
                 multisampled: false,
@@ -1808,8 +1919,8 @@ pub struct Grade<'a> {
     /// What diffuse white is anchored to, which is the divisor between the scene's nits and the
     /// scene-relative units the fit and the sliders are written in.
     pub reference_nits: crate::light::Light<crate::light::SceneNits>,
-    /// Where this target's highlights roll into, which is `job::peak_nits` and not the library's
-    /// mastering peak: an SDR target's sits at diffuse white.
+    /// Where this target's highlights roll into: [`Output::mastered`] for a rendition, and the
+    /// display's own peak for a draw.
     pub peak_nits: crate::light::Light<crate::light::DisplayNits>,
     /// None resolves to the camera match's exposure, or zero without a match.
     pub exposure: Option<crate::light::Stops>,
@@ -1820,7 +1931,7 @@ pub struct Grade<'a> {
     /// multipliers, in which case there is nothing to move relative to and the pair is ignored.
     pub as_shot: Option<crate::white_balance::AsShot>,
     /// Which transfer to write. The grade is the same either way; an SDR target differs by
-    /// having its `peak_nits` at diffuse white (`job::peak_nits`) and by ending here.
+    /// having its `peak_nits` at diffuse white ([`Output::mastered`]) and by ending here.
     pub output: Output,
     /// The reader's crop, straighten and quarter turn, applied in the same dispatch as the grade.
     ///
@@ -2175,6 +2286,20 @@ pub enum Output {
     /// The rolled frame, before any transfer - what the CPU's grade produced and what every
     /// rendition path already encodes for itself.
     Rolled,
+}
+
+impl Output {
+    /// Where a rendition in this output rolls its highlights into.
+    ///
+    /// An HDR file is graded scene-referred, to PQ's own ceiling, and fitted to a display by
+    /// whatever shows it (`stage.slang`), against the brightest pixel its `clli` names. An SDR one
+    /// has nothing above diffuse white to put a highlight in.
+    pub fn mastered(self, reference: crate::light::Light<crate::light::SceneNits>) -> crate::light::Light<crate::light::DisplayNits> {
+        match self {
+            Output::Pq | Output::Rolled => crate::light::Light::PQ_CEILING,
+            Output::Srgb => crate::light::Light::at_diffuse_white(reference),
+        }
+    }
 }
 
 /// One frame, uploaded once, ready for as many dispatches as a job has outputs.
@@ -4274,6 +4399,42 @@ fn half(v: f32) -> [u8; 2] {
 mod tests {
     use crate::light::{Light, Stops};
     use wgpu::util::DeviceExt;
+
+    /// A drawn frame packed to RGB9E5 unpacks to what was drawn, within the format's 9 bits,
+    /// headroom and all: what a canvas the page draws itself is shown.
+    #[test]
+    fn a_packed_frame_is_the_frame_it_was_drawn_as() {
+        let gpu = super::device().expect("a Vulkan adapter");
+        let drawn: [[f32; 3]; 6] =
+            [[0.0, 0.0, 0.0], [0.5, 0.25, 0.125], [1.0, 1.0, 1.0], [4.9, 2.0, 0.3], [12.0, 0.01, 7.5], [-0.2, 0.7, 1.4]];
+        let data: Vec<u8> = drawn.iter().flat_map(|&[r, g, b]| [r, g, b, 1.0]).flat_map(super::half).collect();
+        let texture = gpu.own_texture_with_data(
+            &wgpu::TextureDescriptor {
+                label: Some("drawn"),
+                size: wgpu::Extent3d { width: 3, height: 2, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &data,
+        );
+        let words = pollster::block_on(gpu.rgb9e5(&texture)).expect("the readback mapped");
+        for (at, (word, want)) in words.chunks_exact(4).zip(drawn).enumerate() {
+            let word = u32::from_le_bytes(word.try_into().expect("a word"));
+            let scale = 2f32.powi((word >> 27) as i32 - 15 - 9);
+            let got = [word & 0x1ff, (word >> 9) & 0x1ff, (word >> 18) & 0x1ff].map(|m| m as f32 * scale);
+            // One exponent for the three, so a channel is as fine as the pixel's brightest allows.
+            let step = want.into_iter().fold(1e-3f32, f32::max) / 256.0;
+            for (got, want) in got.into_iter().zip(want) {
+                let want = half::f16::from_f32(want).to_f32().max(0.0);
+                assert!((got - want).abs() <= step, "pixel {at}: {got} for {want}");
+            }
+        }
+    }
 
     /// A `Geometry`, positionally, so a table of cases reads as a table.
     fn geometry(

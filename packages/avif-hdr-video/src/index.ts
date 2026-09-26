@@ -164,6 +164,22 @@ export function orientationOfAvif(avif: Uint8Array): 0 | 90 | 180 | 270 {
 }
 
 /**
+ * The primary picture's `clli`: its brightest pixel and brightest frame average, in nits. Null
+ * where the file states none, or states zero, which is the box's own word for unknown.
+ */
+export function contentLightOfAvif(avif: Uint8Array): { maxCll: number; maxFall: number } | null {
+  const view = new DataView(avif.buffer, avif.byteOffset, avif.byteLength);
+  const meta = findBox(view, 0, avif.byteLength, 'meta');
+  if (meta == null) throw new Error('not an AVIF: no meta box');
+  const children = meta.body + 4;
+  const properties = itemProperties(view, children, meta.end, primaryItem(view, children, meta.end));
+  const clli = properties.find((property) => property.type === 'clli');
+  if (clli == null || clli.end - clli.body < 4) return null;
+  const maxCll = view.getUint16(clli.body);
+  return maxCll === 0 ? null : { maxCll, maxFall: view.getUint16(clli.body + 2) };
+}
+
+/**
  * Whether this browser needs any of the above to show an HDR still in HDR.
  *
  * A user-agent sniff, which is normally the wrong tool and is the only one available

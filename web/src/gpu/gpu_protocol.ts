@@ -51,6 +51,8 @@ export const StageAskSchema = z.discriminatedUnion('kind', [
     proof: RenderingIntentSchema.nullable(),
     headroom: z.number(),
     sourcePeak: z.number(),
+    /** Drawn and handed back rather than drawn into a canvas, which the page keeps (`readback_canvas.ts`). */
+    readback: z.boolean(),
   }),
   z.object({
     kind: z.literal('paintMasked'),
@@ -58,13 +60,21 @@ export const StageAskSchema = z.discriminatedUnion('kind', [
     base: LayerPictureSchema,
     layers: z.array(z.object({ picture: LayerPictureSchema, mask: BitmapSchema, shift: PairSchema, gain: z.number() })),
     headroom: z.number(),
+    sourcePeak: z.number(),
   }),
   z.object({ kind: z.literal('releaseCanvas'), canvas: z.number() }),
 ]);
 export type StageAsk = z.infer<typeof StageAskSchema>;
 
-/** How a paint ended: drawn, or on a canvas that took a WebGPU context and cannot be drawn into. */
-export const PaintedSchema = z.enum(['drawn', 'declined', 'lost']);
+/**
+ * How a paint ended: drawn, or on a canvas that took a WebGPU context and cannot be drawn into - or,
+ * for a read-back paint, what was drawn, for the page to show.
+ */
+export const PaintedSchema = z.union([
+  z.enum(['drawn', 'declined', 'lost']),
+  z.object({ words: z.custom<Uint32Array>((value) => value instanceof Uint32Array), width: z.number(), height: z.number() }),
+  z.object({ bitmap: BitmapSchema }),
+]);
 export type Painted = z.infer<typeof PaintedSchema>;
 
 /** Every message the GPU worker takes, each with the id its answer carries back. */

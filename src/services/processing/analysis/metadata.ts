@@ -110,7 +110,7 @@ async function withTile(filePath: string, stage: TileStage): Promise<RawHeader> 
       exposure: 0,
       adjust: adjustOf(neutralEdits()),
       geometry: { crop: [0, 0, 1, 1], angleDegrees: 0, rotate: 0, keystone: null },
-      grade: { peakNits: 1000, referenceWhiteNits: 203, whiteQuantile: 0.9 },
+      grade: { referenceWhiteNits: 203, whiteQuantile: 0.9 },
       targets: [
         {
           rendition: 'grid',

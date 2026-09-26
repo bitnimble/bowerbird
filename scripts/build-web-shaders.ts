@@ -24,7 +24,7 @@ const OUT = resolve(ROOT, 'web/src/features/photos/generated');
 
 /// The shaders the browser compiles, and nothing else: the rest of `slang/` is dispatched by
 /// `native/rawshim` and reaches the editor through wasm rather than through Vite.
-const SHADERS = ['stage.slang', 'stage_import.slang'];
+const SHADERS = ['stage.slang', 'stage_import.slang', 'readback.slang'];
 
 /** The pinned compiler, the one an environment names, or whatever is on `PATH`. */
 function slangc(): string {

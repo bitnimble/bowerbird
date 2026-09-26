@@ -72,7 +72,6 @@ export function _for_testing_decodeSummary(path: string, atLeastLongEdge = 0): D
 
 /** The parts of an HDR encode a pin varies. */
 export interface GradeSpec {
-  peakNits: number;
   referenceWhiteNits: number;
   whiteQuantile: number;
   crf: number;

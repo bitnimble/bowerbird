@@ -54,7 +54,6 @@ fn main() -> Result<(), String> {
     let prepared = rawshim::edit::prepare_bytes(&bytes, &rawshim::edit::EditRequest {
         long_edge: 1600,
         grade: rawshim::hdr::Grade {
-            peak_nits: Light::exactly(1000.0),
             reference_white_nits: Light::exactly(203.0),
             white_quantile: 0.995,
         },
@@ -92,7 +91,7 @@ fn main() -> Result<(), String> {
             header.height,
             rawshim::tone::Levels { white: header.white, peak: header.peak, floor: header.floor },
             header.grade.reference_white_nits,
-            if sdr { Light::at_diffuse_white(header.grade.reference_white_nits) } else { header.grade.peak_nits },
+            if sdr { Light::at_diffuse_white(header.grade.reference_white_nits) } else { Light::exactly(1000.0) },
         )
     };
     let peak = gpu.scene_peak();

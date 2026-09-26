@@ -139,8 +139,8 @@ export const SettingsStrings = {
   hdrReferenceWhiteHint: () => 'How bright plain white is rendered',
   hdrWhiteQuantile: () => 'HDR white threshold',
   hdrWhiteQuantileHint: () => 'Lower renders brighter',
-  hdrPeakNits: () => 'HDR peak brightness',
-  hdrPeakNitsHint: () => 'Headroom above reference white',
+  displayPeakNits: () => 'Display peak brightness',
+  displayPeakNitsHint: () => 'Saved on this device only',
 
   groupResolution: () => 'Resolution',
   gridRenditionSize: () => 'Grid thumbnail longest edge',

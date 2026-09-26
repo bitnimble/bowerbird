@@ -30,6 +30,8 @@ pub struct StillOptions {
     pub quantizer: i32,
     /// libavif's encoder speed, 0 slowest and 10 fastest.
     pub speed: i32,
+    /// The still's `clli`.
+    pub light: Option<crate::hdr_args::ContentLight>,
 }
 
 const AVIF_RANGE_LIMITED: raw::avifRange = raw::avifRange::AVIF_RANGE_LIMITED;
@@ -441,7 +443,7 @@ pub(crate) fn encode_still_rotated(
         return Err(format!("frame is {} samples, expected {}", pq.len(), width * height * 3));
     }
     encode_avif(pq, 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH, options.format,
-        &options.cicp, options.quantizer, options.speed, rotate, exif)
+        &options.cicp, options.light, options.quantizer, options.speed, rotate, exif)
 }
 
 /// `encode_still` to a file, for the renditions.
@@ -469,7 +471,7 @@ pub fn save_still_bands(
     exif: Option<&[u8]>,
 ) -> Result<(), String> {
     let file = encode_grid(bands, 16, AVIF_RANGE_LIMITED, width, AVIF_DEPTH, options.format,
-        &options.cicp, options.quantizer, options.speed, rotate, exif)?;
+        &options.cicp, options.light, options.quantizer, options.speed, rotate, exif)?;
     std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
 }
 
@@ -489,7 +491,7 @@ pub fn save_rendition_bands(
         true => AVIF_PIXEL_FORMAT_YUV444,
         false => AVIF_PIXEL_FORMAT_YUV420,
     };
-    let file = encode_grid(bands, 8, AVIF_RANGE_FULL, width, 8, format, &SRGB, quantizer, speed, rotate, exif)?;
+    let file = encode_grid(bands, 8, AVIF_RANGE_FULL, width, 8, format, &SRGB, None, quantizer, speed, rotate, exif)?;
     std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
 }
 
@@ -531,7 +533,7 @@ pub(crate) fn encode_rgb8_rotated(
         true => AVIF_PIXEL_FORMAT_YUV444,
         false => AVIF_PIXEL_FORMAT_YUV420,
     };
-    encode_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &SRGB, quantizer, speed, rotate, exif)
+    encode_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &SRGB, None, quantizer, speed, rotate, exif)
 }
 
 /// sRGB primaries, sRGB transfer, BT.601 matrix.
@@ -693,12 +695,13 @@ fn encode_avif<T: Clone>(
     depth: u32,
     format: raw::avifPixelFormat,
     cicp: &Cicp,
+    light: Option<crate::hdr_args::ContentLight>,
     quantizer: i32,
     speed: i32,
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
-    let image = converted(rgb, rgb_depth, range, width, height, depth, format, cicp, rotate, exif)?;
+    let image = converted(rgb, rgb_depth, range, width, height, depth, format, cicp, light, rotate, exif)?;
     let encoder = configured(quantizer, speed)?;
     let mut output = Output::empty();
     // SAFETY: both handles are live for the call, and `output` is libavif's to fill.
@@ -719,6 +722,7 @@ fn encode_grid<T: Clone>(
     depth: u32,
     format: raw::avifPixelFormat,
     cicp: &Cicp,
+    light: Option<crate::hdr_args::ContentLight>,
     quantizer: i32,
     speed: i32,
     rotate: u16,
@@ -743,6 +747,7 @@ fn encode_grid<T: Clone>(
             depth,
             format,
             cicp,
+            light,
             rotate,
             // libavif writes the grid's metadata from its first cell.
             exif.filter(|_| index == 0),
@@ -780,6 +785,7 @@ fn converted<T: Clone>(
     depth: u32,
     format: raw::avifPixelFormat,
     cicp: &Cicp,
+    light: Option<crate::hdr_args::ContentLight>,
     rotate: u16,
     exif: Option<&[u8]>,
 ) -> Result<Image, String> {
@@ -803,6 +809,10 @@ fn converted<T: Clone>(
         (*image.0).colorPrimaries = cicp.primaries;
         (*image.0).transferCharacteristics = cicp.transfer;
         (*image.0).matrixCoefficients = cicp.matrix;
+        if let Some(light) = light {
+            (*image.0).clli.maxCLL = light.max_cll;
+            (*image.0).clli.maxPALL = light.max_fall;
+        }
         if rotate % 360 != 0 {
             (*image.0).transformFlags |= AVIF_TRANSFORM_IROT;
             (*image.0).irot.angle = ((360 - rotate % 360) / 90) as u8;
@@ -928,7 +938,7 @@ mod tests {
         ];
         for (format, width, height, picture) in cases {
             let options =
-                StillOptions { cicp: Cicp { primaries: 9, transfer: 16, matrix: 9 }, format, quantizer: 0, speed: 10 };
+                StillOptions { cicp: Cicp { primaries: 9, transfer: 16, matrix: 9 }, format, quantizer: 0, speed: 10, light: None };
             let file = encode_still(picture.into(), width, height, &options).expect("the still encodes");
             let (libavif, ..) = decode_at_unturned(&file, 16).expect("libavif converts it");
             let (samples, layout) = yuv_planes(&file);
@@ -959,13 +969,13 @@ mod tests {
         };
         let cicp = Cicp { primaries: 9, transfer: 16, matrix: 9 };
         let still = |format, width, height| {
-            let options = StillOptions { cicp: Cicp { ..cicp }, format, quantizer: 20, speed: 10 };
+            let options = StillOptions { cicp: Cicp { ..cicp }, format, quantizer: 20, speed: 10, light: None };
             encode_still(frame(width, height).into(), width, height, &options).expect("the still encodes")
         };
         // Whole rows at a time, the last band shorter: the grid a still is saved as, cropped.
         let bands = |format, width: usize, heights: &[usize]| {
             let bands = heights.iter().map(|height| frame(width, *height)).collect();
-            encode_grid(bands, 16, AVIF_RANGE_LIMITED, width, AVIF_DEPTH, format, &cicp, 20, 10, 0, None)
+            encode_grid(bands, 16, AVIF_RANGE_LIMITED, width, AVIF_DEPTH, format, &cicp, None, 20, 10, 0, None)
                 .expect("the grid encodes")
         };
         let cases = [
@@ -1066,6 +1076,7 @@ mod tests {
                 format: AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 10,
                 speed: 10,
+                light: None,
             },
             90,
             None,
@@ -1082,7 +1093,7 @@ mod tests {
             "preserveSourceOrientation": true,
             "sharpen": 0,
             "defringe": 0,
-            "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
+            "grade": { "referenceWhiteNits": 203, "whiteQuantile": 0.9 },
             "targets": [{
                 "rendition": "max",
                 "output": "srgb",
@@ -1118,6 +1129,7 @@ mod tests {
             format: AVIF_PIXEL_FORMAT_YUV444,
             quantizer: 20,
             speed: 8,
+            light: None,
         };
         let short = vec![0u16; 8 * 8 * 3 - 1];
         assert!(encode_still(short.into(), 8, 8, &options).is_err());
@@ -1189,13 +1201,16 @@ mod tests {
             format: AVIF_PIXEL_FORMAT_YUV420,
             quantizer: 0,
             speed: 10,
+            light: Some(crate::hdr_args::ContentLight { max_cll: 1480, max_fall: 90 }),
         };
         save_still_bands(bands, width, &options, path.to_str().expect("a path"), 0, None)
             .expect("the encode");
-        let (read, read_width, read_height) =
-            decode_at(&std::fs::read(&path).expect("the file"), 16).expect("the decode");
+        let file = std::fs::read(&path).expect("the file");
+        let (read, read_width, read_height) = decode_at(&file, 16).expect("the decode");
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!((read_width, read_height), (width, height));
+        let clli = file.windows(4).position(|window| window == b"clli").expect("a clli") + 4;
+        assert_eq!(file[clli..clli + 4], [1480u16.to_be_bytes(), 90u16.to_be_bytes()].concat());
         let worst = frame.iter().zip(&read).map(|(a, b)| a.abs_diff(*b)).max().expect("pixels");
         assert!(worst <= 1024, "the round trip moved a sample by {worst} of 65535");
     }
@@ -1282,6 +1297,7 @@ mod tests {
                 format: AVIF_PIXEL_FORMAT_YUV420,
                 quantizer: 0,
                 speed: 10,
+                light: None,
             },
         )
         .expect("the encode");
@@ -1334,6 +1350,7 @@ mod tests {
                 AVIF_DEPTH,
                 AVIF_PIXEL_FORMAT_YUV444,
                 &Cicp { primaries: 9, transfer: 16, matrix: 9 },
+                None,
                 quantizer,
                 10,
                 0,
