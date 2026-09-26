@@ -91,11 +91,12 @@ void gather(uint3 gid : SV_DispatchThreadID)
             if (sx < 0 || sy < 0 || sx >= int(params.frame_width) || sy >= int(params.frame_height)) { continue; }
             let weight = (x == 0 ? 1.0 - fx : fx) * (y == 0 ? 1.0 - fy : fy);
             let channel = colour_at(sx, sy);
-            let value = measured<Level>(samples[sy * int(params.frame_width) + sx]).v;
-            sums[site * 3 + channel] += weight * value;
+            Light<Level> value;
+            value.v = samples[sy * int(params.frame_width) + sx];
+            sums[site * 3 + channel] += weight * value.v;
             weights[site * 3 + channel] += weight;
             if (channel == 1) {
-                green_sum += weight * value;
+                green_sum += weight * value.v;
                 green_weight += weight;
             }
         }

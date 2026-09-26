@@ -66,8 +66,10 @@ void settle(uint3 gid : SV_DispatchThreadID)
     let confidence = (1.0 - moved) * clamp(covered, 0.0, 1.0);
     for (uint channel = 0; channel < 3; channel++) {
         let weight = weights[from + channel];
-        let merged = measured<Level>(weight > 0.0 ? sums[from + channel] / weight : rgb[here + channel]);
-        let baseline = measured<Level>(rgb[here + channel]);
-        rgb[here + channel] = measured<Level>(lerp(baseline.v, merged.v, confidence)).v;
+        Light<Level> merged;
+        merged.v = weight > 0.0 ? sums[from + channel] / weight : rgb[here + channel];
+        Light<Level> baseline;
+        baseline.v = rgb[here + channel];
+        rgb[here + channel] = lerp(baseline.v, merged.v, confidence);
     }
 }

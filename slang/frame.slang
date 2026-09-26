@@ -382,13 +382,27 @@ float4 fs_print_flat(float4 pos : SV_Position) : SV_Target
     return float4(srgb_oetf_signed(on_the_canvas(measured<DisplayNits>(reflectance * edit.peak)).v), 1.0);
 }
 
-float3 print_hit_reflected(PrintHit hit, float2 pixel, float2 dx, float2 dy, float2 footprint)
+bool print_inked(PrintHit hit)
 {
-    var reflectance = print_reflectance(float3(1.0), true);
-    if (hit.normal.z > 0.5 && (print.framing.x < 0.5 || print.illumination.w > 0.5 || hit.material == PHOTO)) {
-        reflectance = print_reflectance(print_ink(pixel, dx, dy), true);
-    }
+    return hit.normal.z > 0.5 && (print.framing.x < 0.5 || print.illumination.w > 0.5 || hit.material == PHOTO);
+}
+
+float3 print_hit_reflected(PrintHit hit, float3 inked, float2 footprint)
+{
+    let reflectance = print_inked(hit) ? inked : print_reflectance(float3(1.0), true);
     return reflected_print(reflectance, hit, footprint).v;
+}
+
+/// `uv` and a count of one where `sample` shows the photo, for averaging where the ink is read.
+float3 print_inked_at(PrintHit sample)
+{
+    return sample.hit && print_inked(sample) ? float3(sample.uv, 1.0) : float3(0.0);
+}
+
+float3 print_edge_sample(PrintHit sample, float3 inked, float2 footprint, float3 background)
+{
+    if (!sample.hit) { return background; }
+    return print_hit_reflected(sample, inked, footprint) * print_exposure().g;
 }
 
 bool print_near_frame_edge(float2 point, float2 half, float2 footprint)
@@ -454,29 +468,27 @@ Colour<DisplayNits> print_scene_nits(float2 pos)
         photo_plane.normal = float3(0.0, 0.0, 1.0);
         photo_plane.position.z = 0.0;
         let center_uv = paper_uv(pos, edit.canvas_size, shape, photo_plane);
-        dx = (paper_uv(pos + float2(1.0, 0.0), edit.canvas_size, shape, photo_plane) - center_uv) * shape;
+        dx =(paper_uv(pos + float2(1.0, 0.0), edit.canvas_size, shape, photo_plane) - center_uv) * shape;
         dy = (paper_uv(pos + float2(0.0, 1.0), edit.canvas_size, shape, photo_plane) - center_uv) * shape;
         footprint = 2.0 * (abs(dx) + abs(dy)) / max(shape.x, shape.y);
     }
-    // A count the compiler cannot know, so the grade and the room are one inlined copy: D3D12 compiles
-    // each copy, and a fixed four, unrolled, is a 20 second first draw.
-    let count = edge ? 4u : 1u;
-    var sum = float3(0.0);
-    for (uint i = 0; i < count; i += 1) {
-        var sample = hit;
-        var at = pixel;
-        if (edge) {
-            sample = paper_hit(pos + float2(float(i & 1u), float(i >> 1u)) * 0.5 - 0.25, edit.canvas_size, shape);
-            if (!sample.hit) {
-                sum += background;
-                continue;
-            }
-            at = sample.uv * shape;
-        }
-        let reflected = print_hit_reflected(sample, at, dx, dy, footprint) * exposure;
-        sum += edge ? reflected : lerp(background, reflected, hit.coverage);
+    // Graded once for the pixel, not per edge sample: D3D12 compiles every inlined copy of the
+    // grade, and four of them are a 20 second first draw.
+    if (!edge) {
+        let inked = print_inked(hit) ? print_reflectance(print_ink(pixel, dx, dy), true) : float3(1.0);
+        return measured<DisplayNits>(lerp(background, print_hit_reflected(hit, inked, footprint) * exposure, hit.coverage));
     }
-    return measured<DisplayNits>(edge ? sum * 0.25 : sum);
+    let a = paper_hit(pos + float2(-0.25, -0.25), edit.canvas_size, shape);
+    let b = paper_hit(pos + float2(0.25, -0.25), edit.canvas_size, shape);
+    let c = paper_hit(pos + float2(-0.25, 0.25), edit.canvas_size, shape);
+    let d = paper_hit(pos + float2(0.25, 0.25), edit.canvas_size, shape);
+    let photo = print_inked_at(a) + print_inked_at(b) + print_inked_at(c) + print_inked_at(d);
+    let inked = photo.z > 0.0 ? print_reflectance(print_ink(photo.xy / photo.z * shape, dx, dy), true) : float3(1.0);
+    let sum = print_edge_sample(a, inked, footprint, background)
+        + print_edge_sample(b, inked, footprint, background)
+        + print_edge_sample(c, inked, footprint, background)
+        + print_edge_sample(d, inked, footprint, background);
+    return measured<DisplayNits>(sum * 0.25);
 }
 
 [shader("fragment")]
