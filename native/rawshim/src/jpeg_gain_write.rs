@@ -64,6 +64,10 @@ pub fn combine(base: &[u8], alternate: &[u8], quality: i32) -> Result<Vec<u8>, S
         crate::rgb::RgbRef { width, height, data: &base_rgb },
         quality,
     )?;
+    let base_jpeg = match crate::avif::exif(base) {
+        Some(exif) => crate::jpeg::with_exif(&base_jpeg, &exif).ok_or("the EXIF does not fit a JPEG")?,
+        None => base_jpeg,
+    };
     let map_jpeg = encode_grey(&map, width, height, quality)?;
     let (base_jpeg, map_jpeg) = if orientation == 1 {
         (base_jpeg, map_jpeg)
@@ -175,26 +179,28 @@ fn segment(marker: u8, body: &[u8]) -> Vec<u8> {
     out
 }
 
-fn spliced(jpeg: Vec<u8>, segments: &[u8]) -> Vec<u8> {
+fn spliced(jpeg: Vec<u8>, at: usize, segments: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(jpeg.len() + segments.len());
-    out.extend_from_slice(&jpeg[..2]);
+    out.extend_from_slice(&jpeg[..at]);
     out.extend_from_slice(segments);
-    out.extend_from_slice(&jpeg[2..]);
+    out.extend_from_slice(&jpeg[at..]);
     out
 }
 
 /// The two pictures, their two spellings of the terms, and the index that binds them.
 fn assemble(base_jpeg: Vec<u8>, map_jpeg: Vec<u8>, terms: &Terms) -> Vec<u8> {
     let map_front = [segment(APP1, &xmp(&map_xmp(terms))), segment(APP2, &iso_payload(terms))].concat();
-    let map = spliced(map_jpeg, &map_front);
+    let map = spliced(map_jpeg, 2, &map_front);
 
     let directory = segment(APP1, &xmp(&primary_xmp(map.len())));
     // The primary states only that the standard is in the file; the terms themselves are in the
     // map's own segment, which is where libultrahdr puts them and where a reader looks for them.
     let iso_stub = segment(APP2, &[ISO_URN, &[0, 0, 0, 0]].concat());
+    // MPF follows the Exif APP1 where there is one, which is where its specification puts it.
+    let front_at = crate::jpeg::after_exif(&base_jpeg);
     // MPF's offsets are counted from the byte after its own tag: everything ahead of the segment,
     // then its marker and length, then the tag.
-    let index_at = 2 + directory.len();
+    let index_at = front_at + directory.len();
     let mpf_base = index_at + 4 + MPF_TAG.len();
     // The index's own size does not depend on what it states, so one pass over the lengths is
     // enough: two entries is always the same 82 bytes.
@@ -206,7 +212,7 @@ fn assemble(base_jpeg: Vec<u8>, map_jpeg: Vec<u8>, terms: &Terms) -> Vec<u8> {
         iso_stub,
     ]
     .concat();
-    let mut out = spliced(base_jpeg, &front);
+    let mut out = spliced(base_jpeg, front_at, &front);
     out.extend_from_slice(&map);
     out
 }
@@ -304,7 +310,7 @@ mod tests {
     const W: usize = 64;
     const H: usize = 48;
 
-    fn arms() -> (Vec<u8>, Vec<u8>) {
+    fn samples() -> (Vec<u8>, Vec<u16>) {
         let mut sdr = vec![0u8; W * H * 3];
         let mut hdr = vec![0u16; W * H * 3];
         for y in 0..H {
@@ -317,8 +323,15 @@ mod tests {
                 }
             }
         }
-        let base = crate::avif::encode_rgb8(sdr.into(), W, H, 20, 10, true).expect("the SDR arm");
-        let alternate = crate::avif::encode_still(
+        (sdr, hdr)
+    }
+
+    /// Both arms written at `rotate`, the SDR one carrying `exif`.
+    fn arms_written(rotate: u16, exif: Option<&[u8]>) -> (Vec<u8>, Vec<u8>) {
+        let (sdr, hdr) = samples();
+        let base = crate::avif::encode_rgb8_rotated(sdr.into(), W, H, 20, 10, true, rotate, exif)
+            .expect("the SDR arm");
+        let alternate = crate::avif::encode_still_rotated(
             hdr.into(),
             W,
             H,
@@ -328,9 +341,15 @@ mod tests {
                 quantizer: 20,
                 speed: 10,
             },
+            rotate,
+            None,
         )
         .expect("the HDR arm");
         (base, alternate)
+    }
+
+    fn arms() -> (Vec<u8>, Vec<u8>) {
+        arms_written(0, None)
     }
 
     /// The writer against the reader that already existed, which is the only claim spanning both.
@@ -371,5 +390,22 @@ mod tests {
         let (base, _) = arms();
         let small = crate::avif::encode_rgb8(vec![0u8; 8 * 8 * 3].into(), 8, 8, 20, 10, true).expect("a small arm");
         assert!(combine(&base, &small, 90).is_err());
+    }
+
+    /// The base's EXIF, with the turn the arms were written at added to it, and a map the MPF
+    /// index still leads to past the extra segment.
+    #[test]
+    fn the_base_carries_its_exif_and_its_turn() {
+        let exif = crate::exif::tests::block();
+        let (base, alternate) = arms_written(90, Some(&exif));
+
+        let file = combine(&base, &alternate, 90).expect("the combine");
+        let probe = crate::decode_rendered::probe(&file).expect("the header");
+        assert_eq!(probe.orientation, 6);
+        let carried = crate::exif::Recorded::parse(&probe.exif.expect("an EXIF block")).expect("it parses");
+        assert_eq!(carried.block(crate::exif::NON_IDENTIFYING), Some(exif));
+        assert!(crate::jpeg_gain::read(&file, None).is_some(), "the map is still found");
+        let at = |tag: &[u8]| file.windows(tag.len()).position(|window| window == tag).expect("the segment");
+        assert!(at(b"Exif\0\0") < at(MPF_TAG), "MPF follows the Exif APP1");
     }
 }

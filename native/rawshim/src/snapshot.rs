@@ -262,10 +262,10 @@ impl Snapshot {
 
     pub fn encode(&self) -> Vec<u8> {
         match self.coding {
-            Coding::Pq => crate::png_write::encode_hdr(&self.samples, self.width, self.height),
+            Coding::Pq => crate::png_write::encode_hdr(&self.samples, self.width, self.height, None),
             Coding::Srgb => {
                 let bytes: Vec<u8> = self.samples.iter().map(|&v| (v / 257) as u8).collect();
-                crate::png_write::encode_sdr(&bytes, self.width, self.height)
+                crate::png_write::encode_sdr(&bytes, self.width, self.height, None)
             }
         }
         .expect("the snapshot encodes")
@@ -465,7 +465,7 @@ pub fn side_by_side_png(before: Option<&Snapshot>, after: &Snapshot) -> Vec<u8> 
             }
         }
     }
-    crate::png_write::encode_sdr(&out, out_w, out_h).expect("the side-by-side encodes")
+    crate::png_write::encode_sdr(&out, out_w, out_h, None).expect("the side-by-side encodes")
 }
 
 /// Eight-bit sRGB to show a snapshot as, with `white` at SDR white.

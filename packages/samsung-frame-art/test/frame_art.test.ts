@@ -87,7 +87,7 @@ describe('FrameArt', () => {
       fake.emit({ event: 'ready_to_use', request_id: request.request_id, conn_info: fake.connInfo() });
     };
     tv.onTransfer = (socket) => {
-      socket.on('data', (chunk) => received.push(chunk));
+      socket.on('data', (chunk) => received.push(Buffer.from(chunk)));
       socket.on('end', () => {
         socket.end();
         tv.emit({ event: 'image_added', content_id: 'MY_F0042' });

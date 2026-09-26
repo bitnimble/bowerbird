@@ -158,10 +158,6 @@ png = "0.18.1"
 # under `png`; named here because this crate calls it directly.
 crc32fast = "1.5.0"
 rust_h265 = "0.1.0"
-# TIFF, which an export offers for getting a photograph into another editor rather than for
-# looking at: it holds sixteen bits happily and has no way to signal HDR that anything reads,
-# so `schemas/export.ts` marks it SDR whatever the reader asks for.
-tiff = "0.11.3"
 moxcms = "0.9.1"
 
 # The resize is single-threaded (no `rayon` feature) - it is already milliseconds, and the
@@ -252,3 +248,6 @@ naga = { version = "30.0", features = ["wgsl-in"] }
 # `upright_preview_rgb` reads `preview_jpegs` and has no other way in. Pinned to the version rawler
 # already builds, so this declares what is in the tree rather than adding to it.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# A second reader for what `tiff_write` writes, so the export is held against a decoder that is
+# not the writer's own.
+tiff = "0.11.3"

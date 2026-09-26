@@ -2011,7 +2011,7 @@ fn pano_of_two() -> (Composition, Vec<String>) {
                     samples[at + 2] = code.saturating_add(300).min(65535);
                 }
             }
-            let png = rawshim::png_write::encode_hdr(&samples, w, h).expect("a fixture source");
+            let png = rawshim::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
             std::fs::write(&path, &png).expect("writing the fixture source");
             path.to_string_lossy().into_owned()
         })
@@ -2124,7 +2124,7 @@ fn assembly_of_three() -> (Composition, Vec<String>) {
                     samples[at + 2] = code.saturating_add(300).min(65535);
                 }
             }
-            let png = rawshim::png_write::encode_hdr(&samples, w, h).expect("a fixture source");
+            let png = rawshim::png_write::encode_hdr(&samples, w, h, None).expect("a fixture source");
             std::fs::write(&path, &png).expect("writing the fixture source");
             path.to_string_lossy().into_owned()
         })

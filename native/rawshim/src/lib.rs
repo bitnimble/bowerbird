@@ -138,6 +138,7 @@ pub mod dust;
 pub mod dust_find;
 /// The editor's open half. The tick that follows it is the client's GPU.
 pub mod edit;
+pub mod exif;
 #[cfg(feature = "renditions")]
 pub mod ffi;
 pub mod fit;
@@ -610,6 +611,7 @@ pub fn save_avif_frame(
     full_chroma: bool,
     out_path: &str,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<(), String> {
     avif::encode_rendition_rotated(
         source.data.into(),
@@ -620,6 +622,7 @@ pub fn save_avif_frame(
         full_chroma,
         out_path,
         rotate,
+        exif,
     )
 }
 

@@ -735,8 +735,9 @@ pub fn encode_frame(
     height: usize,
     options: &EncodeOptions,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    crate::avif::save_still(frame, width, height, &still_options(options), &options.output_path, rotate)
+    crate::avif::save_still(frame, width, height, &still_options(options), &options.output_path, rotate, exif)
 }
 
 /// [`encode_frame`] for a frame graded a band of whole rows at a time, written as a grid of them.
@@ -746,8 +747,9 @@ pub fn encode_bands(
     width: usize,
     options: &EncodeOptions,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    crate::avif::save_still_bands(bands, width, &still_options(options), &options.output_path, rotate)
+    crate::avif::save_still_bands(bands, width, &still_options(options), &options.output_path, rotate, exif)
 }
 
 #[cfg(feature = "renditions")]
@@ -822,7 +824,7 @@ pub fn encode_pq_frame(
     height: usize,
     options: &EncodeOptions,
 ) -> Result<(), String> {
-    encode_pq_frame_rotated(frame, width, height, options, 0)
+    encode_pq_frame_rotated(frame, width, height, options, 0, None)
 }
 
 #[cfg(feature = "renditions")]
@@ -832,7 +834,8 @@ pub fn encode_pq_frame_rotated(
     height: usize,
     options: &EncodeOptions,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<(), String> {
     // Handed over rather than lent, so libavif takes the frame rather than a copy of it.
-    encode_frame(std::borrow::Cow::Owned(frame), width, height, options, rotate)
+    encode_frame(std::borrow::Cow::Owned(frame), width, height, options, rotate, exif)
 }

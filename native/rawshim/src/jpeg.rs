@@ -169,6 +169,12 @@ pub fn with_added_rotation(jpeg: &[u8], rotate: u16) -> Option<Vec<u8>> {
     with_orientation(jpeg, tag as u16)
 }
 
+/// The byte past the Exif APP1, or past the SOI where there is none: where the segments that
+/// follow EXIF go.
+pub(crate) fn after_exif(jpeg: &[u8]) -> usize {
+    exif_app1(jpeg).map_or(2, |(_, tiff)| tiff.end)
+}
+
 /// The length field of the Exif APP1, and the TIFF block inside it.
 fn exif_app1(jpeg: &[u8]) -> Option<(usize, std::ops::Range<usize>)> {
     let mut at = 2;
@@ -304,14 +310,23 @@ fn spliced(jpeg: &[u8], orientation: u16) -> Option<Vec<u8>> {
         orientation.to_le_bytes()[0], orientation.to_le_bytes()[1], 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00,
     ];
+    with_exif(jpeg, &tiff)
+}
+
+/// The same JPEG carrying `tiff` as its Exif APP1, for one that has none. None where it is not a
+/// JPEG or the block is more than a segment holds.
+pub fn with_exif(jpeg: &[u8], tiff: &[u8]) -> Option<Vec<u8>> {
+    if !jpeg.starts_with(&[0xff, 0xd8]) {
+        return None;
+    }
     // The length field counts itself and the payload, but not the marker.
-    let length = (2 + 6 + tiff.len()) as u16;
+    let length = u16::try_from(2 + 6 + tiff.len()).ok()?;
     let mut out = Vec::with_capacity(jpeg.len() + 2 + usize::from(length));
     out.extend_from_slice(&jpeg[..2]);
     out.extend_from_slice(&[0xff, 0xe1]);
     out.extend_from_slice(&length.to_be_bytes());
     out.extend_from_slice(b"Exif\0\0");
-    out.extend_from_slice(&tiff);
+    out.extend_from_slice(tiff);
     out.extend_from_slice(&jpeg[2..]);
     Some(out)
 }

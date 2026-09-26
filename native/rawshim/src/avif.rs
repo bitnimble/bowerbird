@@ -220,6 +220,26 @@ pub fn decode(bytes: &[u8]) -> Result<Rgb, String> {
     Ok(Rgb { width, height, data: data.iter().map(|v| *v as u8).collect() })
 }
 
+/// The EXIF block an AVIF carries, read off the container without decoding a pixel.
+pub fn exif(bytes: &[u8]) -> Option<Vec<u8>> {
+    let decoder = Decoder::new().ok()?;
+    // SAFETY: the decoder is live for the block and reads `bytes`, which outlives it; the image it
+    // parses into is its own, and the EXIF is copied out before either is freed.
+    #[expect(unsafe_code)]
+    unsafe {
+        if raw::avifDecoderSetIOMemory(decoder.0, bytes.as_ptr(), bytes.len()) != AVIF_RESULT_OK
+            || raw::avifDecoderParse(decoder.0) != AVIF_RESULT_OK
+        {
+            return None;
+        }
+        let image = (*decoder.0).image;
+        if image.is_null() || (*image).exif.data.is_null() || (*image).exif.size == 0 {
+            return None;
+        }
+        Some(std::slice::from_raw_parts((*image).exif.data, (*image).exif.size).to_vec())
+    }
+}
+
 /// The same decode at whatever depth the caller can use, widened to one sample per `u16`.
 ///
 /// 8 bits is a floor a measurement trips over: one 8-bit step of a PQ signal is four of the
@@ -405,21 +425,23 @@ pub fn encode_still(
     height: usize,
     options: &StillOptions,
 ) -> Result<Vec<u8>, String> {
-    encode_still_rotated(pq, width, height, options, 0)
+    encode_still_rotated(pq, width, height, options, 0, None)
 }
 
+/// `exif` is a TIFF block (`crate::exif`).
 pub(crate) fn encode_still_rotated(
     pq: std::borrow::Cow<'_, [u16]>,
     width: usize,
     height: usize,
     options: &StillOptions,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     if pq.len() < width * height * 3 {
         return Err(format!("frame is {} samples, expected {}", pq.len(), width * height * 3));
     }
     encode_avif(pq, 16, AVIF_RANGE_LIMITED, width, height, AVIF_DEPTH, options.format,
-        &options.cicp, options.quantizer, options.speed, rotate)
+        &options.cicp, options.quantizer, options.speed, rotate, exif)
 }
 
 /// `encode_still` to a file, for the renditions.
@@ -430,8 +452,9 @@ pub fn save_still(
     options: &StillOptions,
     out_path: &str,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    let file = encode_still_rotated(pq, width, height, options, rotate)?;
+    let file = encode_still_rotated(pq, width, height, options, rotate, exif)?;
     std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
 }
 
@@ -443,13 +466,15 @@ pub fn save_still_bands(
     options: &StillOptions,
     out_path: &str,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<(), String> {
     let file = encode_grid(bands, 16, AVIF_RANGE_LIMITED, width, AVIF_DEPTH, options.format,
-        &options.cicp, options.quantizer, options.speed, rotate)?;
+        &options.cicp, options.quantizer, options.speed, rotate, exif)?;
     std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
 }
 
 /// [`encode_rendition_rotated`] for a rendition that arrives as bands of whole rows.
+#[allow(clippy::too_many_arguments)]
 pub fn save_rendition_bands(
     bands: Vec<Vec<u8>>,
     width: usize,
@@ -458,12 +483,13 @@ pub fn save_rendition_bands(
     full_chroma: bool,
     out_path: &str,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<(), String> {
     let format = match full_chroma {
         true => AVIF_PIXEL_FORMAT_YUV444,
         false => AVIF_PIXEL_FORMAT_YUV420,
     };
-    let file = encode_grid(bands, 8, AVIF_RANGE_FULL, width, 8, format, &SRGB, quantizer, speed, rotate)?;
+    let file = encode_grid(bands, 8, AVIF_RANGE_FULL, width, 8, format, &SRGB, quantizer, speed, rotate, exif)?;
     std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
 }
 
@@ -484,9 +510,10 @@ pub fn encode_rgb8(
     speed: i32,
     full_chroma: bool,
 ) -> Result<Vec<u8>, String> {
-    encode_rgb8_rotated(rgb8, width, height, quantizer, speed, full_chroma, 0)
+    encode_rgb8_rotated(rgb8, width, height, quantizer, speed, full_chroma, 0, None)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_rgb8_rotated(
     rgb8: std::borrow::Cow<'_, [u8]>,
     width: usize,
@@ -495,6 +522,7 @@ pub(crate) fn encode_rgb8_rotated(
     speed: i32,
     full_chroma: bool,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     if rgb8.len() < width * height * 3 {
         return Err(format!("frame is {} bytes, expected {}", rgb8.len(), width * height * 3));
@@ -503,7 +531,7 @@ pub(crate) fn encode_rgb8_rotated(
         true => AVIF_PIXEL_FORMAT_YUV444,
         false => AVIF_PIXEL_FORMAT_YUV420,
     };
-    encode_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &SRGB, quantizer, speed, rotate)
+    encode_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &SRGB, quantizer, speed, rotate, exif)
 }
 
 /// sRGB primaries, sRGB transfer, BT.601 matrix.
@@ -519,9 +547,10 @@ pub fn encode_rendition(
     full_chroma: bool,
     out_path: &str,
 ) -> Result<(), String> {
-    encode_rendition_rotated(rgb8, width, height, quantizer, speed, full_chroma, out_path, 0)
+    encode_rendition_rotated(rgb8, width, height, quantizer, speed, full_chroma, out_path, 0, None)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn encode_rendition_rotated(
     rgb8: std::borrow::Cow<'_, [u8]>,
     width: usize,
@@ -531,8 +560,9 @@ pub fn encode_rendition_rotated(
     full_chroma: bool,
     out_path: &str,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<(), String> {
-    let file = encode_rgb8_rotated(rgb8, width, height, quantizer, speed, full_chroma, rotate)?;
+    let file = encode_rgb8_rotated(rgb8, width, height, quantizer, speed, full_chroma, rotate, exif)?;
     std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
 }
 
@@ -666,8 +696,9 @@ fn encode_avif<T: Clone>(
     quantizer: i32,
     speed: i32,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
-    let image = converted(rgb, rgb_depth, range, width, height, depth, format, cicp, rotate)?;
+    let image = converted(rgb, rgb_depth, range, width, height, depth, format, cicp, rotate, exif)?;
     let encoder = configured(quantizer, speed)?;
     let mut output = Output::empty();
     // SAFETY: both handles are live for the call, and `output` is libavif's to fill.
@@ -691,6 +722,7 @@ fn encode_grid<T: Clone>(
     quantizer: i32,
     speed: i32,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     let rows = u32::try_from(bands.len()).map_err(|_| "too many bands for a grid".to_string())?;
     debug_assert!(
@@ -700,7 +732,7 @@ fn encode_grid<T: Clone>(
         "every band but the last is one height, and the last no taller",
     );
     let mut cells = Vec::with_capacity(bands.len());
-    for band in bands {
+    for (index, band) in bands.into_iter().enumerate() {
         let height = band.len() / (width * 3);
         cells.push(converted(
             std::borrow::Cow::Owned(band),
@@ -712,6 +744,8 @@ fn encode_grid<T: Clone>(
             format,
             cicp,
             rotate,
+            // libavif writes the grid's metadata from its first cell.
+            exif.filter(|_| index == 0),
         )?);
     }
     let encoder = configured(quantizer, speed)?;
@@ -747,16 +781,24 @@ fn converted<T: Clone>(
     format: raw::avifPixelFormat,
     cicp: &Cicp,
     rotate: u16,
+    exif: Option<&[u8]>,
 ) -> Result<Image, String> {
     if rotate % 90 != 0 {
         return Err(format!("rotation must be a quarter turn: {rotate}"));
     }
     let image = Image::sized(width as u32, height as u32, depth, format)?;
 
-    // SAFETY: every pointer below is either the handle above or points into `rgb`, which outlives
-    // the conversion.
+    // SAFETY: every pointer below is either the handle above or points into `rgb` or `exif`, which
+    // outlive the calls that read them.
     #[expect(unsafe_code)]
     unsafe {
+        // Ahead of the turn: libavif sets `irot` from an Orientation tag it finds in the block.
+        if let Some(exif) = exif {
+            let status = raw::avifImageSetMetadataExif(image.0, exif.as_ptr(), exif.len());
+            if status != AVIF_RESULT_OK {
+                return Err(format!("libavif refused the EXIF: {}", message(status)));
+            }
+        }
         (*image.0).yuvRange = range;
         (*image.0).colorPrimaries = cicp.primaries;
         (*image.0).transferCharacteristics = cicp.transfer;
@@ -916,7 +958,7 @@ mod tests {
             }
         }
         let encode = |rotate| {
-            encode_rgb8_rotated((&frame[..]).into(), width, height, 0, 10, true, rotate)
+            encode_rgb8_rotated((&frame[..]).into(), width, height, 0, 10, true, rotate, None)
                 .expect("AVIF encode")
         };
         let unturned = encode(0);
@@ -969,6 +1011,7 @@ mod tests {
                 speed: 10,
             },
             90,
+            None,
         )
         .expect("HDR still");
         let dir = std::env::temp_dir().join(format!("bb-orientation-roll-{}", std::process::id()));
@@ -1090,7 +1133,7 @@ mod tests {
             quantizer: 0,
             speed: 10,
         };
-        save_still_bands(bands, width, &options, path.to_str().expect("a path"), 0)
+        save_still_bands(bands, width, &options, path.to_str().expect("a path"), 0, None)
             .expect("the encode");
         let (read, read_width, read_height) =
             decode_at(&std::fs::read(&path).expect("the file"), 16).expect("the decode");
@@ -1098,6 +1141,51 @@ mod tests {
         assert_eq!((read_width, read_height), (width, height));
         let worst = frame.iter().zip(&read).map(|(a, b)| a.abs_diff(*b)).max().expect("pixels");
         assert!(worst <= 1024, "the round trip moved a sample by {worst} of 65535");
+    }
+
+    /// A block with an Orientation tag in it, which libavif turns into `irot` if it is allowed to.
+    fn turned_exif() -> Vec<u8> {
+        let mut out = Vec::new();
+        let tiff =
+            rawler::formats::tiff::writer::TiffWriter::new(std::io::Cursor::new(&mut out)).expect("a writer");
+        let mut root = rawler::formats::tiff::writer::DirectoryWriter::new();
+        root.add_tag(rawler::tags::ExifTag::Model, "ILCE-7M4");
+        root.add_tag(rawler::tags::ExifTag::Orientation, 6u16);
+        tiff.build(root).expect("the block");
+        out
+    }
+
+    #[test]
+    fn a_still_carries_its_exif_and_keeps_its_own_turn() {
+        let exif = turned_exif();
+        let frame = vec![128u8; 16 * 8 * 3];
+        let bytes = encode_rgb8_rotated(frame.into(), 16, 8, 20, 10, true, 180, Some(&exif))
+            .expect("the encode");
+
+        assert_eq!(super::exif(&bytes).as_deref(), Some(&exif[..]));
+        let turn = crate::heif::read(&bytes).expect("the container").primary.turn;
+        assert_eq!(turn, rawler::decoders::Orientation::Rotate180);
+    }
+
+    #[test]
+    fn a_still_written_in_bands_carries_its_exif() {
+        let exif = turned_exif();
+        let bands = vec![vec![128u8; 64 * 64 * 3]; 2];
+        let dir = std::env::temp_dir().join(format!("bb-avif-bands-exif-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("bands.avif");
+        save_rendition_bands(bands, 64, 20, 10, true, path.to_str().expect("a path"), 0, Some(&exif))
+            .expect("the encode");
+        let bytes = std::fs::read(&path).expect("the file");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(super::exif(&bytes).as_deref(), Some(&exif[..]));
+    }
+
+    #[test]
+    fn a_still_written_without_exif_reads_back_with_none() {
+        let bytes = encode_rgb8(vec![128u8; 16 * 8 * 3].into(), 16, 8, 20, 10, true).expect("the encode");
+        assert_eq!(super::exif(&bytes), None);
     }
 
     /// Every grid tile is 4:2:0, which is a different conversion inside libavif and the one this
@@ -1192,6 +1280,7 @@ mod tests {
                 quantizer,
                 10,
                 0,
+                None,
             )
             .expect("the encode")
             .len()
