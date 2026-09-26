@@ -12,8 +12,9 @@ runs:
       run: |
         set -eu
         while :; do
+          # A failed poll is retried: failing here would throw away the build before it.
           state=$(gh run view "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" --json jobs \
-            -q '.jobs[] | select(.name == "wasm") | "\(.status) \(.conclusion)"')
+            -q '.jobs[] | select(.name == "wasm") | "\(.status) \(.conclusion)"') || state=
           case "$state" in
             "completed success") break ;;
             completed*) echo "::error::the wasm job ended $state"; exit 1 ;;
