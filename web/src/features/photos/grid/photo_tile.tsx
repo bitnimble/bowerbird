@@ -56,9 +56,10 @@ function rowName(photo: PhotoSummary): string {
 // points back at it, which is up in the gallery and sideways along the foot.
 export const InStrip = createContext<'x' | 'y' | null>(null);
 
-// The tick box that starts a selection, and the only way into one with the
-// pointer: the frame itself opens the photo (§18.3.1). Drawn only while the tile
-// is hovered or holds focus, so a grid nobody is choosing from is photographs and
+// The tick box that starts a selection, and the only way into one with a mouse
+// (a touch screen has the long press): the frame itself opens the photo (§18.3.1).
+// Drawn only while the tile is hovered or holds focus, or on a touch screen while
+// anything is selected, so a grid nobody is choosing from is photographs and
 // nothing else.
 // isFocused arrives as a prop rather than being read from the store here. Every
 // tile reading store.focusIndex meant one shared scalar changing re-rendered the
@@ -320,6 +321,7 @@ export const PhotoTile = observer(function PhotoTile({
         <>
           <PhotoTilePick
             checked={selected}
+            selecting={selecting}
             name={name}
             onToggle={(e) => {
               // extendTo moves the cursor itself, so it is not preceded by focusAt.
@@ -492,6 +494,8 @@ export const BandMember = observer(function BandMember({ photo }: { photo: Photo
       role="listitem"
       aria-current={open ? 'page' : undefined}
       aria-busy={!loaded}
+      // What a long press dragged over a band picks (`TouchSweep`): a member has no position.
+      data-member-id={photo.id}
     >
       {/* A link for the same reason a tile's frame is one: the context menu and
           the middle click open a member in a tab of its own. */}
@@ -521,6 +525,7 @@ export const BandMember = observer(function BandMember({ photo }: { photo: Photo
 
       <PhotoTilePick
         checked={selected}
+        selecting={marks.hasSelection}
         name={name}
         onToggle={(e) => (e.shiftKey ? photos.extendMembersTo(photo) : photos.toggleMember(photo))}
       />

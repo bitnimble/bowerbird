@@ -15,6 +15,7 @@ import { cells, viewport } from './photo_grid_styles';
 import { BandTiles, MasonryBlock, sectionStyle, tilesFor } from './photo_bands';
 import { GridScrollbar } from './grid_scrollbar';
 import { GridKeys } from './grid_keys';
+import { TouchSweep } from './touch_sweep';
 
 // The scrollers' ids, so each drawn scrollbar can name what it controls.
 const SCROLLER_ID = 'grid-scroller';
@@ -177,6 +178,13 @@ const GridScroller = observer(function GridScroller(): JSX.Element {
     });
     observer.observe(element);
     return () => observer.disconnect();
+  }, [photos]);
+
+  useEffect(() => {
+    const element = scroller.current;
+    if (element == null) return;
+    const sweep = new TouchSweep(element, photos);
+    return () => sweep.dispose();
   }, [photos]);
 
   // The scroller follows `store.rail.top`. A reaction rather than an effect, so that

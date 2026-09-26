@@ -29,17 +29,28 @@ const styles = stylex.create({
     color: color.bone,
     cursor: 'pointer',
     // :focus-visible rather than :focus-within, so the box a click left focused does not stay
-    // drawn on a tile the pointer has moved off. No hover on a phone, and without it a phone
-    // cannot select at all.
+    // drawn on a tile the pointer has moved off. A finger has no hover and a tap leaves one
+    // stuck, so on a touch screen the box waits for a long press to start a selection, and until
+    // then does not take a tap meant for the photo.
+    opacity: {
+      default: 0,
+      [stylex.when.ancestor(':hover', tileMarker)]: 1,
+      [stylex.when.ancestor(':has(:focus-visible)', tileMarker)]: 1,
+      [COARSE]: 0,
+    },
+    pointerEvents: { default: null, [COARSE]: 'none' },
+    transitionProperty: 'opacity',
+    transitionDuration: '120ms',
+    transitionTimingFunction: 'ease',
+  },
+  selecting: {
     opacity: {
       default: 0,
       [stylex.when.ancestor(':hover', tileMarker)]: 1,
       [stylex.when.ancestor(':has(:focus-visible)', tileMarker)]: 1,
       [COARSE]: 1,
     },
-    transitionProperty: 'opacity',
-    transitionDuration: '120ms',
-    transitionTimingFunction: 'ease',
+    pointerEvents: 'auto',
   },
   picked: {
     opacity: 1,
@@ -56,10 +67,13 @@ const styles = stylex.create({
 
 export function PhotoTilePick({
   checked,
+  selecting,
   name,
   onToggle,
 }: {
   checked: boolean;
+  /** Whether anything in the grid is selected. */
+  selecting: boolean;
   name: string;
   /** Takes the event: shift-click extends a span here as it does on the frame. */
   onToggle: (event: React.MouseEvent) => void;
@@ -67,7 +81,7 @@ export function PhotoTilePick({
   return (
     <button
       type="button"
-      {...stylex.props(styles.pick, checked && styles.picked, focusRing.ring)}
+      {...stylex.props(styles.pick, selecting && styles.selecting, checked && styles.picked, focusRing.ring)}
       role="checkbox"
       aria-checked={checked}
       aria-label={PhotoGridStrings.pick(name)}

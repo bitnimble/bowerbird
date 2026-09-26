@@ -76,6 +76,53 @@ test('a shift-click back from an unpicked photo unpicks the span', () => {
   expect(positions(store)).toEqual([0, 1, 2, 4, 5, 7, 8, 9]);
 });
 
+test('a long press picks a photo, and dragging on picks the run back to it', () => {
+  const { store, presenter } = build();
+  presenter.toggle(0);
+  presenter.startSweep(3);
+  expect(positions(store)).toEqual([0, 3]);
+  expect(store.focusIndex).toBe(3);
+
+  presenter.sweepTo(6);
+  expect(positions(store)).toEqual([0, 3, 4, 5, 6]);
+  expect(store.focusIndex).toBe(6);
+
+  // Dragged back past the anchor, the run follows the finger rather than keeping what it covered.
+  presenter.sweepTo(1);
+  expect(positions(store)).toEqual([0, 1, 2, 3]);
+
+  presenter.endSweep();
+  presenter.sweepTo(9);
+  expect(positions(store)).toEqual([0, 1, 2, 3]);
+
+  // And the anchor it leaves is a shift-click's too.
+  presenter.extendTo(5);
+  expect(positions(store)).toEqual([0, 1, 2, 3, 4, 5]);
+});
+
+test('a long press on a picked photo unpicks the run dragged over', () => {
+  const { store, presenter } = build();
+  presenter.selectAll();
+  presenter.startSweep(5);
+  presenter.sweepTo(2);
+  presenter.endSweep();
+  expect(positions(store)).toEqual([0, 1, 6, 7, 8, 9]);
+});
+
+test('a long press inside a band drags over its members the way a shift-click spans them', () => {
+  const { store, presenter } = build();
+  presenter.startMemberSweep('m0');
+  presenter.sweepMembersTo('m2');
+  expect([...store.selectedMembers].sort()).toEqual(['m0', 'm1', 'm2']);
+
+  presenter.sweepMembersTo('m1');
+  expect([...store.selectedMembers].sort()).toEqual(['m0', 'm1']);
+
+  presenter.endSweep();
+  presenter.sweepMembersTo('m2');
+  expect([...store.selectedMembers].sort()).toEqual(['m0', 'm1']);
+});
+
 // A stack's row stands for every photograph under it (§19.6.1), so a span that
 // crosses one is a span over its whole contents - three of the five here - and
 // the band open under it has to draw them that way.

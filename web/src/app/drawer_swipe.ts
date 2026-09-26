@@ -85,8 +85,9 @@ export function useDrawerSwipe({
     const move = (event: TouchEvent): void => {
       if (from == null) return;
       const touch = event.touches[0];
-      // A second finger is a pinch or a scroll being steadied, not this.
-      if (touch == null || event.touches.length !== 1) {
+      // A second finger is a pinch or a scroll being steadied, not this, and a move already
+      // prevented belongs to whatever prevented it: a long press dragging over photos to pick them.
+      if (touch == null || event.touches.length !== 1 || event.defaultPrevented) {
         from = null;
         return;
       }

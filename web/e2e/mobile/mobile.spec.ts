@@ -6,11 +6,14 @@ import {
   editPreview,
   editTools,
   firstPhotoId,
+  frames,
   gallery,
   gotoLibrary,
   gotoPhoto,
   openPhoto,
   photoStage,
+  picks,
+  selectedTiles,
   shownFrame,
   tiles,
   useLibrary,
@@ -61,6 +64,26 @@ async function pinch(page: Page, centre: { x: number; y: number }, from: number,
   }
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await cdp.detach();
+}
+
+// A finger held still until the long press picks or unpicks the photo under it, then dragged along
+// `path` before letting go.
+async function longPress(page: Page, from: { x: number; y: number }, ...path: { x: number; y: number }[]): Promise<void> {
+  const before = await selectedTiles(page).count();
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [from] });
+  await expect(selectedTiles(page)).not.toHaveCount(before);
+  for (const point of path) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.detach();
+}
+
+async function centreOf(locator: Locator): Promise<{ x: number; y: number }> {
+  const box = await locator.boundingBox();
+  if (box == null) throw new Error('nothing to press');
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
 async function openFirstPhoto(page: Page): Promise<void> {
@@ -136,6 +159,64 @@ test('the drawer follows the finger rather than snapping open at the end', async
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await cdp.detach();
   await expect(sidebar).not.toBeVisible();
+});
+
+test('a long press picks a photo, and dragging on from it picks the run', async ({ page }) => {
+  await gotoLibrary(page, PHONE_PHOTOS_DIR);
+  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
+  const grid = page.url();
+  // No hover to reveal a tick box with, and a tap leaves one stuck: until something is picked a
+  // phone's grid is photographs alone.
+  await expect(picks(page).first()).toHaveCSS('opacity', '0');
+
+  const [first, second] = [await centreOf(frames(page).nth(0)), await centreOf(frames(page).nth(1))];
+  await longPress(page, first);
+  await expect(selectedTiles(page)).toHaveCount(1);
+  await expect(picks(page).nth(0)).toBeChecked();
+  // Held, not tapped: the photo it picked is not opened as well.
+  expect(page.url()).toBe(grid);
+  await expect(picks(page).nth(1)).toHaveCSS('opacity', '1');
+
+  // On a picked photo it unpicks, which leaves nothing chosen and the boxes put away again.
+  await longPress(page, first);
+  await expect(selectedTiles(page)).toHaveCount(0);
+  await expect(picks(page).first()).toHaveCSS('opacity', '0');
+
+  await longPress(page, first, { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }, second);
+  await expect(selectedTiles(page)).toHaveCount(2);
+  expect(page.url()).toBe(grid);
+  // A drag across the grid is otherwise the drawer's, and this one was taken by the pick.
+  await expect(drawer(page)).not.toBeVisible();
+});
+
+test('a drag held at the foot of the grid scrolls it, picking what comes into view', async ({ page }) => {
+  await gotoLibrary(page, PHONE_PHOTOS_DIR);
+  await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length);
+  await page.getByRole('button', { name: 'Grid options' }).click();
+  await page.getByRole('slider', { name: 'Thumbnail size' }).press('End');
+  await page.keyboard.press('Escape');
+  // One photo a row, and a window that stops just above the second, which with 2 photos is the
+  // only way to have somewhere to scroll to.
+  const below = await frames(page).nth(1).boundingBox();
+  if (below == null) throw new Error('the second photo has no box');
+  await page.setViewportSize({ width: 390, height: Math.floor(below.y) - 2 });
+  await expect(frames(page).nth(1)).not.toBeInViewport();
+
+  const box = await gallery(page).boundingBox();
+  if (box == null) throw new Error('the grid has no box');
+  expect(box.y + box.height).toBeLessThanOrEqual(Math.floor(below.y) - 2);
+  const first = await centreOf(frames(page).nth(0));
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first] });
+  await expect(selectedTiles(page)).toHaveCount(1);
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: first.x, y: box.y + box.height - 4 }],
+  });
+  // Held still: nothing moves under the finger but the grid.
+  await expect(selectedTiles(page)).toHaveCount(2);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.detach();
 });
 
 test('swiping the frame steps to the next photo and back', async ({ page }) => {
