@@ -7,22 +7,18 @@
 
 use crate::raw;
 
-// **Each takes the type bindgen gave its own enum, rather than naming a width.** A C enum with no
-// negative member is `unsigned int` to the Unixes and `int` to MSVC, so a constant written `u32`
-// here is one the same comparison rejects on Windows - 70 of them, all reading `expected i32,
-// found u32`. The alias follows whichever the header was read as.
-const JXL_ENC_SUCCESS: raw::JxlEncoderStatus = 0;
-const JXL_ENC_NEED_MORE_OUTPUT: raw::JxlEncoderStatus = 2;
-const JXL_TYPE_UINT8: raw::JxlDataType = 2;
-const JXL_TYPE_UINT16: raw::JxlDataType = 3;
-const JXL_NATIVE_ENDIAN: raw::JxlEndianness = 0;
-const JXL_COLOR_SPACE_RGB: raw::JxlColorSpace = 0;
-const JXL_WHITE_POINT_D65: raw::JxlWhitePoint = 1;
-const JXL_PRIMARIES_SRGB: raw::JxlPrimaries = 1;
-const JXL_PRIMARIES_2100: raw::JxlPrimaries = 9;
-const JXL_TRANSFER_FUNCTION_SRGB: raw::JxlTransferFunction = 13;
-const JXL_TRANSFER_FUNCTION_PQ: raw::JxlTransferFunction = 16;
-const JXL_RENDERING_INTENT_RELATIVE: raw::JxlRenderingIntent = 1;
+const JXL_ENC_SUCCESS: raw::JxlEncoderStatus = raw::JxlEncoderStatus::JXL_ENC_SUCCESS;
+const JXL_ENC_NEED_MORE_OUTPUT: raw::JxlEncoderStatus = raw::JxlEncoderStatus::JXL_ENC_NEED_MORE_OUTPUT;
+const JXL_TYPE_UINT8: raw::JxlDataType = raw::JxlDataType::JXL_TYPE_UINT8;
+const JXL_TYPE_UINT16: raw::JxlDataType = raw::JxlDataType::JXL_TYPE_UINT16;
+const JXL_NATIVE_ENDIAN: raw::JxlEndianness = raw::JxlEndianness::JXL_NATIVE_ENDIAN;
+const JXL_COLOR_SPACE_RGB: raw::JxlColorSpace = raw::JxlColorSpace::JXL_COLOR_SPACE_RGB;
+const JXL_WHITE_POINT_D65: raw::JxlWhitePoint = raw::JxlWhitePoint::JXL_WHITE_POINT_D65;
+const JXL_PRIMARIES_SRGB: raw::JxlPrimaries = raw::JxlPrimaries::JXL_PRIMARIES_SRGB;
+const JXL_PRIMARIES_2100: raw::JxlPrimaries = raw::JxlPrimaries::JXL_PRIMARIES_2100;
+const JXL_TRANSFER_FUNCTION_SRGB: raw::JxlTransferFunction = raw::JxlTransferFunction::JXL_TRANSFER_FUNCTION_SRGB;
+const JXL_TRANSFER_FUNCTION_PQ: raw::JxlTransferFunction = raw::JxlTransferFunction::JXL_TRANSFER_FUNCTION_PQ;
+const JXL_RENDERING_INTENT_RELATIVE: raw::JxlRenderingIntent = raw::JxlRenderingIntent::JXL_RENDERING_INTENT_RELATIVE;
 
 /// Eight-bit sRGB, which is what the SDR render holds. `exif` is a TIFF block (`crate::exif`).
 pub fn encode_sdr(

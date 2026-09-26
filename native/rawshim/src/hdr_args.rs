@@ -132,8 +132,8 @@ impl Chroma {
     #[cfg(feature = "renditions")]
     pub fn avif_format(self) -> crate::raw::avifPixelFormat {
         match self {
-            Chroma::Yuv420 => 3,
-            Chroma::Yuv444 => 1,
+            Chroma::Yuv420 => crate::raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV420,
+            Chroma::Yuv444 => crate::raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
         }
     }
 

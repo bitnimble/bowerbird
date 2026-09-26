@@ -15,14 +15,12 @@
 
 use crate::raw;
 
-// The enums take the type bindgen gave them rather than a width, for `avif.rs`'s reason: MSVC
-// types a C enum `int` where the Unixes type it `unsigned int`. The two transform bits are a flag
-// set, `uint32_t` everywhere.
-pub(crate) const AVIF_RESULT_OK: raw::avifResult = 0;
+pub(crate) const AVIF_RESULT_OK: raw::avifResult = raw::avifResult::AVIF_RESULT_OK;
+// Flag set bits, for `avif.rs`'s reason: an enum's `.0` is `int` to MSVC.
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
 const AVIF_TRANSFORM_IMIR: u32 = 1 << 3;
-const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = 0;
-const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat = 3;
+const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = raw::avifRGBFormat::AVIF_RGB_FORMAT_RGB;
+const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat = raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV420;
 /// Rec.2020 primaries, PQ, Rec.2020 non-constant luminance: what every HDR still here is.
 pub(crate) const HDR_CICP: (u16, u16) = (9, 16);
 /// sRGB primaries and transfer, which is what the SDR arm is written as.
@@ -238,7 +236,7 @@ mod tests {
             H,
             &crate::avif::StillOptions {
                 cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
-                format: 1,
+                format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 20,
                 speed: 10,
             },
@@ -287,7 +285,7 @@ mod tests {
             H,
             &crate::avif::StillOptions {
                 cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
-                format: 1,
+                format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 10,
                 speed: 10,
             },
@@ -330,7 +328,7 @@ mod tests {
             H,
             &crate::avif::StillOptions {
                 cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
-                format: 1,
+                format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 20,
                 speed: 10,
             },
