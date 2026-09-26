@@ -31,21 +31,22 @@ fixed by editing the release.
 
 ### 23.2 `release.yml`: a platform, and what it is called there
 
-The binaries carry versions and bundler-chosen suffixes - `Bowerbird_0.2.0_amd64.deb`,
-`Bowerbird_0.2.0_x64-setup.exe` - so a client that built the filename itself would be one
-bundler upgrade away from 404ing every platform at once. The manifest maps the platform to
-whatever they actually came out called:
+The workflow names every installer `Bowerbird_<version>_<platform><kind>` -
+`Bowerbird_0.2.0_macos-aarch64.dmg`, `Bowerbird_0.2.0_windows-x86_64-setup.exe` - but the kind
+is whichever bundle a platform ships, so a client that built the filename itself would 404
+the day a platform changed bundler. The manifest maps the platform to whatever they actually
+came out called:
 
 ```yaml
 version: 0.2.0
 tag: v0.2.0
 assets:
   macos-aarch64:
-    installer: Bowerbird_0.2.0_aarch64.dmg
+    installer: Bowerbird_0.2.0_macos-aarch64.dmg
     payload: bowerbird-payload-macos-aarch64.tar.gz
     payload_sha256: 9f2…
   android-aarch64:
-    installer: Bowerbird_0.2.0.apk
+    installer: Bowerbird_0.2.0_android-aarch64.apk
   docker-x86_64:
     image: ghcr.io/bitnimble/bowerbird:0.2.0
     payload: bowerbird-payload-docker-x86_64.tar.gz
