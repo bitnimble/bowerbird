@@ -82,7 +82,6 @@ export const PhotoTile = observer(function PhotoTile({
   const marks = useMarksStore();
   const stacks = useStacksStore();
   const viewer = useViewerStore();
-  const replication = useReplicationStore();
   const { photos } = usePresenters();
   const navigate = useNavigate();
   const [loaded, setLoaded] = useState(false);
@@ -333,35 +332,46 @@ export const PhotoTile = observer(function PhotoTile({
             }}
           />
 
-          <div {...stylex.props(tile.badges)}>
-            {/* A stack's tile is not one file, so what a file's state says belongs to its band's
-                tiles. A photograph with no local copy has not gone - the RAW comes back when
-                something needs it (§14.5) - so the snowflake, never the word that says the opposite. */}
-            {disclosure ? null
-            : (photo.is_missing || photo.is_offloaded) && replication.fetching.has(photo.id) ?
-              <span {...stylex.props(tile.badge, tile.fetching)}>{PhotoDetailStrings.stateFetching()}</span>
-            : photo.is_offloaded ?
-              <Tooltip label={PhotoDetailStrings.stateOnBackupHint()}>
-                <span {...stylex.props(tile.badge, tile.onBackup)} aria-label={PhotoDetailStrings.stateOnBackup()}>
-                  <Snowflake size={BADGE_ICON} />
-                </span>
-              </Tooltip>
-            : photo.is_missing && (
-                <span {...stylex.props(tile.badge, tile.missing)}>{PhotoDetailStrings.stateMissing()}</span>
-              )
-            }
-            {photo.is_deleted && (
-              <span {...stylex.props(tile.badge, tile.deleted)}>{PhotoDetailStrings.stateBinned()}</span>
-            )}
-            {/* Ungated, unlike the cull's two marks: a reader has to be able to tell which of these
-                is put away, a grid holding the hidden beside the live being what the chip is for. */}
-            {photo.is_hidden && (
-              <span {...stylex.props(tile.badge, tile.hidden)} aria-label={PhotoDetailStrings.stateHidden()}>
-                <EyeOff size={BADGE_ICON} />
-              </span>
-            )}
-          </div>
+          {/* A stack's tile is not one file, so what a file's state says belongs to its band's
+              tiles. */}
+          <TileBadges photo={photo} fileState={!disclosure} />
         </>
+      )}
+    </div>
+  );
+});
+
+const TileBadges = observer(function TileBadges({ photo, fileState }: {
+  photo: PhotoSummary;
+  fileState: boolean;
+}): JSX.Element {
+  const replication = useReplicationStore();
+  return (
+    <div {...stylex.props(tile.badges)}>
+      {/* A photograph with no local copy has not gone - the RAW comes back when something needs
+          it (§14.5) - so the snowflake, never the word that says the opposite. */}
+      {!fileState ? null
+      : (photo.is_missing || photo.is_offloaded) && replication.fetching.has(photo.id) ?
+        <span {...stylex.props(tile.badge, tile.fetching)}>{PhotoDetailStrings.stateFetching()}</span>
+      : photo.is_offloaded ?
+        <Tooltip label={PhotoDetailStrings.stateOnBackupHint()}>
+          <span {...stylex.props(tile.badge, tile.onBackup)} aria-label={PhotoDetailStrings.stateOnBackup()}>
+            <Snowflake size={BADGE_ICON} />
+          </span>
+        </Tooltip>
+      : photo.is_missing && (
+          <span {...stylex.props(tile.badge, tile.missing)}>{PhotoDetailStrings.stateMissing()}</span>
+        )
+      }
+      {photo.is_deleted && (
+        <span {...stylex.props(tile.badge, tile.deleted)}>{PhotoDetailStrings.stateBinned()}</span>
+      )}
+      {/* Ungated, unlike the cull's two marks: a reader has to be able to tell which of these
+          is put away, a grid holding the hidden beside the live being what the chip is for. */}
+      {photo.is_hidden && (
+        <span {...stylex.props(tile.badge, tile.hidden)} aria-label={PhotoDetailStrings.stateHidden()}>
+          <EyeOff size={BADGE_ICON} />
+        </span>
       )}
     </div>
   );
@@ -535,6 +545,8 @@ export const BandMember = observer(function BandMember({ photo }: { photo: Photo
         name={name}
         onToggle={(e) => (e.shiftKey ? photos.extendMembersTo(photo) : photos.toggleMember(photo))}
       />
+
+      <TileBadges photo={photo} fileState />
 
       {outside && (
         <div {...stylex.props(tile.outside)} aria-hidden>
