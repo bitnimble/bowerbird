@@ -226,7 +226,7 @@ fn windowed(
         denoise_colour: job.denoise_colour,
         denoiser: job.denoiser,
         dust: job.dust,
-        adjust: job.adjust,
+        adjust: job.adjust.clone(),
         levels: None,
         noise_fit: None,
         capture_sigma: None,
@@ -265,6 +265,10 @@ fn windowed(
             mosaic: !crate::decode_rendered::is_rendered(&job.raw_file_path),
             as_shot: prepared.as_shot,
             detail: job.detail().resolved(noise_fit),
+            camera_curve: prepared.matched.as_ref().and_then(|m| m.colour.as_ref()).map(|c| {
+                crate::gpu::ToneCurve::PchipCbrt3 { points: c.curve.clone() }
+            }),
+            camera_exposure: prepared.matched.as_ref().and_then(|m| m.colour.as_ref()).map(|c| c.exposure),
             noise_fit,
             defocus,
             photo_analysis: Some(crate::photo_analysis::encode(&known)),

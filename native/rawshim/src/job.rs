@@ -1590,7 +1590,7 @@ pub(crate) async fn graded_bands(
             denoise_colour: job.denoise_colour,
             denoiser: job.denoiser,
             dust: job.dust,
-            adjust: job.adjust,
+            adjust: job.adjust.clone(),
             levels: None,
             noise_fit: None,
             capture_sigma: None,
@@ -1603,7 +1603,7 @@ pub(crate) async fn graded_bands(
         };
         let (frame, window) =
             crate::tile::prepared_on_device(crate::tile::Source::Held(held), &request).await?;
-        let scene = window.scene(job.exposure, job.adjust);
+        let scene = window.scene(job.exposure, job.adjust.clone());
         let grade = crate::gpu::Grade {
             intent: target.intent,
             ..scene.gpu_grade(window.width, window.height, peak_nits(job, target), output)

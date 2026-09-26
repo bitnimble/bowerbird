@@ -145,7 +145,9 @@ fn uniform(colour: &HdrColour, peak_samples: u32, surround: f32) -> Vec<u8> {
         }
         words.resize(words.len() + (rawshim::light::CURVE_MAX_POINTS - 2) * 4, 0);
     }
-    f_push(&mut words, 0.0);
+    f_push(&mut words, 0.0); // camera_exposure
+    words.push(0); // band_top
+    words.push(1); // band_rows: the one output row
     // WGSL binds a uniform struct at its size rounded up to 16 bytes, so a buffer holding
     // exactly the fields is rejected as too small. Same rule as `gpu::uniform`.
     while words.len() % 4 != 0 {

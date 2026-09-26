@@ -3991,14 +3991,14 @@ const EDIT_FIELDS: &[&str] = &[
     "tone_anchor",
     "black_floor",
     "print_blur",
-    "band_top",
-    "band_rows",
     "reader_curve_count",
     "camera_curve_count",
     "curve_is_camera",
     "reader_curve[CURVE_POINTS]",
     "camera_curve[CURVE_POINTS]",
     "camera_exposure",
+    "band_top",
+    "band_rows",
 ];
 
 /// `struct Edit`, field for field, in the order the shader declares them.
@@ -4175,16 +4175,11 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, colour.anchor);
     f(&mut w, crate::tone::floor_share(grade.floor, grade.white).raw());
     f(&mut w, grade.print_blur.raw());
-    let written = grade.written();
-    w.push(written.top.raw() as u32);
-    w.push(written.rows.raw() as u32);
     for points in [reader, camera] {
         assert!(crate::light::curve_is_valid(points), "not a tone curve: {points:?}");
         w.push(points.len() as u32);
     }
     w.push(u32::from(grade.adjust.tone_curve.is_none()));
-    // A `float4` array starts on 16 bytes, so the shader pads before it.
-    w.resize(w.len().next_multiple_of(4), 0);
     for points in [reader, camera] {
         let tangents = crate::light::curve_tangents(points);
         for (point, tangent) in points.iter().zip(tangents) {
@@ -4193,6 +4188,9 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
         w.resize(w.len() + (crate::light::CURVE_MAX_POINTS - points.len()) * 4, 0);
     }
     f(&mut w, camera_exposure.raw());
+    let written = grade.written();
+    w.push(written.top.raw() as u32);
+    w.push(written.rows.raw() as u32);
     // WGSL rounds a uniform struct's size up to a multiple of 16 bytes, and binds it at that
     // size - so a buffer holding exactly the fields is rejected as too small, by however much
     // the last few fields left over. Here it was implicit in the field count until a field was
@@ -4303,7 +4301,7 @@ mod tests {
                     top: crate::px::Place::measured(top),
                     rows: crate::px::Span::measured(rows),
                 }),
-                ..grade
+                ..grade.clone()
             };
             assert_eq!(band.written_size(), (out_width, rows));
             stitched.extend(up.encode(&band));
