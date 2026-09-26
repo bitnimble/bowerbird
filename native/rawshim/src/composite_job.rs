@@ -294,14 +294,9 @@ pub(crate) fn sources_of<'a>(
                 camera_model: camera.as_deref(),
                 lens_model: lens.as_deref(),
                 focal_length: header.as_ref().and_then(|h| positive(h.focal)),
-                focal_px: header.as_ref().and_then(|h| {
-                    focal_in_pixels(
-                        crate::header::name(&h.camera_make),
-                        camera.as_deref().unwrap_or_default(),
-                        positive(h.focal)?,
-                        h.width.max(h.height) as f64,
-                    )
-                }),
+                focal_px: header
+                    .as_ref()
+                    .and_then(|h| focal_in_pixels(h, camera.as_deref().unwrap_or_default())),
                 shutter: header.as_ref().and_then(|h| positive(h.shutter)),
                 aperture: header.as_ref().and_then(|h| positive(h.aperture)),
                 iso: header.as_ref().and_then(|h| positive(h.iso)),
@@ -751,16 +746,17 @@ fn union_match(
 
 /// A focal length in millimetres as the pinhole focal in a photograph's own pixels.
 ///
-/// The sensor's width is the crop factor's: lensfun knows what body wrote the file, and 35mm is
-/// 36mm across. None where it has never heard of the body, and the alignment then does what it can
-/// with an assumed field of view.
-///
-/// The long edge, since that is the axis 36mm measures - a portrait frame is the same sensor
-/// turned, and its long edge is still the sensor's long one.
-fn focal_in_pixels(make: &str, model: &str, millimetres: f32, long_edge: f64) -> Option<f64> {
-    const FULL_FRAME_MM: f64 = 36.0;
-    let crop = lensdb::crop_factor(make, model)?;
-    Some(f64::from(millimetres) * crop * long_edge / FULL_FRAME_MM)
+/// None where the file records no focal length, or neither the file nor lensfun gives a crop
+/// factor, and the alignment then does what it can with an assumed field of view.
+pub fn focal_in_pixels(header: &crate::header::BbHeader, model: &str) -> Option<f64> {
+    if header.focal <= 0.0 {
+        return None;
+    }
+    let crop = lensdb::crop_factor(crate::header::name(&header.camera_make), model, header.crop())?;
+    // The diagonal, which is what a crop factor is a ratio of: a 4:3 picture's long edge is not
+    // 36mm over its crop.
+    let diagonal = f64::from(header.width).hypot(f64::from(header.height));
+    Some(f64::from(header.focal) * crop * diagonal / crate::dust::FULL_FRAME_DIAGONAL_MM.raw())
 }
 
 /// The rectangle two of them share, or None where they share none.
@@ -1233,6 +1229,30 @@ mod tests {
             reference: 0,
             seam_rms_px: None,
         }
+    }
+
+    #[test]
+    fn a_full_frame_body_in_apsc_mode_has_the_apsc_focal() {
+        let mut header = crate::header::BbHeader::blank();
+        header.camera_make[..4].copy_from_slice(b"Sony");
+        (header.width, header.height, header.focal) = (6240, 4160, 45.0);
+        let full = focal_in_pixels(&header, "ILCE-7CR").expect("the body's crop factor");
+        assert!((full - 7800.0).abs() < 0.05, "{full}");
+        header.focal_35mm = 68.0;
+        let apsc = focal_in_pixels(&header, "ILCE-7CR").expect("a crop factor");
+        assert!((apsc - 11_786.67).abs() < 0.05, "{apsc}");
+        header.focal = 0.0;
+        assert_eq!(focal_in_pixels(&header, "ILCE-7CR"), None);
+    }
+
+    /// 12mm across 3.34um photosites is 3593 of them, where the long edge over 36mm says 3456.
+    #[test]
+    fn a_four_thirds_focal_is_measured_on_the_diagonal() {
+        let mut header = crate::header::BbHeader::blank();
+        header.camera_make[..7].copy_from_slice(b"OLYMPUS");
+        (header.width, header.height, header.focal) = (5184, 3888, 12.0);
+        let focal = focal_in_pixels(&header, "E-M1").expect("the body's crop factor");
+        assert!((focal - 3594.4).abs() < 1.0, "{focal}");
     }
 
     /// A composite of one camera's own picture, pointed straight ahead on a canvas its own size, is

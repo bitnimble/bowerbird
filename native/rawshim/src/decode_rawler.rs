@@ -708,9 +708,9 @@ struct Sensor {
     /// What the lens was stopped down to, which decides how large and how deep a particle's shadow
     /// is (`crate::dust`). Zero where the file recorded none, and then nothing is looked for.
     aperture: f32,
-    /// The picture's width across the silicon, in millimetres, which with the width in photosites
-    /// is the pitch a particle's shadow is measured in (`crate::dust`).
-    width_mm: f32,
+    /// The picture's diagonal across the silicon, in millimetres, which with the diagonal in
+    /// photosites is the pitch a particle's shadow is measured in (`crate::dust`).
+    diagonal_mm: crate::px::Extent<crate::px::Millimetre>,
 }
 
 impl Sensor {
@@ -721,7 +721,7 @@ impl Sensor {
             crop: self.crop,
             cfa: self.cfa,
             aperture: self.aperture,
-            width_mm: self.width_mm,
+            diagonal_mm: self.diagonal_mm,
         }
     }
 }
@@ -1044,7 +1044,7 @@ async fn hold(
         .unwrap_or((0, 0, width, height));
     let crop = (crop.0, crop.1, whole_sites(crop.2), whole_sites(crop.3));
 
-    let (aperture, width_mm) = optics_of(decoder, source, params);
+    let (aperture, diagonal_mm) = optics_of(decoder, source, params);
 
     Some(Held {
         mosaic,
@@ -1057,26 +1057,26 @@ async fn hold(
             upright,
             as_shot: as_shot_of(gpu?, &image).await,
             aperture,
-            width_mm,
+            diagonal_mm,
         },
     })
 }
 
-/// What the lens was stopped down to, and how wide the picture is across the silicon.
+/// What the lens was stopped down to, and how long the picture's diagonal is across the silicon.
 ///
 /// Both come out of the same EXIF parse, which is a second walk of the file's IFDs, so they are
 /// asked for together.
 ///
-/// The aperture is zero where the file recorded nothing usable. The width falls back to
-/// [`crate::dust::FULL_FRAME_MM`], because the 35mm-equivalent focal length is the only reading of
-/// a body's size that crosses makers and plenty of them omit it.
+/// The aperture is zero where the file recorded nothing usable. The diagonal falls back to
+/// [`crate::dust::FULL_FRAME_DIAGONAL_MM`], because the 35mm-equivalent focal length is the only
+/// reading of a body's size that crosses makers and plenty of them omit it.
 fn optics_of(
     decoder: &dyn rawler::decoders::Decoder,
     source: &rawler::rawsource::RawSource,
     params: &rawler::decoders::RawDecodeParams,
-) -> (f32, f32) {
+) -> (f32, crate::px::Extent<crate::px::Millimetre>) {
     let Ok(metadata) = decoder.raw_metadata(source, params) else {
-        return (0.0, crate::dust::FULL_FRAME_MM);
+        return (0.0, crate::dust::FULL_FRAME_DIAGONAL_MM);
     };
     let exif = &metadata.exif;
     let rational = |r: &rawler::formats::tiff::Rational| match r.d {
@@ -1092,25 +1092,15 @@ fn optics_of(
 
     let focal = exif.focal_length.as_ref().map_or(0.0, rational);
     let equivalent = exif.focal_length_in_35mm.unwrap_or(0) as f32;
-    (aperture, width_mm_of(focal, equivalent))
+    (aperture, diagonal_mm_of(focal, equivalent))
 }
 
-/// The picture's width across the silicon, from the two focal lengths whose ratio is the crop
-/// factor, or [`crate::dust::FULL_FRAME_MM`] where they do not give one.
-///
-/// A body that shoots a smaller frame out of a larger sensor reports the equivalent of the *cropped*
-/// picture, which is the width the crop is, and so the width that goes with the photosites decoded.
-fn width_mm_of(focal: f32, equivalent: f32) -> f32 {
-    let crop = match focal > 0.0 && equivalent > 0.0 {
-        true => equivalent / focal,
-        false => 1.0,
-    };
-    // Medium format at one end and a phone-sized compact at the other; outside that a body has
-    // written one of the two focal lengths in units the other is not in.
-    match crop.is_finite() && (0.5..=8.0).contains(&crop) {
-        true => crate::dust::FULL_FRAME_MM / crop,
-        false => crate::dust::FULL_FRAME_MM,
-    }
+/// The picture's diagonal across the silicon, or [`crate::dust::FULL_FRAME_DIAGONAL_MM`] where the
+/// two focal lengths do not give a crop factor.
+fn diagonal_mm_of(focal: f32, equivalent: f32) -> crate::px::Extent<crate::px::Millimetre> {
+    let full = crate::dust::FULL_FRAME_DIAGONAL_MM;
+    crate::header::crop_of(focal, equivalent)
+        .map_or(full, |crop| crate::px::Extent::exactly(full.raw() / f64::from(crop)))
 }
 
 async fn decode_source(
@@ -2572,14 +2562,16 @@ mod tests {
     /// -sized compact. What follows them is every way a file can decline to say: no equivalent at
     /// all, no focal length to take a ratio against, and a pair whose ratio is nothing a camera is.
     #[test]
-    fn a_bodys_width_comes_off_the_pair_of_focal_lengths() {
-        let width = super::width_mm_of;
-        assert!((width(24.0, 36.0) - 24.0).abs() < 0.01, "an APS-C body is not read as full frame");
-        assert_eq!(width(50.0, 50.0), 36.0);
-        assert!((width(63.0, 50.0) - 45.36).abs() < 0.01, "medium format is wider, not narrower");
-        assert!((width(4.3, 24.0) - 6.45).abs() < 0.01);
+    fn a_bodys_size_comes_off_the_pair_of_focal_lengths() {
+        let diagonal = |focal, equivalent| super::diagonal_mm_of(focal, equivalent).raw();
+        let full = crate::dust::FULL_FRAME_DIAGONAL_MM.raw();
+        let apsc = diagonal(24.0, 36.0);
+        assert!((apsc - 28.84).abs() < 0.01, "an APS-C body is not read as full frame");
+        assert_eq!(diagonal(50.0, 50.0), full);
+        assert!((diagonal(63.0, 50.0) - 54.52).abs() < 0.01, "medium format is larger, not smaller");
+        assert!((diagonal(4.3, 24.0) - 7.75).abs() < 0.01);
         for (focal, equivalent) in [(24.0, 0.0), (0.0, 36.0), (0.0, 0.0), (1.0, 400.0), (400.0, 1.0)] {
-            assert_eq!(super::width_mm_of(focal, equivalent), 36.0, "{focal} against {equivalent}");
+            assert_eq!(diagonal(focal, equivalent), full, "{focal} against {equivalent}");
         }
     }
 

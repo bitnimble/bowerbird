@@ -122,7 +122,7 @@ fn sized(edge: usize) -> rawshim::dust::Sensor {
         crop: (0, 0, edge, edge),
         cfa: rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
         aperture: 5.6,
-        width_mm: rawshim::dust::FULL_FRAME_MM,
+        diagonal_mm: rawshim::px::Extent::exactly(36.0 * std::f64::consts::SQRT_2),
     }
 }
 
@@ -231,7 +231,7 @@ fn a_frame_that_is_not_square_answers_the_right_way_round() {
         crop: (0, 0, 1200, 800),
         cfa: rawshim::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
         aperture: 5.6,
-        width_mm: rawshim::dust::FULL_FRAME_MM,
+        diagonal_mm: rawshim::dust::FULL_FRAME_DIAGONAL_MM,
     };
     let put = (180.0, 220.0, 6.0, 0.12);
     let Some(spots) = found(&oblong, &[put]) else {

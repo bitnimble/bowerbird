@@ -28,6 +28,7 @@ fn a_third_party_lens_named_loosely_still_resolves() {
         "TAMRON SP 70-200mm F/2.8 Di VC USD A009",
         70.0,
         2.8,
+        None,
         6720,
         4480,
     )
@@ -53,12 +54,47 @@ fn a_lens_filed_under_its_english_name_resolves_from_what_the_body_wrote() {
         "Tamron 17-70mm F2.8 Di III-A VC RXD",
         45.0,
         4.0,
+        None,
         6000,
         4000,
     )
     .expect("the database has this lens under its English name");
     assert!((corner(&knots) - 0.061_802_029_609_680_176).abs() < TOLERANCE, "{knots:?}");
-    assert_eq!(lensdb::crop_factor("Sony", "ILCE-6300"), Some(1.534_000_039_100_647));
+    assert_eq!(lensdb::crop_factor("Sony", "ILCE-6300", None), Some(1.534_000_039_100_647));
+}
+
+/// A full-frame body in APS-C mode writes an APS-C picture, and says so only through its 35mm
+/// focal length: 45mm written as 68.
+#[test]
+fn a_full_frame_body_in_apsc_mode_takes_an_apsc_lens() {
+    let asked = |stated| {
+        lensdb::distortion_knots(
+            "Sony",
+            "ILCE-7CR",
+            "Tamron 17-70mm F2.8 Di III-A VC RXD",
+            45.0,
+            4.0,
+            stated,
+            6240,
+            4160,
+        )
+    };
+    let knots = asked(Some(68.0 / 45.0)).expect("the APS-C picture takes its APS-C lens");
+    assert!((corner(&knots) / 0.061_802_029_609_680_176 - 1.0).abs() < 0.05, "{knots:?}");
+    let stated = 68.0f32 / 45.0;
+    assert_eq!(lensdb::crop_factor("Sony", "ILCE-7CR", Some(stated)), Some(f64::from(stated)));
+}
+
+/// The same full-frame lens reaches only the middle of its own barrel on the smaller picture.
+#[test]
+fn a_full_frame_lens_on_an_apsc_mode_picture_corrects_its_middle() {
+    let asked = |stated| {
+        let lens = "Canon RF24-50mm F4.5-6.3 IS STM";
+        lensdb::distortion_knots("Canon", "Canon EOS R5", lens, 24.0, 4.5, stated, 5088, 3392)
+            .expect("the database has this lens")
+    };
+    let (full, cropped) = (corner(&asked(None)), corner(&asked(Some(38.0 / 24.0))));
+    assert!(cropped.abs() < full.abs() * 0.6, "{cropped} against {full}");
 }
 
 #[test]
@@ -69,6 +105,7 @@ fn a_zoom_answers_for_the_end_of_its_range_it_was_shot_at() {
         "Tamron 25-200mm F2.8-5.6 Di III VXD G2",
         25.0,
         2.8,
+        None,
         9504,
         6336,
     )
@@ -81,10 +118,10 @@ fn a_zoom_answers_for_the_end_of_its_range_it_was_shot_at() {
 #[test]
 fn a_kit_zoom_answers_with_the_whole_of_its_barrel() {
     let knots =
-        lensdb::distortion_knots("Canon", "Canon EOS R8", "Canon RF24-50mm F4.5-6.3 IS STM", 24.0, 4.5, 6000, 4000)
+        lensdb::distortion_knots("Canon", "Canon EOS R8", "Canon RF24-50mm F4.5-6.3 IS STM", 24.0, 4.5, None, 6000, 4000)
             .expect("the database has this lens");
     assert!((corner(&knots) - -0.158_402_502_536_773_68).abs() < TOLERANCE, "{knots:?}");
-    assert_eq!(lensdb::crop_factor("Canon", "Canon EOS R8"), Some(1.0));
+    assert_eq!(lensdb::crop_factor("Canon", "Canon EOS R8", None), Some(1.0));
 }
 
 /// Sixty of the database's 1300 lenses state a focal range in the XML and the rest have it read
@@ -100,6 +137,7 @@ fn a_lens_that_states_no_range_still_has_one_read_from_its_name() {
             "Canon EF 70-200mm f/2.8L IS II USM",
             focal,
             2.8,
+            None,
             6720,
             4480,
         )
@@ -110,7 +148,8 @@ fn a_lens_that_states_no_range_still_has_one_read_from_its_name() {
 
 #[test]
 fn a_body_the_database_has_never_heard_of_has_no_crop_factor() {
-    assert_eq!(lensdb::crop_factor("Bowerbird", "Imaginary One"), None);
+    assert_eq!(lensdb::crop_factor("Bowerbird", "Imaginary One", None), None);
+    assert_eq!(lensdb::crop_factor("Bowerbird", "Imaginary One", Some(1.5)), Some(1.5));
 }
 
 /// A directory holding no lens data is refused, rather than loaded as a database with nothing in

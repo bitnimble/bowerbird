@@ -752,6 +752,7 @@ pub(crate) fn database_lateral(path: &str) -> Option<[Vec<f64>; 2]> {
         crate::header::name(&header.lens_model),
         header.focal,
         header.aperture,
+        header.crop(),
         header.width as usize,
         header.height as usize,
     )?;
@@ -777,6 +778,7 @@ fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
         crate::header::name(&header.lens_model),
         header.focal,
         header.aperture,
+        header.crop(),
         header.width as usize,
         header.height as usize,
     )?;

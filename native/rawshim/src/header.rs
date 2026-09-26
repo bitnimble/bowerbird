@@ -49,6 +49,8 @@ pub struct BbHeader {
     pub sequence_group: u32,
     pub sequence_index: u32,
     pub sequence_count: u32,
+    /// The 35mm-equivalent focal length, 0 where unrecorded.
+    pub focal_35mm: f32,
 }
 
 pub const SEQUENCE_NONE: u32 = 0;
@@ -57,7 +59,7 @@ pub const SEQUENCE_EXPOSURE_BRACKET: u32 = 2;
 pub const SEQUENCE_FOCUS_BRACKET: u32 = 3;
 
 impl BbHeader {
-    fn blank() -> BbHeader {
+    pub(crate) fn blank() -> BbHeader {
         BbHeader {
             width: 0,
             height: 0,
@@ -76,8 +78,25 @@ impl BbHeader {
             sequence_group: 0,
             sequence_index: 0,
             sequence_count: 0,
+            focal_35mm: UNKNOWN,
         }
     }
+
+    /// How much smaller the picture is than 35mm, as the file states it.
+    pub fn crop(&self) -> Option<f32> {
+        crop_of(self.focal, self.focal_35mm)
+    }
+}
+
+/// The crop factor two focal lengths give, or None where they do not give a plausible one.
+///
+/// A body that shoots a smaller frame out of a larger sensor reports the equivalent of the
+/// *cropped* picture, so this is the crop factor of the photosites decoded.
+pub fn crop_of(focal: f32, equivalent: f32) -> Option<f32> {
+    let crop = equivalent / focal;
+    // Medium format at one end and a phone-sized compact at the other; outside that a body has
+    // written one of the two focal lengths in units the other is not in.
+    (focal > 0.0 && equivalent > 0.0 && crop.is_finite() && (0.5..=8.0).contains(&crop)).then_some(crop)
 }
 
 /// Bounds that mean "no camera reports this", not physical limits: ISO 4 million,
@@ -209,6 +228,7 @@ fn read_exif_into(tiff: &[u8], out: &mut BbHeader) {
     out.shutter = plausible(rational(0x829A), 3600.0);
     out.aperture = plausible(rational(0x829D), 256.0);
     out.focal = plausible(rational(0x920A), 10_000.0);
+    out.focal_35mm = plausible(rational(0xA405), 10_000.0);
 
     let taken = exif
         .and_then(|ifd| ifd.get_entry(0x9003u16))
@@ -308,6 +328,7 @@ pub fn read_with(
     out.shutter = plausible(exif.exposure_time.as_ref().map_or(0.0, ratio), 3600.0);
     out.aperture = plausible(exif.fnumber.as_ref().map_or(0.0, ratio), 256.0);
     out.focal = plausible(exif.focal_length.as_ref().map_or(0.0, ratio), 10_000.0);
+    out.focal_35mm = plausible(exif.focal_length_in_35mm.unwrap_or(0) as f32, 10_000.0);
 
     if let Some(taken) = exif.date_time_original.as_deref().and_then(seconds_since_epoch) {
         // 1990 to 2100: a timestamp outside that is a misparse, not a photograph.
@@ -417,7 +438,7 @@ mod tests {
     fn the_layout_the_typescript_reader_assumes_still_holds() {
         // rawshim_ops.ts reads this at fixed offsets and checks the size at the
         // first call. This is the same check, at build time.
-        assert_eq!(std::mem::size_of::<BbHeader>(), 328);
+        assert_eq!(std::mem::size_of::<BbHeader>(), 336);
         assert_eq!(std::mem::align_of::<BbHeader>(), 8);
     }
 
@@ -435,6 +456,16 @@ mod tests {
         write_name(&mut into, "ILCE-7CR");
         write_name(&mut into, "R8");
         assert_eq!(name(&into), "R8");
+    }
+
+    #[test]
+    fn a_crop_factor_is_the_ratio_of_the_two_focal_lengths() {
+        assert_eq!(crop_of(45.0, 68.0), Some(68.0 / 45.0));
+        assert_eq!(crop_of(63.0, 50.0), Some(50.0 / 63.0), "medium format");
+        assert_eq!(crop_of(0.0, 50.0), None);
+        assert_eq!(crop_of(50.0, 0.0), None);
+        assert_eq!(crop_of(400.0, 1.0), None, "a ratio no body has");
+        assert_eq!(crop_of(1.0, 400.0), None);
     }
 
     #[test]
