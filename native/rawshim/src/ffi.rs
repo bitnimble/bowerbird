@@ -99,7 +99,9 @@ pub unsafe extern "C" fn bb_run_job(
         }),
     };
 
-    unsafe { replied(result, out, out_cap) }
+    let answered = unsafe { replied(result, out, out_cap) };
+    crate::release_freed_memory();
+    answered
 }
 
 /// Writes one rendition a client rendered (`job::render_bytes`), as `bb_run_job` would have written
@@ -130,7 +132,9 @@ pub unsafe extern "C" fn bb_write_rendered(
             job::write_rendered(&parsed, framed)
         }),
     };
-    unsafe { replied(result, out, out_cap) }
+    let answered = unsafe { replied(result, out, out_cap) };
+    crate::release_freed_memory();
+    answered
 }
 
 /// A job's result as the reply both job entry points answer with.
@@ -218,7 +222,10 @@ pub unsafe extern "C" fn bb_prepare_picture(
             &[],
         ),
     };
-    unsafe { reply(&framed, out, out_cap) }
+    let answered = unsafe { reply(&framed, out, out_cap) };
+    drop(framed);
+    crate::release_freed_memory();
+    answered
 }
 
 /// How many bytes of a prepared picture's buffer are the header's, so the caller sizes for it.
@@ -479,7 +486,10 @@ pub unsafe extern "C" fn bb_export_still(
         }
     });
     let Some(encoded) = encoded else { return -1 };
-    unsafe { reply(&encoded, out, out_cap) }
+    let answered = unsafe { reply(&encoded, out, out_cap) };
+    drop(encoded);
+    crate::release_freed_memory();
+    answered
 }
 
 /// Names the adapter the grade will run on, or reports that there is none.

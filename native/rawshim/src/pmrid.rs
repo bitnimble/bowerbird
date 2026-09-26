@@ -1174,6 +1174,12 @@ pub fn release_arenas() {
     kept().release();
 }
 
+/// Whether any [`hold_arenas`] is still unreleased.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn arenas_held() -> bool {
+    kept().holds > 0
+}
+
 /// The arena and the bindings one tile size needs, built once and dispatched over every tile.
 struct Session {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]

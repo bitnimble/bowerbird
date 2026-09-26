@@ -313,6 +313,30 @@ pub(crate) fn guard<T>(what: &str, fallback: T, body: impl FnOnce() -> T) -> T {
     }
 }
 
+/// Hands the pages a finished call freed back to the system, unless a render queue is holding
+/// memory for its next render ([`bb_hold_render_memory`]). For the end of an entry point that
+/// worked on whole frames.
+#[cfg(feature = "renditions")]
+#[cfg_attr(all(target_os = "linux", target_env = "gnu"), expect(unsafe_code))]
+pub(crate) fn release_freed_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        if pmrid::arenas_held() {
+            return;
+        }
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> std::ffi::c_int;
+        }
+        // glibc keeps a freed frame in the arena of whichever thread allocated it, one arena per
+        // thread up to eight per core, so without this a server's heap grows to every render
+        // thread's peak at once and stays there.
+        // SAFETY: takes no pointers, and walks only the allocator's own state under its locks.
+        unsafe {
+            malloc_trim(0);
+        }
+    }
+}
+
 // **The denoise is not scaled by the frame's ISO.** Shot noise does go as its square root, but
 // the ISO is what the body was set to rather than what the sensor did, and it says nothing about
 // a pushed exposure. It is fitted off the mosaic instead (`galosh::NoiseModel`, carried on the
@@ -708,6 +732,7 @@ pub extern "C" fn bb_hold_render_memory() {
 #[unsafe(no_mangle)]
 pub extern "C" fn bb_release_render_memory() {
     pmrid::release_arenas();
+    release_freed_memory();
 }
 
 /// Size of `BbHeader`, which the caller checks against the layout it reads.
