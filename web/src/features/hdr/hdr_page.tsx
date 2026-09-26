@@ -1,5 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
-import { Fragment, useState } from 'react';
+import type { MDXComponents } from 'mdx/types';
+import { Fragment, createContext, useContext, useState, type ReactNode } from 'react';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { displayIsHdr } from '../../app/device';
 import { focusRing } from '../../ui/focus_ring';
@@ -8,6 +9,7 @@ import { Page, PageHead } from '../../ui/page';
 import { Text } from '../../ui/text';
 import { color, font, size } from '../../ui/tokens.stylex';
 import { useHdrVideo } from '../photos/viewer/hdr_video';
+import HdrPageCopy from './hdr_page.mdx';
 import { HdrPageStrings } from './hdr_page.strings';
 
 const NARROW = '@media (max-width: 640px)';
@@ -428,37 +430,6 @@ function RangeChart(): JSX.Element {
   );
 }
 
-interface Scene {
-  /** Names the two files under `web/public/hdr`, and the scene in the asset script. */
-  slug: string;
-  title: string;
-  /** What to look at, and what the 8-bit frame had to do to it. */
-  body: string;
-}
-
-const SCENES: Scene[] = [
-  {
-    slug: 'whites',
-    title: HdrPageStrings.sceneWhitesTitle(),
-    body: HdrPageStrings.sceneWhitesBody(),
-  },
-  {
-    slug: 'sun',
-    title: HdrPageStrings.sceneSunTitle(),
-    body: HdrPageStrings.sceneSunBody(),
-  },
-  {
-    slug: 'saturated',
-    title: HdrPageStrings.sceneSaturatedTitle(),
-    body: HdrPageStrings.sceneSaturatedBody(),
-  },
-  {
-    slug: 'gamut',
-    title: HdrPageStrings.sceneGamutTitle(),
-    body: HdrPageStrings.sceneGamutBody(),
-  },
-];
-
 /**
  * Two versions of one thing, in the same place, swapped by pressing it.
  *
@@ -514,11 +485,13 @@ function Swap({ slug, label, alt }: { slug: string; label: string; alt: string }
   );
 }
 
+type Children = { children?: ReactNode };
+
 /** One photograph, in both ranges. */
-function Comparison({ scene }: { scene: Scene }): JSX.Element {
+function Comparison({ slug, title }: { slug: string; title: string }): JSX.Element {
   return (
     <figure {...stylex.props(styles.compare)}>
-      <Swap slug={scene.slug} label={scene.title} alt={scene.title} />
+      <Swap slug={slug} label={title} alt={title} />
       <figcaption {...stylex.props(styles.caption)}>
         <Text variant="mono">{HdrPageStrings.clickToSwitch()}</Text>
       </figcaption>
@@ -526,109 +499,125 @@ function Comparison({ scene }: { scene: Scene }): JSX.Element {
   );
 }
 
-export function HdrPage(): JSX.Element {
+function Prose({ children }: Children): JSX.Element {
+  return <div {...stylex.props(styles.text)}>{children}</div>;
+}
+
+function Paragraph({ children }: Children): JSX.Element {
+  return (
+    <Text variant="muted" as="p" style={styles.p}>
+      {children}
+    </Text>
+  );
+}
+
+const InColumn = createContext(false);
+
+function SectionHeading({ children }: Children): JSX.Element {
+  const inColumn = useContext(InColumn);
+  return <Heading style={inColumn ? styles.h2OpensColumn : styles.h2}>{children}</Heading>;
+}
+
+function SdrNotice({ children }: Children): JSX.Element | null {
   // Not a reliable "no": Firefox answers `standard` on an HDR display, which is why the copy
   // hedges rather than hiding anything.
-  const high = displayIsHdr();
+  if (displayIsHdr()) return null;
+  return (
+    <div {...stylex.props(styles.notice)}>
+      <Text as="p" style={styles.p}>
+        {children}
+      </Text>
+    </div>
+  );
+}
 
+function Split({ children }: Children): JSX.Element {
+  return <section {...stylex.props(styles.split)}>{children}</section>;
+}
+
+function Column({ wide = false, children }: Children & { wide?: boolean }): JSX.Element {
+  return (
+    <InColumn.Provider value>
+      <div {...stylex.props(!wide && styles.text)}>{children}</div>
+    </InColumn.Provider>
+  );
+}
+
+function Note({ children }: Children): JSX.Element {
+  return (
+    <Text variant="mono" as="p" style={[styles.p, styles.note]}>
+      {children}
+    </Text>
+  );
+}
+
+/**
+ * One PQ file holding both halves, not two files: a standard-range browser paints a PQ file
+ * about a quarter dim against an sRGB one, so a pair could not be compared.
+ */
+function Swatches(): JSX.Element {
+  return (
+    <figure {...stylex.props(styles.swatches)}>
+      <img
+        src={route(PathSegment.hdr(), 'swatches.avif')}
+        alt={HdrPageStrings.swatchesAlt()}
+        {...stylex.props(styles.swatchesImage)}
+      />
+      <figcaption {...stylex.props(styles.swatchesCaption)}>
+        <Text variant="mono" style={styles.swatchesHalf}>
+          {HdrPageStrings.eightBit()}
+        </Text>
+        <Text variant="mono" style={[styles.swatchesHalf, styles.swatchesHalfRight]}>
+          {HdrPageStrings.hdr()}
+        </Text>
+      </figcaption>
+    </figure>
+  );
+}
+
+function Scenes({ children }: Children): JSX.Element {
+  return <div {...stylex.props(styles.scenes)}>{children}</div>;
+}
+
+/**
+ * No heading per photograph: the sentence above each one already names its subject. `title`
+ * is what the alt and aria text are built from, and `slug` names the two files under
+ * `web/public/hdr` and the scene in the asset script.
+ */
+function Scene({ slug, title, children }: Children & { slug: string; title: string }): JSX.Element {
+  return (
+    <section {...stylex.props(styles.scene)}>
+      <Text variant="muted" as="p" style={[styles.p, styles.pInScene]}>
+        {children}
+      </Text>
+      <Comparison slug={slug} title={title} />
+    </section>
+  );
+}
+
+const COPY = {
+  p: Paragraph,
+  h2: SectionHeading,
+  Prose,
+  SdrNotice,
+  Split,
+  Column,
+  RangeChart,
+  Note,
+  Swatches,
+  Scenes,
+  Scene,
+} satisfies MDXComponents;
+
+export type MDXProvidedComponents = typeof COPY;
+
+export function HdrPage(): JSX.Element {
   return (
     <Page style={styles.page}>
       <PageHead withSidebarButton>
         <Heading level={1}>{HdrPageStrings.title()}</Heading>
       </PageHead>
-
-      <div {...stylex.props(styles.text)}>
-        <Text variant="muted" as="p" style={styles.p}>
-          {HdrPageStrings.intro()}
-        </Text>
-        <Text variant="muted" as="p" style={styles.p}>
-          {HdrPageStrings.introHowToUse()}
-        </Text>
-
-        {!high && (
-          <div {...stylex.props(styles.notice)}>
-            <Text as="p" style={styles.p}>
-              {HdrPageStrings.sdrNotice()}
-            </Text>
-          </div>
-        )}
-      </div>
-
-      <section {...stylex.props(styles.split)}>
-        <div {...stylex.props(styles.text)}>
-          <Heading style={styles.h2OpensColumn}>{HdrPageStrings.whiteHeading()}</Heading>
-          <Text variant="muted" as="p" style={styles.p}>
-            {HdrPageStrings.whiteBody1()}
-          </Text>
-          <Text variant="muted" as="p" style={styles.p}>
-            {HdrPageStrings.whiteBody2()}
-          </Text>
-          <Text variant="muted" as="p" style={styles.p}>
-            {HdrPageStrings.whiteBody3()}
-          </Text>
-        </div>
-        <div>
-          <Heading style={styles.h2OpensColumn}>{HdrPageStrings.fitHeading()}</Heading>
-          <Text variant="muted" as="p" style={styles.p}>
-            {HdrPageStrings.fitBody()}
-          </Text>
-          <RangeChart />
-          <Text variant="mono" as="p" style={[styles.p, styles.note]}>
-            {HdrPageStrings.fitNote()}
-          </Text>
-        </div>
-      </section>
-
-      <section {...stylex.props(styles.split)}>
-        <div {...stylex.props(styles.text)}>
-          <Heading style={styles.h2OpensColumn}>{HdrPageStrings.colourHeading()}</Heading>
-          <Text variant="muted" as="p" style={styles.p}>
-            {HdrPageStrings.colourBody1()}
-          </Text>
-          <Text variant="muted" as="p" style={styles.p}>
-            {HdrPageStrings.colourBody2()}
-          </Text>
-          <Text variant="muted" as="p" style={styles.p}>
-            {HdrPageStrings.colourBody3()}
-          </Text>
-        </div>
-        {/* One PQ file holding both halves, not two files: a standard-range browser paints a PQ
-            file about a quarter dim against an sRGB one, so a pair could not be compared. */}
-        <figure {...stylex.props(styles.swatches)}>
-          <img
-            src={route(PathSegment.hdr(), 'swatches.avif')}
-            alt={HdrPageStrings.swatchesAlt()}
-            {...stylex.props(styles.swatchesImage)}
-          />
-          <figcaption {...stylex.props(styles.swatchesCaption)}>
-            <Text variant="mono" style={styles.swatchesHalf}>
-              {HdrPageStrings.eightBit()}
-            </Text>
-            <Text variant="mono" style={[styles.swatchesHalf, styles.swatchesHalfRight]}>
-              {HdrPageStrings.hdr()}
-            </Text>
-          </figcaption>
-        </figure>
-      </section>
-
-      <Heading style={styles.h2}>{HdrPageStrings.examplesHeading()}</Heading>
-      {/* No heading per photograph: the sentence above each one already names its subject.
-          `title` is what the alt and aria text are built from. */}
-      <div {...stylex.props(styles.scenes)}>
-        {SCENES.map((scene) => (
-          <section key={scene.slug} {...stylex.props(styles.scene)}>
-            <Text variant="muted" as="p" style={[styles.p, styles.pInScene]}>
-              {scene.body}
-            </Text>
-            <Comparison scene={scene} />
-          </section>
-        ))}
-      </div>
-
-      <Heading style={styles.h2}>{HdrPageStrings.aboutHeading()}</Heading>
-      <Text variant="muted" as="p" style={[styles.p, styles.text]}>
-        {HdrPageStrings.aboutBody()}
-      </Text>
+      <HdrPageCopy components={COPY} />
     </Page>
   );
 }

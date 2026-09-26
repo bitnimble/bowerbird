@@ -1,0 +1,37 @@
+import { FeatureIndex, FeatureRow } from '../feature_row';
+import { Actions, DownloadButton, FeaturesButton, Hero, Lead, Notice, Split } from '../sections';
+import { Shot } from '../shot';
+import { Speed } from '../speed';
+
+<Hero>
+
+# A faster way through thousands of RAW photos
+
+<Lead>Get through the thousands of photos you bring home from a trip. Bowerbird is free, it never makes you wait, and it has the editing to finish most of your Picks.</Lead>
+
+<Actions>
+  <DownloadButton />
+  <FeaturesButton>See all features</FeaturesButton>
+</Actions>
+
+<Shot src="viewer.jpg" frame="desktop" alt="The photo viewer showing a photo at full size, with the filmstrip beside it" />
+
+</Hero>
+
+<Speed />
+
+<FeatureRow id="hdr" />
+
+## More features
+
+<FeatureIndex skip="hdr" />
+
+<Split title="Always free">
+
+Bowerbird is free and open source, and that won't change. It has no paid tier and no ads, and every feature is free on every device.
+
+<Notice>Bowerbird is still early. It never deletes your originals, but an update may mean importing a library again, and edits may look a little different afterwards.</Notice>
+
+<DownloadButton />
+
+</Split>
