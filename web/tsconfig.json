@@ -31,5 +31,6 @@
     // `@observable accessor x` up on its own, so no makeObservable call is needed.
     "useDefineForClassFields": true
   },
-  "include": ["src", "e2e"]
+  "include": ["src", "e2e"],
+  "mdx": { "checkMdx": true }
 }

@@ -32,7 +32,7 @@
     "get:swiftshader": "bun run scripts/get-swiftshader.ts",
     "get:pmrid": "bun run scripts/get-pmrid.ts",
     "build:web-shaders": "bun run scripts/build-web-shaders.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p e2e-tauri/tsconfig.json && tsc --noEmit -p landing/tsconfig.json && tsc --noEmit -p packages/samsung-frame-art/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p e2e-tauri/tsconfig.json && tsc --noEmit -p landing/tsconfig.json && tsc --noEmit -p packages/samsung-frame-art/tsconfig.json && bun run scripts/check-mdx.ts",
     "build:native": "bun run scripts/cargo.ts build --profile quick --manifest-path native/rawshim/Cargo.toml",
     "build:native:release": "bun run scripts/cargo.ts build --release --manifest-path native/rawshim/Cargo.toml",
     "build:wasm": "rm -f native/rawshim/pkg/package.json && bun x wasm-pack@0.13.1 build native/rawshim --target web --out-dir pkg --no-opt -- --no-default-features && bun run scripts/hash-pkg.ts",
@@ -56,13 +56,17 @@
     "zod": "^4.0.5"
   },
   "devDependencies": {
+    "@mdx-js/language-service": "^0.7.4",
     "@playwright/test": "^1.62.0",
     "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
+    "@volar/kit": "^2.4.28",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
     "fflate": "^0.8.3",
     "oxlint": "^1.76.0",
-    "typescript": "^5.7.2"
+    "remark-frontmatter": "^5.0.0",
+    "typescript": "^5.7.2",
+    "volar-service-typescript": "^0.0.71"
   }
 }

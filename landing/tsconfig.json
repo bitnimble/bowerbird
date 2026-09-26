@@ -16,5 +16,6 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "mdx": { "checkMdx": true }
 }

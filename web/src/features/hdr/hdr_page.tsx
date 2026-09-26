@@ -595,7 +595,7 @@ function Scene({ slug, title, children }: Children & { slug: string; title: stri
   );
 }
 
-const COPY: MDXComponents = {
+const COPY = {
   p: Paragraph,
   h2: SectionHeading,
   Prose,
@@ -607,7 +607,9 @@ const COPY: MDXComponents = {
   Swatches,
   Scenes,
   Scene,
-};
+} satisfies MDXComponents;
+
+export type MDXProvidedComponents = typeof COPY;
 
 export function HdrPage(): JSX.Element {
   return (

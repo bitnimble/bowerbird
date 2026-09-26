@@ -523,8 +523,11 @@ round-trip through XMP, and the single letters naming physical keys stay as lite
 **A page that is mostly prose is an MDX file beside its component instead**, as
 `hdr_page.mdx` is. The component draws it through the `components` it passes in, so its
 figures stay in TypeScript and take their labels from the strings file as usual. The
-landing site's copy is MDX in the same way, under `landing/src/copy/`. Lint never reads
-MDX, so its words are held to `COPYWRITING.md` by review alone.
+landing site's copy is MDX in the same way, under `landing/src/copy/`. `bun run typecheck`
+checks the tags and props an MDX file uses (`scripts/check-mdx.ts`); one that is handed its
+components rather than importing them names their type in an `@import` of
+`MDXProvidedComponents`, as `hdr_page.mdx` does, or every tag in it is `any`. Lint never
+reads MDX, so its words are held to `COPYWRITING.md` by review alone.
 
 `bun run lint` enforces it, through the oxlint plugin in `scripts/oxlint-plugin-strings.ts`.
 `no-jsx-text` covers JSX: a text node, a literal a brace only wraps, and one reached
