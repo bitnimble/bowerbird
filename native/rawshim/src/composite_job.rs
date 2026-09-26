@@ -749,7 +749,6 @@ fn union_match(
 /// None where the file records no focal length, or neither the file nor lensfun gives a crop
 /// factor, and the alignment then does what it can with an assumed field of view.
 pub fn focal_in_pixels(header: &crate::header::BbHeader, model: &str) -> Option<f64> {
-    const FULL_FRAME_DIAGONAL_MM: f64 = 43.266_615;
     if header.focal <= 0.0 {
         return None;
     }
@@ -757,7 +756,7 @@ pub fn focal_in_pixels(header: &crate::header::BbHeader, model: &str) -> Option<
     // The diagonal, which is what a crop factor is a ratio of: a 4:3 picture's long edge is not
     // 36mm over its crop.
     let diagonal = f64::from(header.width).hypot(f64::from(header.height));
-    Some(f64::from(header.focal) * crop * diagonal / FULL_FRAME_DIAGONAL_MM)
+    Some(f64::from(header.focal) * crop * diagonal / crate::dust::FULL_FRAME_DIAGONAL_MM.raw())
 }
 
 /// The rectangle two of them share, or None where they share none.

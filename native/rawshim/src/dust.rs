@@ -24,6 +24,7 @@
 //! knob: it is what confines the answer to the regions where the answer is trustworthy, and the
 //! correction is only sound where it has passed.
 
+use crate::px::{Extent, Millimetre};
 
 /// Profile samples per spot, spanning [`SPAN`] elliptical radii. Matched in `dust.slang`.
 pub const BINS: usize = 14;
@@ -116,13 +117,13 @@ const WORKING_RADIUS: f32 = 7.8;
 /// four times the prediction rather than a tight fit.
 const PARTICLE_HEIGHT_UM: f32 = 2000.0;
 
-/// What a body is taken to be where the file names no size, in millimetres across.
+/// What a body is taken to be where the file names no size: 36x24mm's diagonal, in millimetres.
 ///
 /// The 35mm-equivalent focal length is the only reading of a sensor's size that crosses makers, and
 /// a body that recorded a focal length but no equivalent has said nothing about how large it is.
 /// Guessing full frame there predicts a smaller shadow than a smaller body really casts, which the
 /// area bracket absorbs; guessing anything else would mis-size the frames that are full frame.
-pub const FULL_FRAME_MM: f32 = 36.0;
+pub const FULL_FRAME_DIAGONAL_MM: Extent<Millimetre> = Extent::exactly(43.266_615);
 
 /// One particle, in the half-resolution quad coordinates the mosaic was read in.
 ///
@@ -379,10 +380,10 @@ pub struct Sensor {
     pub crop: (usize, usize, usize, usize),
     pub cfa: crate::cfa::Cfa,
     pub aperture: f32,
-    /// How wide [`Sensor::picture`] is across the silicon, in millimetres, which with its width in
-    /// photosites is the pitch a particle's shadow is predicted in. [`FULL_FRAME_MM`] where the file
-    /// gave no reading of the body's size.
-    pub width_mm: f32,
+    /// How long [`Sensor::picture`]'s diagonal is across the silicon, in millimetres, which with its
+    /// diagonal in photosites is the pitch a particle's shadow is predicted in.
+    /// [`FULL_FRAME_DIAGONAL_MM`] where the file gave no reading of the body's size.
+    pub diagonal_mm: Extent<Millimetre>,
 }
 
 impl Sensor {
@@ -417,12 +418,14 @@ impl Sensor {
     /// as a radius and halving again, or reading it as a diameter and doubling, moves every blur, the
     /// morphology and the area bracket by a factor of two against gates nobody has re-measured.
     ///
-    /// The body's own width where the file gave one and [`FULL_FRAME_MM`] where it did not, which
-    /// on an APS-C frame is a pitch a third too coarse and so a shadow predicted two-thirds the size
-    /// it is. The area bracket spans eleven times the prediction, which is what absorbs the bodies
-    /// that still fall back.
+    /// The body's own size where the file gave one and [`FULL_FRAME_DIAGONAL_MM`] where it did not,
+    /// which on an APS-C frame is a pitch a third too coarse and so a shadow predicted two-thirds the
+    /// size it is. The area bracket spans eleven times the prediction, which is what absorbs the
+    /// bodies that still fall back.
     fn dust_half_px(&self, shrink: usize) -> f32 {
-        let pitch_um = self.width_mm * 1000.0 / self.picture().2.max(1) as f32;
+        let (_, _, width, height) = self.picture();
+        let pitch_um =
+            self.diagonal_mm.raw() as f32 * 1000.0 / (width as f32).hypot(height as f32).max(1.0);
         (PARTICLE_HEIGHT_UM / self.aperture) / pitch_um / 2.0 / shrink as f32
     }
 
@@ -878,7 +881,7 @@ mod tests {
             crop: (0, 0, edge, edge),
             cfa: crate::cfa::Cfa::bayer([0, 1, 1, 2]).unwrap(),
             aperture: WIDEST_USEFUL_APERTURE,
-            width_mm: FULL_FRAME_MM,
+            diagonal_mm: Extent::exactly(36.0 * std::f64::consts::SQRT_2),
         }
     }
 
@@ -908,11 +911,27 @@ mod tests {
     #[test]
     fn a_smaller_body_casts_a_larger_shadow_in_its_own_photosites() {
         let full = sized(2200);
-        let cropped = Sensor { width_mm: 24.0, ..full };
+        let cropped = Sensor { diagonal_mm: Extent::exactly(full.diagonal_mm.raw() / 1.5), ..full };
         let ratio = cropped.dust_half_px(1) / full.dust_half_px(1);
         assert!((ratio - 1.5).abs() < 1e-3, "the crop factor did not reach the prediction: {ratio}");
         assert_eq!(full.shrink(), 1);
         assert_eq!(cropped.shrink(), 2, "a body this dense is worth reading coarser");
+    }
+
+    /// A crop factor is a ratio of diagonals, so a 4:3 body's pitch comes off its diagonal: an E-M1's
+    /// 17.3mm across 5184 photosites, where 36mm over its crop of 2 says 18mm.
+    #[test]
+    fn a_four_thirds_pitch_is_its_own() {
+        let four_thirds = Sensor {
+            width: 5184,
+            height: 3888,
+            crop: (0, 0, 5184, 3888),
+            diagonal_mm: Extent::exactly(FULL_FRAME_DIAGONAL_MM.raw() / 2.0),
+            ..sized(2)
+        };
+        let expected = PARTICLE_HEIGHT_UM / four_thirds.aperture / (17.3 * 1000.0 / 5184.0) / 2.0;
+        let predicted = four_thirds.dust_half_px(1);
+        assert!((predicted / expected - 1.0).abs() < 0.005, "{predicted} against {expected}");
     }
 
     /// A frame shot wide open is not looked at, however dirty the glass behind it.
