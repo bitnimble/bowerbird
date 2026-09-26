@@ -115,7 +115,7 @@ impl Rcd {
                     module: &module,
                     entry_point: Some(name),
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &bayer.constants(),
+                        constants: crate::wgsl_overrides::for_entry("rcd.wgsl", name, &bayer.constants()),
                         ..Default::default()
                     },
                     cache: None,

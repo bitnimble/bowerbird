@@ -3,6 +3,7 @@ import type { DrawnLayer } from './merge_layers';
 import { PREVIEW_HOLDER, type Compositor } from './merge_presenter';
 import { decodeFrame, keepOnly, releaseHolder, type Decoded } from '../viewer/stage_bitmaps';
 import { type CanvasSize, stageCanvases } from '../viewer/stage_canvas';
+import type { LayerPicture, StagePicture } from '../../../gpu/gpu_protocol';
 
 /**
  * The real `Compositor`: a fresh one per canvas mount, exactly like the viewer's frames.
@@ -54,17 +55,17 @@ export class MergeStage implements Compositor {
     keepOnly(PREVIEW_HOLDER, [url]);
     const settled = await decodeFrame(url);
     const size = this.size();
-    if (this.waiting != null || settled.closed || !isFrame(settled.picture) || isEmpty(size)) return;
+    if (this.waiting != null || settled.closed || !isLayer(settled.picture) || isEmpty(size)) return;
     await stageCanvases.paintMasked(this.canvas, size, settled.picture, []);
   }
 
   private async paint(base: number, layers: DrawnLayer[]): Promise<void> {
     const baseLayer = this.layers.get(base);
     const size = this.size();
-    if (baseLayer == null || baseLayer.closed || !isFrame(baseLayer.picture) || isEmpty(size)) return;
+    if (baseLayer == null || baseLayer.closed || !isLayer(baseLayer.picture) || isEmpty(size)) return;
     const masked = layers.flatMap((layer) => {
       const decoded = this.layers.get(layer.source);
-      if (decoded == null || decoded.closed || !isFrame(decoded.picture)) return [];
+      if (decoded == null || decoded.closed || !isLayer(decoded.picture)) return [];
       return [
         {
           picture: decoded.picture,
@@ -83,6 +84,7 @@ function isEmpty(size: CanvasSize): boolean {
   return size.width === 0 || size.height === 0;
 }
 
-function isFrame(picture: ImageBitmap | VideoFrame): picture is VideoFrame {
-  return typeof VideoFrame === 'function' && picture instanceof VideoFrame;
+/** A picture the composite can take, which is anything but a bitmap. */
+function isLayer(picture: StagePicture): picture is LayerPicture {
+  return typeof ImageBitmap !== 'function' || !(picture instanceof ImageBitmap);
 }

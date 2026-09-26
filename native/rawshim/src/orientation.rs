@@ -26,6 +26,21 @@ pub fn code(orientation: rawler::decoders::Orientation) -> u32 {
     }
 }
 
+/// A HEIF container's turn, in rawler's terms.
+pub fn of_heif(turn: heif::Orientation) -> rawler::decoders::Orientation {
+    use heif::Orientation as H;
+    match turn {
+        H::Normal => O::Normal,
+        H::HorizontalFlip => O::HorizontalFlip,
+        H::Rotate180 => O::Rotate180,
+        H::VerticalFlip => O::VerticalFlip,
+        H::Transpose => O::Transpose,
+        H::Rotate90 => O::Rotate90,
+        H::Transverse => O::Transverse,
+        H::Rotate270 => O::Rotate270,
+    }
+}
+
 /// Whether this turn swaps the picture's axes.
 pub fn transposes(orientation: rawler::decoders::Orientation) -> bool {
     matches!(orientation, O::Transpose | O::Rotate90 | O::Transverse | O::Rotate270)

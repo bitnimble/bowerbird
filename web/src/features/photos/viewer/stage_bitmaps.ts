@@ -13,6 +13,8 @@
 
 import { planarLayout } from './planar_layout';
 import { WebCodecs } from './image_decoder';
+import { canDecodeAvifPlanes, decodeAvifPlanes, type DecodeOptions } from '../../../avif/avif_planes';
+import type { StagePicture } from '../../../gpu/gpu_protocol';
 import { orientationOfAvif } from 'avif-hdr-video';
 import { REQUEST_ACTIVITY_HEADER, type RequestActivity } from '../../../../../src/schemas/request_activity';
 
@@ -59,8 +61,11 @@ function avifRotation(bytes: ArrayBuffer, type: string): 0 | 90 | 180 | 270 {
 
 
 export interface Decoded {
-  /** Drawable as it is, and closed by us: a `VideoFrame` where the browser has WebCodecs, else an `ImageBitmap`. */
-  picture: ImageBitmap | VideoFrame;
+  /**
+   * Closed by us: a `VideoFrame` where the browser has WebCodecs, planes from `native/avif_planes`
+   * for a PQ AVIF where it does not, else an `ImageBitmap`.
+   */
+  picture: StagePicture;
   close: () => void;
   closed: boolean;
   /** What was decoded, which is what the canvas is sized to. */
@@ -71,14 +76,23 @@ export interface Decoded {
   naturalHeight: number;
   /** Clockwise display turn carried by AVIF; bitmap decodes already apply it. */
   rotation: 0 | 90 | 180 | 270;
+  /** The file behind planes, drawn as a bitmap where a paint cannot take planes. */
+  flat?: Blob;
+}
+
+/** A decode in flight, and how to move it ahead of the neighbours once its photo is on screen. */
+interface Running {
+  work: Promise<Decoded>;
+  abort: AbortController;
+  promote: () => void;
 }
 
 const held = new Map<string, Decoded>();
-const inFlight = new Map<string, { work: Promise<Decoded>; abort: AbortController }>();
+const inFlight = new Map<string, Running>();
 
 // The uncapped frames behind a zoom, by the same source as the frame each magnifies.
 const detailHeld = new Map<string, Decoded>();
-const detailInFlight = new Map<string, { work: Promise<Decoded>; abort: AbortController }>();
+const detailInFlight = new Map<string, Running>();
 
 export function decodedFrame(source: string): Decoded | undefined {
   return held.get(source);
@@ -124,7 +138,8 @@ async function decodePicture(
   signal: AbortSignal,
   cap = DECODE_CAP,
   cropped = false,
-): Promise<Pick<Decoded, 'picture' | 'close' | 'width' | 'height' | 'rotation'>> {
+  priority: Pick<DecodeOptions, 'urgent' | 'promoted'> = {},
+): Promise<Pick<Decoded, 'picture' | 'close' | 'width' | 'height' | 'rotation' | 'flat'>> {
   const longest = Math.max(natural.width, natural.height);
   const scale = longest === 0 || longest <= cap ? 1 : cap / longest;
   const width = Math.round(natural.width * scale);
@@ -161,6 +176,28 @@ async function decodePicture(
       // the bitmap decode have it.
       if (signal.aborted) throw err;
       console.warn(`stage: ImageDecoder refused a ${blob.type}, so it is decoded as a bitmap, which tone maps HDR to SDR`, err);
+    }
+  }
+
+  // Safari: no `ImageDecoder`, so a PQ rendition's planes come from our own AV1 decoder, which only
+  // the WebGPU painter can draw - and it draws the fitted frame whole, so nothing past the texture
+  // edge every device allows.
+  const fitsATexture = Math.max(natural.width, natural.height) <= MAX_CANVAS_EDGE;
+  if (WebCodecs == null && blob.type === 'image/avif' && fitsATexture && navigator.gpu != null && canDecodeAvifPlanes()) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const planes = await decodeAvifPlanes(bytes, { signal, ...priority, pixels: natural.width * natural.height });
+    if (planes != null) {
+      const rotation = avifRotation(bytes.buffer, blob.type);
+      const sideways = rotation === 90 || rotation === 270;
+      const { width, height } = planes.layout;
+      return {
+        picture: planes,
+        close: () => {},
+        width: sideways ? height : width,
+        height: sideways ? width : height,
+        rotation,
+        flat: blob,
+      };
     }
   }
 
@@ -250,7 +287,7 @@ function closeDetail(decoded: Decoded): void {
 function decodedAt(
   source: string,
   store: Map<string, Decoded>,
-  running: Map<string, { work: Promise<Decoded>; abort: AbortController }>,
+  running: Map<string, Running>,
   cap: number,
   cropped = false,
   activity: RequestActivity = 'interactive',
@@ -258,9 +295,17 @@ function decodedAt(
   const already = store.get(source);
   if (already != null) return Promise.resolve(already);
   const inProgress = running.get(source);
-  if (inProgress != null) return inProgress.work;
+  if (inProgress != null) {
+    // A neighbour decoded ahead, which the reader has now stepped onto.
+    if (activity === 'interactive') inProgress.promote();
+    return inProgress.work;
+  }
 
   const abort = new AbortController();
+  let promote = (): void => {};
+  const promoted = new Promise<void>((resolve) => {
+    promote = resolve;
+  });
   const work = (async (): Promise<Decoded> => {
     // Every way this ends because *we* dropped it reads as `superseded`, which is the one
     // rejection a caller is meant to shrug off. A fetch cancelled mid-flight rejects with
@@ -275,7 +320,8 @@ function decodedAt(
     if (!response.ok) throw new Error(`${response.status} for ${source}`);
     const blob = await response.blob().catch(superseded<Blob>);
     const natural = await shapeOf(blob).catch(superseded<{ width: number; height: number }>);
-    const drawn = await decodePicture(blob, natural, abort.signal, cap, cropped).catch(
+    const priority = { urgent: activity === 'interactive', promoted };
+    const drawn = await decodePicture(blob, natural, abort.signal, cap, cropped, priority).catch(
       superseded<Awaited<ReturnType<typeof decodePicture>>>,
     );
     // Abandoned while it was out: the reader has moved past this photograph, and holding it
@@ -298,7 +344,7 @@ function decodedAt(
     return decoded;
   })();
 
-  running.set(source, { work, abort });
+  running.set(source, { work, abort, promote });
   work.catch(() => forget(running, source, abort));
   return work;
 }
@@ -311,11 +357,7 @@ function decodedAt(
  * the *second's* entry. Untracked, it can no longer be aborted, every later ask starts another
  * decode of the same file, and each one that lands overwrites a frame nothing can close.
  */
-function forget(
-  running: Map<string, { work: Promise<Decoded>; abort: AbortController }>,
-  source: string,
-  abort: AbortController,
-): void {
+function forget(running: Map<string, Running>, source: string, abort: AbortController): void {
   if (running.get(source)?.abort === abort) running.delete(source);
 }
 

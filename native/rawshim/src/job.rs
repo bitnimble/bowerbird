@@ -313,12 +313,12 @@ impl Job {
         }
         let bytes = std::fs::read(&self.raw_file_path)
             .map_err(|error| format!("could not read {}: {error}", self.raw_file_path))?;
-        let picture = crate::heif::read(&bytes)?.primary;
+        let picture = crate::decode_rendered::read_heif(&bytes)?.primary;
         match picture.turn {
-            rawler::decoders::Orientation::Normal => Ok(0),
-            rawler::decoders::Orientation::Rotate90 => Ok(90),
-            rawler::decoders::Orientation::Rotate180 => Ok(180),
-            rawler::decoders::Orientation::Rotate270 => Ok(270),
+            heif::Orientation::Normal => Ok(0),
+            heif::Orientation::Rotate90 => Ok(90),
+            heif::Orientation::Rotate180 => Ok(180),
+            heif::Orientation::Rotate270 => Ok(270),
             _ => Err("a source-preserving roll needs a non-mirrored AVIF".into()),
         }
     }

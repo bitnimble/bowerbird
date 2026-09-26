@@ -118,6 +118,7 @@ pub mod view;
 /// What a uniform block is, according to the shader that reads it.
 #[cfg(test)]
 mod wgsl_layout;
+pub mod wgsl_overrides;
 /// Which colour each photosite carries, as a period rather than as a 2x2.
 pub mod cfa;
 /// The monotonic clock the timed paths read, which `wasm32` has none of.
@@ -163,8 +164,6 @@ pub mod hdr;
 pub mod hdr_args;
 pub mod hdr_fit;
 pub mod header;
-/// A HEIF file's boxes: where the picture is, what colour it is, and what came with it.
-pub mod heif;
 /// The HEVC bitstream inside a HEIC, into the code values the linearise reads.
 pub mod hevc;
 pub mod image;

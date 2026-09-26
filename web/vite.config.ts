@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import stylex from '@stylexjs/unplugin';
 import { SLANG, buildWebShaders } from '../scripts/build-web-shaders';
 import { PathSegment, route } from '../src/schemas/route';
+import { CROSS_ORIGIN_ISOLATION } from '../src/schemas/isolation';
 
 const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(',')
   .map((h) => h.trim())
@@ -66,7 +67,9 @@ export default defineConfig({
       },
     ],
   },
+  preview: { headers: CROSS_ORIGIN_ISOLATION },
   server: {
+    headers: CROSS_ORIGIN_ISOLATION,
     // The decoder's wasm package is built into `native/rawshim/pkg`, a sibling of this root, and
     // Vite serves nothing above its root without being told to.
     fs: { allow: ['..'] },

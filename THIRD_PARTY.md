@@ -32,9 +32,11 @@ Beyond these and `lensdb`, nothing in the tree is copyleft without such an excep
 a constraint rather than an observation. It
 decided how the finished formats are read (DESIGN §7): both pure-Rust HEIC decoders on
 crates.io - `heic` and `heic_decoder` - are AGPL-3 or a paid commercial licence, as is
-`rav1d-safe`. So HEIC is `rust_h265` (MIT/Apache-2.0) behind an ISOBMFF reader of our own, and
-AVIF is the libavif already linked below rather than `rav1d` (BSD-2-Clause), which cannot build
-for `wasm32-unknown-unknown`. The remaining Rust and TypeScript dependencies are not listed
+`rav1d-safe`. So HEIC is `rust_h265` (MIT/Apache-2.0) behind an ISOBMFF reader of our own
+(`native/heif`), and AVIF is the libavif already linked below on the server. `rav1d`
+(BSD-2-Clause) cannot build for `wasm32-unknown-unknown`, so rawshim's browser build reads no AVIF;
+it does build for `wasm32-wasip1-threads`, which is `native/avif_planes`, the AV1 decoder a browser
+with no `ImageDecoder` gets (Safari). The remaining Rust and TypeScript dependencies are not listed
 here: they are resolved from `Cargo.lock` and `bun.lock`, and all are permissive.
 
 ## The C libraries the server links

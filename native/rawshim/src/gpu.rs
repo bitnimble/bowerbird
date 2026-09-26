@@ -1244,7 +1244,11 @@ impl Gpu {
                         // Keyed by the id `frame.slang`'s `[vk::constant_id(0)]` fixes, not by
                         // the name: the generated WGSL renames it `FROM_FRAME_0`, and a key that
                         // matched no constant is a pipeline the driver refuses outright.
-                        constants: &[(FROM_FRAME_ID, f64::from(u8::from(from_frame)))],
+                        constants: crate::wgsl_overrides::for_entry(
+                            "frame.wgsl",
+                            entry,
+                            &[(FROM_FRAME_ID, f64::from(u8::from(from_frame)))],
+                        ),
                         ..Default::default()
                     },
                     targets: &[Some(if entry == "fs_print_pq" {

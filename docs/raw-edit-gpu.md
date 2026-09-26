@@ -331,13 +331,14 @@ accepted and ignored; shipping WebKit refuses the pipeline instead, and for a
 compute pipeline the whole diagnosis is `Compute library failed creation` - no
 constant named, no line number, because nothing on that path sets an `NSError`
 (`Pipeline.mm`; fixed in trunk June 2026, so it will be a Safari floor for a
-while). `peak.wgsl` has four entry points and two overrides, and neither
-`measure` nor `collect` reads both, so passing both to all four refused every
-RAW on iOS at the open. They are `const` in the shader now, pinned to the host's
-copy by `gpu/tests/peak_constants.test.ts`. The rule that falls out is worth
-keeping: a value is an `override` only where it genuinely differs between
-pipelines built from one entry point - `FROM_FRAME` is the only one left - since
-that is the only kind an entry point cannot stop using.
+while). So a module's constants go only to the entry points
+`wgsl_overrides::READS_OVERRIDES` lists, and `tests/wgsl_overrides.rs` holds that
+list to what each entry point of the compiled WGSL actually reads - a listed one
+reads every constant its module declares, an unlisted one none - so a shader
+edit that moves a read fails a test rather than every open on Safari. Where a
+value never differs between pipelines built from one entry point it is a
+`const`, as `peak.wgsl`'s are, pinned to the host's copy by
+`gpu/tests/peak_constants.test.ts`.
 
 ### 6.2 wgpu in Rust, not a device in JS
 

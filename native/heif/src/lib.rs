@@ -3,9 +3,9 @@
 //!
 //! **A container, not a codec.** HEIC and AVIF are the same file format with a different codec
 //! inside - ISO/IEC 23008-12 items in an ISOBMFF `meta` box - so everything about finding the
-//! picture is shared and only the bitstream at the end differs. That is why this is its own module:
-//! `decode_rendered` asks it what is in the file and then hands the coded bytes to whichever
-//! decoder the item names.
+//! picture is shared and only the bitstream at the end differs. That is why this is its own crate:
+//! rawshim's `decode_rendered` and the browser's AV1 decoder (`native/avif_planes`) ask it what is
+//! in the file and then hand the coded bytes to whichever decoder the item names.
 //!
 //! **Ours rather than a crate's**, because the two crates that read this are AGPL and the licence
 //! is the one thing about a dependency that cannot be worked around later. What it costs is the
@@ -16,7 +16,18 @@
 //! often as a `grid` of tiles, with `colr`, `pixi`, `irot`/`imir` and an `Exif` item beside it, and
 //! anything else is declined by name rather than half-read.
 
-use rawler::decoders::Orientation;
+/// Which way up a picture is shown, as the eight EXIF orientations.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Orientation {
+    Normal,
+    HorizontalFlip,
+    Rotate180,
+    VerticalFlip,
+    Transpose,
+    Rotate90,
+    Transverse,
+    Rotate270,
+}
 
 /// The bitstream a picture item is coded in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -54,6 +65,9 @@ pub struct Picture {
     pub nclx: Option<Nclx>,
     pub icc: Option<Vec<u8>>,
     pub turn: Orientation,
+    /// An essential property this reader does not act on, so the picture may not be the one the
+    /// file describes. The caller says so: this crate has no console of its own on every host.
+    pub unhandled: Option<String>,
 }
 
 /// A gain map beside the picture, and the terms that apply it.
@@ -284,7 +298,7 @@ impl<'a> Catalogue<'a> {
             .item_bytes(item)
             .ok_or_else(|| format!("item {item}'s coded bytes are not in the file"))?];
         picture.tile = (picture.width, picture.height);
-        credible(&picture, self.bytes.len())?;
+        credible(&picture)?;
         Ok(picture)
     }
 
@@ -352,7 +366,7 @@ impl<'a> Catalogue<'a> {
                 picture.tile.0, picture.tile.1,
             ));
         }
-        credible(&picture, self.bytes.len())?;
+        credible(&picture)?;
         Ok(picture)
     }
 
@@ -381,6 +395,7 @@ impl<'a> Catalogue<'a> {
             nclx: None,
             icc: None,
             turn: Orientation::Normal,
+            unhandled: None,
         };
         for (kind, body) in self.properties_of(item) {
             match kind {
@@ -395,12 +410,12 @@ impl<'a> Catalogue<'a> {
         }
         (picture.nclx, picture.icc) = self.colour_of(item);
         picture.turn = self.turn_of(item);
-        if let Some(kind) = self.unhandled_essential(item) {
-            crate::warn(&format!(
-                "rawshim: this HEIF item carries an essential {kind} property this build does not \
-                 act on, so the picture may not be the one the file describes",
-            ));
-        }
+        picture.unhandled = self.unhandled_essential(item).map(|kind| {
+            format!(
+                "this HEIF item carries an essential {kind} property this build does not act on, \
+                 so the picture may not be the one the file describes"
+            )
+        });
         if picture.width == 0 || picture.height == 0 {
             return Err(format!("item {item} does not say how big it is"));
         }
@@ -530,25 +545,29 @@ fn turn_of(quarters: u8, mirrored: Option<u8>) -> Orientation {
     }
 }
 
-/// Whether a picture's declared size is one its own bytes could carry.
+/// Whether a picture's declared size is one a decoder should allocate for.
 ///
 /// **The container is what vouches for these numbers, so it is where they are checked.** `ispe`
 /// and a `grid` header are file-controlled `u32`s, and the consumer allocates from them before it
-/// decodes anything: `hevc::decode` reserves `width * height * 3` samples, so a file claiming
-/// 65535 by 65535 asks for 25GB and the allocator's failure is an abort that `crate::guard`
+/// decodes anything: rawshim's `hevc::decode` reserves `width * height * 3` samples, so a file
+/// claiming 65535 by 65535 asks for 25GB and the allocator's failure is an abort that its `guard`
 /// cannot catch - the whole server, not the one job. A larger one overflows the multiply instead.
 ///
-/// One byte of file per output pixel is far past any real coding ratio and still rejects both.
-fn credible(picture: &Picture, file: usize) -> Result<(), String> {
-    let pixels = picture.width.checked_mul(picture.height);
-    match pixels.filter(|it| it.checked_mul(3).is_some() && *it <= file.max(1) * 8) {
+/// An absolute bound, not one relative to the file's length: AV1 codes a flat sky in almost
+/// nothing, and a 1200x800 web image in 65kB is past any ratio that still rejects the 25GB file.
+fn credible(picture: &Picture) -> Result<(), String> {
+    match picture.width.checked_mul(picture.height).filter(|pixels| *pixels <= MAX_PIXELS) {
         Some(_) => Ok(()),
         None => Err(format!(
-            "this HEIF file says its picture is {}x{}, which {file} bytes cannot hold",
+            "this HEIF file says its picture is {}x{}, which is past the {MAX_PIXELS} pixels this \
+             reader opens",
             picture.width, picture.height,
         )),
     }
 }
+
+/// A gigapixel: past any panorama this application stitches.
+const MAX_PIXELS: usize = 1 << 30;
 
 fn be16(bytes: &[u8]) -> u16 {
     u16::from_be_bytes([bytes[0], bytes[1]])
@@ -874,11 +893,11 @@ mod tests {
         assert!(read_iloc(&iloc).get(&7).is_none(), "the item is dropped, not summed");
     }
 
-    /// A declared size is a `u32` out of the file and the decoder allocates from it, so a file
-    /// claiming a raster its own bytes could not hold has to be refused *here* - an allocation
-    /// that large aborts the process, which `crate::guard` cannot catch.
+    /// A declared size is a `u32` out of the file and the decoder allocates from it, so an absurd
+    /// one has to be refused *here* - an allocation that large aborts the process, which rawshim's
+    /// `guard` cannot catch.
     #[test]
-    fn a_picture_larger_than_its_own_file_is_refused() {
+    fn a_picture_too_large_to_allocate_is_refused() {
         let huge = Picture {
             codec: Codec::Hevc,
             width: 65535,
@@ -891,14 +910,17 @@ mod tests {
             nclx: None,
             icc: None,
             turn: Orientation::Normal,
+            unhandled: None,
         };
-        assert!(credible(&huge, 4096).is_err(), "25 gigabytes out of a four-kilobyte file");
+        assert!(credible(&huge).is_err(), "25 gigabytes");
         // And the overflow case, which is the lucky one: the multiply wraps rather than asking.
         let wrapping = Picture { width: usize::MAX, height: 3, ..huge };
-        assert!(credible(&wrapping, 4096).is_err());
+        assert!(credible(&wrapping).is_err());
 
         let ordinary = Picture { width: 4032, height: 3024, ..wrapping };
-        assert!(credible(&ordinary, 3_000_000).is_ok(), "a 12MP HEIC in three megabytes is normal");
+        assert!(credible(&ordinary).is_ok(), "a 12MP HEIC");
+        let panorama = Picture { width: 33804, height: 8000, ..ordinary };
+        assert!(credible(&panorama).is_ok(), "a stitched panorama");
     }
 
     /// The `iloc` walk against a hand-built box, since every camera's differs only in its widths.

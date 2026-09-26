@@ -338,8 +338,8 @@ mod tests {
         let combined = combine(&base, &alternate, 20, 10).expect("combined gain map");
         let decoded = decode(&combined).expect("decoded combined image");
         assert_eq!(orientation_tag(&decoded.image).expect("orientation"), 6);
-        let file = crate::heif::read(&combined).expect("combined AVIF");
-        assert_eq!(file.primary.turn, rawler::decoders::Orientation::Rotate90);
+        let file = heif::read(&combined).expect("combined AVIF");
+        assert_eq!(file.primary.turn, heif::Orientation::Rotate90);
         assert_eq!(crate::avif::exif(&combined), Some(exif));
     }
 }

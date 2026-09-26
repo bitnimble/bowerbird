@@ -179,6 +179,9 @@ native/rawshim/target/
 native/launcher/target/
 # The lens database's, which only its own suite builds as a root.
 native/lensdb/target/
+# The HEIF reader's and the browser's AV1 decoder's, likewise.
+native/heif/target/
+native/avif_planes/target/
 # Materialised by ensure-patched-rayon.sh from patches/; not committed.
 native/rawshim/patched/
 # Where `bun run build:wasm` puts wasm-pack's output, which the editor imports as a

@@ -148,7 +148,7 @@ function findPngExif(bytes: Uint8Array, view: DataView): Uint8Array | null {
 //
 // A HEIC's EXIF is deliberately not reached here. It is an item whose bytes are located through
 // the `meta` box's `iloc` table rather than sitting in a box of its own, so finding it is the
-// whole HEIF item walk - which `native/rawshim/src/heif.rs` already does, for the catalogue's
+// whole HEIF item walk - which `native/heif` already does, for the catalogue's
 // other fields. What is lost is the capture's UTC offset on a HEIC, which reads as "the body
 // recorded none" - the same answer every camera older than EXIF 2.31 gets.
 export function parseCaptureOffset(bytes: Uint8Array): string | null {

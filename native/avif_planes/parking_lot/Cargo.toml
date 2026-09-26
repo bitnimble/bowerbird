@@ -1,0 +1,7 @@
+[package]
+name = "parking_lot"
+version = "0.12.99"
+edition = "2024"
+
+[lib]
+path = "lib.rs"

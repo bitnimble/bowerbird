@@ -201,7 +201,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown, wasm32-wasip1-threads
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true

@@ -51,6 +51,7 @@ import { extractMetadata } from './services/processing/analysis/metadata';
 import { PairedPeers, Peers } from './services/replication/peer_transport';
 import type { Library } from './schemas/libraries';
 import { PathSegment, route } from './schemas/route';
+import { CROSS_ORIGIN_ISOLATION } from './schemas/isolation';
 import { forgetOrphanedLibraries } from './services/replication/gc';
 import { ReplicationLifecycle } from './services/replication/library_lifecycle';
 import { ReplicationService } from './services/replication/replication_service';
@@ -424,6 +425,7 @@ app.use(
 app.use(route(PathSegment.any()), async (c, next) => {
   await next();
   c.header('X-Content-Type-Options', 'nosniff');
+  for (const [name, value] of Object.entries(CROSS_ORIGIN_ISOLATION)) c.header(name, value);
 });
 app.use(route(PathSegment.any()), async (c, next) => {
   const started = performance.now();

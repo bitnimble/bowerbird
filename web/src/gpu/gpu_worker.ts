@@ -17,6 +17,7 @@ import { planarLayout } from '../features/photos/viewer/planar_layout';
 import { WebCodecs } from '../features/photos/viewer/image_decoder';
 import { StagePainter } from '../features/photos/viewer/stage_gpu';
 import { AnswerSchema, MessageSchema, ProgressSchema, type Message } from './gpu_protocol';
+import { canDecodeAvifPlanes, decodeAvifPlanes, type PlanarPicture } from '../avif/avif_planes';
 
 /** The other half of `GpuThread`, which says why the module is over here. */
 
@@ -366,17 +367,8 @@ async function networkWeights(denoiser: PrepareCrossing['denoiser']): Promise<vo
   await weights;
 }
 
-/** `crate::planes::Layout`. */
-type PlanesLayout = {
-  width: number;
-  height: number;
-  bits: 10 | 12;
-  subsampled: boolean;
-  planes: { offset: number; stride: number }[];
-};
-
-async function decodedPlanes(avif: Uint8Array<ArrayBuffer>): Promise<{ samples: Uint8Array; layout: PlanesLayout } | null> {
-  if (WebCodecs == null) return null;
+async function decodedPlanes(avif: Uint8Array<ArrayBuffer>): Promise<PlanarPicture | null> {
+  if (WebCodecs == null) return canDecodeAvifPlanes() ? decodeAvifPlanes(avif) : null;
   const decoder = new WebCodecs({ data: avif, type: 'image/avif' });
   try {
     // A file this browser will not decode is one the server can still prepare.

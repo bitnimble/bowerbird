@@ -169,9 +169,24 @@ with no analysis read or filed, and anchored at the white its file states (`Edit
 rather than at a quantile, and the page draws it at neutral without reading the saved edits. A
 neutral grade of that frame is the file's own light, so the print starts from the picture the viewer
 shows, and what crosses the network is the AVIF rather than the samples it decodes to - 3MB against
-59MB for a 10MP rendition. A browser with no `ImageDecoder`, or one that hands back anything other
+59MB for a 10MP rendition. A browser with no `ImageDecoder` - Safari - gets the same planes from
+`native/avif_planes` (below). One that can decode neither way, or that hands back anything other
 than planar PQ, gets the server's prepare of the same file instead (`from=rendition`, which runs the
 job with `Job::stated_white`).
+
+**Safari has no `ImageDecoder`, and every other way it decodes a picture flattens HDR** - an
+`<img>` drawn to a canvas, `createImageBitmap`, a `VideoFrame` built from an image, all SDR by the
+time a canvas sees them. So the viewer and the mockup decode a rendition themselves there: rav1d
+(`native/avif_planes`), built for `wasm32-wasip1-threads` because it cannot build for
+`wasm32-unknown-unknown`, returning exactly the planes `copyTo` would (pinned sample for sample
+against libavif, grids included: `the_browsers_decoder_hands_back_libavifs_planes`). `web/src/avif/`
+hosts it: a worker holding the instance, and a pool of workers started ahead of time as its threads,
+handed each thread through shared memory because the decode that spawns one never returns to its
+event loop until it is done. Shared memory is why the app is served cross-origin isolated
+(`src/schemas/isolation.ts`), and the pool is why the decode costs 90ms for a 10MP rendition rather
+than seconds. Decodes run one at a time, the photo on screen ahead of its neighbours; an abandoned
+one waiting is dropped, and an abandoned one running past 20MP tears the decoder down and starts a
+fresh one rather than being waited out, which a rebuild costs less than.
 
 Print mode holds its paper, lighting and orientation in a separate `PrintStore`, written by
 `PrintPresenter`. These are viewing settings and leave the photo document and its history alone.

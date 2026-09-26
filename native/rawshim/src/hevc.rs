@@ -6,7 +6,7 @@
 //! in front of the slices - and then take the YCbCr planes it hands back to RGB, and the grid's
 //! tiles into one raster.
 
-use crate::heif::{Nclx, Picture};
+use heif::{Nclx, Picture};
 
 /// A picture's samples as interleaved RGB code values at its own depth.
 ///

@@ -26,7 +26,8 @@ import IMPORT_WGSL from '../generated/stage_import.wgsl?raw';
 import PLANAR_WGSL from '../generated/stage.wgsl?raw';
 import { planarLayout } from './planar_layout';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
-import type { Painted, StageAsk } from '../../../gpu/gpu_protocol';
+import type { LayerPicture, Painted, StageAsk, StagePicture } from '../../../gpu/gpu_protocol';
+import type { PlanarPicture } from '../../../avif/avif_planes';
 
 /**
  * Where SDR white sits, in nits (ITU-R BT.2408).
@@ -151,6 +152,78 @@ export function storedRegion(region: Region, rotation: 0 | 90 | 180 | 270, width
   }
 }
 
+/** A picture the planar path reads, whichever decoder it came from. */
+interface Planar {
+  codedWidth: number;
+  codedHeight: number;
+  displayWidth: number;
+  displayHeight: number;
+  layout: { depth: number; chroma: number };
+  /** `region` of the stored picture, on the chroma grid, as a texture per plane. */
+  upload(device: GPUDevice, region: Region): Promise<GPUTexture[]>;
+  described: string;
+}
+
+function planarOf(picture: StagePicture, rotation: 0 | 90 | 180 | 270 = 0): Planar | null {
+  if (isPlanes(picture)) {
+    const { width, height, bits, subsampled } = picture.layout;
+    const sideways = rotation === 90 || rotation === 270;
+    const layout = { depth: bits === 12 ? 4 : 1, chroma: subsampled ? 0.5 : 1 };
+    return {
+      codedWidth: width,
+      codedHeight: height,
+      displayWidth: sideways ? height : width,
+      displayHeight: sideways ? width : height,
+      layout,
+      upload: (device, region) => Promise.resolve(planesFrom(device, picture, region, layout.chroma)),
+      described: `${bits}-bit ${subsampled ? '4:2:0' : '4:4:4'} planes ${width}x${height}`,
+    };
+  }
+  if (!isFrame(picture)) return null;
+  const layout = planarLayout(picture, rotation);
+  if (layout == null) return null;
+  return {
+    codedWidth: picture.codedWidth,
+    codedHeight: picture.codedHeight,
+    displayWidth: picture.displayWidth,
+    displayHeight: picture.displayHeight,
+    layout,
+    upload: (device, region) => planesOf(device, picture, region, layout.chroma),
+    described: described(picture),
+  };
+}
+
+function isFrame(picture: StagePicture | ImageBitmap): picture is VideoFrame {
+  return typeof VideoFrame === 'function' && picture instanceof VideoFrame;
+}
+
+function isPlanes(picture: StagePicture | ImageBitmap): picture is PlanarPicture {
+  return 'samples' in picture;
+}
+
+/** Planes already in memory, uploaded straight from it: the rows of `region` and nothing else. */
+export function planesFrom(device: GPUDevice, { samples, layout }: PlanarPicture, region: Region, chroma: number): GPUTexture[] {
+  return layout.planes.slice(0, 3).map((plane, at) => {
+    const span = at === 0 ? 1 : chroma;
+    const width = Math.ceil(region.width * span);
+    const height = Math.ceil(region.height * span);
+    const texture = device.createTexture({
+      size: [width, height],
+      format: 'r16uint',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    const offset =
+      samples.byteOffset + plane.offset + region.y * span * plane.stride + region.x * span * Uint16Array.BYTES_PER_ELEMENT;
+    device.queue.writeTexture(
+      { texture },
+      samples.buffer,
+      { offset, bytesPerRow: plane.stride, rowsPerImage: height },
+      { width, height },
+    );
+    return texture;
+  });
+}
+
 export async function planesOf(
   device: GPUDevice,
   frame: VideoFrame,
@@ -216,7 +289,8 @@ export class StagePainter {
       const canvas = this.sized(ask);
       return ask.kind === 'paint' ? await this.paint(canvas, ask) : await this.paintMasked(canvas, ask);
     } finally {
-      for (const picture of [...pictures, ...masks]) picture.close();
+      // Planes are memory, not a handle: dropping them is closing them.
+      for (const picture of [...pictures, ...masks]) if (!isPlanes(picture)) picture.close();
     }
   }
 
@@ -243,6 +317,9 @@ export class StagePainter {
   private async paint(canvas: OffscreenCanvas, ask: Paint): Promise<Painted> {
     const extended = await this.paintExtended(canvas, ask);
     if (extended !== 'declined') return extended;
+    const { picture, region, rotation } = ask;
+    // Left to the page, which draws a bitmap of the same file instead (`stage_canvas.ts`).
+    if (isPlanes(picture)) return 'declined';
     // Otherwise plain and unconfigured, which is what a machine with no WebGPU shows: no colour
     // space asked for is no colour space converted to, so an SDR photograph comes out as the
     // `<img>` drew it, and the browser tone maps an HDR rendition on the way in rather than
@@ -253,12 +330,11 @@ export class StagePainter {
     // context for its whole life. Reported rather than skipped: `drawImage` silently doing
     // nothing leaves a blank canvas that the stage goes on to treat as a painted picture.
     if (flat == null) throw new Error('no drawable context');
-    const { picture, region, rotation } = ask;
     // To the canvas rather than at the frame's own size: the canvas is capped at what a browser
     // will allocate (`canvasSizeFor`), and a frame past that would otherwise be drawn corner-first
     // and cropped to the part that fitted.
     const bitmap =
-      region != null && rotation !== 0 && typeof VideoFrame === 'function' && picture instanceof VideoFrame
+      region != null && rotation !== 0 && isFrame(picture)
         ? await createImageBitmap(picture, { imageOrientation: 'from-image' })
         : null;
     try {
@@ -279,7 +355,7 @@ export class StagePainter {
    * has nothing more to show past that, and blowing it up is an upscale of what is already
    * there.
    *
-   * Declined where this cannot be done - no device, no WebCodecs frame, or a canvas that already
+   * Declined where this cannot be done - no device, no frame or planes, or a canvas that already
    * holds a context of another kind - and the caller draws it the ordinary way instead. A
    * canvas holds one kind of context for its whole life, so which of the two a frame uses is
    * settled by the first draw into it and never changes under it.
@@ -289,64 +365,47 @@ export class StagePainter {
    */
   private async paintExtended(canvas: OffscreenCanvas, ask: Paint): Promise<Painted> {
     const { device } = this;
-    const { picture, region, rotation, proof } = ask;
+    const { picture, rotation } = ask;
     if (this.declined) return 'declined';
     if (device == null) return this.decline('there is no WebGPU device');
-    if (!(typeof VideoFrame === 'function' && picture instanceof VideoFrame)) return 'declined';
-    const layout = planarLayout(picture, rotation);
-    const planar = layout != null;
-    if (!planar && carriesHdr(picture)) {
+    // **In both arms, everything that can decline has to decline before the context is asked
+    // for.** A canvas holds one kind of context for its whole life, so taking a WebGPU one and only
+    // then failing leaves an element nothing can ever draw into - the 2D path then gets no context
+    // either and reports the frame missing, so a photograph that is on disk and fine reads as one
+    // the server never built.
+    //
+    // What is too large is not the same question for the two. An import is the whole frame however
+    // little of it is drawn, so a sixty-megapixel camera JPEG at 9504 wide is past an 8192 limit
+    // before it starts; the planar arm uploads only the region, so what matters there is the
+    // region. Neither failure throws - an oversized texture comes back invalid and the draw is
+    // silently dropped - so both are checked rather than caught.
+    const planar = planarOf(picture, rotation);
+    if (planar != null) return this.paintPlanar(canvas, ask, device, planar);
+    if (!isFrame(picture)) return 'declined';
+    if (carriesHdr(picture)) {
       this.warn(`an HDR frame (${described(picture)}) is not one the planar path reads, so it is imported and drawn flat`);
     }
-    const whole = { x: 0, y: 0, width: picture.displayWidth, height: picture.displayHeight };
-    const displayed = region ?? whole;
-    const stored = planar ? storedRegion(displayed, rotation, picture.codedWidth, picture.codedHeight) : displayed;
-    const storedWhole = { x: 0, y: 0, width: picture.codedWidth, height: picture.codedHeight };
-    const drawnRegion = planar ? onChromaGrid(stored, layout.chroma, storedWhole) : displayed;
+    return this.paintImported(canvas, ask, device, picture);
+  }
 
-    // **Everything that can decline has to decline before the context is asked for.** A canvas
-    // holds one kind of context for its whole life, so taking a WebGPU one and only then failing
-    // leaves an element nothing can ever draw into - the 2D path then gets no context either
-    // and reports the frame missing, so a photograph that is on disk and fine reads as one the
-    // server never built.
-    //
-    // What is too large is not the same question for the two paths. An import is the whole frame
-    // however little of it is drawn, so a sixty-megapixel camera JPEG at 9504 wide is past an
-    // 8192 limit before it starts; the planar path uploads only the region, so what matters
-    // there is the region. Neither failure throws - an oversized texture comes back invalid and
-    // the draw is silently dropped - so both are checked rather than caught.
+  private async paintPlanar(canvas: OffscreenCanvas, ask: Paint, device: GPUDevice, planar: Planar): Promise<Painted> {
+    const { region, rotation, proof } = ask;
+    const whole = { x: 0, y: 0, width: planar.displayWidth, height: planar.displayHeight };
+    const stored = storedRegion(region ?? whole, rotation, planar.codedWidth, planar.codedHeight);
+    const storedWhole = { x: 0, y: 0, width: planar.codedWidth, height: planar.codedHeight };
+    const drawnRegion = onChromaGrid(stored, planar.layout.chroma, storedWhole);
     const limit = device.limits.maxTextureDimension2D;
-    const tooLarge =
-      planar ?
-        Math.max(drawnRegion.width, drawnRegion.height) > limit
-      : Math.max(picture.codedWidth, picture.codedHeight) > limit;
-    if (tooLarge) return this.decline(`${described(picture)} is past this device's ${limit}px texture limit`);
-
-    // The planes are copied out before the context is taken for the same reason: `copyTo` is
-    // real work on a frame the run may close underneath it, and it rejects.
-    let planes: GPUTexture[] = [];
-    try {
-      if (planar) planes = await planesOf(device, picture, drawnRegion, layout.chroma);
-    } catch (err) {
-      return this.decline(`copying the planes out of ${described(picture)} failed`, err);
+    if (Math.max(drawnRegion.width, drawnRegion.height) > limit) {
+      return this.decline(`${planar.described} is past this device's ${limit}px texture limit`);
     }
 
-    // And the import for the same reason again, this being the last call that can fail on the
-    // *frame* rather than on the browser: `importExternalTexture` throws on a `VideoFrame` the
-    // run closed underneath the draw, which a reader on the arrow key produces routinely. Taken
-    // after the context, that throw would spend the canvas and read as a browser that cannot do
-    // this at all. It expires at the end of the task that made it, and nothing below awaits.
-    let imported: GPUExternalTexture | null = null;
-    if (!planar) {
-      try {
-        // In the canvas's own space, not the default `srgb`: the shader is a passthrough, so
-        // whatever the import converts to is what the surface is handed - and sRGB values
-        // written into a display-p3 canvas are read as display-p3, which is a picture too
-        // saturated by exactly the difference between the two gamuts.
-        imported = device.importExternalTexture({ source: picture, colorSpace: 'display-p3' });
-      } catch (err) {
-        return this.decline(`importing ${described(picture)} failed`, err);
-      }
+    // Copied out before the context is taken: `copyTo` is real work on a frame the run may close
+    // underneath it, and it rejects.
+    let planes: GPUTexture[];
+    try {
+      planes = await planar.upload(device, drawnRegion);
+    } catch (err) {
+      return this.decline(`copying the planes out of ${planar.described} failed`, err);
     }
 
     const context = canvas.getContext('webgpu');
@@ -355,62 +414,31 @@ export class StagePainter {
       return this.decline('the canvas gave no WebGPU context');
     }
     try {
-      if (planar) {
-        // Region pixels per canvas pixel, which is one unless the canvas was capped below the
-        // region it covers.
-        const uniform = colourWords(
-          ask.headroom,
-          [
-            (rotation === 90 || rotation === 270 ? drawnRegion.height : drawnRegion.width) / Math.max(canvas.width, 1),
-            (rotation === 90 || rotation === 270 ? drawnRegion.width : drawnRegion.height) / Math.max(canvas.height, 1),
-          ],
-          layout,
-          [0, 0],
-          1,
-          rotation,
-          proof == null ? 0 : PROOF_INTENT[proof],
-          ask.sourcePeak,
-        );
-        device.queue.writeBuffer(pipelinesFor(device).colour, 0, uniform.buffer as ArrayBuffer);
-      } else {
-        const { x, y, width, height } = drawnRegion;
-        const span = new Float32Array([
-          x / picture.displayWidth,
-          y / picture.displayHeight,
-          width / picture.displayWidth,
-          height / picture.displayHeight,
-        ]);
-        device.queue.writeBuffer(pipelinesFor(device).region, 0, span.buffer as ArrayBuffer);
-      }
-      configure(context, device);
-
-      const drawn = pipelinesFor(device);
-      const entries: GPUBindGroupEntry[] =
-        imported == null ?
-          [
-            { binding: 0, resource: planes[0]!.createView() },
-            { binding: 1, resource: planes[1]!.createView() },
-            { binding: 2, resource: planes[2]!.createView() },
-            { binding: 3, resource: { buffer: drawn.colour } },
-          ]
-        : [
-            { binding: 0, resource: drawn.sampler },
-            { binding: 1, resource: imported },
-            { binding: 2, resource: { buffer: drawn.region } },
-          ];
-
-      const pipeline = planar ? drawn.planar : drawn.imported;
-      const commands = device.createCommandEncoder();
-      const pass = commands.beginRenderPass({
-        colorAttachments: [
-          { view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
+      const sideways = rotation === 90 || rotation === 270;
+      // Region pixels per canvas pixel, which is one unless the canvas was capped below the
+      // region it covers.
+      const uniform = colourWords(
+        ask.headroom,
+        [
+          (sideways ? drawnRegion.height : drawnRegion.width) / Math.max(canvas.width, 1),
+          (sideways ? drawnRegion.width : drawnRegion.height) / Math.max(canvas.height, 1),
         ],
-      });
-      pass.setPipeline(pipeline);
-      pass.setBindGroup(0, device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries }));
-      pass.draw(3);
-      pass.end();
-      device.queue.submit([commands.finish()]);
+        planar.layout,
+        [0, 0],
+        1,
+        rotation,
+        proof == null ? 0 : PROOF_INTENT[proof],
+        ask.sourcePeak,
+      );
+      const drawn = pipelinesFor(device);
+      device.queue.writeBuffer(drawn.colour, 0, uniform.buffer as ArrayBuffer);
+      configure(context, device);
+      drawOnce(device, context, drawn.planar, [
+        { binding: 0, resource: planes[0]!.createView() },
+        { binding: 1, resource: planes[1]!.createView() },
+        { binding: 2, resource: planes[2]!.createView() },
+        { binding: 3, resource: { buffer: drawn.colour } },
+      ]);
       return 'drawn';
     } catch (err) {
       this.giveUp(err);
@@ -420,13 +448,60 @@ export class StagePainter {
     }
   }
 
+  private paintImported(canvas: OffscreenCanvas, ask: Paint, device: GPUDevice, frame: VideoFrame): Painted {
+    const limit = device.limits.maxTextureDimension2D;
+    if (Math.max(frame.codedWidth, frame.codedHeight) > limit) {
+      return this.decline(`${described(frame)} is past this device's ${limit}px texture limit`);
+    }
+
+    // Imported before the context is taken, this being the last call that can fail on the *frame*
+    // rather than on the browser: `importExternalTexture` throws on a `VideoFrame` the run closed
+    // underneath the draw, which a reader on the arrow key produces routinely. Taken after the
+    // context, that throw would spend the canvas and read as a browser that cannot do this at all.
+    // It expires at the end of the task that made it, and nothing below awaits.
+    let imported: GPUExternalTexture;
+    try {
+      // In the canvas's own space, not the default `srgb`: the shader is a passthrough, so
+      // whatever the import converts to is what the surface is handed - and sRGB values
+      // written into a display-p3 canvas are read as display-p3, which is a picture too
+      // saturated by exactly the difference between the two gamuts.
+      imported = device.importExternalTexture({ source: frame, colorSpace: 'display-p3' });
+    } catch (err) {
+      return this.decline(`importing ${described(frame)} failed`, err);
+    }
+
+    const context = canvas.getContext('webgpu');
+    if (context == null) return this.decline('the canvas gave no WebGPU context');
+    try {
+      const { x, y, width, height } = ask.region ?? { x: 0, y: 0, width: frame.displayWidth, height: frame.displayHeight };
+      const span = new Float32Array([
+        x / frame.displayWidth,
+        y / frame.displayHeight,
+        width / frame.displayWidth,
+        height / frame.displayHeight,
+      ]);
+      const drawn = pipelinesFor(device);
+      device.queue.writeBuffer(drawn.region, 0, span.buffer as ArrayBuffer);
+      configure(context, device);
+      drawOnce(device, context, drawn.imported, [
+        { binding: 0, resource: drawn.sampler },
+        { binding: 1, resource: imported },
+        { binding: 2, resource: { buffer: drawn.region } },
+      ]);
+      return 'drawn';
+    } catch (err) {
+      this.giveUp(err);
+      return 'lost';
+    }
+  }
+
   /**
    * Draws a base layer, then a set of masked layers over it, onto one canvas - the merge page's
    * hover preview.
    *
    * Every picture has to be planar PQ, because every one of them is this pipeline's own analysis
    * plane rather than a camera JPEG: there is no imported-texture arm here, and a picture
-   * `planarLayout` cannot read has nothing sensible to composite from.
+   * `planarOf` cannot read has nothing sensible to composite from.
    *
    * Declined under the same conditions `paintExtended` declines for.
    */
@@ -435,10 +510,13 @@ export class StagePainter {
     const { base, layers } = ask;
     if (this.declined) return 'declined';
     if (device == null) return this.decline('there is no WebGPU device');
-    if (planarLayout(base) == null) return this.decline(`a composite's base (${described(base)}) is not planar PQ`);
+    const basePlanar = planarOf(base);
+    if (basePlanar == null) {
+      return this.decline(`a composite's base (${isFrame(base) ? described(base) : 'planes'}) is not planar PQ`);
+    }
     const limit = device.limits.maxTextureDimension2D;
-    if (Math.max(base.displayWidth, base.displayHeight) > limit) {
-      return this.decline(`${described(base)} is past this device's ${limit}px texture limit`);
+    if (Math.max(basePlanar.displayWidth, basePlanar.displayHeight) > limit) {
+      return this.decline(`${basePlanar.described} is past this device's ${limit}px texture limit`);
     }
 
     const drawn = pipelinesFor(device);
@@ -451,15 +529,16 @@ export class StagePainter {
      * buffer written three times would have all three passes read the last value.
      */
     const prepare = async (
-      picture: VideoFrame,
+      picture: LayerPicture,
       source: ImageBitmap | null,
       shift: readonly [number, number],
       gain: number,
     ): Promise<Prepared | null> => {
-      const layout = planarLayout(picture);
-      if (layout == null) return null;
-      const region = { x: 0, y: 0, width: picture.displayWidth, height: picture.displayHeight };
-      const planes = await planesOf(device, picture, region, layout.chroma);
+      const planar = planarOf(picture);
+      if (planar == null) return null;
+      const { layout } = planar;
+      const region = { x: 0, y: 0, width: planar.displayWidth, height: planar.displayHeight };
+      const planes = await planar.upload(device, region);
       spent.push(...planes);
       const uniform = device.createBuffer({
         size: COLOUR_BYTES,
@@ -595,6 +674,21 @@ function configure(context: GPUCanvasContext, device: GPUDevice): void {
     colorSpace: 'display-p3',
     toneMapping: { mode: 'extended' },
   } as GPUCanvasConfiguration);
+}
+
+/** One full-screen triangle through `pipeline`, onto a cleared canvas. */
+function drawOnce(device: GPUDevice, context: GPUCanvasContext, pipeline: GPURenderPipeline, entries: GPUBindGroupEntry[]): void {
+  const commands = device.createCommandEncoder();
+  const pass = commands.beginRenderPass({
+    colorAttachments: [
+      { view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } },
+    ],
+  });
+  pass.setPipeline(pipeline);
+  pass.setBindGroup(0, device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries }));
+  pass.draw(3);
+  pass.end();
+  device.queue.submit([commands.finish()]);
 }
 
 /** `Colour` in `stage.slang`, packed as the emitted WGSL declares it: twelve floats. */

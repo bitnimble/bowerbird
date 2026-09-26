@@ -377,6 +377,12 @@ fn with_asset_cors(
     mut response: tauri::http::Response<Vec<u8>>,
     origin: Option<&str>,
 ) -> tauri::http::Response<Vec<u8>> {
+    // The page is cross-origin isolated, and this scheme is another origin: without it, COEP
+    // blocks every `<img>` and `<video>` it serves, which send no `Origin` to be answered.
+    response.headers_mut().insert(
+        "cross-origin-resource-policy",
+        tauri::http::HeaderValue::from_static("cross-origin"),
+    );
     if let Some(origin) = origin {
         response.headers_mut().insert(
             "access-control-allow-origin",

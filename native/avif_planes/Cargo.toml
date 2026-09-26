@@ -1,0 +1,23 @@
+[package]
+name = "avif_planes"
+version = "0.1.0"
+edition = "2024"
+
+# cdylib for the browser (`scripts/build-avif-planes.ts`, `wasm32-wasip1-threads`); rlib for
+# rawshim's test that holds these planes to libavif's.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+heif = { path = "../heif" }
+# BSD-2, and the only AV1 decoder in Rust. No assembly: none of it is for wasm.
+rav1d = { version = "=1.1.0", default-features = false, features = ["bitdepth_16"] }
+# rav1d's own, for the errno its results are negated from: `EAGAIN` is 6 on WASI and 11 on Linux.
+libc = "0.2"
+
+[patch.crates-io]
+parking_lot = { path = "parking_lot" }
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -53,7 +53,7 @@ pub fn is_rendered(path: &str) -> bool {
 
 /// The same question of bytes in hand, which is what the editor has: the file's own magic.
 pub fn is_rendered_bytes(bytes: &[u8]) -> bool {
-    bytes.starts_with(&PNG_MAGIC) || bytes.starts_with(&[0xFF, 0xD8]) || crate::heif::is_heif(bytes)
+    bytes.starts_with(&PNG_MAGIC) || bytes.starts_with(&[0xFF, 0xD8]) || heif::is_heif(bytes)
 }
 
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -115,10 +115,10 @@ pub fn holding(read: Read) -> Result<Held, String> {
 pub fn hold_planes(avif: &[u8], planes: &[u8], layout: &crate::planes::Layout) -> Result<Held, String> {
     let gpu = crate::gpu::device()
         .ok_or_else(|| crate::base::without_a_device("reading a decoded rendition"))?;
-    let primary = crate::heif::read(avif)?.primary;
+    let primary = read_heif(avif)?.primary;
     let codes = crate::planes::codes(gpu, planes, layout)?;
-    let picture =
-        crate::linearise::Picture::on_device(gpu, codes, coding_of(&primary, 16), primary.turn, None);
+    let turn = crate::orientation::of_heif(primary.turn);
+    let picture = crate::linearise::Picture::on_device(gpu, codes, coding_of(&primary, 16), turn, None);
     Ok(Held { picture, camera: None })
 }
 
@@ -230,7 +230,7 @@ pub fn probe(bytes: &[u8]) -> Option<Probe> {
     // Whether EXIF this probe did not find could still be further into the file. A PNG's `eXIf`
     // and a JPEG's `APP1` are both in front of the pixels, so "not here" is the answer; a HEIF's
     // is an item located through `iloc` and free to sit anywhere in `mdat`.
-    let deferred = crate::heif::is_heif(bytes);
+    let deferred = heif::is_heif(bytes);
     let (width, height, turn, exif) = if bytes.starts_with(&PNG_MAGIC) {
         // IHDR is the first chunk of every PNG, and its width and height are its first eight
         // bytes: 8 of signature, 4 of length, 4 of type.
@@ -251,9 +251,10 @@ pub fn probe(bytes: &[u8]) -> Option<Probe> {
             exif_turn(exif.as_deref()),
             exif,
         )
-    } else if crate::heif::is_heif(bytes) {
-        let file = crate::heif::read(bytes).ok()?;
-        (file.primary.width, file.primary.height, file.primary.turn, file.exif)
+    } else if heif::is_heif(bytes) {
+        let file = read_heif(bytes).ok()?;
+        let turn = crate::orientation::of_heif(file.primary.turn);
+        (file.primary.width, file.primary.height, turn, file.exif)
     } else {
         return None;
     };
@@ -288,10 +289,19 @@ pub fn read(bytes: &[u8]) -> Result<Read, String> {
     if bytes.starts_with(&[0xFF, 0xD8]) {
         return jpeg(bytes);
     }
-    if crate::heif::is_heif(bytes) {
+    if heif::is_heif(bytes) {
         return heif(bytes);
     }
     Err("this file is not a PNG, a JPEG, a HEIC or an AVIF".to_string())
+}
+
+/// A HEIF file's boxes, with anything the reader could not act on said out loud.
+pub fn read_heif(bytes: &[u8]) -> Result<heif::File, String> {
+    let file = heif::read(bytes)?;
+    if let Some(unhandled) = &file.primary.unhandled {
+        crate::warn(&format!("rawshim: {unhandled}"));
+    }
+    Ok(file)
 }
 
 fn png(bytes: &[u8]) -> Result<Read, String> {
@@ -388,7 +398,7 @@ fn jpeg(bytes: &[u8]) -> Result<Read, String> {
 }
 
 fn heif(bytes: &[u8]) -> Result<Read, String> {
-    let file = crate::heif::read(bytes)?;
+    let file = read_heif(bytes)?;
     let picture = file.primary;
     let coded = decode_picture(bytes, &picture)?;
     let coding = coding_of(&picture, coded.depth);
@@ -404,17 +414,17 @@ fn heif(bytes: &[u8]) -> Result<Read, String> {
         width: coded.width,
         height: coded.height,
         coding,
-        turn: picture.turn,
+        turn: crate::orientation::of_heif(picture.turn),
         gain,
         exif: file.exif,
     })
 }
 
 /// One HEIF picture's bitstream, through whichever decoder its codec names.
-fn decode_picture(file: &[u8], picture: &crate::heif::Picture) -> Result<crate::hevc::Coded, String> {
+fn decode_picture(file: &[u8], picture: &heif::Picture) -> Result<crate::hevc::Coded, String> {
     match picture.codec {
-        crate::heif::Codec::Hevc => crate::hevc::decode(picture),
-        crate::heif::Codec::Av1 => av1(file, picture),
+        heif::Codec::Hevc => crate::hevc::decode(picture),
+        heif::Codec::Av1 => av1(file, picture),
     }
 }
 
@@ -427,7 +437,7 @@ fn decode_picture(file: &[u8], picture: &crate::heif::Picture) -> Result<crate::
 /// `wasm32-unknown-unknown` does not have. So an AVIF gets renditions, a grid tile and a viewer,
 /// and the editor says why it cannot open one rather than showing a black frame.
 #[cfg(feature = "renditions")]
-fn av1(file: &[u8], _picture: &crate::heif::Picture) -> Result<crate::hevc::Coded, String> {
+fn av1(file: &[u8], _picture: &heif::Picture) -> Result<crate::hevc::Coded, String> {
     // libavif reads the whole container for itself, so the boxes this module walked are used for
     // everything *around* the pixels - the colour, the turn, the EXIF, the gain map - and the file
     // goes to it entire.
@@ -441,14 +451,14 @@ fn av1(file: &[u8], _picture: &crate::heif::Picture) -> Result<crate::hevc::Code
 }
 
 #[cfg(not(feature = "renditions"))]
-fn av1(_: &[u8], _: &crate::heif::Picture) -> Result<crate::hevc::Coded, String> {
+fn av1(_: &[u8], _: &heif::Picture) -> Result<crate::hevc::Coded, String> {
     Err("this build reads no AVIF: the AV1 decoder is libavif, which a browser links no C to \
          reach. Open this photograph's rendition instead."
         .to_string())
 }
 
 /// What a HEIF picture's samples mean, from its `colr` box or its profile.
-fn coding_of(picture: &crate::heif::Picture, depth: u32) -> Coding {
+fn coding_of(picture: &heif::Picture, depth: u32) -> Coding {
     if let Some(nclx) = picture.nclx {
         return Coding::from_cicp(nclx.primaries, nclx.transfer, depth);
     }
@@ -471,12 +481,12 @@ fn coding_of(picture: &crate::heif::Picture, depth: u32) -> Coding {
 /// its terms out of the container, which is what `avif::gain_map` asks for.
 fn gain_map_of(
     file: &[u8],
-    map: &crate::heif::GainMap,
+    map: &heif::GainMap,
     exif: Option<&[u8]>,
     base_width: usize,
     base_height: usize,
 ) -> Option<GainMap> {
-    if map.picture.codec == crate::heif::Codec::Av1 {
+    if map.picture.codec == heif::Codec::Av1 {
         return avif_gain_map(file, base_width, base_height);
     }
     let terms = match map.metadata.as_deref() {

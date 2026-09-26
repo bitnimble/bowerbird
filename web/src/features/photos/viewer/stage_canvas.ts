@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { settingsApi } from '../../../api/settings';
 import { displayIsHdr } from '../../../app/device';
 import { gpuThread } from '../../../gpu/gpu_thread';
-import { PaintedSchema, type Painted } from '../../../gpu/gpu_protocol';
+import { PaintedSchema, type LayerPicture, type Painted } from '../../../gpu/gpu_protocol';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import type { Decoded } from './stage_bitmaps';
 import { SDR_WHITE_NITS, type Region } from './stage_gpu';
@@ -27,7 +27,7 @@ export interface CanvasSize {
 
 /** One masked layer over an already-drawn canvas. */
 export interface MaskedLayer {
-  picture: VideoFrame;
+  picture: LayerPicture;
   /** Alpha per canvas pixel, at the canvas's own size - `merge_mask.ts` rasterises it. */
   mask: OffscreenCanvas | HTMLCanvasElement;
   /** Where the picture is read for a canvas pixel, relative to it, in canvas pixels. */
@@ -62,33 +62,31 @@ class StageCanvases {
     const [headroom, sourcePeak] = await Promise.all([this.displayHeadroom(), this.renditionHeadroom()]);
     if (this.released.has(canvas)) return;
     const { id, handed } = this.handOver(canvas);
+    const common = { kind: 'paint', canvas: id, ...size, region: region ?? null, proof, headroom, sourcePeak } as const;
     const painted = await gpuThread().ask(
       PaintedSchema,
-      {
-        to: 'stage',
-        ask: {
-          kind: 'paint',
-          canvas: id,
-          handed,
-          ...size,
-          picture: frame.picture,
-          region: region ?? null,
-          rotation: frame.rotation,
-          proof,
-          headroom,
-          sourcePeak,
-        },
-      },
+      { to: 'stage', ask: { ...common, handed, picture: frame.picture, rotation: frame.rotation } },
       handed == null ? [] : [handed],
     );
     lostIf(painted);
+    if (painted !== 'declined' || frame.flat == null) return;
+    // Planes only WebGPU can draw, on a thread that could not: the same file as a bitmap, in SDR,
+    // which is where any other declined frame ends up too.
+    const bitmap = await createImageBitmap(frame.flat, { imageOrientation: 'from-image' });
+    lostIf(
+      await gpuThread().ask(
+        PaintedSchema,
+        { to: 'stage', ask: { ...common, handed: null, picture: bitmap, rotation: 0 } },
+        [bitmap],
+      ),
+    );
   }
 
   /**
    * Draws a base layer, then a set of masked layers over it, onto one canvas - the merge page's
    * hover preview. False where the GPU thread declined it.
    */
-  async paintMasked(canvas: HTMLCanvasElement, size: CanvasSize, base: VideoFrame, layers: readonly MaskedLayer[]): Promise<boolean> {
+  async paintMasked(canvas: HTMLCanvasElement, size: CanvasSize, base: LayerPicture, layers: readonly MaskedLayer[]): Promise<boolean> {
     const [headroom, masks] = await Promise.all([
       this.displayHeadroom(),
       Promise.all(layers.map((layer) => createImageBitmap(layer.mask))),

@@ -125,6 +125,7 @@ rawler = { path = "../vendor/dnglab/rawler" }
 # the editor's open reads the spline the camera recorded in the RAW and never asks a database,
 # so the Android and wasm builds link neither it nor its ~3.6MB of XML.
 lensdb = { path = "../lensdb", optional = true }
+heif = { path = "../heif" }
 fast_image_resize = "6.1.0"
 # The f16 the detail and surround textures and the jacobian readback are held in. Conversion
 # only - no feature of it is wanted.
@@ -251,3 +252,5 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # A second reader for what `tiff_write` writes, so the export is held against a decoder that is
 # not the writer's own.
 tiff = "0.11.3"
+# The browser's AV1 decoder, held to libavif's planes (`avif::tests`).
+avif_planes = { path = "../avif_planes" }

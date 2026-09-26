@@ -82,7 +82,7 @@ server writes and reads one back exactly; the editor links no C at all, and the 
 decoder under a licence this project can take reaches for `libc` types
 `wasm32-unknown-unknown` does not have. So an AVIF gets a catalogue row, a grid tile, renditions
 and a viewer, and the editor says why it cannot open one rather than showing a black frame. HEIC
-has no such gap: `heif.rs` reads the boxes and `hevc.rs` the bitstream, both pure Rust, on both
+has no such gap: `native/heif` reads the boxes and `hevc.rs` the bitstream, both pure Rust, on both
 hosts.
 
 **Canon needed no second reader, and that is the point of the split.** The decoder reads CR3 and parses its header like any other format - LibRaw's did then and rawler's does now - so the decode, the embedded preview, the exposure and the body and lens names all arrived working. Three things did not, and each is a place the ARW-only assumption had hardened into code rather than a Canon feature:

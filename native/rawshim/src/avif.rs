@@ -945,6 +945,63 @@ mod tests {
         }
     }
 
+    /// The browser's AV1 decoder (`avif_planes`, Safari's viewer and editor) against libavif, plane
+    /// for plane. Both are dav1d, so one sample apart is the grid assembly or the layout.
+    #[test]
+    fn the_browsers_decoder_hands_back_libavifs_planes() {
+        let frame = |width: usize, height: usize| -> Vec<u16> {
+            (0..width * height)
+                .flat_map(|at| {
+                    let (x, y) = (at % width, at / width);
+                    [(20_000 + x * 300) as u16, (22_000 + y * 250) as u16, (30_000 - x * 90 - y * 70) as u16]
+                })
+                .collect()
+        };
+        let cicp = Cicp { primaries: 9, transfer: 16, matrix: 9 };
+        let still = |format, width, height| {
+            let options = StillOptions { cicp: Cicp { ..cicp }, format, quantizer: 20, speed: 10 };
+            encode_still(frame(width, height).into(), width, height, &options).expect("the still encodes")
+        };
+        // Whole rows at a time, the last band shorter: the grid a still is saved as, cropped.
+        let bands = |format, width: usize, heights: &[usize]| {
+            let bands = heights.iter().map(|height| frame(width, *height)).collect();
+            encode_grid(bands, 16, AVIF_RANGE_LIMITED, width, AVIF_DEPTH, format, &cicp, 20, 10, 0, None)
+                .expect("the grid encodes")
+        };
+        let cases = [
+            ("4:4:4", still(AVIF_PIXEL_FORMAT_YUV444, 64, 48)),
+            ("odd 4:2:0", still(AVIF_PIXEL_FORMAT_YUV420, 63, 47)),
+            ("4:2:0 grid", bands(AVIF_PIXEL_FORMAT_YUV420, 96, &[64, 64, 64, 8])),
+            ("4:4:4 grid", bands(AVIF_PIXEL_FORMAT_YUV444, 96, &[64, 64, 64, 8])),
+        ];
+        for (name, file) in cases {
+            let (libavif, layout) = yuv_planes(&file);
+            let Ok(avif_planes::Decoded::Planes(ours)) = avif_planes::decode(&file, 2) else {
+                panic!("{name}: the browser's decoder declined or failed");
+            };
+            assert_eq!(
+                (ours.width, ours.height, ours.bits, ours.subsampled),
+                (layout.width, layout.height, layout.bits, layout.subsampled),
+                "{name}",
+            );
+            for (plane, (first, row_length)) in ours.layout().into_iter().enumerate() {
+                let rows = if plane > 0 && ours.subsampled { ours.height.div_ceil(2) } else { ours.height };
+                let theirs = &layout.planes[plane];
+                for row in 0..rows {
+                    let at = theirs.offset + row * theirs.stride;
+                    let expected: Vec<u16> = libavif[at..at + row_length * 2]
+                        .chunks_exact(2)
+                        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                        .collect();
+                    let start = first + row * row_length;
+                    assert_eq!(&ours.samples[start..start + row_length], &expected[..], "{name}: plane {plane}, row {row}");
+                }
+            }
+        }
+        let sdr = encode_rgb8(vec![128u8; 16 * 8 * 3].into(), 16, 8, 20, 10, true).expect("the encode");
+        assert!(matches!(avif_planes::decode(&sdr, 2), Ok(avif_planes::Decoded::Declined(_))), "SDR is declined");
+    }
+
     #[test]
     fn rotation_is_container_metadata_and_decode_honours_it() {
         let (width, height) = (8usize, 6usize);
@@ -963,16 +1020,16 @@ mod tests {
         };
         let unturned = encode(0);
         let (samples, _, _) = decode_at(&unturned, 8).expect("AVIF decode");
-        let stored = crate::heif::read(&unturned).expect("AVIF container");
+        let stored = heif::read(&unturned).expect("AVIF container");
         for (rotate, angle, turn) in [
             (90, 3, rawler::decoders::Orientation::Rotate90),
             (180, 2, rawler::decoders::Orientation::Rotate180),
             (270, 1, rawler::decoders::Orientation::Rotate270),
         ] {
             let encoded = encode(rotate);
-            let picture = crate::heif::read(&encoded).expect("rotated AVIF container").primary;
+            let picture = heif::read(&encoded).expect("rotated AVIF container").primary;
             assert_eq!(picture.tiles, stored.primary.tiles, "coded pixels at {rotate}");
-            assert_eq!(picture.turn, turn, "container orientation at {rotate}");
+            assert_eq!(crate::orientation::of_heif(picture.turn), turn, "container orientation at {rotate}");
             let rendered = crate::decode_rendered::read(&encoded).expect("rendered AVIF decode");
             let raw = decode_at_unturned(&encoded, 16).expect("unturned AVIF decode");
             assert_eq!((rendered.codes, rendered.width, rendered.height), raw,
@@ -1042,8 +1099,8 @@ mod tests {
         .expect("SDR roll job");
         crate::job::run(&job).expect("SDR roll");
         let base = std::fs::read(&base_path).expect("SDR still");
-        let hdr = crate::heif::read(&source).expect("HDR container");
-        let sdr = crate::heif::read(&base).expect("SDR container");
+        let hdr = heif::read(&source).expect("HDR container");
+        let sdr = heif::read(&base).expect("SDR container");
         assert_eq!((sdr.primary.width, sdr.primary.height, sdr.primary.turn),
             (hdr.primary.width, hdr.primary.height, hdr.primary.turn));
         let shared = crate::jpeg_gain_write::combine(&base, &source, 90).expect("gain-map JPEG");
@@ -1163,8 +1220,8 @@ mod tests {
             .expect("the encode");
 
         assert_eq!(super::exif(&bytes).as_deref(), Some(&exif[..]));
-        let turn = crate::heif::read(&bytes).expect("the container").primary.turn;
-        assert_eq!(turn, rawler::decoders::Orientation::Rotate180);
+        let turn = heif::read(&bytes).expect("the container").primary.turn;
+        assert_eq!(turn, heif::Orientation::Rotate180);
     }
 
     #[test]

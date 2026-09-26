@@ -188,11 +188,13 @@ else or wait for the completion notification**.
 `--test <file>`, or `--lib`; with nothing it prints how to narrow it and exits 2. The tests that
 decode a real RAW are not even compiled without `--features fixtures`.
 
-**It is also `native/rawshim` only.** Two crates beside it carry their own tests, and each takes a
+**It is also `native/rawshim` only.** Three crates beside it carry their own tests, and each takes a
 second: the supervisor, `bun run scripts/cargo.ts test --manifest-path native/launcher/Cargo.toml`,
-and the lens database, the same with `native/lensdb/Cargo.toml`. `lensdb`'s suite is what holds its
-scored search to the answers the C library gives (DESIGN §10.8), so a change to that crate is
-covered by nothing `test:native` runs.
+the lens database, the same with `native/lensdb/Cargo.toml`, and the HEIF reader, with
+`native/heif/Cargo.toml`. `lensdb`'s suite is what holds its scored search to the answers the C
+library gives (DESIGN §10.8), so a change to that crate is covered by nothing `test:native` runs.
+`native/avif_planes`, Safari's AV1 decoder, has none of its own: rawshim's
+`the_browsers_decoder_hands_back_libavifs_planes` holds it to libavif, and `build:wasm` builds it.
 
 **Run e2e once, at the end.** It is the final check before handing work back, not a step between
 edits: four minutes an iteration is most of an afternoon spent watching a browser start. The fast

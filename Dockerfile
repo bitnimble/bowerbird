@@ -269,7 +269,7 @@ RUN cargo build --release --manifest-path native/launcher/Cargo.toml --target-di
 # source and costs minutes for a tool that publishes one.
 COPY package.json bun.lock ./
 COPY scripts ./scripts
-RUN rustup target add wasm32-unknown-unknown \
+RUN rustup target add wasm32-unknown-unknown wasm32-wasip1-threads \
   && curl -sSfL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz \
      | tar -xz --strip-components=1 -C /usr/local/bin --wildcards '*/wasm-pack' \
   && bun run build:wasm \
@@ -341,7 +341,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends build-essential ca-certificates curl git unzip xz-utils \
   && rm -rf /var/lib/apt/lists/*
 RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
-  && sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable --target wasm32-unknown-unknown \
+  && sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable --target wasm32-unknown-unknown wasm32-wasip1-threads \
   && rm /tmp/rustup.sh
 ENV PATH="/root/.cargo/bin:${PATH}"
 

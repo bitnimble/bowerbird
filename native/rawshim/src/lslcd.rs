@@ -279,7 +279,7 @@ impl Lslcd {
                     // Every stage here runs on a 6x6 period and no other, so `mosaic.slang`'s
                     // modulo is a compile-time one.
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &xtrans.constants(),
+                        constants: crate::wgsl_overrides::for_entry("lslcd.wgsl", name, &xtrans.constants()),
                         ..Default::default()
                     },
                     cache: None,
