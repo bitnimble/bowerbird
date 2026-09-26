@@ -95,6 +95,22 @@ impl Scale {
         }
     }
 
+    /// The whole photograph as a decode that is resized before it is corrected produces it.
+    pub fn decoded(self, photograph: crate::px::Size<crate::px::Photograph>) -> crate::px::Size<crate::px::Decoded> {
+        let (width, height) = (self.span(photograph.width), self.span(photograph.height));
+        crate::px::Size::exact(width.raw(), height.raw())
+    }
+
+    /// [`Scale::read_at`], for a region of that decode.
+    pub fn read_decoded(self, place: crate::px::Place<crate::px::Decoded>) -> crate::px::Place<crate::px::Photograph> {
+        self.read_at(crate::px::Place::exact(place.raw()))
+    }
+
+    /// [`Scale::read_span`], for a region of that decode.
+    pub fn read_decoded_span(self, span: crate::px::Span<crate::px::Decoded>) -> crate::px::Span<crate::px::Photograph> {
+        self.read_span(crate::px::Span::exact(span.raw()))
+    }
+
     /// The scale worth taking to render `photograph` no larger than `long_edge` on its long side.
     ///
     /// **Asked of the photograph, never of a window.** Whether a 61MP sensor is worth halving for a

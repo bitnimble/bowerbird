@@ -580,14 +580,11 @@ pub fn fit_hdr_measured(
 pub fn save_avif_frame(
     source: rgb::RgbRef<'_>,
     quantizer: i32,
-    effort: i32,
+    speed: i32,
     full_chroma: bool,
     out_path: &str,
     rotate: u16,
 ) -> Result<(), String> {
-    // libvips counted effort up from 0 as *fastest*; libavif counts speed down from
-    // 10 as fastest. Same knob, opposite ends.
-    let speed = (10 - effort).clamp(0, 10);
     avif::encode_rendition_rotated(
         source.data.into(),
         source.width,

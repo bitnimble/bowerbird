@@ -486,11 +486,24 @@ public float4 detail_at(float2 at)
     // rounded up to a whole texel - so sampling by uv stretches the blur by whatever the last
     // texel is short by. For a frame and a window of it those are different amounts, which
     // slides the window's blur against the photograph's by a fraction of a texel everywhere.
+    //
+    // **Weighted here, off the remainder past a whole texel, and not by the sampler.** A window
+    // sits a whole number of texels into the photograph, so a pixel's remainder is the same number
+    // in both and subtracting whole texels is exact - where `at / step`, or the sampler's own
+    // arithmetic on a UV, rounds by the magnitude of `at` and weighs a window's texels differently
+    // from the frame's.
     let step = float(max(edit.detail_step, 1));
-    let texel = at / step;
+    let centred = at - 0.5 * step;
+    let near = floor(centred / step);
+    let weight = saturate((centred - near * step) / step);
     uint2 size;
     detail.GetDimensions(size.x, size.y);
-    return detail.SampleLevel(bilinear, texel / float2(size), 0.0);
+    let last = int2(size) - int2(1);
+    let lo = clamp(int2(near), int2(0), last);
+    let hi = clamp(int2(near) + int2(1), int2(0), last);
+    let top = lerp(detail.Load(int3(lo.x, lo.y, 0)), detail.Load(int3(hi.x, lo.y, 0)), weight.x);
+    let bottom = lerp(detail.Load(int3(lo.x, hi.y, 0)), detail.Load(int3(hi.x, hi.y, 0)), weight.x);
+    return lerp(top, bottom, weight.y);
 }
 
 /// The edge-aware neighbourhood of a pixel, in the base's stops under diffuse white.

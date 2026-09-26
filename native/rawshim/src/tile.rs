@@ -96,6 +96,13 @@ pub struct TileRequest {
     /// (`crate::repair::reaching`).
     #[serde(default)]
     pub repairs: Vec<crate::repair::Repair>,
+    /// The photograph drawn at `[width, height]`, and then **`tile` is in that drawing's pixels**
+    /// rather than the photograph's: a band of a render too large to hold whole (`job::bands`), or a
+    /// window of one level of a picture (`picture::prepared`). Where `scale` decodes some other
+    /// size, the decode is coded and defringed at its own and resized to this one before the lens
+    /// and the sharpen, which is the whole frame's order.
+    #[serde(skip)]
+    pub drawn: Option<[usize; 2]>,
 }
 
 impl TileRequest {
@@ -371,12 +378,17 @@ pub async fn prepared_on_device(
     // stored beside it. Both beat this window fitting its own, which is a defringe read off the
     // crop's own edges - see `MeasuredDefocus`.
     // Keyed on the *photograph's* long edge rather than this window's: the pair was fitted over the
-    // whole frame, and it is that frame's pixels the coefficient is in.
+    // whole frame, and it is that frame's pixels the coefficient is in - the decode's, where a
+    // resize comes between the defringe and the drawing.
+    let defringed_long = match &grown.resize {
+        Some(resize) => resize.decoded.long().raw(),
+        None => grown.frame.0.max(grown.frame.1),
+    };
     let defocus = match request.defocus {
         crate::base::Defringe::Measure => stored
             .from_render
             .defocus
-            .and_then(|d| d.pair_for(strengths.defringe, grown.frame.0.max(grown.frame.1)))
+            .and_then(|d| d.pair_for(strengths.defringe, defringed_long))
             .map_or(crate::base::Defringe::Measure, crate::base::Defringe::Take),
         given => given,
     };
@@ -426,25 +438,77 @@ pub async fn prepared_on_device(
         crate::px::Span::<crate::px::Sensor>::exact(sensor_long),
         crate::px::Span::<crate::px::Drawn>::exact(drawn_long),
     );
-    let chained = crate::base::prepare(
-        gpu,
-        base,
-        resident,
-        gather,
-        levels,
-        request.grade.reference_white_nits,
-        Strengths {
-            sharpen: request.strengths.sharpen,
-            ..strengths
-        },
-        sigma,
-        sharpen_noise,
-        grown.lens.as_ref().unwrap_or(&none),
-        defocus,
-        noise,
-        matrix,
-    )
-    .await;
+    let chained = match &grown.resize {
+        None => {
+            crate::base::prepare(
+                gpu,
+                base,
+                resident,
+                gather,
+                levels,
+                request.grade.reference_white_nits,
+                Strengths {
+                    sharpen: request.strengths.sharpen,
+                    ..strengths
+                },
+                sigma,
+                sharpen_noise,
+                grown.lens.as_ref().unwrap_or(&none),
+                defocus,
+                noise,
+                matrix,
+            )
+            .await
+        }
+        // `Base::build`'s coding and defringe, `Cut::from_base`'s resize, gather and sharpen: the
+        // whole frame's chain, over the window.
+        Some(resize) => {
+            let coded = crate::base::prepare(
+                gpu,
+                base,
+                resident,
+                crate::base::Gather::frame(Size::exact(width, height)),
+                levels,
+                request.grade.reference_white_nits,
+                strengths,
+                crate::image::SharpenSigma::fixed(crate::image::DECONVOLVE_SIGMA),
+                crate::image::SharpenNoise::NONE,
+                &none,
+                defocus,
+                noise,
+                matrix,
+            )
+            .await;
+            coded.map(|(coded, took_off)| {
+                let drawn = crate::base::resize_window(
+                    gpu,
+                    base,
+                    &coded,
+                    resize.region_at,
+                    resize.decoded,
+                    resize.out,
+                    Size::exact(grown.frame.0, grown.frame.1),
+                );
+                coded.reclaim();
+                let (left, top, width, height) = grown.window;
+                let gathered = crate::base::gather_and_sharpen(
+                    gpu,
+                    base,
+                    drawn,
+                    crate::base::Gather::window(
+                        Size::exact(grown.frame.0, grown.frame.1),
+                        Rect::exact(left, top, width, height),
+                        resize.out,
+                    ),
+                    grown.lens.as_ref(),
+                    request.strengths.sharpen,
+                    sigma,
+                    sharpen_noise,
+                );
+                (gathered, took_off)
+            })
+        }
+    };
     let Some((frame, took_off)) = chained else {
         return Err(refused());
     };
@@ -504,7 +568,21 @@ struct Grown {
     matched: Option<crate::hdr_fit::HdrMatch>,
     /// Its lens, where that match carries one worth applying.
     lens: Option<crate::fit::Lens>,
+    /// Where the decode is resized between the coding and the lens, for a request with a `drawn`
+    /// size.
+    resize: Option<Resize>,
 }
+
+struct Resize {
+    /// The whole photograph as the decode produces it, which is what the resize's ratio is of.
+    decoded: Size<crate::px::Decoded>,
+    region_at: At<crate::px::Decoded>,
+    /// The rectangle of the resized, uncorrected frame that region becomes: what the gather reads.
+    out: Rect<Drawn>,
+}
+
+/// How far the defringe reads past the pixel it writes: `defringe.slang`'s Laplacian of luma.
+const DEFRINGE_REACH: Span<crate::px::Decoded> = Span::exact(1);
 
 impl Grown {
     /// The region to read, and at what resolution: what `decode_tile_source` takes.
@@ -580,24 +658,26 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     if photograph.width.is_zero() || photograph.height.is_zero() {
         return Err("a tile needs the size of the photograph it is a piece of".to_string());
     }
-    let asked: Rect<Photograph> = Rect::exact(
-        request.tile[0],
-        request.tile[1],
-        request.tile[2],
-        request.tile[3],
-    );
-    // Two places compared, not two numbers: the photograph's far corner is where its origin plus
-    // its size lands, which is the same shape as the rectangle's own far corner.
-    let corner: At<Photograph> = At {
-        x: Place::ORIGIN + photograph.width,
-        y: Place::ORIGIN + photograph.height,
+    let [left, top, width, height] = request.tile;
+    let (outside, across) = match request.drawn {
+        Some([drawn_width, drawn_height]) => {
+            (left + width > drawn_width || top + height > drawn_height, [drawn_width, drawn_height])
+        }
+        None => {
+            // Two places compared, not two numbers: the photograph's far corner is where its origin
+            // plus its size lands, which is the same shape as the rectangle's own far corner.
+            let asked: Rect<Photograph> = Rect::exact(left, top, width, height);
+            let corner: At<Photograph> = At {
+                x: Place::ORIGIN + photograph.width,
+                y: Place::ORIGIN + photograph.height,
+            };
+            (asked.past().x > corner.x || asked.past().y > corner.y, request.frame)
+        }
     };
-    if asked.past().x > corner.x || asked.past().y > corner.y {
-        let (left, top, width, height) = asked.raw();
+    if outside {
         return Err(format!(
             "a tile of {width}x{height} at {left},{top} is outside a {}x{} photograph",
-            photograph.width.raw(),
-            photograph.height.raw(),
+            across[0], across[1],
         ));
     }
 
@@ -613,20 +693,30 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     // answer; rounding out covers every pixel the reader asked for, where rounding in would drop
     // one at the seam between two tiles.
     let scale = request.scale;
-    let frame: Size<Drawn> = Size {
-        width: scale.span(photograph.width),
-        height: scale.span(photograph.height),
-    };
-    let at: At<Drawn> = At {
-        x: scale.at(asked.at.x),
-        y: scale.at(asked.at.y),
-    };
-    let kept: Rect<Drawn> = Rect {
-        at,
-        size: Size {
-            width: scale.past(asked.past().x).min(Place::ORIGIN + frame.width) - at.x,
-            height: scale.past(asked.past().y).min(Place::ORIGIN + frame.height) - at.y,
-        },
+    let (frame, kept): (Size<Drawn>, Rect<Drawn>) = match request.drawn {
+        Some([drawn_width, drawn_height]) => (
+            Size::exact(drawn_width, drawn_height),
+            Rect::exact(left, top, width, height),
+        ),
+        None => {
+            let asked: Rect<Photograph> = Rect::exact(left, top, width, height);
+            let frame: Size<Drawn> = Size {
+                width: scale.span(photograph.width),
+                height: scale.span(photograph.height),
+            };
+            let at: At<Drawn> = At {
+                x: scale.at(asked.at.x),
+                y: scale.at(asked.at.y),
+            };
+            let kept = Rect {
+                at,
+                size: Size {
+                    width: scale.past(asked.past().x).min(Place::ORIGIN + frame.width) - at.x,
+                    height: scale.past(asked.past().y).min(Place::ORIGIN + frame.height) - at.y,
+                },
+            };
+            (frame, kept)
+        }
     };
     let (left, top) = (kept.at.x, kept.at.y);
     let (width, height) = (kept.size.width, kept.size.height);
@@ -734,19 +824,41 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
     // buffer coordinate multiplied by the ratio lands on a whole CFA site by construction, which is
     // what `decode_tile` requires of a halved region and what an origin scaled the other way could
     // not promise.
-    let read_at: At<Photograph> = At {
-        x: scale.read_at(decode.at.x),
-        y: scale.read_at(decode.at.y),
+    // A drawing at the decode's own size is not resized, as `base::resize` declines the same.
+    let decoded = scale.decoded(photograph);
+    let resizing = request.drawn.filter(|drawn| *drawn != [decoded.width.raw(), decoded.height.raw()]);
+    let (read_at, read_size, resize) = match resizing {
+        None => (
+            At { x: scale.read_at(decode.at.x), y: scale.read_at(decode.at.y) },
+            (scale.read_span(decode.size.width), scale.read_span(decode.size.height)),
+            None,
+        ),
+        // Through the resize first: what the gather reads is a rectangle of the resized frame, and
+        // the decode holds every pixel that rectangle's footprints reach, and what the defringe
+        // reads past those.
+        Some(_) => {
+            let reads = crate::base::resize_footprint(decoded, decode, frame);
+            let near = |at: Place<crate::px::Decoded>| at.max(Place::ORIGIN + DEFRINGE_REACH) - DEFRINGE_REACH;
+            let far = |at: Place<crate::px::Decoded>, whole: Span<crate::px::Decoded>| {
+                (at + DEFRINGE_REACH).min(Place::ORIGIN + whole)
+            };
+            let region_at = At { x: near(reads.at.x), y: near(reads.at.y) };
+            let size = (
+                far(reads.past().x, decoded.width) - region_at.x,
+                far(reads.past().y, decoded.height) - region_at.y,
+            );
+            (
+                At { x: scale.read_decoded(region_at.x), y: scale.read_decoded(region_at.y) },
+                (scale.read_decoded_span(size.0), scale.read_decoded_span(size.1)),
+                Some(Resize { decoded, region_at, out: decode }),
+            )
+        }
     };
     let decode: Rect<Photograph> = Rect {
         at: read_at,
         size: Size {
-            width: scale
-                .read_span(decode.size.width)
-                .min((Place::ORIGIN + photograph.width) - read_at.x),
-            height: scale
-                .read_span(decode.size.height)
-                .min((Place::ORIGIN + photograph.height) - read_at.y),
+            width: read_size.0.min((Place::ORIGIN + photograph.width) - read_at.x),
+            height: read_size.1.min((Place::ORIGIN + photograph.height) - read_at.y),
         },
     };
     let decode = decode.raw();
@@ -765,6 +877,7 @@ fn grown(request: &TileRequest) -> Result<Grown, String> {
         frame: frame.raw(),
         matched,
         lens,
+        resize,
     })
 }
 
@@ -798,6 +911,7 @@ mod tests {
             photo_analysis: None,
             scale: crate::view::Scale::Full,
             repairs: Vec::new(),
+            drawn: None,
         }
     }
 

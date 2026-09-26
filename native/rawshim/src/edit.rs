@@ -525,6 +525,7 @@ pub async fn from_frame(
                 // decode has already halved it if it was going to.
                 scale: crate::view::Scale::Full,
                 repairs: request.repairs.clone(),
+                drawn: None,
             },
         )
         .await?;

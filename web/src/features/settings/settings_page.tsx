@@ -217,12 +217,11 @@ const RenderingTab = observer(function RenderingTab(): JSX.Element | null {
           disabledReason={hdrOff}
         />
         <NumberSetting
-          field="hdr_preset"
-          label={SettingsStrings.hdrPreset()}
-          hint={SettingsStrings.hdrPresetHint()}
+          field="avif_speed"
+          label={SettingsStrings.avifSpeed()}
+          hint={SettingsStrings.avifSpeedHint()}
           min={0}
           max={10}
-          disabledReason={hdrOff}
         />
       </Panel>
 

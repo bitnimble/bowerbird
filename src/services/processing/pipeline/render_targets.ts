@@ -50,7 +50,7 @@ export class RenderTargets {
         size: options.longEdge,
         sdrQuantizer: encoderQuality('avif-sdr', options.quality),
         hdrQuantizer: encoderQuality('avif-hdr', options.quality),
-        preset: settings.hdr_preset,
+        preset: settings.avif_speed,
         stillFullChroma: true,
         sdrFullChroma: true,
         intent: options.renderingIntent,
@@ -69,7 +69,7 @@ export class RenderTargets {
             size: EXPORT_THUMBNAIL_EDGE,
             sdrQuantizer: encoderQuality('avif-sdr', EXPORT_THUMBNAIL_QUALITY),
             hdrQuantizer: encoderQuality('avif-hdr', EXPORT_THUMBNAIL_QUALITY),
-            preset: settings.hdr_preset,
+            preset: settings.avif_speed,
             stillFullChroma: false,
             sdrFullChroma: false,
             intent: options.renderingIntent,
@@ -151,7 +151,7 @@ export class RenderTargets {
       // description of the work rather than of the caller's branch.
       sdrQuantizer: encoderQuality('avif-sdr', quality[rendition]),
       hdrQuantizer: encoderQuality('avif-hdr', quality[rendition]),
-      preset: settings.hdr_preset,
+      preset: settings.avif_speed,
       stillFullChroma: settings.hdr_still_full_chroma,
       // Not the same shape of decision as the one above, and not a coercion either:
       // chroma is a setting this reads rather than something a caller asks for, so

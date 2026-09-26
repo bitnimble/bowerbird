@@ -158,33 +158,102 @@ pub struct Picture {
     pub stored: Size<Photograph>,
     /// Where `stored` starts in the raster.
     origin: At<Photograph>,
+    strip_bytes: usize,
     /// What the file says the picture's top-left is, in `rawler`'s numbering.
     pub upright: rawler::decoders::Orientation,
     pub coding: crate::transfer::Coding,
 }
 
-/// A picture's samples as the kernel reads them.
-enum Samples {
-    /// Two `u16` codes a word, through the table.
-    Codes(crate::resident::Resident),
-    /// An `f32` a word, conditioned by [`Affine`].
-    Float { buffer: crate::gpu::Buffer, width: usize, height: usize, affine: Affine },
+/// A picture's samples, where the kernel reads them from.
+struct Samples {
+    raster: Raster,
+    width: usize,
+    height: usize,
+    /// How a floating-point sample becomes light; None for codes, which the table reads.
+    float: Option<Affine>,
 }
 
+/// On the device where the whole raster fits a binding comfortably; on the host otherwise, and
+/// uploaded a band's rows at a time.
+enum Raster {
+    Codes(crate::resident::Resident),
+    Float(crate::gpu::Buffer),
+    HostCodes(Vec<u16>),
+    HostFloat(Vec<f32>),
+}
+
+const DEVICE_RASTER_BYTES: u64 = 1 << 30;
+
+const STRIP_BYTES: usize = 256 << 20;
+
 impl Samples {
-    fn buffer(&self) -> &crate::gpu::Buffer {
-        match self {
-            Samples::Codes(codes) => codes.buffer(),
-            Samples::Float { buffer, .. } => buffer,
+    fn codes(gpu: &'static crate::gpu::Gpu, codes: Vec<u16>, width: usize, height: usize) -> Samples {
+        let raster = match Samples::bound_whole(gpu, codes.len() * 2) {
+            true => Raster::Codes(crate::resident::Resident::upload(gpu, &codes, width, height)),
+            false => Raster::HostCodes(codes),
+        };
+        Samples { raster, width, height, float: None }
+    }
+
+    fn floats(
+        gpu: &'static crate::gpu::Gpu,
+        samples: Vec<f32>,
+        width: usize,
+        height: usize,
+        affine: Affine,
+    ) -> Samples {
+        let raster = match Samples::bound_whole(gpu, samples.len() * 4) {
+            true => Raster::Float(float_buffer(gpu, &samples)),
+            false => Raster::HostFloat(samples),
+        };
+        Samples { raster, width, height, float: Some(affine) }
+    }
+
+    fn bound_whole(gpu: &crate::gpu::Gpu, bytes: usize) -> bool {
+        bytes as u64 <= gpu.most_bound().min(DEVICE_RASTER_BYTES)
+    }
+
+    fn bytes_per_sample(&self) -> usize {
+        match self.float {
+            Some(_) => 4,
+            None => 2,
         }
     }
 
-    fn size(&self) -> (usize, usize) {
-        match self {
-            Samples::Codes(codes) => codes.size(),
-            Samples::Float { width, height, .. } => (*width, *height),
+    /// The raster's `rect` where a dispatch can bind it, and the rectangle the binding holds: all of
+    /// it for a raster on the device, `rect` alone for one on the host.
+    fn strip(&self, gpu: &'static crate::gpu::Gpu, rect: crate::Tile) -> (crate::gpu::Buffer, crate::Tile) {
+        let whole = crate::Tile { left: 0, top: 0, width: self.width, height: self.height };
+        match &self.raster {
+            Raster::Codes(codes) => (codes.buffer().clone(), whole),
+            Raster::Float(buffer) => (buffer.clone(), whole),
+            Raster::HostCodes(codes) => {
+                let rows = Samples::rows_of(codes, self.width, rect);
+                let strip = crate::resident::Resident::upload(gpu, &rows, rect.width, rect.height);
+                (strip.buffer().clone(), rect)
+            }
+            Raster::HostFloat(samples) => {
+                (float_buffer(gpu, &Samples::rows_of(samples, self.width, rect)), rect)
+            }
         }
     }
+
+    fn rows_of<T: Copy>(samples: &[T], width: usize, rect: crate::Tile) -> Vec<T> {
+        let mut out = Vec::with_capacity(rect.width * rect.height * 3);
+        for row in rect.top..rect.top + rect.height {
+            let at = (row * width + rect.left) * 3;
+            out.extend_from_slice(&samples[at..at + rect.width * 3]);
+        }
+        out
+    }
+}
+
+fn float_buffer(gpu: &crate::gpu::Gpu, samples: &[f32]) -> crate::gpu::Buffer {
+    gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("linearise float samples"),
+        contents: bytemuck::cast_slice(samples),
+        usage: wgpu::BufferUsages::STORAGE,
+    })
 }
 
 /// A floating-point sample's light, a channel at a time: `sample * scale + offset`.
@@ -194,22 +263,6 @@ pub struct Affine {
     pub offset: [f32; 3],
 }
 
-/// Refuses a picture whose samples the kernel could not bind whole, which it has to.
-///
-/// Asked before the upload rather than found out after: a buffer past the device's limit is a
-/// validation error, and `on_uncaptured_error` makes those fatal.
-pub fn check_fits(gpu: &crate::gpu::Gpu, bytes: usize) -> Result<(), String> {
-    let most = gpu.most_bound();
-    match bytes as u64 <= most {
-        true => Ok(()),
-        false => Err(format!(
-            "this picture's samples are {} MiB, and this GPU binds at most {} MiB",
-            bytes >> 20,
-            most >> 20
-        )),
-    }
-}
-
 impl Picture {
     /// Uploads a decoded picture and everything the kernel reads beside it.
     ///
@@ -217,7 +270,7 @@ impl Picture {
     /// value the decoder produced, and the table is indexed by it directly.
     pub fn upload(
         gpu: &'static crate::gpu::Gpu,
-        codes: &[u16],
+        codes: Vec<u16>,
         width: usize,
         height: usize,
         coding: crate::transfer::Coding,
@@ -227,8 +280,9 @@ impl Picture {
         if width == 0 || height == 0 || codes.len() < width * height * 3 {
             return None;
         }
-        let codes = crate::resident::Resident::upload(gpu, codes, width, height);
-        Some(Picture::on_device(gpu, codes, coding, upright, gain))
+        let whole = Rect::exact(0, 0, width, height);
+        let samples = Samples::codes(gpu, codes, width, height);
+        Some(Picture::built(gpu, samples, whole, coding, &coding.table(), upright, gain))
     }
 
     /// The same, for codes already on the device.
@@ -241,30 +295,33 @@ impl Picture {
     ) -> Picture {
         let (width, height) = codes.size();
         let whole = Rect::exact(0, 0, width, height);
-        Picture::built(gpu, Samples::Codes(codes), whole, coding, &coding.table(), upright, gain)
+        let samples = Samples { raster: Raster::Codes(codes), width, height, float: None };
+        Picture::built(gpu, samples, whole, coding, &coding.table(), upright, gain)
     }
 
-    /// A linear DNG's counts, already on the device: `crop` of the raster, read through a table
-    /// the caller conditioned rather than through the coding's transfer.
+    /// A linear DNG's counts, interleaved RGB of a `width` by `height` raster: `crop` of it, read
+    /// through a table the caller conditioned rather than through the coding's transfer.
     pub fn camera(
         gpu: &'static crate::gpu::Gpu,
-        codes: crate::resident::Resident,
+        codes: Vec<u16>,
+        width: usize,
+        height: usize,
         crop: Rect<Photograph>,
         coding: crate::transfer::Coding,
         table: &[f32],
         upright: rawler::decoders::Orientation,
     ) -> Picture {
-        Picture::built(gpu, Samples::Codes(codes), crop, coding, table, upright, None)
+        let samples = Samples::codes(gpu, codes, width, height);
+        Picture::built(gpu, samples, crop, coding, table, upright, None)
     }
 
-    /// A linear DNG stored as floating point: `samples` interleaved RGB, `crop` of a `width` by
-    /// `height` raster.
+    /// The same stored as floating point.
     ///
     /// Lifted, so white sits `HDR_HEADROOM` below the top: a float sample past the white level is
     /// highlight the file kept, where a count past it is a clipped photosite.
     pub fn camera_float(
         gpu: &'static crate::gpu::Gpu,
-        samples: &[f32],
+        samples: Vec<f32>,
         width: usize,
         height: usize,
         crop: Rect<Photograph>,
@@ -272,12 +329,7 @@ impl Picture {
         affine: Affine,
         upright: rawler::decoders::Orientation,
     ) -> Picture {
-        let buffer = gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("linearise float samples"),
-            contents: bytemuck::cast_slice(&samples[..width * height * 3]),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let samples = Samples::Float { buffer, width, height, affine };
+        let samples = Samples::floats(gpu, samples, width, height, affine);
         Picture::built(gpu, samples, crop, coding, &[], upright, None)
     }
 
@@ -305,6 +357,7 @@ impl Picture {
             terms,
             stored: crop.size,
             origin: crop.at,
+            strip_bytes: STRIP_BYTES,
             upright,
             coding,
         }
@@ -316,7 +369,7 @@ impl Picture {
     /// difference between grading one and grading the other: the transfer says where white is, and
     /// the gain map says whether the container had to make room above it.
     pub fn white_level(&self) -> crate::light::Light<crate::light::Level> {
-        let lifted = self.terms.is_some() || matches!(self.samples, Samples::Float { .. });
+        let lifted = self.terms.is_some() || self.samples.float.is_some();
         crate::light::Light::measured(self.coding.white_level(lifted))
     }
 
@@ -350,21 +403,25 @@ impl Picture {
         // which under a flip or a rotation is the upright picture's *near* one. The frame then
         // comes back shifted a pixel and missing the wrong column.
         let (out_w, out_h) = (window.size.width.raw() / step, window.size.height.raw() / step);
-        if out_w == 0 || out_h == 0 {
+        if out_w == 0 || out_h == 0 || !gpu.fits(out_w * out_h) {
             return None;
         }
         // The rectangle back through the turn, so it names the stored raster the codes are in.
-        let stored = crate::orientation::unoriented_rect(
-            crate::Tile {
-                left: window.at.x.raw(),
-                top: window.at.y.raw(),
-                width: out_w * step,
-                height: out_h * step,
-            },
-            self.stored.width.raw(),
-            self.stored.height.raw(),
-            self.upright,
-        );
+        let upright_rows = |top: usize, rows: usize| crate::Tile {
+            left: window.at.x.raw(),
+            top: window.at.y.raw() + top * step,
+            width: out_w * step,
+            height: rows * step,
+        };
+        let unoriented = |upright: crate::Tile| {
+            crate::orientation::unoriented_rect(
+                upright,
+                self.stored.width.raw(),
+                self.stored.height.raw(),
+                self.upright,
+            )
+        };
+        let stored = unoriented(upright_rows(0, out_h));
         // The unoriented output, which is what the kernel's turn is defined against: a quarter
         // turn swaps the two, and the halving applies to both the same way.
         let (frame_w, frame_h) = match crate::orientation::transposes(self.upright) {
@@ -373,39 +430,62 @@ impl Picture {
         };
 
         let out = crate::resident::Resident::empty(gpu, out_w, out_h);
-        let mut recording = gpu.record();
-        // Every buffer the pass reads as well as the one it writes: `gpu::Buffer`'s `Drop` is a
-        // `destroy`, not a refcount release, and both callers hand this a `Picture` they drop as
-        // soon as the window is out - while the dispatch is submitted and not yet complete.
-        recording.holding(out.buffer());
-        recording.holding(self.samples.buffer());
-        recording.holding(&self.table);
-        recording.holding(&self.gain);
-        let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
-            label: Some("linearise params"),
-            contents: &self.block(stored, step, (frame_w, frame_h), (out_w, out_h)),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("linearise"),
-            layout: &kernels.layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.samples.buffer().as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: self.table.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: self.gain.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: out.buffer().as_entire_binding() },
-            ],
-        });
-        {
-            let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-            pass.set_pipeline(&kernels.pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            let (x, y) = crate::base::groups(out.words());
-            pass.dispatch_workgroups(x, y, 1);
+        let band = self.band_rows(gpu, out_w, out_h, step);
+        for top in (0..out_h).step_by(band) {
+            let rows = band.min(out_h - top);
+            let (origin_x, origin_y) = self.origin.raw();
+            let read = unoriented(upright_rows(top, rows));
+            let read = crate::Tile { left: origin_x + read.left, top: origin_y + read.top, ..read };
+            let (strip, held) = self.samples.strip(gpu, read);
+            // Whole words: a band starts on an even row, so its first sample is too.
+            let words = (top * out_w * 3 / 2, ((top + rows) * out_w * 3).div_ceil(2));
+
+            let mut recording = gpu.record();
+            // Every buffer the pass reads as well as the one it writes: `gpu::Buffer`'s `Drop` is a
+            // `destroy`, not a refcount release, and both callers hand this a `Picture` they drop
+            // as soon as the window is out - while the dispatch is submitted and not yet complete.
+            recording.holding(out.buffer());
+            recording.holding(&strip);
+            recording.holding(&self.table);
+            recording.holding(&self.gain);
+            let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
+                label: Some("linearise params"),
+                contents: &self.block(stored, step, (frame_w, frame_h), (out_w, out_h), held, words),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("linearise"),
+                layout: &kernels.layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: strip.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.table.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.gain.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: out.buffer().as_entire_binding() },
+                ],
+            });
+            {
+                let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+                pass.set_pipeline(&kernels.pipeline);
+                pass.set_bind_group(0, &group, &[]);
+                let (x, y) = crate::base::groups(words.1 - words.0);
+                pass.dispatch_workgroups(x, y, 1);
+            }
+            recording.submit();
         }
-        recording.submit();
         Some(out)
+    }
+
+    /// Output rows a dispatch writes: all of them for a raster on the device, and for one on the
+    /// host as many as read `strip_bytes` of it, or what the adapter binds if that is less. Even,
+    /// so every band starts on a whole word.
+    fn band_rows(&self, gpu: &crate::gpu::Gpu, out_w: usize, out_h: usize, step: usize) -> usize {
+        if let Raster::Codes(_) | Raster::Float(_) = self.samples.raster {
+            return out_h;
+        }
+        let budget = self.strip_bytes.min(usize::try_from(gpu.most_bound()).unwrap_or(usize::MAX));
+        let per_row = out_w * step * step * 3 * self.samples.bytes_per_sample();
+        ((budget / per_row.max(1)).max(2) & !1).min(out_h.next_multiple_of(2))
     }
 
     /// Which reconstruction the kernel's gain arm runs, as `linearise.slang`'s `GAIN_*` numbers.
@@ -433,9 +513,11 @@ impl Picture {
         step: usize,
         frame: (usize, usize),
         out: (usize, usize),
+        strip: crate::Tile,
+        words: (usize, usize),
     ) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(BLOCK_BYTES);
-        let (raster_w, raster_h) = self.samples.size();
+        let (raster_w, raster_h) = (self.samples.width, self.samples.height);
         let (origin_x, origin_y) = self.origin.raw();
         for word in [
             raster_w as u32,
@@ -475,18 +557,24 @@ impl Picture {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
-        let (affine, float_samples) = match &self.samples {
-            Samples::Float { affine, .. } => (*affine, 1u32),
-            Samples::Codes(_) => (Affine { scale: [1.0; 3], offset: [0.0; 3] }, 0),
-        };
+        let affine = self.samples.float.unwrap_or(Affine { scale: [1.0; 3], offset: [0.0; 3] });
         for row in self.coding.matrix.into_iter().chain([affine.scale, affine.offset]) {
             for value in [row[0], row[1], row[2], 0.0] {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
-        // The struct's size rounds up to its sixteen-byte alignment, so the flag carries three
-        // words of padding the shader never reads.
-        for word in [float_samples, 0, 0, 0] {
+        // The struct's size rounds up to its sixteen-byte alignment, which the last three words
+        // are padding to.
+        for word in [
+            u32::from(self.samples.float.is_some()),
+            strip.left as u32,
+            strip.top as u32,
+            strip.width as u32,
+            words.0 as u32,
+            words.1 as u32,
+            0,
+            0,
+        ] {
             bytes.extend_from_slice(&word.to_le_bytes());
         }
         bytes
@@ -494,7 +582,7 @@ impl Picture {
 }
 
 /// What [`Picture::block`] writes, for `wgsl_layout` to hold against the shader's own struct.
-pub(crate) const BLOCK_BYTES: usize = 12 * 4 + 4 * 4 + 10 * 16 + 16;
+pub(crate) const BLOCK_BYTES: usize = 12 * 4 + 4 * 4 + 10 * 16 + 32;
 
 fn float_storage(gpu: &crate::gpu::Gpu, values: &[f32]) -> crate::gpu::Buffer {
     let mut bytes = Vec::with_capacity(values.len().max(1) * 4);
@@ -556,9 +644,9 @@ mod tests {
             (0..6).flat_map(|code| (0..3).map(move |channel| 0.1 * code as f32 + 0.01 * channel as f32)).collect();
         let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let coding = Coding { matrix: identity, curve: Curve::Linear, depth: 16 };
-        let raster = crate::resident::Resident::upload(gpu, &codes, 3, 2);
         let crop = Rect::exact(1, 1, 2, 1);
-        let picture = Picture::camera(gpu, raster, crop, coding, &table, rawler::decoders::Orientation::Normal);
+        let picture =
+            Picture::camera(gpu, codes, 3, 2, crop, coding, &table, rawler::decoders::Orientation::Normal);
         let window = Rect { at: At::ORIGIN, size: picture.upright_size() };
         let frame = picture
             .window(gpu, device(gpu), window, crate::view::Scale::Full)
@@ -587,8 +675,8 @@ mod tests {
         let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let coding = Coding { matrix: identity, curve: Curve::Linear, depth: 16 };
         let read = |upright, scale| -> Vec<f64> {
-            let raster = crate::resident::Resident::upload(gpu, &codes, 4, 3);
-            let picture = Picture::camera(gpu, raster, Rect::exact(1, 1, 2, 2), coding, &table, upright);
+            let picture =
+                Picture::camera(gpu, codes.clone(), 4, 3, Rect::exact(1, 1, 2, 2), coding, &table, upright);
             let window = Rect { at: At::ORIGIN, size: picture.upright_size() };
             let frame = picture.window(gpu, device(gpu), window, scale).expect("the pass runs");
             let samples = pollster::block_on(frame.into_host()).expect("the frame reads back");
@@ -602,6 +690,38 @@ mod tests {
         let turned = read(rawler::decoders::Orientation::Rotate180, crate::view::Scale::Full);
         for (got, want) in turned.iter().zip([10.0, 9.0, 6.0, 5.0]) {
             assert!((got - want).abs() < 0.01, "turned {turned:?}");
+        }
+    }
+
+    /// A picture held on the host and read a few rows at a time comes out as the same picture
+    /// bound whole, whichever way up it is and whether or not it is halved.
+    #[test]
+    fn a_picture_read_in_strips_is_the_picture_read_whole() {
+        let Some(gpu) = crate::gpu::device() else {
+            eprintln!("SKIPPED: no adapter answered, so the strips were not read.");
+            return;
+        };
+        let (width, height) = (13usize, 11usize);
+        let codes: Vec<u16> = (0..width * height * 3).map(|at| (at * 37 % 256) as u16).collect();
+        let coding = Coding::of(Primaries::REC709, Curve::Srgb, 8);
+        let crop = Rect::exact(1, 2, 11, 9);
+        use rawler::decoders::Orientation as O;
+        for upright in [O::Normal, O::Rotate90, O::Rotate180, O::Rotate270, O::Transpose, O::HorizontalFlip] {
+            for scale in [crate::view::Scale::Full, crate::view::Scale::Half] {
+                let read = |host: bool| {
+                    let mut picture =
+                        Picture::camera(gpu, codes.clone(), width, height, crop, coding, &coding.table(), upright);
+                    if host {
+                        picture.samples.raster = Raster::HostCodes(codes.clone());
+                        // A row or two of the raster a band, so every band boundary is exercised.
+                        picture.strip_bytes = width * 3 * 2 * 4;
+                    }
+                    let window = Rect { at: At::ORIGIN, size: picture.upright_size() };
+                    let frame = picture.window(gpu, device(gpu), window, scale).expect("the pass runs");
+                    pollster::block_on(frame.into_host()).expect("the frame reads back")
+                };
+                assert_eq!(read(true), read(false), "{upright:?} at {scale:?}");
+            }
         }
     }
 
@@ -622,7 +742,7 @@ mod tests {
         };
         let coding = Coding::of(WIDE, Curve::Linear, 8);
         let picture =
-            Picture::upload(gpu, &[0, 255, 0], 1, 1, coding, rawler::decoders::Orientation::Normal, None)
+            Picture::upload(gpu, vec![0, 255, 0], 1, 1, coding, rawler::decoders::Orientation::Normal, None)
                 .expect("the picture uploads");
         let window = Rect { at: At::ORIGIN, size: picture.upright_size() };
         let frame = picture

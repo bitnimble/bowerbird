@@ -9,13 +9,10 @@ import { deleteScratchDirectory } from '../../../utils/deletions';
 import type { Originals } from '../../blobs/originals';
 import type { CompositesService } from '../../composites/composites_service';
 import type { PhotoRenditionService } from '../../photos/renditions/photo_rendition_service';
+import type { SettingsRepository } from '../../settings/settings_repository';
 import type { ProcessingService } from '../pipeline/processing_service';
 import { encoderQuality } from '../analysis/quality';
 import { exportStill, transcodeJpeg, watchingJobProgress, writeGainMap } from '../rawshim/rawshim_job';
-
-// libavif's encoder speed, 0 slowest and 10 fastest. An export is a reader waiting, and the
-// difference between 6 and the encoder's own default is seconds on a 60MP frame.
-const EXPORT_SPEED = 6;
 
 // Perceived quality for a share, which nobody is offered a dialog for: the picture is going to
 // a message rather than to a library, and the export dialog is where a reader who wants to
@@ -53,6 +50,7 @@ export class ExportService {
     private readonly processing: ProcessingService,
     /** The way to a photograph's bytes, which may be on a backup rather than here (§14.4). */
     private readonly originals: Originals,
+    private readonly settings: SettingsRepository,
     /**
      * Which panorama a photograph is a frame of, where the catalogue knows about panoramas at
      * all. Optional so the tests that are about formats and quality build one of these without
@@ -201,7 +199,7 @@ export class ExportService {
     try {
       const base = path.join(scratch, 'base.avif');
       await this.processing.renderSdrRoll(renditionPath, photoId, scratch, base, SHARE_QUALITY);
-      return new Uint8Array(writeGainMap(base, renditionPath, 'jpeg', quality, EXPORT_SPEED));
+      return new Uint8Array(writeGainMap(base, renditionPath, 'jpeg', quality, 0));
     } finally {
       await deleteScratchDirectory(scratch);
     }
@@ -232,7 +230,8 @@ export class ExportService {
     }
     const quality = encoderQuality(options.format === 'avif' ? 'avif-sdr' : 'jpeg', options.quality);
     log.info('export encoding', { photo: photoId, format: options.format, gainMap: true });
-    return new Uint8Array(writeGainMap(base, alternate, options.format, quality, EXPORT_SPEED));
+    const speed = options.format === 'avif' ? this.settings.get().avif_speed : 0;
+    return new Uint8Array(writeGainMap(base, alternate, options.format, quality, speed));
   }
 
   /**

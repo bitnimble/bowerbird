@@ -39,7 +39,7 @@ export interface FileMetadata {
  * Where to leave this file's grid tile, and how to encode it, for a scan that is already
  * holding the RAW open (§10.4).
  *
- * The size and the quantizer come from the same settings a tile built by the rendition pass
+ * The size, quantizer and speed come from the same settings a tile built by the rendition pass
  * reads, handed over rather than looked up again: a scan that encoded to its own idea of
  * "grid" would fill a library with tiles the next settings change could not explain.
  */
@@ -55,6 +55,7 @@ export interface TileStage extends TileEncoding {
 export interface TileEncoding {
   size: number;
   quantizer: number;
+  speed: number;
 }
 
 const log = new Logger('scan');
@@ -119,7 +120,7 @@ async function withTile(filePath: string, stage: TileStage): Promise<RawHeader> 
           // Neither reaches an SDR tile, and the chroma is the grid's own rule: its source is
           // already subsampled, so 4:4:4 would store chroma at a resolution it never had.
           hdrQuantizer: stage.quantizer,
-          preset: 0,
+          preset: stage.speed,
           stillFullChroma: false,
           sdrFullChroma: false,
         },

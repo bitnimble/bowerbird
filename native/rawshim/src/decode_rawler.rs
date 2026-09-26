@@ -224,7 +224,7 @@ pub(crate) async fn decode_tile_source(
     let shape = decoder.raw_image(&source, &params, true).ok()?;
     // A DNG is read whole whatever `dummy` says, so a linear one is already here to window.
     if is_linear(&shape) {
-        let held = linear(decoder.as_ref(), &shape, upright).await;
+        let held = linear(decoder.as_ref(), shape, upright).await;
         return held.map_err(|why| crate::warn(&format!("rawshim: {why}"))).ok()?.window(view.window, view.scale);
     }
     let (frame_w, frame_h) = (shape.width, shape.height);
@@ -570,6 +570,14 @@ pub async fn open_bytes(bytes: &[u8]) -> Result<crate::decode::Held, String> {
     open(&rawler::rawsource::RawSource::new_from_slice(bytes)).await
 }
 
+/// The same, from a file this process can open.
+#[cfg(feature = "renditions")]
+pub async fn open_path(path: &str) -> Result<crate::decode::Held, String> {
+    let source = rawler::rawsource::RawSource::new(std::path::Path::new(path))
+        .map_err(|why| format!("could not read {path}: {why}"))?;
+    open(&source).await
+}
+
 /// The mosaic, or for a linear DNG the picture, which has no mosaic to stop at.
 async fn open(source: &rawler::rawsource::RawSource) -> Result<crate::decode::Held, String> {
     let mut lap = crate::clock::laps("  decode ");
@@ -583,7 +591,7 @@ async fn open(source: &rawler::rawsource::RawSource) -> Result<crate::decode::He
     let image = decoder.raw_image(source, &params, false).map_err(|why| why.to_string())?;
     lap("read");
     if is_linear(&image) {
-        return linear(decoder.as_ref(), &image, upright).await.map(crate::decode::Held::Rendered);
+        return linear(decoder.as_ref(), image, upright).await.map(crate::decode::Held::Rendered);
     }
     hold(decoder.as_ref(), source, &params, image, upright)
         .await
@@ -605,7 +613,7 @@ fn is_linear(image: &rawler::RawImage) -> bool {
 /// this file no longer has.
 async fn linear(
     decoder: &dyn rawler::decoders::Decoder,
-    image: &rawler::RawImage,
+    mut image: rawler::RawImage,
     upright: rawler::decoders::Orientation,
 ) -> Result<crate::decode_rendered::Held, String> {
     let gpu = crate::gpu::device()
@@ -622,27 +630,31 @@ async fn linear(
     if stored < values {
         return Err(format!("this linear DNG holds {stored} samples where {values} were expected"));
     }
-    let matrix = camera_to_rec2020(image).ok_or("this DNG's camera matrix is singular")?;
+    let matrix = camera_to_rec2020(&image).ok_or("this DNG's camera matrix is singular")?;
     let curves = plane_curves(decoder, width, height)?;
     let crop = image.crop_area.map_or(crate::px::Rect::exact(0, 0, width, height), |area| {
         crate::px::Rect::exact(area.p.x, area.p.y, area.d.w, area.d.h)
     });
     let coding =
         crate::transfer::Coding { matrix, curve: crate::transfer::Curve::Linear, depth: 16 };
+    let as_shot = as_shot_of(gpu, &image).await;
 
-    let (picture, ceiling) = match &image.data {
-        rawler::RawImageData::Integer(samples) => {
-            crate::linearise::check_fits(gpu, values * 2)?;
-            let table = linear_table(image, &curves);
+    let data = std::mem::replace(&mut image.data, rawler::RawImageData::Integer(Vec::new()));
+    let (picture, ceiling) = match data {
+        rawler::RawImageData::Integer(mut samples) => {
+            let table = linear_table(&image, &curves);
             let ceiling = std::array::from_fn(|channel| {
                 table.iter().skip(channel).step_by(3).copied().fold(0.0f32, f32::max)
             });
-            let codes = crate::resident::Resident::upload(gpu, &samples[..values], width, height);
-            (crate::linearise::Picture::camera(gpu, codes, crop, coding, &table, upright), ceiling)
+            samples.truncate(values);
+            let picture = crate::linearise::Picture::camera(
+                gpu, samples, width, height, crop, coding, &table, upright,
+            );
+            (picture, ceiling)
         }
-        rawler::RawImageData::Float(samples) => {
-            crate::linearise::check_fits(gpu, values * 4)?;
-            let affine = float_affine(decoder, image, &curves)?;
+        rawler::RawImageData::Float(mut samples) => {
+            let affine = float_affine(decoder, &image, &curves)?;
+            samples.truncate(values);
             let picture = crate::linearise::Picture::camera_float(
                 gpu, samples, width, height, crop, coding, affine, upright,
             );
@@ -650,7 +662,7 @@ async fn linear(
             (picture, [1.0; 3])
         }
     };
-    let camera = crate::decode_rendered::Camera { as_shot: as_shot_of(gpu, image).await, ceiling };
+    let camera = crate::decode_rendered::Camera { as_shot, ceiling };
     Ok(crate::decode_rendered::Held::camera(picture, camera))
 }
 
@@ -999,6 +1011,7 @@ impl Held {
     pub async fn window(
         &self,
         tile: crate::Tile,
+        scale: crate::view::Scale,
         detail: crate::galosh::Detail,
         fit: crate::galosh::Fit,
         halo: usize,
@@ -1055,16 +1068,27 @@ impl Held {
             tile.height.min(region_h - inset.1),
         );
         let (gpu, rcd) = gpu.and_then(|gpu| crate::demosaic::device(gpu).map(|rcd| (gpu, rcd)))?;
-        let built =
+        let halving = scale.halves() && region_crop.0 % 2 == 0 && region_crop.1 % 2 == 0 && cfa.is_bayer();
+        let built = if halving {
+            let crop = (
+                region_crop.0 / 2,
+                region_crop.1 / 2,
+                reduced_span(region_crop.2, 2),
+                reduced_span(region_crop.3, 2),
+            );
+            reduced_into(gpu, rcd, &mosaic, crop, region_w, colour, orientation_code(upright), &cfa)
+                .await
+        } else {
             demosaic_in_tiles(gpu, rcd, &mosaic, &cfa, region_crop, colour, orientation_code(upright))
-                .await;
+                .await
+        };
         drop(mosaic);
         let built = built?;
         Some(Frame {
             width: built.width,
             height: built.height,
             pixels: Pixels::Resident(built),
-            reduced: 1,
+            reduced: if halving { 2 } else { 1 },
             as_shot,
             noise,
             // A window is handed the photograph's list rather than finding one, and its sigma for

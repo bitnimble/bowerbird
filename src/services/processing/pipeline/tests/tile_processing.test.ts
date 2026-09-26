@@ -91,8 +91,8 @@ describe('scan-built tiles', () => {
     // explains and that no rebuild reproduces.
     const service = makeService(
       {} as PhotoProcessingRepository,
-      settingsWith({ grid_rendition_size: 640, grid_rendition_quality: 70 }),
+      settingsWith({ grid_rendition_size: 640, grid_rendition_quality: 70, avif_speed: 7 }),
     );
-    expect(service.tileEncoding()).toEqual({ size: 640, quantizer: encoderQuality('avif-sdr', 70) });
+    expect(service.tileEncoding()).toEqual({ size: 640, quantizer: encoderQuality('avif-sdr', 70), speed: 7 });
   });
 });

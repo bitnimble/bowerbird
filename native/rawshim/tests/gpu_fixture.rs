@@ -454,42 +454,52 @@ fn the_server_picks_the_level_this_host_produces() {
     assert_eq!(rawshim::composition::COARSEST_LONG, 4096);
 }
 
-/// How this host fills `Reduction`, so a rewrite of `base::reduction_bytes` says what moved.
+/// How this host fills `Reduction`, so a rewrite of `base::Reduction::bytes` says what moved.
 ///
-/// **Eight words written by hand in front of a shader that is shared verbatim.** A pair transposed
+/// **Twelve words written by hand in front of a shader that is shared verbatim.** A pair transposed
 /// there is a canvas sampling a pyramid level built for a different picture, which looks like a
 /// photograph - and nothing downstream would notice.
 ///
 /// The ratios are the ones actually asked for: exactly two for every pyramid level, and a fraction
 /// for a rendition cut to a size the sensor does not divide into. The odd source is here because a
-/// level is a floored half, which is the case that makes the ratio worth sending at all.
+/// level is a floored half, which is the case that makes the ratio worth sending at all. The last is
+/// a band of a render too large to resize whole, which is the only caller with origins.
 #[test]
 fn the_editor_fills_a_reduction_the_way_this_host_does() {
-    let cases: [((usize, usize), (usize, usize), (f64, f64)); 4] = [
-        ((96, 64), (48, 32), (2.0, 2.0)),
-        ((129, 67), (64, 33), (2.0, 2.0)),
-        (
-            (6000, 4000),
-            (1600, 1067),
-            (6000.0 / 1600.0, 4000.0 / 1067.0),
-        ),
-        ((1, 1), (1, 1), (1.0, 1.0)),
+    use rawshim::base::Reduction;
+    let cases = [
+        Reduction::whole((96, 64), (48, 32), (2.0, 2.0)),
+        Reduction::whole((129, 67), (64, 33), (2.0, 2.0)),
+        Reduction::whole((6000, 4000), (1600, 1067), (6000.0 / 1600.0, 4000.0 / 1067.0)),
+        Reduction::whole((1, 1), (1, 1), (1.0, 1.0)),
+        Reduction {
+            source: (36564, 2210),
+            out: (30464, 1024),
+            scale: (36564.0 / 30464.0, 10562.0 / 8800.0),
+            out_origin: (0, 3072),
+            source_origin: (0, 3686),
+        },
     ];
     let rows: Vec<String> = cases
         .iter()
-        .map(|(source, out, scale)| {
-            let words: Vec<String> = rawshim::base::reduction_bytes(*source, *out, *scale)
+        .map(|block| {
+            let words: Vec<String> = block
+                .bytes()
                 .chunks_exact(4)
                 .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]).to_string())
                 .collect();
             format!(
-                "{},{} {},{} {} {} {}",
-                source.0,
-                source.1,
-                out.0,
-                out.1,
-                scale.0,
-                scale.1,
+                "{},{} {},{} {} {} {},{} {},{} {}",
+                block.source.0,
+                block.source.1,
+                block.out.0,
+                block.out.1,
+                block.scale.0,
+                block.scale.1,
+                block.out_origin.0,
+                block.out_origin.1,
+                block.source_origin.0,
+                block.source_origin.1,
                 words.join(","),
             )
         })

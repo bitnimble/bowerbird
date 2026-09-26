@@ -79,6 +79,7 @@ fn main() {
         photo_analysis: Some(sidecar.clone()),
         scale: Default::default(),
         repairs: Vec::new(),
+        drawn: None,
     };
     let sidecar_bytes = sidecar.len();
     drop(frame);

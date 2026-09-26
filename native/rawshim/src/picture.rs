@@ -68,6 +68,12 @@ pub fn prepared(
     } else {
         size
     };
+    let scale = crate::view::Scale::for_long_edge(picture, decode_size);
+    if let Some(window) = window.filter(|_| {
+        job.composite.is_none() && scale.of(picture.0) * scale.of(picture.1) > crate::job::BANDED_PIXELS
+    }) {
+        return windowed(job, level, window);
+    }
     // No targets: a prepare is of the photographs rather than of the cameras' own pictures, and it
     // takes no crop - the client applies the reader's geometry to what it is handed.
     let base = crate::job::assembled(job, decode_size, &[], window, parts)?;
@@ -193,4 +199,144 @@ pub fn prepared(
         },
         samples,
     })
+}
+
+/// A window of one level of a photograph too large to decode whole, decoded only where it reads.
+/// `window` is in that level's pixels.
+fn windowed(
+    job: &Job,
+    level: u32,
+    window: crate::px::Rect<crate::px::Composite>,
+) -> Result<crate::edit::Prepared, String> {
+    let held = pollster::block_on(crate::decode::hold_path(&job.raw_file_path))?;
+    let picture = held.size().raw();
+    let shape = crate::composite_job::level_shape(&[picture.0, picture.1], level);
+    let known = known(job)?;
+    let (x, y, width, height) = window.raw();
+    let request = crate::tile::TileRequest {
+        tile: [x, y, width, height],
+        frame: [picture.0, picture.1],
+        grade: job.grade,
+        strengths: job.strengths(),
+        denoise_luminance: job.denoise_luminance,
+        denoise_colour: job.denoise_colour,
+        denoiser: job.denoiser,
+        dust: job.dust,
+        adjust: job.adjust,
+        levels: None,
+        noise_fit: None,
+        capture_sigma: None,
+        sensor_long: None,
+        defocus: crate::base::Defringe::Measure,
+        photo_analysis: Some(crate::photo_analysis::encode(&known)),
+        scale: crate::view::Scale::for_long_edge(picture, shape.0.max(shape.1) as u32),
+        // No repairs: the client draws them over whatever level and tiles it holds
+        // (`wasm::HeldRaw::set_repairs`), as it draws the geometry.
+        repairs: Vec::new(),
+        drawn: Some([shape.0, shape.1]),
+    };
+    let prepared = crate::tile::prepared(crate::tile::Source::Held(&held), &request)?;
+    let [left, top, kept_width, kept_height] = prepared.keep;
+    let mut samples = Vec::with_capacity(kept_width * kept_height * 3);
+    for row in top..top + kept_height {
+        let from = (row * prepared.width + left) * 3;
+        samples.extend_from_slice(&prepared.samples[from..from + kept_width * 3]);
+    }
+    let noise_fit = known.from_raw.noise;
+    let defocus = known
+        .from_render
+        .defocus
+        .map_or((0.0, 0.0), |pair| (pair.red, pair.blue));
+    Ok(crate::edit::Prepared {
+        header: crate::edit::PreparedHeader {
+            width: kept_width,
+            height: kept_height,
+            white: prepared.levels.white,
+            peak: prepared.levels.peak,
+            floor: prepared.levels.floor,
+            grade: job.grade,
+            strengths: job.strengths(),
+            camera_match: job.camera_match,
+            matched: prepared.matched.is_some(),
+            mosaic: !crate::decode_rendered::is_rendered(&job.raw_file_path),
+            as_shot: prepared.as_shot,
+            detail: job.detail().resolved(noise_fit),
+            noise_fit,
+            defocus,
+            photo_analysis: Some(crate::photo_analysis::encode(&known)),
+            window: Some(crate::edit::PreparedWindow { canvas: shape, origin: (x, y) }),
+            picture: Some(picture),
+            level,
+            finest: level == 0,
+        },
+        samples,
+    })
+}
+
+/// What a window of this photograph is corrected and graded against, which a window cannot measure:
+/// what the job was handed, or else what a small render of the whole photograph measures.
+fn known(job: &Job) -> Result<crate::photo_analysis::PhotoAnalysis, String> {
+    let stored = job.stored();
+    let complete = stored
+        .from_render
+        .levels
+        .and_then(|measured| measured.levels_at(job.grade.white_quantile))
+        .is_some()
+        && (job.defringe == 0.0 || stored.from_render.defocus.is_some())
+        && !job.camera_match.needs_fit(stored.from_raw.matched.as_ref());
+    if complete {
+        return Ok(stored);
+    }
+    let base = crate::job::Base::build(job, crate::job::MEASURED_LONG_EDGE)?;
+    match base.frame {
+        crate::job::Cutting::OnDevice(frame) => frame.reclaim(),
+        crate::job::Cutting::AlreadyCut(mut cut) => cut.release(),
+    }
+    Ok(base.analysis.filled_from(&stored))
+}
+
+#[cfg(all(test, feature = "fixtures"))]
+mod tests {
+    use super::*;
+
+    /// A window prepared on its own, decoding only what it reads, is that rectangle of the whole
+    /// level's prepare: what a reader sees at 1:1 of a picture too large to decode whole.
+    #[test]
+    fn a_windowed_picture_matches_the_whole_prepare() {
+        let path = crate::fixture_tests::sony();
+        let mut job: Job = serde_json::from_value(serde_json::json!({
+            "rawFilePath": path,
+            "cameraMatch": "lensAndColour",
+            "sharpen": 0.5,
+            "defringe": 1.0,
+            "grade": { "peakNits": 1000, "referenceWhiteNits": 203, "whiteQuantile": 0.99 },
+            "targets": []
+        }))
+        .expect("the prepare job parses");
+        for level in [0, 1] {
+            let whole = prepared(&job, level, None, &[]).expect("the whole picture prepares");
+            job.photo_analysis = whole.header.photo_analysis.clone();
+            let rectangle = crate::px::Rect::exact(1024, 800, 400, 300);
+            let cut = windowed(&job, level, rectangle).expect("the window prepares");
+            assert_eq!((cut.header.width, cut.header.height), (400, 300));
+            assert_eq!(cut.header.window.as_ref().map(|window| window.origin), Some((1024, 800)));
+            assert_eq!(cut.header.white, whole.header.white);
+
+            let mut worst = 0u16;
+            let mut outliers = 0usize;
+            for row in 0..300 {
+                let from = ((800 + row) * whole.header.width + 1024) * 3;
+                for (want, got) in whole.samples[from..from + 400 * 3]
+                    .iter()
+                    .zip(&cut.samples[row * 400 * 3..(row + 1) * 400 * 3])
+                {
+                    let difference = want.abs_diff(*got);
+                    worst = worst.max(difference);
+                    outliers += usize::from(difference > 8);
+                }
+            }
+            assert!(worst <= 8, "level {level} window differs by {worst} PQ codes");
+            assert!(outliers <= 8, "level {level}: {outliers} samples differ by more than 8 codes");
+        }
+    }
 }

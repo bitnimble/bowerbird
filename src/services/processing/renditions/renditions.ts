@@ -35,14 +35,6 @@ export type Rendition = (typeof RENDITIONS)[number];
 // `renditions` saying which develop settings they were built from.
 export type RenditionVariant = Rendition | `${Rendition}-hdr`;
 
-// Fixed rather than configurable: at a fixed quantizer it buys 0.46dB and a few percent
-// of the file for 10x the encode time (§10.1).
-//
-// Still on libvips' scale, where 0 is fastest, because that is the scale the
-// measurement was taken on and the number here is that measurement's conclusion.
-// `save_avif_frame` inverts it into libavif's `speed`, where 10 is fastest.
-export const AVIF_EFFORT = 0;
-
 // How much larger a composite's grid tile is than a photograph's. A canvas is several frames
 // wide, so a tile framed to the same longest edge gives each frame a fraction of what one
 // photograph's tile gives it, and the wall shows a row of smears.

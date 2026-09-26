@@ -1281,6 +1281,7 @@ impl HeldRaw {
             photo_analysis: self.analysis_bytes(),
             scale: crate::view::Scale::Full,
             repairs,
+            drawn: None,
         }))
     }
 

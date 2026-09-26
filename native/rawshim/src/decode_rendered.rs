@@ -95,10 +95,9 @@ pub fn hold(bytes: &[u8]) -> Result<Held, String> {
 pub fn holding(read: Read) -> Result<Held, String> {
     let gpu = crate::gpu::device()
         .ok_or_else(|| crate::base::without_a_device("reading a finished picture"))?;
-    crate::linearise::check_fits(gpu, read.width * read.height * crate::resident::BYTES_PER_PIXEL)?;
     let picture = crate::linearise::Picture::upload(
         gpu,
-        &read.codes,
+        read.codes,
         read.width,
         read.height,
         read.coding,

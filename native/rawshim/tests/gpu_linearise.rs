@@ -59,7 +59,7 @@ fn the_kernel_undoes_the_transfer_the_table_states() {
     let (width, height) = (16usize, 9);
     let codes = ramp(width, height, 8);
     let picture =
-        Picture::upload(gpu, &codes, width, height, coding, Orientation::Normal, None).unwrap();
+        Picture::upload(gpu, codes.clone(), width, height, coding, Orientation::Normal, None).unwrap();
     let (samples, out_w, out_h) = whole(&picture).expect("the pass runs");
     assert_eq!((out_w, out_h), (width, height));
 
@@ -96,7 +96,7 @@ fn a_pq_picture_keeps_its_headroom() {
     let white_code = coded(203.0);
     let bright_code = coded(1000.0);
     let codes: Vec<u16> = [white_code, bright_code].iter().flat_map(|c| [*c, *c, *c]).collect();
-    let picture = Picture::upload(gpu, &codes, 2, 1, coding, Orientation::Normal, None).unwrap();
+    let picture = Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, None).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
     let white = 65535.0 / rawshim::transfer::HDR_HEADROOM;
@@ -119,7 +119,7 @@ fn the_primaries_conversion_is_the_hosts() {
     let coding = Coding::of(Primaries::REC709, Curve::Linear, 8);
     // Pure red, green, blue and white, which is where a swapped row shows most.
     let codes: Vec<u16> = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
-    let picture = Picture::upload(gpu, &codes, 4, 1, coding, Orientation::Normal, None).unwrap();
+    let picture = Picture::upload(gpu, codes.clone(), 4, 1, coding, Orientation::Normal, None).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
     let matrix = Primaries::REC709.to_rec2020();
@@ -170,7 +170,7 @@ fn a_turned_picture_is_windowed_in_the_readers_coordinates() {
         Orientation::Transverse,
         Orientation::Rotate270,
     ] {
-        let picture = Picture::upload(gpu, &codes, width, height, coding, turn, None).unwrap();
+        let picture = Picture::upload(gpu, codes.clone(), width, height, coding, turn, None).unwrap();
         let upright = picture.upright_size();
         let (whole_samples, out_w, out_h) = whole(&picture).expect("the pass runs");
         assert_eq!((out_w, out_h), upright.raw(), "{turn:?} answered the wrong shape");
@@ -200,7 +200,7 @@ fn halving_averages_light_rather_than_code_values() {
     let coding = Coding::of(Primaries::REC2020, Curve::Srgb, 8);
     // One 2x2 site: black, white, black, white.
     let codes: Vec<u16> = vec![0, 0, 0, 255, 255, 255, 0, 0, 0, 255, 255, 255];
-    let picture = Picture::upload(gpu, &codes, 2, 2, coding, Orientation::Normal, None).unwrap();
+    let picture = Picture::upload(gpu, codes.clone(), 2, 2, coding, Orientation::Normal, None).unwrap();
     let (samples, out_w, out_h) =
         linearised(&picture, Rect { at: At::ORIGIN, size: Size::exact(2, 2) }, Scale::Half)
             .expect("the pass runs");
@@ -237,7 +237,7 @@ fn a_halved_picture_drops_the_same_edge_whichever_way_up_it_is() {
 
     for turn in [Orientation::Normal, Orientation::HorizontalFlip, Orientation::Rotate180] {
         let picture =
-            Picture::upload(gpu, &codes, width, height, coding, turn, None).unwrap();
+            Picture::upload(gpu, codes.clone(), width, height, coding, turn, None).unwrap();
         let upright = picture.upright_size();
         let (samples, out_w, _) =
             linearised(&picture, picture_window(upright), Scale::Half).expect("the pass runs");
@@ -290,7 +290,7 @@ fn a_gain_map_lifts_the_base_by_what_its_terms_say() {
         terms: two_stops(),
     };
     let picture =
-        Picture::upload(gpu, &codes, 2, 1, coding, Orientation::Normal, Some(map)).unwrap();
+        Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, Some(map)).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
     // A gain-mapped base is put on the HDR scale, so the unlifted pixel sits at its own light
@@ -323,7 +323,7 @@ fn a_gain_map_is_read_at_its_own_depth_rather_than_the_pictures() {
             terms: two_stops(),
         };
         let picture =
-            Picture::upload(gpu, &codes, 2, 1, coding, Orientation::Normal, Some(map)).unwrap();
+            Picture::upload(gpu, codes.clone(), 2, 1, coding, Orientation::Normal, Some(map)).unwrap();
         whole(&picture).expect("the pass runs").0
     };
 
@@ -353,7 +353,7 @@ fn apples_gain_is_linear_in_the_recovery_where_isos_is_exponential() {
         let map =
             GainMap { samples: vec![32768; 3], width: 1, height: 1, last: 65535.0, terms };
         let picture =
-            Picture::upload(gpu, &codes, 1, 1, coding, Orientation::Normal, Some(map)).unwrap();
+            Picture::upload(gpu, codes.clone(), 1, 1, coding, Orientation::Normal, Some(map)).unwrap();
         f64::from(whole(&picture).expect("the pass runs").0[0])
     };
 
@@ -404,7 +404,7 @@ fn a_gain_maps_gamma_and_offsets_are_the_ones_the_terms_state() {
         },
     };
     let picture =
-        Picture::upload(gpu, &codes, 1, 1, coding, Orientation::Normal, Some(map)).unwrap();
+        Picture::upload(gpu, codes.clone(), 1, 1, coding, Orientation::Normal, Some(map)).unwrap();
     let (samples, _, _) = whole(&picture).expect("the pass runs");
 
     // ISO 21496-1, evaluated here: the recovery through 1/gamma, lerped between min and max in

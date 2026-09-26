@@ -972,6 +972,7 @@ mod decode_geometry {
                     photo_analysis: whole.header.photo_analysis.clone(),
                             scale: crate::view::Scale::Full,
                     repairs: Vec::new(),
+                    drawn: None,
                 },
             ))
             .expect("the band");
@@ -1835,6 +1836,93 @@ mod loupe_tile {
             "{outliers} samples of {} are past {ROUTE_COUNTS} codes, which is a picture that moved \
              rather than a handful that crossed something",
             reference.len(),
+        );
+    }
+
+    /// A target rendered a band of output rows at a time is the target rendered whole.
+    ///
+    /// The route a picture too large to hold takes, held to the one every other picture takes, at a
+    /// size the decode does not give - so each band is resized on its own - and through the lens,
+    /// the sharpen, a crop, a straighten, a turn and Clarity, each of which reads past the pixel it
+    /// writes and so past a band's edge.
+    #[test]
+    fn a_render_in_bands_is_the_render_whole() {
+        let path = sony();
+        let path = path.to_str().unwrap();
+        let target = crate::job::Target {
+            rendition: crate::job::Rendition::Max,
+            output: crate::job::Output::Pq,
+            output_path: String::new(),
+            size: 4800,
+            source: crate::job::Source::Render,
+            sdr_quantizer: 30,
+            hdr_quantizer: 30,
+            preset: 6,
+            still_full_chroma: false,
+            sdr_full_chroma: false,
+            intent: crate::gpu::Intent::Perceptual,
+        };
+        let mut job = tile_job(path, None, None);
+        job.camera_match = crate::hdr_fit::CameraMatch::LensAndColour;
+        job.geometry = crate::image::Geometry {
+            crop: [0.12, 0.08, 0.93, 0.9],
+            angle_degrees: -2.25,
+            rotate: 90,
+            keystone: None,
+        };
+        job.sharpen = 1.0;
+        job.defringe = 1.0;
+        job.adjust.clarity = 40.0;
+        job.targets = vec![target];
+        // Measured once and handed to both, as `restricted_decode_is_the_whole_one` says why.
+        job.photo_analysis = Some(crate::photo_analysis::encode(
+            &crate::job::Base::build(&job, 4800).expect("the frame").analysis,
+        ));
+
+        let targets = [&job.targets[0]];
+        let base = crate::job::Base::build(&job, 4800).expect("the frame");
+        let mut whole = None;
+        let rendered = pollster::block_on(crate::job::render(&job, base, &targets, |_, coded, width, height, _| {
+            whole = Some((coded, width, height));
+            Ok(())
+        }))
+        .expect("the whole render");
+        let (whole, width, height) = whole.expect("a picture");
+        let crate::job::Coded::Pq(whole) = whole else { panic!("a PQ target") };
+
+        let held = pollster::block_on(crate::decode::hold_path(path)).expect("the photograph opens");
+        let banded = pollster::block_on(crate::job::graded_bands(
+            &job,
+            &job.targets[0],
+            &held,
+            &rendered.known,
+            rendered.peak,
+            1 << 20,
+        ))
+        .expect("the bands");
+        assert_eq!(banded.size, (width, height), "the two routes framed differently");
+        assert!(banded.bands.len() > 2, "{} bands is not a banded render", banded.bands.len());
+        let stitched: Vec<u16> = banded
+            .bands
+            .into_iter()
+            .flat_map(|band| match band {
+                crate::job::Coded::Pq(samples) => samples,
+                crate::job::Coded::Srgb(_) => panic!("a PQ target"),
+            })
+            .collect();
+        assert_eq!(stitched.len(), whole.len());
+        let mut worst = 0u16;
+        let mut outliers = 0usize;
+        for (a, b) in whole.iter().zip(&stitched) {
+            let off = a.abs_diff(*b);
+            outliers += usize::from(off > ROUTE_COUNTS);
+            worst = worst.max(off);
+        }
+        assert!(worst <= ROUTE_CODES, "the bands are not the picture: {worst} codes");
+        assert!(
+            outliers <= ROUTE_OUTLIERS,
+            "{outliers} samples of {} are past {ROUTE_COUNTS} codes",
+            whole.len(),
         );
     }
 

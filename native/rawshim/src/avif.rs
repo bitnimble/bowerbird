@@ -435,6 +435,38 @@ pub fn save_still(
     std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
 }
 
+/// [`save_still`] for a still that arrives as bands of whole rows (`encode_grid`), written as a grid
+/// of them.
+pub fn save_still_bands(
+    bands: Vec<Vec<u16>>,
+    width: usize,
+    options: &StillOptions,
+    out_path: &str,
+    rotate: u16,
+) -> Result<(), String> {
+    let file = encode_grid(bands, 16, AVIF_RANGE_LIMITED, width, AVIF_DEPTH, options.format,
+        &options.cicp, options.quantizer, options.speed, rotate)?;
+    std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
+}
+
+/// [`encode_rendition_rotated`] for a rendition that arrives as bands of whole rows.
+pub fn save_rendition_bands(
+    bands: Vec<Vec<u8>>,
+    width: usize,
+    quantizer: i32,
+    speed: i32,
+    full_chroma: bool,
+    out_path: &str,
+    rotate: u16,
+) -> Result<(), String> {
+    let format = match full_chroma {
+        true => AVIF_PIXEL_FORMAT_YUV444,
+        false => AVIF_PIXEL_FORMAT_YUV420,
+    };
+    let file = encode_grid(bands, 8, AVIF_RANGE_FULL, width, 8, format, &SRGB, quantizer, speed, rotate)?;
+    std::fs::write(out_path, file).map_err(|e| format!("could not write {out_path}: {e}"))
+}
+
 /// An 8-bit sRGB rendition, straight to disk.
 ///
 /// Nothing to transfer and no gamut to convert: the 8-bit decode already produced sRGB,
@@ -467,14 +499,15 @@ pub(crate) fn encode_rgb8_rotated(
     if rgb8.len() < width * height * 3 {
         return Err(format!("frame is {} bytes, expected {}", rgb8.len(), width * height * 3));
     }
-    // sRGB primaries, sRGB transfer, BT.601 matrix - which is what libheif was writing.
-    let cicp = Cicp { primaries: 1, transfer: 13, matrix: 6 };
     let format = match full_chroma {
         true => AVIF_PIXEL_FORMAT_YUV444,
         false => AVIF_PIXEL_FORMAT_YUV420,
     };
-    encode_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &cicp, quantizer, speed, rotate)
+    encode_avif(rgb8, 8, AVIF_RANGE_FULL, width, height, 8, format, &SRGB, quantizer, speed, rotate)
 }
+
+/// sRGB primaries, sRGB transfer, BT.601 matrix.
+const SRGB: Cicp = Cicp { primaries: 1, transfer: 13, matrix: 6 };
 
 /// `encode_rgb8` to a file, for the renditions.
 pub fn encode_rendition(
@@ -634,13 +667,94 @@ fn encode_avif<T: Clone>(
     speed: i32,
     rotate: u16,
 ) -> Result<Vec<u8>, String> {
+    let image = converted(rgb, rgb_depth, range, width, height, depth, format, cicp, rotate)?;
+    let encoder = configured(quantizer, speed)?;
+    let mut output = Output::empty();
+    // SAFETY: both handles are live for the call, and `output` is libavif's to fill.
+    #[expect(unsafe_code)]
+    let status = unsafe { raw::avifEncoderWrite(encoder.0, image.0, &mut output.0) };
+    written(status, &output)
+}
+
+/// Whole-width bands, top to bottom, as one grid still. **Every band but the last the same height,
+/// at least 64 rows**, and even at 4:2:0 - the grid's own rules (MIAF 7.3.11.4.2), which libavif
+/// refuses the encode for breaking. At most 256 of them.
+#[allow(clippy::too_many_arguments)]
+fn encode_grid<T: Clone>(
+    bands: Vec<Vec<T>>,
+    rgb_depth: u32,
+    range: raw::avifRange,
+    width: usize,
+    depth: u32,
+    format: raw::avifPixelFormat,
+    cicp: &Cicp,
+    quantizer: i32,
+    speed: i32,
+    rotate: u16,
+) -> Result<Vec<u8>, String> {
+    let rows = u32::try_from(bands.len()).map_err(|_| "too many bands for a grid".to_string())?;
+    debug_assert!(
+        bands.split_last().is_some_and(|(last, rest)| {
+            rest.iter().all(|band| band.len() == bands[0].len()) && last.len() <= bands[0].len()
+        }),
+        "every band but the last is one height, and the last no taller",
+    );
+    let mut cells = Vec::with_capacity(bands.len());
+    for band in bands {
+        let height = band.len() / (width * 3);
+        cells.push(converted(
+            std::borrow::Cow::Owned(band),
+            rgb_depth,
+            range,
+            width,
+            height,
+            depth,
+            format,
+            cicp,
+            rotate,
+        )?);
+    }
+    let encoder = configured(quantizer, speed)?;
+    let pointers: Vec<*const raw::avifImage> = cells.iter().map(|cell| cell.0.cast_const()).collect();
+    let mut output = Output::empty();
+    // SAFETY: every cell outlives both calls, and `output` is libavif's to fill.
+    #[expect(unsafe_code)]
+    unsafe {
+        let status = raw::avifEncoderAddImageGrid(
+            encoder.0,
+            1,
+            rows,
+            pointers.as_ptr(),
+            // Each cell's encoder is freed as soon as the cell is written, not held to the end.
+            raw::avifAddImageFlag_AVIF_ADD_IMAGE_FLAG_SINGLE,
+        );
+        if status != AVIF_RESULT_OK {
+            return Err(format!("libavif could not encode the grid: {}", message(status)));
+        }
+        written(raw::avifEncoderFinish(encoder.0, &mut output.0), &output)
+    }
+}
+
+/// A frame in libavif's YUV, tagged for the file, with the RGB it came from dropped.
+#[allow(clippy::too_many_arguments)]
+fn converted<T: Clone>(
+    rgb: std::borrow::Cow<'_, [T]>,
+    rgb_depth: u32,
+    range: raw::avifRange,
+    width: usize,
+    height: usize,
+    depth: u32,
+    format: raw::avifPixelFormat,
+    cicp: &Cicp,
+    rotate: u16,
+) -> Result<Image, String> {
     if rotate % 90 != 0 {
         return Err(format!("rotation must be a quarter turn: {rotate}"));
     }
     let image = Image::sized(width as u32, height as u32, depth, format)?;
 
-    // SAFETY: every pointer below is either one of the handles above or points into `rgb`, which
-    // outlives the conversion.
+    // SAFETY: every pointer below is either the handle above or points into `rgb`, which outlives
+    // the conversion.
     #[expect(unsafe_code)]
     unsafe {
         (*image.0).yuvRange = range;
@@ -654,12 +768,19 @@ fn encode_avif<T: Clone>(
 
         let row_bytes = width * 3 * (rgb_depth as usize / 8);
         to_yuv_banded(image.0, rgb.as_ptr() as *const u8, row_bytes, rgb_depth)?;
-        // The planes hold everything now, and `source.pixels` is not read again -
-        // `avifEncoderWrite` works off `image`. So the frame goes back before the
-        // encoder asks for its own, rather than sitting under it.
-        drop(rgb);
+    }
+    // The planes hold everything now, and the encoder works off `image`. So the frame goes back
+    // before the encoder asks for its own, rather than sitting under it.
+    drop(rgb);
+    Ok(image)
+}
 
-        let encoder = Encoder::new()?;
+/// The encoder every still is written with.
+fn configured(quantizer: i32, speed: i32) -> Result<Encoder, String> {
+    let encoder = Encoder::new()?;
+    // SAFETY: the handle is live, and these are plain fields libavif reads at the encode.
+    #[expect(unsafe_code)]
+    unsafe {
         (*encoder.0).maxThreads = max_threads();
         (*encoder.0).speed = speed;
         // Both ends, not `--min 0 --max N`. libavif derives the encode's quality from the
@@ -679,15 +800,18 @@ fn encode_avif<T: Clone>(
                 return Err(format!("libavif would not set the tune: {}", message(status)));
             }
         }
-
-        let mut output = Output::empty();
-        let status = raw::avifEncoderWrite(encoder.0, image.0, &mut output.0);
-        match (status, output.bytes()) {
-            (AVIF_RESULT_OK, Some(written)) => Ok(written),
-            (AVIF_RESULT_OK, None) => Err("libavif returned no bytes".to_string()),
-            _ => Err(format!("libavif could not encode: {}", message(status))),
-        }
     }
+    Ok(encoder)
+}
+
+fn written(status: raw::avifResult, output: &Output) -> Result<Vec<u8>, String> {
+    if status != AVIF_RESULT_OK {
+        // SAFETY: `message` reads a static string libavif owns.
+        #[expect(unsafe_code)]
+        let why = unsafe { message(status) };
+        return Err(format!("libavif could not encode: {why}"));
+    }
+    output.bytes().ok_or_else(|| "libavif returned no bytes".to_string())
 }
 
 /// libavif's own words for a failure, rather than a number.
@@ -940,6 +1064,40 @@ mod tests {
             .max()
             .expect("pixels");
         assert!(worst <= 4, "the round trip moved a channel by {worst} of 255");
+    }
+
+    /// A still written as a grid of bands reads back as one picture, the bands in order: what lets
+    /// a picture too large for one frame be written at all. At 4:2:0, whose grid has the most rules.
+    #[test]
+    fn a_still_written_in_bands_reads_back_as_one_picture() {
+        let dir = std::env::temp_dir().join("bb-avif-bands");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("bands.avif");
+        let (width, height) = (96usize, 200usize);
+        let frame: Vec<u16> = (0..width * height * 3)
+            .map(|i| {
+                let (pixel, channel) = (i / 3, i % 3);
+                let (x, y) = (pixel % width, pixel / width);
+                (20_000 + x * 100 + y * 100 + channel * 3000) as u16
+            })
+            .collect();
+        let bands: Vec<Vec<u16>> =
+            frame.chunks(width * 64 * 3).map(<[u16]>::to_vec).collect();
+        assert_eq!(bands.len(), 4, "three whole bands and a short one");
+        let options = StillOptions {
+            cicp: Cicp { primaries: 9, transfer: 16, matrix: 9 },
+            format: AVIF_PIXEL_FORMAT_YUV420,
+            quantizer: 0,
+            speed: 10,
+        };
+        save_still_bands(bands, width, &options, path.to_str().expect("a path"), 0)
+            .expect("the encode");
+        let (read, read_width, read_height) =
+            decode_at(&std::fs::read(&path).expect("the file"), 16).expect("the decode");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!((read_width, read_height), (width, height));
+        let worst = frame.iter().zip(&read).map(|(a, b)| a.abs_diff(*b)).max().expect("pixels");
+        assert!(worst <= 1024, "the round trip moved a sample by {worst} of 65535");
     }
 
     /// Every grid tile is 4:2:0, which is a different conversion inside libavif and the one this
