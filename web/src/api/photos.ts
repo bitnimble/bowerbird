@@ -61,6 +61,7 @@ export interface PhotoListParams {
   /** Bodies and lenses, spelled as the RAW header spelled them; sent comma-separated. */
   camera_models?: string[];
   lens_models?: string[];
+  labels?: string[];
   match?: 'all' | 'any';
   /** Every photograph of a stack as a row of its own, rather than the stack as one (§19.5.4). */
   expand_stacks?: boolean;

@@ -183,6 +183,8 @@ nowhere to go back to.
 | `folder_rules` | one stamp per row | none |
 | `shoot_banners` | one stamp per row | none |
 | `libraries` | one stamp over `name`, `ordering`, `include_subfolders`, `bin_name`, `auto_stack`, `auto_stack_similarity`, `auto_stack_window_seconds` | `root_path`, `read_only`, `bin_dev/ino/birthtime`, `last_synced_at`, `rendition_source`, `rendition_hdr` (what to build is a per-device choice; a laptop may build SDR where the server builds HDR) |
+| `labels` | `label`: `name`, `colour`. `label.position`: `position`. Each on its own stamp, so a reorder, which rewrites every label's position at once, cannot clobber a rename made elsewhere | none |
+| `photo_labels` | one stamp per row, like `stack_members`: the row *is* the labelling, and a removal is a tombstone | none |
 | `settings` | not replicated: per-install (HDR viewing on a device that can't, backup schedule) | everything |
 
 Albums (`albums`, `album_photos`, `album_banners`) are not replicated at all (§1).
@@ -266,7 +268,10 @@ row, always whole, never delta-spliced.
 Hard-deleted rows leave `(entity, id, stamp)`. Sources: shoot deleted, stack dissolved, stack
 membership removed, folder rule removed, shoot banner cleared, photo rows removed by taking a
 folder out of the library (catalogue rows only, no file touched), blob location retracted
-(§7.2). Merge in §5.1, GC in §8.3.
+(§7.2), label deleted, label taken off a photo. Merge in §5.1, GC in §8.3.
+
+A label's tombstone is final, like a photograph's and a shoot's: its deletion took every
+photograph's copy of it, so a rename arriving afterwards would bring back a label on nothing.
 
 Removing a **replica** is not a deletion of the library: unlinking drops local rows and writes
 no entity tombstones. It does have replicated final acts and safety checks, §8.4. Deleting the

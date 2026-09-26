@@ -62,6 +62,16 @@ export const styles = stylex.create({
   models: {
     maxWidth: '320px',
   },
+  action: {
+    width: '100%',
+    borderStyle: 'none',
+    backgroundColor: { default: 'transparent', ':hover': color.slate },
+    textAlign: 'left',
+  },
+  swatch: {
+    width: '8px',
+    height: '8px',
+  },
   caption: {
     display: 'flex',
     gap: '4px',

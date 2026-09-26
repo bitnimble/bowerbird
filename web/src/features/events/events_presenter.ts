@@ -3,6 +3,7 @@ import { RenditionEventSchema, ReplicationEventSchema } from '../../../../src/sc
 import { ExportProgressSchema } from '../../../../src/schemas/exports';
 import { type EventStream, subscribeEvents } from '../../api/transport';
 import type { ExportPresenter } from '../export/export_presenter';
+import type { LabelsPresenter } from '../labels/labels_presenter';
 import type { PhotosPresenter } from '../photos/photos_presenter';
 import type { ReplicationPresenter } from '../replication/replication_presenter';
 import type { StackTriagePresenter } from '../photos/stack_triage/stack_triage_presenter';
@@ -15,6 +16,7 @@ export class EventsPresenter {
     private readonly replication: Pick<ReplicationPresenter, 'libraryChanged' | 'reload'>,
     private readonly stackTriage: Pick<StackTriagePresenter, 'renditionsRebuilt'>,
     private readonly exports: Pick<ExportPresenter, 'progressed'>,
+    private readonly labels: Pick<LabelsPresenter, 'load'>,
   ) {}
 
   // One stream for the session, opened by the shell. Whichever transport carries it
@@ -38,6 +40,7 @@ export class EventsPresenter {
         if (!reconnect) return;
         this.photos.serverReachable();
         void this.replication.reload('background');
+        void this.labels.load('background');
       },
       rendition: (payload) => {
         // The announcement carries the row's new value rather than a bare "it changed", so
@@ -52,6 +55,7 @@ export class EventsPresenter {
       replication: (payload) => {
         const { library_id } = ReplicationEventSchema.parse(JSON.parse(payload));
         void this.replication.libraryChanged(library_id);
+        void this.labels.load('background');
       },
       // A merge is minutes of work behind one request, so what the grid draws while it runs -
       // the frames dimmed, the bar in the toast - comes from here rather than from the call.

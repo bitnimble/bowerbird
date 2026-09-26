@@ -13,6 +13,8 @@ export function PopoverButton({
   active = false,
   badge,
   align = 'start',
+  open,
+  onOpenChange,
   children,
 }: {
   trigger: ReactNode;
@@ -24,10 +26,13 @@ export function PopoverButton({
   badge?: number;
   /** Which of the trigger's edges the popup lines up with: `end` for a trigger at a bar's end. */
   align?: 'start' | 'end';
+  /** For a popup that has to close from inside, as one opening a dialog does. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode;
 }): JSX.Element {
   return (
-    <Popover.Root>
+    <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Tooltip label={iconOnly ? label : undefined}>
         <Popover.Trigger
           {...buttonProps('default', iconOnly, badge != null && buttonStyles.holdsBadge)}

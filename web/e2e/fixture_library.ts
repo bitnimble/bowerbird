@@ -50,6 +50,7 @@ export const RENDITION_PHOTOS_DIR = path.join(E2E_ROOT, 'rendition-photos');
 export const FRAME_PHOTOS_DIR = path.join(E2E_ROOT, 'frame-photos');
 export const ZOOM_PHOTOS_DIR = path.join(E2E_ROOT, 'zoom-photos');
 export const PHONE_PHOTOS_DIR = path.join(E2E_ROOT, 'phone-photos');
+export const LABEL_PHOTOS_DIR = path.join(E2E_ROOT, 'label-photos');
 // Triage writes a verdict onto every member it judges, so it gets a library of
 // its own rather than leaving the stacks spec's frames triaged behind it.
 export const TRIAGE_PHOTOS_DIR = path.join(E2E_ROOT, 'triage-photos');
@@ -234,6 +235,7 @@ export function prepareFixture(): void {
     FRAME_PHOTOS_DIR,
     ZOOM_PHOTOS_DIR,
     PHONE_PHOTOS_DIR,
+    LABEL_PHOTOS_DIR,
     TRIAGE_PHOTOS_DIR,
     EDIT_PHOTOS_DIR,
     MOBILE_EDIT_PHOTOS_DIR,

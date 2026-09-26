@@ -400,6 +400,37 @@ A **symlinked `DB_PATH` is resolved first** - a chain of them, up to a bounded n
 
 The refusals are ordered so the backup is validated **before** the in-use probe, because that probe opens the catalogue read-write and so may checkpoint a stale `-wal` into it. Harmless in itself, and no data is lost either way, but a restore refused for a bad backup should not have touched the live catalogue at all.
 
+### 4.10 `labels` and `photo_labels` tables
+
+```sql
+CREATE TABLE labels (
+  id              TEXT PRIMARY KEY,
+  library_id      TEXT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,  -- one line, at most 20 characters
+  colour          TEXT NOT NULL,  -- '#rrggbb'
+  position        INTEGER NOT NULL,
+  stamp           TEXT,
+  stamp_position  TEXT
+);
+CREATE INDEX idx_labels_library ON labels(library_id);
+
+CREATE TABLE photo_labels (
+  library_id  TEXT NOT NULL,
+  label_id    TEXT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+  photo_id    TEXT NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  stamp       TEXT,
+  PRIMARY KEY (library_id, label_id, photo_id)
+);
+CREATE INDEX idx_photo_labels_photo ON photo_labels(photo_id, label_id);
+```
+
+A library's free-form tags, in the order the reader arranged them, and which photos carry each.
+
+- **Per library, not global like an album**, so they replicate with the library (docs/replication.md §3.2). A label applies only to photos of its own library, which the write enforces.
+- **No unique index on `name`.** Two devices naming a label the same while apart is a state neither can refuse, and a unique index would defer the second row on every session for good. `LabelsService` refuses a duplicate, ignoring case, where it is made.
+- `position` ties are broken by `id`, since two devices each appending a label while apart both take the same position.
+- A listing filters by labels as scope (`photo_query.ts`): a photo must carry **every** label asked for, and `match: 'any'` does not reach them.
+
 ---
 
 ## 5. Schemas (Zod)

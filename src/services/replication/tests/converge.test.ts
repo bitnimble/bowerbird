@@ -19,6 +19,7 @@ import { FolderRulesRepository } from '../../shoots/folder_rules_repository';
 import { ShootsRepository } from '../../shoots/shoots_repository';
 import { StacksRepository } from '../../stacks/stacks_repository';
 import { BlobLocations } from '../../blobs/blob_locations';
+import { LabelsRepository } from '../../labels/labels_repository';
 import { PushPageRequestSchema } from '../../../schemas/replication';
 import { ReplicationService } from '../replication_service';
 import { pull, pushTo, replicate, type ChangeSink } from '../session';
@@ -190,6 +191,36 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
   // sees it happen.
   (peer, rng) => new PhotoPathsRepository(peer.db, new StackMembership(peer.db)).deleteByIds([rng.pick(PHOTOS)]),
   (peer, rng) => new ShootsRepository(peer.db).delete(rng.pick(SHOOTS)),
+  // Names from a small set, so two peers creating the same name while apart comes up: nothing may
+  // refuse the second, or it is deferred for good.
+  (peer, rng) => new LabelsRepository(peer.db).create(LIB, { id: rng.id(), name: `label ${rng.int(4)}`, colour: '#000000' }),
+  // A save of the edit dialog: the whole list reordered, one label renamed, sometimes one deleted.
+  // Every position moves under one stamp, so this is what races a rename made elsewhere.
+  (peer, rng) => {
+    const labels = new LabelsRepository(peer.db);
+    const order = labels.listByLibrary(LIB);
+    if (order.length === 0) return;
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = rng.int(i + 1);
+      [order[i]!, order[j]!] = [order[j]!, order[i]!];
+    }
+    const renamed = rng.pick(order).id;
+    const removed = rng.next() < 0.3 ? [rng.pick(order).id] : [];
+    const kept = order
+      .filter((label) => !removed.includes(label.id))
+      .map((label) =>
+        label.id === renamed ? { id: label.id, name: `label ${rng.int(4)}`, colour: `#${rng.int(10)}00000` } : label,
+      );
+    labels.save(LIB, kept, removed);
+  },
+  (peer, rng) => {
+    const labels = new LabelsRepository(peer.db);
+    const held = labels.listByLibrary(LIB);
+    if (held.length === 0) return;
+    const labelId = rng.pick(held).id;
+    if (rng.next() < 0.6) labels.addPhotos(labelId, LIB, [rng.pick(PHOTOS)]);
+    else labels.removePhotos(labelId, LIB, [rng.pick(PHOTOS)]);
+  },
 ];
 
 function stampOf(peer: Peer): string {

@@ -61,6 +61,17 @@ export const REPLICATED_UNITS: readonly ReplicatedUnit[] = [
     rowId: "$.stack_id || '/' || $.photo_id",
     library: OWN_LIBRARY,
   },
+  { entity: 'label', table: 'labels', stamp: 'stamp', rowId: '$.id', library: OWN_LIBRARY },
+  // Apart from the name and colour: a reorder writes every label's position at once, and on one
+  // stamp it would clobber a rename made on another peer while they were apart.
+  { entity: 'label.position', table: 'labels', stamp: 'stamp_position', rowId: '$.id', library: OWN_LIBRARY },
+  {
+    entity: 'photo_label',
+    table: 'photo_labels',
+    stamp: 'stamp',
+    rowId: "$.label_id || '/' || $.photo_id",
+    library: OWN_LIBRARY,
+  },
   // Which peer holds a photograph's original. Replicated because it is what tells
   // every other peer where a photograph can be fetched from, and what an eviction
   // has to consult before it removes the copy in front of it.

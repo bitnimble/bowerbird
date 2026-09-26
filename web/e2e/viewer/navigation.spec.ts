@@ -181,8 +181,8 @@ test('the panels keep their shape while the next photo is loading', async ({ pag
   const details = page.getByRole('region', { name: 'Photo details' });
   const camera = details.getByRole('group', { name: 'Camera', exact: true });
   await expect(camera.getByText('loading').first()).toBeVisible();
-  // Notes, Edits, Camera, Rendition, Original - triage is in the header and the rating in its menu.
-  await expect(details.getByRole('group', { name: /^(Notes|Edits|Camera|Rendition details|Original)$/ })).toHaveCount(5);
+  // Info, Edits, Camera, Rendition, Original - triage is in the header and the rating in its menu.
+  await expect(details.getByRole('group', { name: /^(Info|Edits|Camera|Rendition details|Original)$/ })).toHaveCount(5);
 });
 
 function photoControls(page: Page): Locator {

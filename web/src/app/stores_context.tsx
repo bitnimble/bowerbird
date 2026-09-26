@@ -10,6 +10,9 @@ import { ExportHistoryPresenter } from '../features/exports/export_history_prese
 import { ExportHistoryStore } from '../features/exports/export_history_store';
 import { FrameTvPresenter } from '../features/frame_tv/frame_tv_presenter';
 import { FrameTvStore } from '../features/frame_tv/frame_tv_store';
+import { LabelEditorStore } from '../features/labels/label_editor_store';
+import { LabelsPresenter } from '../features/labels/labels_presenter';
+import { LabelsStore } from '../features/labels/labels_store';
 import { LibrariesPresenter } from '../features/libraries/libraries_presenter';
 import { LibrariesStore } from '../features/libraries/libraries_store';
 import { PhotosPresenter } from '../features/photos/photos_presenter';
@@ -60,6 +63,8 @@ const ExportHistoryStoreContext = createContext<ExportHistoryStore | null>(null)
 const UpdatesStoreContext = createContext<UpdatesStore | null>(null);
 const SidebarStoreContext = createContext<SidebarStore | null>(null);
 const FrameTvStoreContext = createContext<FrameTvStore | null>(null);
+const LabelsStoreContext = createContext<LabelsStore | null>(null);
+const LabelEditorStoreContext = createContext<LabelEditorStore | null>(null);
 
 interface Presenters {
   libraries: LibrariesPresenter;
@@ -80,6 +85,7 @@ interface Presenters {
   updates: UpdatesPresenter;
   sidebar: SidebarPresenter;
   frameTv: FrameTvPresenter;
+  labels: LabelsPresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
@@ -123,6 +129,8 @@ function build(): { stores: Stores; presenters: Presenters } {
     // whoever read them last. The settings say whether the viewer hides it.
     sidebar: new SidebarStore(appSettingsStore),
     frameTv: new FrameTvStore(),
+    labels: new LabelsStore(),
+    labelEditor: new LabelEditorStore(),
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -161,7 +169,10 @@ function build(): { stores: Stores; presenters: Presenters } {
   // Reports through the toasts like every other action that finishes off screen, and shows
   // its progress there too while the sidebar that otherwise shows it is hidden.
   const exportPhotos = new ExportPresenter(stores.export, stores.sidebar, toasts);
-  const events = new EventsPresenter(photos, replication, stackTriage, exportPhotos);
+  // Labels a photo through the photos presenter, so the open photograph shows it, and drops a
+  // deleted label from the grid's filter the same way.
+  const labels = new LabelsPresenter(stores.labels, stores.labelEditor, photos, toasts);
+  const events = new EventsPresenter(photos, replication, stackTriage, exportPhotos, labels);
   const presenters: Presenters = {
     libraries,
     photos,
@@ -183,6 +194,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     updates: new UpdatesPresenter(stores.updates),
     sidebar,
     frameTv: new FrameTvPresenter(stores.frameTv, stores.appSettings, stores.viewer, photos, toasts),
+    labels,
   };
   return { stores, presenters };
 }
@@ -208,6 +220,8 @@ interface Stores {
   updates: UpdatesStore;
   sidebar: SidebarStore;
   frameTv: FrameTvStore;
+  labels: LabelsStore;
+  labelEditor: LabelEditorStore;
 }
 
 export function StoresProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -233,7 +247,13 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                       <SidebarStoreContext.Provider value={stores.sidebar}>
                                         <BackupStoreContext.Provider value={stores.backup}>
                                           <FeedbackStoreContext.Provider value={stores.feedback}>
-                                            <FrameTvStoreContext.Provider value={stores.frameTv}>{children}</FrameTvStoreContext.Provider>
+                                            <FrameTvStoreContext.Provider value={stores.frameTv}>
+                                              <LabelsStoreContext.Provider value={stores.labels}>
+                                                <LabelEditorStoreContext.Provider value={stores.labelEditor}>
+                                                  {children}
+                                                </LabelEditorStoreContext.Provider>
+                                              </LabelsStoreContext.Provider>
+                                            </FrameTvStoreContext.Provider>
                                           </FeedbackStoreContext.Provider>
                                         </BackupStoreContext.Provider>
                                       </SidebarStoreContext.Provider>
@@ -284,4 +304,7 @@ export const useUpdatesStore = (): UpdatesStore => required(useContext(UpdatesSt
 export const useFeedbackStore = (): FeedbackStore => required(useContext(FeedbackStoreContext), 'FeedbackStore');
 export const useSidebarStore = (): SidebarStore => required(useContext(SidebarStoreContext), 'SidebarStore');
 export const useFrameTvStore = (): FrameTvStore => required(useContext(FrameTvStoreContext), 'FrameTvStore');
+export const useLabelsStore = (): LabelsStore => required(useContext(LabelsStoreContext), 'LabelsStore');
+export const useLabelEditorStore = (): LabelEditorStore =>
+  required(useContext(LabelEditorStoreContext), 'LabelEditorStore');
 export const usePresenters = (): Presenters => required(useContext(PresentersContext), 'Presenters');

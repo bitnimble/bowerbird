@@ -419,6 +419,23 @@ export class PhotosPresenter {
     });
   }
 
+  async toggleLabelFilter(labelId: string, checked: boolean): Promise<void> {
+    const f = this.listing.filters;
+    const next = checked ? [...(f.labels ?? []), labelId] : (f.labels ?? []).filter((id) => id !== labelId);
+    await this.setFilters({ ...f, labels: next.length === 0 ? undefined : next });
+  }
+
+  /**
+   * Drops ticked labels that no longer exist. Left ticked, a label deleted here or on another device
+   * narrows the grid to nothing, with no row in the menu to untick it from.
+   */
+  async keepLabelFilters(known: ReadonlySet<string>): Promise<void> {
+    const f = this.listing.filters;
+    const kept = (f.labels ?? []).filter((id) => known.has(id));
+    if (kept.length === (f.labels ?? []).length) return;
+    await this.setFilters({ ...f, labels: kept.length === 0 ? undefined : kept });
+  }
+
   /**
    * Back to the collection as it opens: every question the reader asked dropped, and the
    * working set they started from restored, so this is the one control that empties the
@@ -944,6 +961,11 @@ export class PhotosPresenter {
     await this.marksPresenter.setNotes(photoId, notes);
   }
 
+  @action.bound
+  photoLabelled(photoId: string, labelId: string, labelled: boolean): void {
+    this.viewerPresenter.photoLabelled(photoId, labelId, labelled);
+  }
+
   // --- keyboard culling ---
   // These act on the focused tile, so the whole cull can happen in the grid
   // without opening each photo.
@@ -1224,6 +1246,7 @@ export class PhotosPresenter {
       taken_to: f.takenTo,
       camera_models: f.cameraModels,
       lens_models: f.lensModels,
+      labels: f.labels,
       match: f.match,
       // Which listing the positions are into, so a selection made on an expanded
       // grid resolves against the same rows it was made from (§19.5.4).
@@ -1285,11 +1308,11 @@ export class PhotosPresenter {
       const updated = await photosApi.update(photoId, fields);
       // Into the object the panels are already reading, not over it: only the
       // fields that moved then notify, so rating a photo leaves the camera
-      // settings and the paths beside it alone. Minus the two a patch cannot
+      // settings and the paths beside it alone. Minus the ones a patch cannot
       // change, which arrive as fresh objects every time and would look like a
       // change to whoever reads them - the frame and the rendition panel, for a
       // star. What does move them says so itself (§18.6).
-      const { renditions: _renditions, album_ids: _albums, ...changed } = updated;
+      const { renditions: _renditions, album_ids: _albums, label_ids: _labels, ...changed } = updated;
       this.viewerPresenter.patchPhoto(photoId, changed);
       // Written into the row the grid is already rendering rather than over
       // it: replacing the object invalidates that tile's observable, and a

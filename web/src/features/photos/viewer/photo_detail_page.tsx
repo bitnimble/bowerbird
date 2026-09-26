@@ -44,7 +44,7 @@ import { styles } from './photo_detail_page.stylex';
 import { PhotoTriage } from './detail_triage';
 import { DetailNav } from './detail_nav';
 import { DetailFrame } from './detail_frame';
-import { DetailNotes } from './detail_notes';
+import { DetailInfo } from './detail_info';
 import { DetailFilmstrip, type StripView } from './detail_filmstrip';
 import {
   CameraPanel,
@@ -321,7 +321,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
           <IntentChoice value={store.proofIntent} onChange={photos.chooseProofIntent} />
         </Panel>
       )}
-      <DetailNotes photoId={photoId} style={panelStyle} />
+      <DetailInfo photoId={photoId} style={panelStyle} />
       <PhotoEdits photoId={photoId} defaultOpen={expanded} style={panelStyle} />
       <CameraPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />
       <RenditionPanel photoId={photoId} defaultOpen={expanded} style={panelStyle} />

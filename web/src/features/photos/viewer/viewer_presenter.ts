@@ -145,6 +145,14 @@ export class ViewerPresenter {
     if (detail != null) Object.assign(detail, fields);
   }
 
+  @action.bound
+  photoLabelled(photoId: string, labelId: string, labelled: boolean): void {
+    const detail = this.store.detailFor(photoId);
+    if (detail == null) return;
+    const others = detail.label_ids.filter((id) => id !== labelId);
+    detail.label_ids = labelled ? [...others, labelId] : others;
+  }
+
   /**
    * What the viewer's filmstrip is over, or null once it has gone.
    *

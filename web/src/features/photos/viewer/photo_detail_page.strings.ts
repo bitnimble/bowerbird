@@ -75,6 +75,8 @@ export const PhotoDetailStrings = {
   rating: () => 'Rating',
   setRatingTo: (stars: number) => `Set rating to ${stars}`,
 
+  info: () => 'Info',
+  labels: () => 'Labels',
   notes: () => 'Notes',
   addANote: () => 'Add note',
   unsaved: () => 'unsaved',

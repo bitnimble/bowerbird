@@ -30,13 +30,15 @@ const ORDER: Record<ReplicatedKind, number> = {
   library: 0,
   shoot: 1,
   folder_rule: 2,
-  photo: 3,
-  stack: 4,
-  stack_member: 5,
-  shoot_banner: 6,
-  photo_edits: 7,
-  edit_conflict: 8,
-  blob_location: 9,
+  label: 3,
+  photo: 4,
+  stack: 5,
+  stack_member: 6,
+  photo_label: 7,
+  shoot_banner: 8,
+  photo_edits: 9,
+  edit_conflict: 10,
+  blob_location: 11,
 };
 
 const log = new Logger('replication');
@@ -353,7 +355,7 @@ function applyTombstone(db: Database, libraryId: string, entity: ReplicatedEntit
     if (survives) return;
     // The same fan-out the peer that made this deletion ran: the children go with
     // the row, and this peer stops advertising the ones it was holding.
-    if (entity.kind === 'photo' || entity.kind === 'shoot' || entity.kind === 'stack') {
+    if (entity.kind === 'photo' || entity.kind === 'shoot' || entity.kind === 'stack' || entity.kind === 'label') {
       if (entity.kind === 'photo') sayWhatTheDeletionCosts(db, change);
       // A shoot takes the tree under it, and the tree *here* is not the tree the
       // sender had: a child made on this peer while the other was deleting the
@@ -619,9 +621,14 @@ function afterWrite(
   }
 }
 
-/** Whether a later write may bring this kind of row back at all (see `applyTombstone`). */
+/**
+ * Whether a later write may bring this kind of row back at all (see `applyTombstone`).
+ *
+ * A label is final for a reason of its own: its deletion took every photograph's copy of it, so a
+ * rename arriving afterwards would bring back a label nobody had applied to anything.
+ */
 function resurrectable(entity: ReplicatedEntity): boolean {
-  return entity.kind !== 'photo' && entity.kind !== 'shoot';
+  return entity.kind !== 'photo' && entity.kind !== 'shoot' && entity.kind !== 'label';
 }
 
 /**

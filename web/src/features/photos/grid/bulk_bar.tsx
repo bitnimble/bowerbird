@@ -12,11 +12,13 @@ import {
   Layers,
   Layers2,
   ListChecks,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
   RotateCw,
   Sparkles,
+  Tag,
   Trash2,
   X,
 } from 'lucide-react';
@@ -25,6 +27,7 @@ import { useNavigate } from 'react-router-dom';
 import { canRevealFile } from '../../../api/transport';
 import {
   useAlbumsStore,
+  useLabelsStore,
   useLibrariesStore,
   useListingStore,
   useMarksStore,
@@ -41,6 +44,8 @@ import { Submenu } from '../../../ui/submenu';
 import { Text } from '../../../ui/text';
 import { color } from '../../../ui/tokens.stylex';
 import { AddAlbumDialog } from '../../albums/add_album_dialog';
+import { AddLabelMenuStrings } from '../../labels/add_label_menu.strings';
+import { EditLabelsStrings } from '../../labels/edit_labels_dialog.strings';
 import { SendToFrameTv } from '../../frame_tv/send_to_frame_tv';
 import { AddShootDialog } from '../../shoots/add_shoot_dialog';
 import { BulkBarStrings } from './bulk_bar.strings';
@@ -48,7 +53,14 @@ import { Rating, Verdict } from '../marks';
 import { MergePageStrings } from '../merge/merge_page.strings';
 import { PanoramaIcon } from './panorama_icon';
 import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
-import { isComposite, mergeJobPath, triagePath, type MergeCandidate, type StackSelection } from '../photos_store';
+import {
+  isComposite,
+  libraryOfSource,
+  mergeJobPath,
+  triagePath,
+  type MergeCandidate,
+  type StackSelection,
+} from '../photos_store';
 
 // Behind the overflow, so the bar's own row holds only what a cull does
 // constantly - the verdict. The rest is reached deliberately, and most of it
@@ -96,6 +108,7 @@ const styles = stylex.create({
 
 // Beside the ids in the shoot and album submenus, which are never empty.
 const NEW_COLLECTION = '';
+const EDIT_LABELS = '';
 
 // Not the come-and-go of Stack and Unstack below: a session wants one whole stack
 // and nothing else, so the row that is refusing has to stay and say so.
@@ -227,7 +240,8 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   const albums = useAlbumsStore();
   const libraries = useLibrariesStore();
   const replicationStore = useReplicationStore();
-  const { photos, replication, export: exportPhotos, frameTv } = usePresenters();
+  const labelsStore = useLabelsStore();
+  const { photos, replication, export: exportPhotos, frameTv, labels } = usePresenters();
   const [creating, setCreating] = useState<'shoot' | 'album' | null>(null);
 
   // The selection itself, not the ids: it may name more photographs than this client
@@ -275,17 +289,8 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
     affected === 0 ? null
     : affected == null || count < 2 ? plain
     : counted(affected);
-  // Which library this collection belongs to, read off the collection rather
-  // than off a row: rows are a sparse, evictable window, so a guard keyed on one
-  // lapses when the reader scrolls past the block holding it. An album names no
-  // library at all, spanning as many as its members do, so it answers `undefined`
-  // and the server is what refuses.
-  const source = listing.source;
-  const libraryId =
-    source == null ? undefined
-    : 'libraryId' in source ? source.libraryId
-    : source.kind === 'shoot' ? shoots.byId.get(source.shootId)?.library_id
-    : undefined;
+  // An album answers `undefined`, and the server is what refuses.
+  const libraryId = libraryOfSource(listing.source, (shootId) => shoots.byId.get(shootId)?.library_id);
   const library = libraryId == null ? undefined : libraries.byId.get(libraryId);
   const readOnly = library?.read_only === true;
   const readOnlyRefusal = readOnly ? BulkBarStrings.notOnReadOnlyLibrary() : undefined;
@@ -452,6 +457,24 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                         albumId === NEW_COLLECTION ? setCreating('album') : void photos.addSelectedToAlbum(albumId)
                       }
                     />
+                    {libraryId != null && (
+                      <Submenu
+                        label={AddLabelMenuStrings.addLabel()}
+                        icon={<Tag size={ICON} />}
+                        options={[
+                          { value: EDIT_LABELS, label: EditLabelsStrings.open(), icon: <Pencil size={ICON} /> },
+                          ...labelsStore.labelsOf(libraryId).map((label) => ({ value: label.id, label: label.name })),
+                        ]}
+                        onSelect={(labelId) => {
+                          if (labelId === EDIT_LABELS) {
+                            void labels.openEditor(libraryId);
+                            return;
+                          }
+                          const target = photos.selectionTarget();
+                          if (target != null) void labels.labelSelection(labelId, target, count);
+                        }}
+                      />
+                    )}
                   </>
                 ),
                 options: filingOptions({

@@ -376,6 +376,7 @@ export class ListingPresenter {
       taken_to: f.takenTo,
       camera_models: f.cameraModels,
       lens_models: f.lensModels,
+      labels: f.labels,
       match: f.match,
       ...(expandStacks ? { expand_stacks: true } : {}),
       // No ordering: the collection's own is the answer, and asking for it back

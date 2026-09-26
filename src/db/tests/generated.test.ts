@@ -6,6 +6,7 @@ import { runMigrations } from '../migrate';
 import * as albums from '../schema/albums';
 import * as blobs from '../schema/blobs';
 import * as exportsSchema from '../schema/exports';
+import * as labels from '../schema/labels';
 import * as libraries from '../schema/libraries';
 import * as photoEdits from '../schema/photo_edits';
 import * as photos from '../schema/photos';
@@ -19,6 +20,7 @@ const declared = [
   albums,
   blobs,
   exportsSchema,
+  labels,
   libraries,
   photoEdits,
   photos,

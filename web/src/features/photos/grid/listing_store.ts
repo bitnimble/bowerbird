@@ -114,6 +114,7 @@ export class ListingStore {
       // One apiece however many bodies are ticked, as the verdict set counts once.
       ((filters.cameraModels?.length ?? 0) > 0 ? 1 : 0) +
       ((filters.lensModels?.length ?? 0) > 0 ? 1 : 0) +
+      ((filters.labels?.length ?? 0) > 0 ? 1 : 0) +
       ((filters.search ?? '') !== '' ? 1 : 0)
     );
   }
@@ -129,6 +130,7 @@ export class ListingStore {
       filters.takenTo != null ||
       (filters.cameraModels?.length ?? 0) > 0 ||
       (filters.lensModels?.length ?? 0) > 0 ||
+      (filters.labels?.length ?? 0) > 0 ||
       (filters.search ?? '') !== ''
     );
   }

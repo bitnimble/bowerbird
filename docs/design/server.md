@@ -99,6 +99,20 @@ This service handles the full scan algorithm. See §9 for the detailed algorithm
 | `delete(albumId)` | Deletes the album and all its photo associations. |
 | `update(albumId, updates)` | Updates mutable fields: `name`, `ordering`. Setting `banner_photo_id` upserts the `album_banners` row; clearing it (null) deletes that row; it is not a column on `albums` (§4.6). |
 
+### 8.7 Labels Service (`labels_service.ts`)
+
+**Constructor dependencies:** `LabelsRepository`, `LibrariesRepository`
+
+**Methods:**
+
+| Method | Description |
+|---|---|
+| `list()` | Every library's labels, each library's in its own order, with how many live photos carry each. |
+| `create(request)` | Appends a label to a library. 409 for a name the library already has, ignoring case. |
+| `save(request)` | Writes the edit dialog's list: its labels in its order, then any label it never mentioned in the order they had, less `removed`. A name or colour is sent only where the reader changed it, so a rename replicated in while the dialog was open survives. A label the request names that has since gone is a 404 rather than recreated. A name given now that another label has is a 409; two labels replication left sharing one are not. One stamp for the save, moved only onto what each label actually changed (§4.10). |
+| `addPhotos(labelId, photoIds)` | Labels the photos, ignoring any outside the label's library. |
+| `removePhotos(labelId, photoIds)` | Takes the label off the photos. |
+
 ---
 
 ## 13. API Endpoints
@@ -167,6 +181,7 @@ Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `q` (optional, case-insensitive substring of any input path a photograph names)
 - `taken_from` / `taken_to` (optional `YYYY-MM-DD`, inclusive bounds)
 - `camera_models` / `lens_models` (optional, comma-separated, spelled as the RAW header spelled them)
+- `labels` (optional, comma-separated label ids, every one of which a photo must carry)
 - `match` (optional, `all` (default) or `any`)
 - `expand_stacks` (boolean, default false: list every photograph of a stack as a row of its own rather than the stack as one, §19.5.4)
 
@@ -174,7 +189,7 @@ The same schema serves the library, shoot and album listings, so a filter behave
 
 `rated` is a "has any rating" test rather than an equality one, because the question during a cull is "what have I not judged yet".
 
-`match` selects how `rated`, `triage`, `is_missing` and `is_hidden` combine. `all` intersects them; `any` unions them, which is what a "show me anything still needing attention" filter means; as an intersection, "picks and unrated and missing" is almost always empty. It applies only to those four: scope (soft-delete, `no_shoot`, `q`, the date range, the two model lists) always intersects, so narrowing by filename, date or body still narrows a union.
+`match` selects how `rated`, `triage`, `is_missing` and `is_hidden` combine. `all` intersects them; `any` unions them, which is what a "show me anything still needing attention" filter means; as an intersection, "picks and unrated and missing" is almost always empty. It applies only to those four: scope (soft-delete, `no_shoot`, `q`, the date range, the two model lists, the labels) always intersects, so narrowing by filename, date or body still narrows a union.
 
 The model lists union within themselves and intersect across: two bodies is either of them, a body and a lens is that lens on that body. They filter on the `camera_model` / `lens_model` columns the import read off the RAW header (§11.1), so a photograph the camera told nothing about is in neither list and matches neither filter.
 
@@ -299,6 +314,18 @@ Two scopes, not three: the `libraries` row holds what belongs to one catalogue (
 | `DELETE` | `/api/exports/runs/:runId` | Forget a whole run, which is what a selection's export is one row of |
 | `DELETE` | `/api/exports/:id` | Forget one file's row. Neither delete touches a file, the files being the reader's |
 | `GET` | `/image/exports/:id` | The tile beside a history row, written with the export and served immutable (§13.5) |
+
+### 13.8 Labels
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/labels` | Every library's labels (§4.10) |
+| `POST` | `/api/labels` | Create a label (body: `{ library_id, name, colour }`) |
+| `PUT` | `/api/labels` | Save the edit dialog's list (body: `{ library_id, labels, removed }`, §8.7) |
+| `POST` | `/api/labels/:id/photos` | Label photos (`PhotoTargetSchema`, §5.3) |
+| `DELETE` | `/api/labels/:id/photos` | Take the label off photos (`PhotoTargetSchema`) |
+
+A photo's detail carries `label_ids`, in its library's label order.
 
 ---
 

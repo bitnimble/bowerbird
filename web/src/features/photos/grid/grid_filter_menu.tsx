@@ -1,9 +1,31 @@
 import * as stylex from '@stylexjs/stylex';
-import { Aperture, Camera, ChevronRight, CircleDashed, EyeOff, Filter, Star, ThumbsDown, ThumbsUp, Unplug } from 'lucide-react';
+import {
+  Aperture,
+  Camera,
+  ChevronRight,
+  CircleDashed,
+  EyeOff,
+  Filter,
+  Pencil,
+  Star,
+  Tag,
+  ThumbsDown,
+  ThumbsUp,
+  Unplug,
+} from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useState } from 'react';
 import { Popover } from '@base-ui-components/react/popover';
-import { useListingStore, usePresenters } from '../../../app/stores_context';
+import {
+  useLabelsStore,
+  useLibrariesStore,
+  useListingStore,
+  usePresenters,
+  useShootsStore,
+} from '../../../app/stores_context';
+import { EditLabelsStrings } from '../../labels/edit_labels_dialog.strings';
+import { PhotoDetailStrings } from '../viewer/photo_detail_page.strings';
+import { libraryOfSource } from '../photos_store';
 import { Button } from '../../../ui/button';
 import { focusRing } from '../../../ui/focus_ring';
 import { ICON } from '../../../ui/icon';
@@ -30,7 +52,7 @@ const CUSTOM: Option<CustomKey>[] = [
 ];
 
 // The tick list owns the chips and nothing else, so a tick keeps the filename, the
-// date range and the two model lists, which are the other controls in this panel.
+// date range, the two model lists and the labels, which are the other controls in this panel.
 function withCustom(filters: PhotoFilters, keys: CustomKey[]): PhotoFilters {
   const kept: PhotoFilters = {
     search: filters.search,
@@ -38,6 +60,7 @@ function withCustom(filters: PhotoFilters, keys: CustomKey[]): PhotoFilters {
     takenTo: filters.takenTo,
     cameraModels: filters.cameraModels,
     lensModels: filters.lensModels,
+    labels: filters.labels,
   };
   // Nothing ticked is not an empty result set, it is no chip at all.
   return keys.length === 0 ? kept : { ...kept, ...customToFilters(keys) };
@@ -72,9 +95,9 @@ function customKeys(filters: PhotoFilters): CustomKey[] {
   ];
 }
 
-type ModelList = 'camera' | 'lens';
+type SideList = 'camera' | 'lens' | 'labels';
 
-function openedList(row: ModelList, open: boolean, current: ModelList | null): ModelList | null {
+function openedList(row: SideList, open: boolean, current: SideList | null): SideList | null {
   if (open) return row;
   // Moving from one row to the other closes the first *after* the second has opened, so a
   // close is only its own row's to act on.
@@ -97,7 +120,7 @@ const ModelFilter = observer(function ModelFilter({
   open,
   onOpen,
 }: {
-  which: ModelList;
+  which: 'camera' | 'lens';
   label: string;
   icon: JSX.Element;
   // Which list is open is the panel's to hold, not each row's: two lists open at once
@@ -148,6 +171,80 @@ const ModelFilter = observer(function ModelFilter({
 });
 
 /**
+ * The labels a photo must all carry, beside the panel for the reason the models are. An album spans
+ * libraries, so it lists each library's labels under that library's name.
+ */
+const LabelFilter = observer(function LabelFilter({
+  open,
+  onOpen,
+  onEdit,
+}: {
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  // The panel has to close under the dialog: its popups stack above a modal's.
+  onEdit: () => void;
+}): JSX.Element | null {
+  const store = useListingStore();
+  const labelsStore = useLabelsStore();
+  const librariesStore = useLibrariesStore();
+  const shoots = useShootsStore();
+  const { photos, labels } = usePresenters();
+  const own = libraryOfSource(store.source, (shootId) => shoots.byId.get(shootId)?.library_id);
+  const libraries = own != null ? [own] : librariesStore.libraries.map((library) => library.id);
+  const editing = own ?? libraries[0];
+  if (editing == null) return null;
+  const selected = store.filters.labels ?? [];
+  const grouped = own == null && labelsStore.libraryIds.length > 1;
+
+  return (
+    <Popover.Root open={open} onOpenChange={onOpen}>
+      <Popover.Trigger {...stylex.props(menuStyles.item, styles.submenu, focusRing.ring)} openOnHover>
+        <Tag size={ICON} />
+        {PhotoDetailStrings.labels()}
+        {selected.length > 0 && <span {...stylex.props(menuStyles.badge)}>{selected.length}</span>}
+        <ChevronRight size={ICON} {...stylex.props(styles.caret, selected.length === 0 && styles.caretAlone)} />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner {...stylex.props(menuStyles.positioner)} side="right" align="start" sideOffset={4}>
+          <Popover.Popup {...stylex.props(menuStyles.popup, styles.models)} aria-label={PhotoDetailStrings.labels()}>
+            <button
+              type="button"
+              {...stylex.props(menuStyles.item, styles.check, styles.action, focusRing.ring)}
+              onClick={() => {
+                onEdit();
+                void labels.openEditor(editing, own == null);
+              }}
+            >
+              <Pencil size={ICON} />
+              {EditLabelsStrings.open()}
+            </button>
+            {libraries.map((libraryId) => {
+              const offered = labelsStore.labelsOf(libraryId);
+              if (offered.length === 0) return null;
+              return (
+                <Section key={libraryId} label={grouped ? librariesStore.byId.get(libraryId)?.name : undefined}>
+                  {offered.map((label) => (
+                    <label key={label.id} {...stylex.props(menuStyles.item, styles.check)}>
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(label.id)}
+                        onChange={(event) => void photos.toggleLabelFilter(label.id, event.target.checked)}
+                      />
+                      <span {...stylex.props(menuStyles.dot, styles.swatch)} style={{ backgroundColor: label.colour }} />
+                      {label.name}
+                    </label>
+                  ))}
+                </Section>
+              );
+            })}
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+});
+
+/**
  * Every question about the collection behind one button: the verdict and rating sets, the
  * filename, and the range of days.
  *
@@ -163,10 +260,13 @@ export const GridFilterMenu = observer(function GridFilterMenu(): JSX.Element {
   const on = customKeys(f);
   const count = store.activeFilterCount;
   const hasModels = store.cameraModelOptions.length > 0 || store.lensModelOptions.length > 0;
-  const [openList, setOpenList] = useState<'camera' | 'lens' | null>(null);
+  const [openList, setOpenList] = useState<SideList | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   return (
     <PopoverButton
+      open={panelOpen}
+      onOpenChange={setPanelOpen}
       active={count > 0}
       iconOnly
       label={count > 0 ? GridControlsStrings.filtersWithCount(count) : GridControlsStrings.filters()}
@@ -191,6 +291,16 @@ export const GridFilterMenu = observer(function GridFilterMenu(): JSX.Element {
                 {option.label}
               </label>
             ))}
+          </Section>
+          <Section>
+            <LabelFilter
+              open={openList === 'labels'}
+              onOpen={(open) => setOpenList((current) => openedList('labels', open, current))}
+              onEdit={() => {
+                setOpenList(null);
+                setPanelOpen(false);
+              }}
+            />
           </Section>
           {/* A library whose files name no body or lens has neither row, and a heading over
               nothing is a section the panel says it has and does not. */}

@@ -56,6 +56,7 @@ export function toFilters(query: PhotoListQuery): PhotoListFilters {
     takenTo: query.taken_to,
     cameraModels: query.camera_models,
     lensModels: query.lens_models,
+    labels: query.labels,
     match: query.match,
     count: query.count,
     expandStacks: query.expand_stacks,
@@ -79,6 +80,7 @@ export function fromSelectionFilters(filters: PhotoSelection['filters']): PhotoL
     takenTo: filters.taken_to,
     cameraModels: filters.camera_models,
     lensModels: filters.lens_models,
+    labels: filters.labels,
     match: filters.match,
     expandStacks: filters.expand_stacks,
   };

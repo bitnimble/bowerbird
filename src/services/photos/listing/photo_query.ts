@@ -383,7 +383,7 @@ function displayed(row: DetailRow): { display_width: number; display_height: num
   }
 }
 
-export function toDetail(row: DetailRow, albumIds: string[]): UnresolvedDetail {
+export function toDetail(row: DetailRow, albumIds: string[], labelIds: string[]): UnresolvedDetail {
   return {
     id: row.id,
     library_id: row.library_id,
@@ -442,6 +442,7 @@ export function toDetail(row: DetailRow, albumIds: string[]): UnresolvedDetail {
     ...displayed(row),
     renditions: null,
     album_ids: albumIds,
+    label_ids: labelIds,
   };
 }
 
@@ -536,6 +537,10 @@ export function conditions(filters: PhotoListFilters, prefix: string): { clauses
     if (wanted == null || wanted.length === 0) continue;
     scope.push(`${prefix}${column} IN (${wanted.map(() => '?').join(', ')})`);
     scopeParams.push(...wanted);
+  }
+  for (const labelId of filters.labels ?? []) {
+    scope.push(`EXISTS (SELECT 1 FROM photo_labels pl WHERE pl.photo_id = ${prefix}id AND pl.label_id = ?)`);
+    scopeParams.push(labelId);
   }
 
   if (filters.isMissing != null) {

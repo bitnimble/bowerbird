@@ -56,6 +56,7 @@ export const PathSegment = {
   job: segment('job'),
   jobs: segment('jobs'),
   keep: segment('keep'),
+  labels: segment('labels'),
   landed: segment('landed'),
   libraries: segment('libraries'),
   mark: segment('mark'),

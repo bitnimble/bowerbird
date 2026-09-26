@@ -207,6 +207,8 @@ export const PhotoDetailSchema = PhotoSummarySchema.extend({
   // Albums this photo belongs to. On the detail only: it needs a second query,
   // and a grid of 100 tiles has no use for it.
   album_ids: z.array(IdSchema),
+  // In the library's label order.
+  label_ids: z.array(IdSchema),
 });
 export type PhotoDetail = z.infer<typeof PhotoDetailSchema>;
 
@@ -289,6 +291,8 @@ export const PhotoListQuerySchema = PaginationSchema
     // Comma-separated bodies and lenses, spelled as the RAW header spelled them.
     camera_models: CommaListSchema.optional(),
     lens_models: CommaListSchema.optional(),
+    // Comma-separated label ids, every one of which a photo must carry.
+    labels: CommaListSchema.optional(),
     // How rated/triage/is_missing/is_hidden combine. 'any' is what makes a
     // custom filter like "picks, unrated or missing" mean a union rather than an
     // intersection, which as an intersection is almost always empty.
@@ -322,6 +326,7 @@ export const PhotoFiltersSchema = z.object({
   taken_to: z.iso.date().optional(),
   camera_models: z.array(z.string()).min(1).optional(),
   lens_models: z.array(z.string()).min(1).optional(),
+  labels: z.array(IdSchema).min(1).optional(),
   match: z.enum(['all', 'any']).optional(),
   expand_stacks: z.boolean().optional(),
 });

@@ -47,6 +47,7 @@ import { ExportsPage } from '../features/exports/exports_page';
 import { ExportsPageStrings } from '../features/exports/exports_page.strings';
 import { bugReporter } from '../features/feedback/report_bug';
 import { ReportBugDialog } from '../features/feedback/report_bug_dialog';
+import { EditLabelsDialog } from '../features/labels/edit_labels_dialog';
 import { ReportBugStrings } from '../features/feedback/report_bug_dialog.strings';
 import { Toasts } from '../features/toasts/toasts';
 import { UpdateBadge } from '../features/updates/update_badge';
@@ -770,6 +771,12 @@ const EnsureLibraries = observer(function EnsureLibraries(): null {
   return null;
 });
 
+function EnsureLabels(): null {
+  const { labels } = usePresenters();
+  useEffect(() => void labels.load(), [labels]);
+  return null;
+}
+
 // Which libraries have peers gates every piece of replication UI, and a
 // divergence is announced in the sidebar from wherever the reader is.
 const EnsureReplication = observer(function EnsureReplication(): null {
@@ -877,6 +884,7 @@ export const App = observer(function App(): JSX.Element {
       <HdrOutput />
       <EnsureLibraries />
       <EnsureReplication />
+      <EnsureLabels />
       <ServerEvents />
       <CheckForUpdates />
       {mobile && (drawerOpen || dragging) && (
@@ -899,6 +907,8 @@ export const App = observer(function App(): JSX.Element {
         {/* The same, for the sidebar's entry and the photo menu's: only one of the two knows
             a photograph, and the form is the same form either way. */}
         <ReportBugDialog />
+        {/* Opened from the grid's filter menu, the bulk bar and the photo viewer. */}
+        <EditLabelsDialog />
         <main {...stylex.props(styles.content)}>
           <ShowSidebar.Provider value={sidebarOpen ? null : toggleSidebar}>
             <Routes>

@@ -40,7 +40,9 @@ export type ReplicatedKind =
   | 'library'
   | 'shoot_banner'
   | 'photo_edits'
-  | 'edit_conflict';
+  | 'edit_conflict'
+  | 'label'
+  | 'photo_label';
 
 export interface ReplicatedEntity {
   /** What a tombstone for one of these is called in the log. */
@@ -266,6 +268,22 @@ export const REPLICATED_ENTITIES: readonly ReplicatedEntity[] = [
     // A frozen candidate, so plain LWW is exact: the only writes it ever sees are
     // the same divergence parked again after a later save of the same session.
     units: unitsOf('edit_conflicts', { edit_conflict: ['doc', 'history', 'cursor', 'chain'] }),
+  },
+  {
+    kind: 'label',
+    table: 'labels',
+    key: ['id'],
+    libraryColumn: 'library_id',
+    identity: ['id', 'library_id', 'name', 'colour', 'position'],
+    units: unitsOf('labels', { label: ['name', 'colour'], 'label.position': ['position'] }),
+  },
+  {
+    kind: 'photo_label',
+    table: 'photo_labels',
+    key: ['label_id', 'photo_id'],
+    libraryColumn: 'library_id',
+    identity: ['library_id', 'label_id', 'photo_id'],
+    units: unitsOf('photo_labels', { photo_label: [] }),
   },
 ];
 

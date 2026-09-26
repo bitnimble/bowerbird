@@ -28,6 +28,9 @@ import { ShootsRepository } from './services/shoots/shoots_repository';
 import { AlbumsApi } from './api/albums/albums_api';
 import { AlbumsService } from './services/albums/albums_service';
 import { AlbumsRepository } from './services/albums/albums_repository';
+import { LabelsApi } from './api/labels/labels_api';
+import { LabelsService } from './services/labels/labels_service';
+import { LabelsRepository } from './services/labels/labels_repository';
 import { AssembliesApi } from './api/assemblies/assemblies_api';
 import { CompositesApi } from './api/composites/composites_api';
 import { CompositesService } from './services/composites/composites_service';
@@ -140,6 +143,7 @@ const photoMetadataRepo = new PhotoMetadataRepository(db, photoProcessingRepo);
 const shootsRepo = new ShootsRepository(db);
 const folderRulesRepo = new FolderRulesRepository(db);
 const albumsRepo = new AlbumsRepository(db);
+const labelsRepo = new LabelsRepository(db);
 const stacksRepo = new StacksRepository(db);
 const syncLocksRepo = new SyncLocksRepository(db);
 const photoEditsRepo = new PhotoEditsRepository(db);
@@ -229,6 +233,7 @@ const photoReadService = new PhotoReadService(
 );
 const photoMutationService = new PhotoMutationService(photoStateRepo, photoPathsRepo, librariesRepo, photoReadService);
 const albumsService = new AlbumsService(albumsRepo, photoPathsRepo);
+const labelsService = new LabelsService(labelsRepo, librariesRepo);
 const photoEditsService = new PhotoEditsService(
   db,
   photoEditsRepo,
@@ -452,6 +457,7 @@ app.route(route(PathSegment.api()), photosApi.routes);
 app.route(route(PathSegment.api()), new PhotoEditsApi(photoEditsService).routes);
 app.route(route(PathSegment.api()), shootsApi.routes);
 app.route(route(PathSegment.api(), PathSegment.albums()), albumsApi.routes);
+app.route(route(PathSegment.api(), PathSegment.labels()), new LabelsApi(labelsService, photoReadService).routes);
 app.route(route(PathSegment.api(), PathSegment.stacks()), stacksApi.routes);
 app.route(route(PathSegment.api(), PathSegment.composites()), compositesApi.routes);
 app.route(route(PathSegment.api(), PathSegment.assemblies()), assembliesApi.routes);

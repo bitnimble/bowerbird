@@ -83,6 +83,9 @@ export class Rng {
   }
 }
 
+const LABELS = 'SELECT id, library_id, name, colour, position, stamp, stamp_position FROM labels ORDER BY id';
+const PHOTO_LABELS = 'SELECT label_id, photo_id, stamp FROM photo_labels ORDER BY label_id, photo_id';
+
 /**
  * Everything about a library that is supposed to be the same on every peer, keyed
  * by row.
@@ -162,6 +165,8 @@ export function replicatedRows(db: Database): Map<string, string> {
     'SELECT library_id, photo_id, peer_id, stamp FROM blob_locations ORDER BY photo_id, peer_id',
     (row) => `${row.photo_id}/${row.peer_id}`,
   );
+  dump('label', LABELS, (row) => String(row.id));
+  dump('photo_label', PHOTO_LABELS, (row) => `${row.label_id}/${row.photo_id}`);
   return rows;
 }
 
@@ -247,6 +252,8 @@ export function replicatedState(db: Database): string {
        FROM libraries ORDER BY id`,
   );
   dump('blob_locations', 'SELECT library_id, photo_id, peer_id, stamp FROM blob_locations ORDER BY photo_id, peer_id');
+  dump('labels', LABELS);
+  dump('photo_labels', PHOTO_LABELS);
   // The log is deliberately not compared. It is an index over what this replica
   // holds, not a fact about the library: a peer that never heard of a photograph
   // has no entry for it and a peer that did has a tombstone, and those are the
@@ -303,6 +310,8 @@ export function invariants(db: Database): string[] {
     ['shoot_banner', 'shoot_banners', 'shoot_id'],
     ['photo_edits', 'photo_edits', 'photo_id'],
     ['folder_rule', 'folder_rules', 'folder_path'],
+    ['label', 'labels', 'id'],
+    ['label.position', 'labels', 'id'],
   ] as const) {
     const stale = db
       .query(
@@ -315,6 +324,7 @@ export function invariants(db: Database): string[] {
   for (const [entity, joined] of [
     ['stack_member', "SELECT stack_id || '/' || photo_id FROM stack_members"],
     ['edit_conflict', "SELECT photo_id || '/' || session_id FROM edit_conflicts"],
+    ['photo_label', "SELECT label_id || '/' || photo_id FROM photo_labels"],
   ] as const) {
     const stale = db
       .query(`SELECT row_id FROM replication_log WHERE entity = ? AND deleted = 0 AND row_id NOT IN (${joined})`)

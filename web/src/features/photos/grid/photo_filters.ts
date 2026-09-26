@@ -19,6 +19,8 @@ export interface PhotoFilters {
   // spelled them. Several of either is any of them.
   cameraModels?: string[];
   lensModels?: string[];
+  // Ticked label ids. A photo must carry every one of them.
+  labels?: string[];
   // 'any' is what the filter panel sends: picking "picks, unrated and missing"
   // means a photo that is any of those, which as an intersection is empty.
   match?: 'all' | 'any';

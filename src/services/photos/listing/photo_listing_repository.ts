@@ -56,6 +56,8 @@ export interface PhotoListFilters {
   // Bodies and lenses to include, spelled as the RAW header spelled them.
   cameraModels?: string[];
   lensModels?: string[];
+  // Label ids a photo must carry, every one of them.
+  labels?: string[];
   // 'any' unions the rated/triage/isMissing/isHidden filters instead of intersecting them.
   // Scope (deleted, no-shoot, search, dates) always intersects.
   match?: 'all' | 'any';
@@ -125,9 +127,16 @@ export class PhotoListingRepository {
         .get(id) as DetailRow | null;
       if (row == null) return null;
       const albums = this.db.query('SELECT album_id FROM album_photos WHERE photo_id = ?').all(id) as { album_id: string }[];
+      const labels = this.db
+        .query(
+          `SELECT pl.label_id FROM photo_labels pl JOIN labels l ON l.id = pl.label_id
+            WHERE pl.photo_id = ? ORDER BY l.position, l.id`,
+        )
+        .all(id) as { label_id: string }[];
       return toDetail(
         row,
         albums.map((a) => a.album_id),
+        labels.map((l) => l.label_id),
       );
     }
   listByLibrary(libraryId: string, ordering: Ordering, offset: number, limit: number, filters: PhotoListFilters): PhotoListResult {

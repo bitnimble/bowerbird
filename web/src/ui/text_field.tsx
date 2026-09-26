@@ -27,6 +27,9 @@ const styles = stylex.create({
   growInField: {
     width: '100%',
   },
+  invalid: {
+    borderColor: color.rose,
+  },
   // The bed is the wrapper's, so the icon and the suffix sit inside it.
   input: {
     backgroundColor: 'transparent',
@@ -56,8 +59,10 @@ export function TextField({
   min,
   max,
   step,
+  maxLength,
   suffix,
   describedBy,
+  invalid = false,
   style,
   inputStyle,
 }: {
@@ -75,9 +80,11 @@ export function TextField({
   min?: number;
   max?: number;
   step?: number;
+  maxLength?: number;
   suffix?: string;
   /** The id of text saying what this field does, for a reader who only hears the label. */
   describedBy?: string;
+  invalid?: boolean;
   /** On the bed around the input. */
   style?: stylex.StyleXStyles;
   inputStyle?: stylex.StyleXStyles;
@@ -89,6 +96,7 @@ export function TextField({
         fieldStyles.bed,
         styles.wrap,
         grow && (inField ? styles.growInField : styles.grow),
+        invalid && styles.invalid,
         style,
       )}
     >
@@ -99,9 +107,11 @@ export function TextField({
         min={min}
         max={max}
         step={step}
+        maxLength={maxLength}
         value={value}
         aria-label={suffix == null ? label : `${label} (${suffix})`}
         aria-describedby={describedBy}
+        aria-invalid={invalid || undefined}
         placeholder={placeholder}
         autoFocus={autoFocus}
         disabled={disabled}

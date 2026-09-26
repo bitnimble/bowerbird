@@ -35,6 +35,19 @@ export function sourceKey(source: PhotoSource): string {
 }
 
 /** Where a collection's own grid lives. */
+/**
+ * Which library a collection belongs to, read off the collection rather than off a row: rows are a
+ * sparse, evictable window. An album names none, spanning as many as its photos do.
+ */
+export function libraryOfSource(
+  source: PhotoSource | null,
+  shootLibrary: (shootId: string) => string | undefined,
+): string | undefined {
+  if (source == null) return undefined;
+  if ('libraryId' in source) return source.libraryId;
+  return source.kind === 'shoot' ? shootLibrary(source.shootId) : undefined;
+}
+
 export function collectionPath(source: PhotoSource): string {
   switch (source.kind) {
     case 'shoot':

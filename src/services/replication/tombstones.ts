@@ -88,7 +88,7 @@ export function replicates(db: Database, libraryId: string): boolean {
 export function forgetCascade(
   db: Database,
   libraryId: string,
-  kind: 'photo' | 'shoot' | 'stack',
+  kind: 'photo' | 'shoot' | 'stack' | 'label',
   rowIds: readonly string[],
 ): void {
   if (rowIds.length === 0 || !replicates(db, libraryId)) return;
@@ -126,8 +126,17 @@ export function forgetCascade(
       `SELECT stack_id || '/' || photo_id AS row_id FROM stack_members WHERE photo_id IN (${placeholders})`,
       'stack_member',
     );
+    sweep(
+      `SELECT label_id || '/' || photo_id AS row_id FROM photo_labels WHERE photo_id IN (${placeholders})`,
+      'photo_label',
+    );
   } else if (kind === 'shoot') {
     sweep(`SELECT shoot_id AS row_id FROM shoot_banners WHERE shoot_id IN (${placeholders})`, 'shoot_banner');
+  } else if (kind === 'label') {
+    sweep(
+      `SELECT label_id || '/' || photo_id AS row_id FROM photo_labels WHERE label_id IN (${placeholders})`,
+      'photo_label',
+    );
   } else {
     sweep(
       `SELECT stack_id || '/' || photo_id AS row_id FROM stack_members WHERE stack_id IN (${placeholders})`,

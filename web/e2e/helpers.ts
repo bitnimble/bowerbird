@@ -89,7 +89,7 @@ async function libraryAt(page: Page, rootPath: string): Promise<Library | undefi
   return LibrariesSchema.parse(await listed.json()).find((library) => library.root_path === rootPath);
 }
 
-async function libraryOf(page: Page, rootPath: string): Promise<Library> {
+export async function libraryOf(page: Page, rootPath: string): Promise<Library> {
   const library = await libraryAt(page, rootPath);
   if (library == null) throw new Error(`no library is added at ${rootPath}`);
   return library;
