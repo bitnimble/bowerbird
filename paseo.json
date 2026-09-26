@@ -5,9 +5,9 @@
       "[ ! -f $PASEO_SOURCE_CHECKOUT_PATH/web/.env ] || cp $PASEO_SOURCE_CHECKOUT_PATH/web/.env $PASEO_WORKTREE_PATH/web/",
       "scripts/subwt.sh",
       "bun install",
+      "cd web && bun install",
       "bun run get:all",
-      "bun run build:native",
-      "cd web && bun install"
+      "bun run build:native"
     ]
   },
   "scripts": {
