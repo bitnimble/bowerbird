@@ -434,7 +434,8 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/app/native/rawshim/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \
-  && eval "$(cargo xwin env --target x86_64-pc-windows-msvc)" \
+  && xwin_env="$(cargo xwin env --target x86_64-pc-windows-msvc)" \
+  && eval "$xwin_env" \
   && bun run build:native:release --target x86_64-pc-windows-msvc --no-default-features \
   && bun run build:sidecar --target x86_64-pc-windows-msvc \
   && bun run build:app --target x86_64-pc-windows-msvc --bundles nsis --runner cargo-xwin \

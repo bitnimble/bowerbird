@@ -75,11 +75,23 @@ function isTarget(arg: string): arg is Target {
 function checkout(tree: string): void {
   run('git', ['worktree', 'add', '--detach', tree, 'HEAD'], repoRoot);
   // The submodule from this checkout's own objects, so a fork commit that is not pushed yet
-  // still builds.
+  // still builds. `-c`, not `git config`: a worktree shares the checkout's config, and the
+  // written URL would outlive the check.
   const submodule = 'native/vendor/dnglab';
   run('git', ['submodule', 'init', submodule], tree);
-  run('git', ['config', `submodule.${submodule}.url`, join(repoRoot, submodule)], tree);
-  run('git', ['-c', 'protocol.file.allow=always', 'submodule', 'update', submodule], tree);
+  run(
+    'git',
+    [
+      '-c',
+      `submodule.${submodule}.url=${join(repoRoot, submodule)}`,
+      '-c',
+      'protocol.file.allow=always',
+      'submodule',
+      'update',
+      submodule,
+    ],
+    tree,
+  );
 }
 
 function build(target: Target, tree: string, work: string): void {

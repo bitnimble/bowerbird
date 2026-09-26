@@ -327,8 +327,8 @@ installed, forever.
 **`bun run release:check` builds what a tag would, before there is one.** It builds HEAD in a
 detached worktree, since a tag releases the commit and an uncommitted edit would otherwise decide
 the answer. The container is `docker build` on the same Dockerfile, and the apps are its
-`android`, `macos` and `windows` stages, which run the workflow's own scripts and write to
-`dist/` as the workflow lays it out.
+`android`, `macos` and `windows` stages, which run the workflow's own scripts and write each
+platform's installer and payload under `dist/installer/<platform>/` and `dist/payload/<platform>/`.
 
 The desktop stages cross-build from Linux, so they test the scripts and the Rust for those
 targets rather than reproducing the release: macOS goes through osxcross and yields the `.app`
