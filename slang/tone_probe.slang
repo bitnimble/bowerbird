@@ -11,12 +11,12 @@ void curve_draw(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= edit.width) { return; }
     let original = inputs[id.x].xyz;
-    if (edit.curve_is_camera != 0 && edit.exposure == edit.camera_exposure && sliders_at_rest()) {
+    if (sliders_at_camera()) {
         answers[id.x] = float4(original, 1.0);
         return;
     }
-    Colour<Graded> undone;
-    camera_undone(measured<Graded>(original), undone);
+    Colour<Scene> undone;
+    camera_undone(measured<Rendered>(original), undone);
     let exposed = times(undone, gain_of(stops(edit.exposure)));
     let luma = luma_of(exposed).v;
     if (luma <= 0.0) {
@@ -39,7 +39,7 @@ void curve_draw(uint3 id : SV_DispatchThreadID)
     curve_evaluated(code, false, curved);
     curve_light(curved, light);
     Gain residual;
-    camera_floor_residual(measured<Graded>(original), residual);
+    camera_floor_residual(measured<Rendered>(original), residual);
     answers[id.x] = float4(exposed.v * (light.g / luma) * residual.g, 1.0);
 }
 

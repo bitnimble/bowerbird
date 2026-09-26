@@ -118,8 +118,9 @@ export const EditDocSchema = z
     // Named as Camera Raw names it. The `Edit` uniform already has a `saturation`
     // that is the camera match's own fit multiplier around 1.0 and not a slider
     // (`colour.slang`), so the shader has to give this one a distinct uniform name -
-    // renaming it *here* would cost the import its identity mapping instead.
-    saturation: z.number().int().min(-100).max(100).default(0),
+    // renaming it *here* would cost the import its identity mapping instead. Null is the camera
+    // match's own, as for `exposure`.
+    saturation: z.number().int().min(-100).max(100).nullable().default(null),
     colourProfile: ColourProfileSchema.default('matched'),
 
     // Detail. Both are positions on a slider rather than a strength in anything: the denoise

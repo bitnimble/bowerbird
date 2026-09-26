@@ -55,7 +55,7 @@ test.beforeAll(async ({ browser }) => {
 });
 
 async function openComposite(page: Page): Promise<void> {
-  await page.goto(`${route(PathSegment.photos(), panoramaId)}?edit`);
+  await page.goto(route(PathSegment.photos(), panoramaId, PathSegment.edit()));
   await waitForEditorLive(page, 240_000);
 }
 

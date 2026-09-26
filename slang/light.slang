@@ -1,9 +1,9 @@
 // Light that knows which domain it is a quantity in, and whether it is a quantity or a ratio.
 //
 // `native/rawshim/src/light.rs` on this side of the boundary, and for the same reason: a
-// photograph crosses twelve domains between the sensor and the canvas - scene-linear counts, the
+// photograph crosses eleven domains between the sensor and the canvas - scene-linear counts, the
 // assemble stage's fraction of full scale, nits against its own diffuse white, the scene at white
-// 1, the camera's own rendering, that rendering at white 1, nits at the display, the display's
+// 1, the camera's own rendering, nits at the display, the display's
 // peak at 1, two gamuts and two codings - and every one of them was a bare `float3`. The render harness that graded sRGB at the HDR peak
 // wrote five stops of highlight into eight bits and came out flat; the pyramid that averaged the
 // frame's codes averaged a curve rather than a light.
@@ -17,8 +17,7 @@
 //   time it is read. Those get numbers through `measured`, at the boundary that measured them.
 // - `ILinear` is where light adds. A weighted sum of PQ codes is not a light, which is why
 //   `frame.slang`'s pyramid decodes each tap before it weighs it.
-// - `IWhiteAtOne` is where 1.0 is diffuse white, which is what lets `adjust.slang` be written once
-//   and run over the scene on the neutral arm and over the camera's rendering on the matched one.
+// - `IWhiteAtOne` is where 1.0 is diffuse white, which is what `adjust.slang` is written against.
 //
 // **Nothing here survives into the WGSL.** A `Colour` is one `float3` in a struct with no methods
 // that touch memory, and Slang monomorphises the generic away, so what a host binds and what a
@@ -45,9 +44,6 @@ public interface ILinear : IDomain {}
 public interface IStandard : IDomain {}
 
 /// A domain where 1.0 is diffuse white.
-///
-/// Middle grey is not the same number in the two that are, which is why `adjusted` takes its pivot
-/// rather than assuming one.
 public interface IWhiteAtOne : IStandard, ILinear {}
 
 /// A domain measured in absolute nits, which is the only thing ST 2084 codes.
@@ -82,12 +78,9 @@ public struct Scene : IWhiteAtOne {}
 
 /// The camera's own rendering: past its tone curve, its matrix and its chroma lattice.
 ///
-/// Not `IStandard`. The fit's target is the body's own JPEG, so diffuse white comes out wherever
-/// that body put it - `matched_white` measures it per frame, two stops apart across two fixtures.
+/// Not `IStandard`. The fit's target is the body's own JPEG, so the scene's diffuse white comes out
+/// wherever that body put it, two stops apart across two fixtures; the camera's exposure carries it.
 public struct Rendered : ILinear {}
-
-/// `Rendered` over that measured white, where diffuse white is 1 again.
-public struct Graded : IWhiteAtOne {}
 
 /// Absolute nits at the display, bounded by the target's peak.
 public struct DisplayNits : INits {}

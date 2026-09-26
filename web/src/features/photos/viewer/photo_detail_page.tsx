@@ -54,7 +54,7 @@ import {
   RenditionPanel,
 } from './detail_panels';
 import { DetailKeys } from './detail_keys';
-import { detailMode, detailPath, isPrintRequest, mockupPath, type DetailMode } from './detail_mode';
+import { detailMode, detailPath, editPath, isPrintRequest, mockupPath, type DetailMode } from './detail_mode';
 import { isPrintProof, type SoftProof } from '../../raw_edit/proof/soft_proof';
 import { IntentChoice } from '../../raw_edit/proof/intent_choice';
 import { PrintPanelStrings } from '../../raw_edit/print/print_panel.strings';
@@ -108,14 +108,14 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // the same reason `box` is: it is mounted and unmounted under this component,
   // by the editor as much as by the not-found branch.
   const [stage, setStage] = useState<HTMLDivElement | null>(null);
-  const { pathname, search, state } = useLocation();
+  const { pathname, state } = useLocation();
   const navigate = useNavigate();
   // Which print the mockup was asked for, carried on the navigation; a deep link is the sheet.
   // Through a ref, so asking for the other one from inside the mockup is not a second open.
   const requestedPrint = useRef<SoftProof>('print3d');
   requestedPrint.current = isPrintRequest(state) ? state.proof : 'print3d';
   // In the address rather than in state, because the address is the one thing stepping
-  // already changes: `useStep` navigates to a bare photo path, so walking away drops `?edit`
+  // already changes: `useStep` navigates to a bare photo path, so walking away drops `/edit`
   // and there is nothing left to go stale.
   //
   // Held as state instead, remembered against the photo it was opened for, the flag is
@@ -123,10 +123,10 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // photograph and back re-enters an editor nobody asked for, each re-entry another
   // full-sensor decode.
   //
-  // `?edit` still lands a deep link (and e2e) straight in, and so does `/mockup`.
-  const mode = detailMode(pathname, search);
+  // `/edit` lands a deep link, a new tab and e2e straight in, and so does `/mockup`.
+  const mode = detailMode(pathname);
   // The photograph's own path, so the controls below build from it rather than from
-  // whatever mode is open: `?edit` under `/mockup` is a URL for nothing.
+  // whatever mode is open.
   const photoPathname = detailPath(pathname);
   const editing = mode === 'edit';
   const previewing = mode !== 'view';
@@ -198,17 +198,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     };
   }, [mode, photoId, photos, touch]);
 
-  // Both replace, so opening and closing the editor leaves the history where it found it:
-  // one entry for this photograph, and Back goes wherever the photograph was reached from.
-  // Which is what it did when edit mode was state and the address never moved.
+  // Both replace (the Edit row's link too), so opening and closing the editor leaves the history
+  // where it found it: one entry for this photograph, and Back goes wherever the photograph was
+  // reached from.
   //
   // Pushing on the way in reads better - Back would leave the editor - but it costs a dead
   // press: the entry the way out replaces is then identical to the one already behind it, so
   // the first Back after Done or Escape does nothing at all.
-  const startEdit = useCallback(
-    () => navigate(`${photoPathname}?edit`, { replace: true }),
-    [navigate, photoPathname],
-  );
   const replacePastSheet = useReplacePastSheet();
   const stopPreview = useCallback(() => replacePastSheet(photoPathname), [replacePastSheet, photoPathname]);
   const showsHdr = store.showsHdr(photoId);
@@ -250,7 +246,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   // nothing in flight - which read as "not found" and tore the whole page down,
   // stage included, for the frame before the effect ran.
   //
-  // Edit mode is exempt: e2e opens a missing id under `?edit` so the editor's
+  // Edit mode is exempt: e2e opens a missing id under `/edit` so the editor's
   // own failure path (not the detail fetch's) is what surfaces the reason.
   const open = store.open;
   if (open?.id === photoId && open.status === 'missing' && !previewing) {
@@ -403,7 +399,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
         // something to leave one press from.
         stripOpen={mobile || previewing ? null : stripOpen}
         onToggleStrip={toggleStrip}
-        onEdit={startEdit}
+        editHref={editPath(photoPathname)}
         onDone={stopPreview}
         proof={proof}
         hdrOffered={mode === 'edit' || showsHdr}
@@ -435,7 +431,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
             //
             // **Keyed, because the canvas belongs to the worker once it has been handed over.**
             // `transferControlToOffscreen` is permanent and throws on a second call, and stepping
-            // between two `?edit` addresses rebuilds the pair without React ever seeing a null
+            // between two `/edit` addresses rebuilds the pair without React ever seeing a null
             // session - so an unkeyed stage would hand the *new* presenter an element the *old*
             // worker already owns, and the editor would open failed for good.
             session != null && (

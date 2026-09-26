@@ -34,6 +34,7 @@ export const PathSegment = {
   done: segment('done'),
   download: segment('download'),
   drafts: segment('drafts'),
+  edit: segment('edit'),
   editConflicts: segment('edit-conflicts'),
   edits: segment('edits'),
   events: segment('events'),

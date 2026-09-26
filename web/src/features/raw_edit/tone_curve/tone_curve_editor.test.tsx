@@ -14,13 +14,13 @@ afterEach(cleanup);
 const curve = (points: ToneCurvePoints): ToneCurve => ({ kind: TONE_CURVE_KIND, points });
 const CAMERA = curve([[0, 0.1], [0.5, 0.55], [1, 1]]);
 
-function open(toneCurve: ToneCurve | null = null, profile: 'matched' | 'none' = 'matched', known = true): {
+function open(toneCurve: ToneCurve | null = null, known = true): {
   calls: { kind: string; curve: ToneCurve | null }[];
   edit: EditStore;
 } {
   const edit = new EditStore();
   const stage = new StageStore(edit);
-  edit.doc = { ...neutralEdits(), toneCurve, colourProfile: profile };
+  edit.doc = { ...neutralEdits(), toneCurve };
   stage.status = 'live';
   stage.detail = known ? [20, 70] : null;
   stage.cameraCurve = CAMERA;
@@ -61,15 +61,8 @@ test('pressing a point focuses its keyboard control', () => {
   fireEvent.pointerUp(svg, { pointerId: 1, isPrimary: true });
 });
 
-test('profile without a match shows identity', () => {
-  open(null, 'none');
-  screen.getByRole('slider', { name: 'Black point, 0% input, 0% output' });
-  screen.getByRole('slider', { name: 'White point, 100% input, 100% output' });
-  expect(screen.queryByRole('slider', { name: /Curve point/ })).toBeNull();
-});
-
 test('plot stays blank and disabled until header arrives', () => {
-  open(null, 'matched', false);
+  open(null, false);
   expect(screen.getByRole('group', { name: 'Tone curve' }).getAttribute('aria-disabled')).toBe('true');
   expect(screen.queryByRole('slider', { name: /point/i })).toBeNull();
 });
@@ -99,7 +92,7 @@ test('right click removes interior point, never endpoints, and suppresses plot m
 });
 
 test('plot press inserts a point and release settles once', () => {
-  const { calls } = open(null, 'none');
+  const { calls } = open(curve([[0, 0], [1, 1]]));
   const svg = plot();
   fireEvent.pointerDown(svg, { pointerId: 2, isPrimary: false, button: 0, clientX: 25, clientY: 75 });
   expect(calls).toEqual([]);
@@ -215,7 +208,7 @@ test('keyboard adds a point along the widest gap and reset keeps focus', () => {
 });
 
 test('capture failure restores insertion and permits another drag', () => {
-  const { calls } = open(null, 'none');
+  const { calls } = open();
   const svg = plot();
   const capture = svg.setPointerCapture;
   svg.setPointerCapture = () => { throw new Error('pointer gone'); };

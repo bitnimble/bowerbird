@@ -38,7 +38,7 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
       `,
     });
   });
-  await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
+  await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
   await waitForEditorLive(page);
   const aspect = await editPreview(page).evaluate((canvas: HTMLCanvasElement) => canvas.width / canvas.height);
   const worker = page.workers().find((worker) => worker.url().includes('gpu_worker'));
@@ -83,7 +83,7 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
 });
 
 test('footer panels overlay the photo and isolate a slider throughout a touch drag', async ({ page }) => {
-  await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
+  await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
   await waitForEditorLive(page);
   const tabs = page.getByRole('tablist', { name: 'Edit panels' });
   await expect(tabs).toBeVisible();
@@ -151,7 +151,7 @@ for (const { device, viewport, hasTouch, isMobile } of [
   test.describe(`${device} print controls`, () => {
     test.use({ viewport, hasTouch, isMobile });
     test('every slider spans the panel width', async ({ page }) => {
-      await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
+      await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
       await waitForEditorLive(page);
       await softProof(page, 'Printed media (3D)');
       for (const { name, count } of [
@@ -227,7 +227,7 @@ test.describe('zoom on a high density phone display with small memory', () => {
           `,
         });
       });
-      await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
+      await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
       await waitForEditorLive(page);
       const worker = page.workers().find((worker) => worker.url().includes('gpu_worker'));
       if (worker == null) throw new Error('The GPU worker was not created');

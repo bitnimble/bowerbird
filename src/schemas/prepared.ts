@@ -43,6 +43,8 @@ export const PreparedHeaderSchema = z.object({
    */
   detail: PairSchema,
   cameraExposure: z.number().nullable(),
+  /** On the Saturation slider's scale, or null where nothing was matched. */
+  cameraSaturation: z.number().nullable(),
   /** The camera match's curve, or null where nothing was matched. */
   cameraCurve: ToneCurveSchema.nullable(),
   /**

@@ -18,29 +18,6 @@ export interface XmpImport {
 }
 
 /**
- * Camera Raw's develop settings as edits of ours.
- *
- * This is a *pick*, not a conversion: `EditDoc` borrows Camera Raw's names and
- * `xmp.ts`'s ranges exactly - `crs:Exposure2012` is EV in -5..5, the tone and
- * presence sliders are -100..100, `crs:Temperature` is 2000..50000 - so there is
- * no constant here to get wrong. Choosing our own units is what would have put a
- * fudge factor on every line of this function, and is why we did not.
- *
- * Three refusals, each because the file is stating something we would otherwise
- * quietly get wrong:
- *
- * - **No develop settings.** A sidecar may hold only a rating and some keywords.
- * - **Already applied.** The pixels were rendered with these settings, so the
- *   values describe what is baked in rather than what to apply; applying them
- *   again double-processes the picture.
- * - **A pre-2012 process version.** `xmp_schema.ts` keeps `legacyTone` out of
- *   `tone` deliberately, because `Brightness` and `FillLight` have no current
- *   equivalent and back-filling would cost this layer the ability to tell a real
- *   value from an approximation. So this layer declines rather than guessing: an
- *   approximate import is worse than a refused one, because nothing downstream
- *   could tell it had happened.
- */
-/**
  * Whether a pre-2012 file's tone controls hold anything, which is what makes its era
  * matter.
  *
@@ -67,6 +44,29 @@ function legacyToneMoved(legacy: XmpSettings['legacyTone']): boolean {
   return [legacy.curve, legacy.curveRed, legacy.curveGreen, legacy.curveBlue].some(bent);
 }
 
+/**
+ * Camera Raw's develop settings as edits of ours.
+ *
+ * This is a *pick*, not a conversion: `EditDoc` borrows Camera Raw's names and
+ * `xmp.ts`'s ranges exactly - `crs:Exposure2012` is EV in -5..5, the tone and
+ * presence sliders are -100..100, `crs:Temperature` is 2000..50000 - so there is
+ * no constant here to get wrong. Choosing our own units is what would have put a
+ * fudge factor on every line of this function, and is why we did not.
+ *
+ * Three refusals, each because the file is stating something we would otherwise
+ * quietly get wrong:
+ *
+ * - **No develop settings.** A sidecar may hold only a rating and some keywords.
+ * - **Already applied.** The pixels were rendered with these settings, so the
+ *   values describe what is baked in rather than what to apply; applying them
+ *   again double-processes the picture.
+ * - **A pre-2012 process version.** `xmp_schema.ts` keeps `legacyTone` out of
+ *   `tone` deliberately, because `Brightness` and `FillLight` have no current
+ *   equivalent and back-filling would cost this layer the ability to tell a real
+ *   value from an approximation. So this layer declines rather than guessing: an
+ *   approximate import is worse than a refused one, because nothing downstream
+ *   could tell it had happened.
+ */
 export function editsFromXmp(settings: XmpSettings): XmpImport {
   const reasons: string[] = [];
   const unsupported = [...settings.unsupported];
@@ -134,7 +134,7 @@ export function editsFromXmp(settings: XmpSettings): XmpImport {
     clarity: presence.clarity,
     dehaze: presence.dehaze,
     vibrance: presence.vibrance,
-    saturation: presence.saturation,
+    saturation: presence.saturation === 0 ? null : presence.saturation,
     whiteBalanceMode: whiteBalance.mode,
     temperature: custom ? whiteBalance.temperature : null,
     tint: custom ? whiteBalance.tint : null,

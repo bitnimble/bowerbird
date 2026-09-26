@@ -330,7 +330,7 @@ Only claims that need the real thing:
   That a frame *arrived*, not what it looks like: see below for looking at it.
 - **A pointer gesture on a real element** - the crop rectangle taking a drag, touch targets on a
   phone. These need hit-testing and a layout engine.
-- **The browser itself** - history entries, routing, reload, `?edit` handling.
+- **The browser itself** - history entries, routing, reload, `/edit` handling.
 - **The whole chain, once** - an edit surviving a save and a reload.
 
 If a Playwright test's assertion could be written against a presenter, a store or a pure

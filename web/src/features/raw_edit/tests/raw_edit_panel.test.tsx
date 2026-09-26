@@ -89,6 +89,7 @@ function open(
   // The same for the camera match's own tone, fitted rather than chosen, so off every step too.
   stage.cameraCurve = { kind: TONE_CURVE_KIND, points: [[0, 0.1], [1, 1]] };
   stage.cameraExposure = 0.347;
+  stage.cameraSaturation = 17;
   stage.noiseFit = noiseFit;
   const { presenter, calls } = recording();
   render(
@@ -183,11 +184,19 @@ describe('the edit panel', () => {
     expect((light.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe('+0.35 EV');
   });
 
-  test('shows zero exposure with the camera profile off', () => {
+  test('keeps the camera exposure and saturation with the colour profile off', () => {
     open({ colourProfile: 'none' });
     expect(
       (screen.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value,
-    ).toBe('0.00 EV');
+    ).toBe('+0.35 EV');
+    expect((screen.getByRole('textbox', { name: 'Saturation value' }) as HTMLInputElement).value).toBe('+17');
+  });
+
+  test('resets saturation to the camera value', () => {
+    const { calls } = open({ saturation: 40 });
+
+    screen.getByLabelText('Reset Saturation').click();
+    expect(calls).toEqual([{ name: 'settle', value: { saturation: null } }]);
   });
 
   test('resets exposure to the camera value', () => {

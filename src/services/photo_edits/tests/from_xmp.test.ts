@@ -212,6 +212,13 @@ describe('editsFromXmp', () => {
     expect(doc?.contrast).toBe(20);
   });
 
+  it('leaves a zero saturation at the camera value alongside another edit', () => {
+    const { doc } = editsFromXmp(parse(`${CURRENT} crs:Saturation="0" crs:Contrast2012="20"`));
+
+    expect(doc?.saturation).toBeNull();
+    expect(doc?.contrast).toBe(20);
+  });
+
   it('declines a sidecar whose tone sits at Camera Raw zeros and states nothing else', () => {
     const { doc, reasons } = editsFromXmp(
       parse('crs:Exposure2012="0" crs:Contrast2012="0" crs:Whites2012="0" crs:Blacks2012="0"'),

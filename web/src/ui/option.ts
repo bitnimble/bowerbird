@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 
 export interface Option<T extends string> {
   value: T;
@@ -23,4 +23,7 @@ export interface Option<T extends string> {
   disabled?: boolean;
   // Where a disabled row says what would make it selectable.
   tooltip?: string;
+  // In a menu: a row that goes somewhere, drawn as this element (a router `Link`) so it opens in
+  // a new tab like any other link. Selecting it follows the link rather than calling `onSelect`.
+  link?: ReactElement;
 }

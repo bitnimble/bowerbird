@@ -857,6 +857,7 @@ const TRIAGE_ROUTE = route(PathSegment.stacks(), PathSegment.param('stackId'), P
 const MERGE_ROUTE = route(PathSegment.photos(), PathSegment.merge(), PathSegment.param('jobId'));
 const MERGE_EDIT_ROUTE = route(PathSegment.photos(), PathSegment.param('photoId'), PathSegment.merge());
 const MOCKUP_ROUTE = route(PathSegment.photos(), PathSegment.param('photoId'), PathSegment.mockup());
+const EDIT_ROUTE = route(PathSegment.photos(), PathSegment.param('photoId'), PathSegment.edit());
 
 // Nothing to land on until the libraries and settings are known: a fresh install
 // starts in the welcome wizard, and after it the first library's photographs are
@@ -967,6 +968,7 @@ export const App = observer(function App(): JSX.Element {
                 <Fragment key={prefix}>
                   <Route path={`${prefix}${PHOTO_ROUTE}`} element={<PhotoDetailPage />} />
                   <Route path={`${prefix}${MOCKUP_ROUTE}`} element={<PhotoDetailPage />} />
+                  <Route path={`${prefix}${EDIT_ROUTE}`} element={<PhotoDetailPage />} />
                   <Route path={`${prefix}${TRIAGE_ROUTE}`} element={<StackTriagePage />} />
                   <Route path={`${prefix}${MERGE_ROUTE}`} element={<MergePage />} />
                   <Route path={`${prefix}${MERGE_EDIT_ROUTE}`} element={<MergePage />} />
@@ -974,6 +976,7 @@ export const App = observer(function App(): JSX.Element {
               ))}
               <Route path={PHOTO_ROUTE} element={<PhotoDetailPage />} />
               <Route path={MOCKUP_ROUTE} element={<PhotoDetailPage />} />
+              <Route path={EDIT_ROUTE} element={<PhotoDetailPage />} />
               <Route path={TRIAGE_ROUTE} element={<StackTriagePage />} />
               <Route path={MERGE_ROUTE} element={<MergePage />} />
               <Route path={MERGE_EDIT_ROUTE} element={<MergePage />} />

@@ -66,7 +66,8 @@ export const JobAdjustSchema = z.object({
   blacks: z.number(),
   toneCurve: ToneCurveSchema.nullable(),
   vibrance: z.number(),
-  saturation: z.number(),
+  /** Null is the camera match's own, as for the exposure. */
+  saturation: z.number().nullable(),
   texture: z.number(),
   clarity: z.number(),
   dehaze: z.number(),

@@ -194,6 +194,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
     let colour = HdrColour {
         exposure: Stops::measured(0.625),
         curve: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
+        camera_saturation: rawshim::light::Gain::of_ratio(1.25),
         ..HdrColour::identity()
     };
     let at = |exposure: Option<Stops>, adjust: rawshim::gpu::Adjust| {
@@ -233,7 +234,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
             points: vec![[0.0, 0.0], [0.3, 0.25], [1.0, 1.0]],
         }),
         vibrance: -66.0,
-        saturation: 77.0,
+        saturation: Some(77.0),
         texture: -88.0,
         clarity: 99.0,
         dehaze: -12.5,
@@ -274,7 +275,7 @@ fn the_editor_puts_each_slider_where_this_host_does() {
                 adjust.whites,
                 adjust.blacks,
                 adjust.vibrance,
-                adjust.saturation,
+                or_null(adjust.saturation),
                 adjust.texture,
                 adjust.clarity,
                 adjust.dehaze,

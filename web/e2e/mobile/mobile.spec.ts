@@ -209,7 +209,7 @@ test('a back press leaves the viewer rather than walking back through the swipes
  */
 test('the crop rectangle takes a finger, and the stage does not pan under it', async ({ page }) => {
   const photoId = await firstPhotoId(page, PHONE_PHOTOS_DIR);
-  await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
+  await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
   await waitForEditorLive(page);
 
   await editTools(page).getByRole('radio', { name: 'Crop' }).click();

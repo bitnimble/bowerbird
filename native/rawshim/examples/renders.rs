@@ -47,6 +47,8 @@ struct Stages<'a> {
     /// Whether the camera match colours the render, or the neutral arm does. Off renders what the
     /// grade does with no body to imitate, which is the picture the match has to beat.
     matched: bool,
+    /// The editor's None profile: the neutral arm at the match's exposure, curve and saturation.
+    none_profile: bool,
     /// The match without its chroma lattice, which is the one piece of it indexed by a pixel's
     /// surroundings rather than by the pixel - so the one piece that can carry a neighbourhood's
     /// colour into a pixel that is not that colour.
@@ -72,7 +74,7 @@ struct Stages<'a> {
     /// The low pair are here because where they *land* depends on the photo,
     /// so what they do can only be asked of a real frame. None is the camera match's own.
     contrast: f64,
-    saturation_adjust: f64,
+    saturation_adjust: Option<f64>,
     blacks: f64,
     shadows: f64,
     texture: f64,
@@ -393,6 +395,11 @@ fn graded(
             shadows: stages.shadows,
             texture: stages.texture,
             clarity: stages.clarity,
+            colour_profile: if stages.none_profile {
+                rawshim::gpu::ColourProfile::None
+            } else {
+                rawshim::gpu::ColourProfile::Matched
+            },
             ..rawshim::gpu::Adjust::none()
         },
         // The frame's own, as `job::run` carries it: without it the neutral arm white-balances
@@ -478,6 +485,7 @@ fn main() {
         defringe: strengths().defringe,
         lens: true,
         matched: true,
+        none_profile: false,
         lattice: true,
         matrix: true,
         saturation: true,
@@ -485,7 +493,7 @@ fn main() {
         tone: true,
         chroma: 1.0,
         contrast: 0.0,
-        saturation_adjust: 0.0,
+        saturation_adjust: None,
         blacks: 0.0,
         shadows: 0.0,
         texture: 0.0,
@@ -529,6 +537,7 @@ fn main() {
             }
             "--no-lens" => stages.lens = false,
             "--no-match" => stages.matched = false,
+            "--none-profile" => stages.none_profile = true,
             "--no-lattice" => stages.lattice = false,
             "--no-matrix" => stages.matrix = false,
             "--no-saturation" => stages.saturation = false,
@@ -555,7 +564,7 @@ fn main() {
             }
             "--saturation" => {
                 stages.saturation_adjust =
-                    args.next().expect("a number").parse().expect("a number");
+                    Some(args.next().expect("a number").parse().expect("a number"));
             }
             "--one-curve" => stages.curves = false,
             "--no-tone" => stages.tone = false,

@@ -1928,7 +1928,7 @@ impl HeldRaw {
         let print = if std::ptr::eq(onto, &self.stage) { self.print.get() } else { None };
         let grade = crate::gpu::Grade {
             photograph_long: crate::px::Span::measured(picture_w.max(picture_h)),
-            colour: adjust.colour(drawing.matched.as_ref().and_then(|m| m.colour.as_ref())),
+            colour: drawing.matched.as_ref().and_then(|m| m.colour.as_ref()),
             exposure: ev,
             adjust,
             as_shot: drawing.as_shot,
@@ -1948,7 +1948,7 @@ impl HeldRaw {
         // kept rather than the frame, which is what makes it a tick's worth of work. Only where the
         // match is in play, since the neutral arm reads no `peak_out` at all. A part is graded
         // against the peak the frame's last tick left, which is the same buffer.
-        if grade.colour.is_some() && matches!(reading, Reading::Frame) {
+        if grade.matched().is_some() && matches!(reading, Reading::Frame) {
             drawing.uploaded.peak_from_candidates(&grade);
         }
         uploaded.set_printer(self.printer.borrow().clone());

@@ -141,12 +141,14 @@ function actions({
   rerendering,
   renders,
   editable,
+  editHref,
   hidden,
   merged,
 }: {
   rerendering: boolean;
   renders: boolean;
   editable: boolean;
+  editHref: string;
   /** Whether this photograph is already put away, which is which way the one hide row points. */
   hidden: boolean;
   /** A row composed out of others, which is the only kind that has a merge to go back into. */
@@ -163,6 +165,7 @@ function actions({
       label: editable ? PhotoDetailStrings.edit() : PhotoDetailStrings.editNeedsOriginal(),
       icon: <SlidersHorizontal size={ICON} />,
       disabled: !editable,
+      ...(editable ? { link: <Link to={editHref} replace /> } : {}),
     },
     // Offered for any composite, panorama included: which kind of recipe this is is the merge
     // page's own question, and it answers it by failing to load with the server's reason rather
@@ -195,7 +198,7 @@ export const DetailNav = observer(function DetailNav({
   onTogglePanels,
   stripOpen,
   onToggleStrip,
-  onEdit,
+  editHref,
   onDone,
   proof,
   hdrOffered,
@@ -216,7 +219,8 @@ export const DetailNav = observer(function DetailNav({
   /** Null where this bar is not what offers the strip: a phone, and the editor. */
   stripOpen: boolean | null;
   onToggleStrip: () => void;
-  onEdit: () => void;
+  /** Where the Edit row goes, which replaces this entry in the history rather than pushing one. */
+  editHref: string;
   onDone: () => void;
   /** What the stage stands in for, and whether an HDR rendition is there to stand in for. */
   proof: SoftProof;
@@ -359,14 +363,11 @@ export const DetailNav = observer(function DetailNav({
               // Everything else needs its original, unknown until the detail arrives and yes for
               // almost every photograph: a library nobody replicates holds its own.
               editable,
+              editHref,
               hidden: photo?.is_hidden ?? false,
               merged: isComposite(store.photoFor(photoId)),
             }),
             onSelect: (action) => {
-              if (action === 'edit') {
-                onEdit();
-                return;
-              }
               if (action === 'editMerge') {
                 navigate(mergeEditPath(photoId, listing.source));
                 return;

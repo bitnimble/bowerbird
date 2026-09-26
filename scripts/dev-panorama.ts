@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { PathSegment, route } from '../src/schemas/route';
 import { panoramaViews } from './pano-views';
 
 // A panorama in a running library, so opening one in the editor can be checked by hand.
@@ -101,4 +102,4 @@ const { photoId } = await ask<{ photoId: string }>('POST', '/api/composites/pano
 console.log('');
 console.log(`panorama ${photoId}`);
 console.log(`  view   ${WEB}/photos/${photoId}`);
-console.log(`  edit   ${WEB}/photos/${photoId}?edit`);
+console.log(`  edit   ${WEB}${route(PathSegment.photos(), photoId, PathSegment.edit())}`);

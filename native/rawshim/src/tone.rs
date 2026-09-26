@@ -312,8 +312,8 @@ pub struct SceneGrade<'a> {
     /// Settled on the photo like everything else here: two sizes of it must not be balanced
     /// against two different baselines.
     as_shot: Option<crate::white_balance::AsShot>,
-    /// The camera's colour, or None for the neutral arm.
-    matched: Option<&'a HdrColour>,
+    /// The camera match, whatever `adjust`'s profile asks of it (`gpu::Grade::colour`).
+    colour: Option<&'a HdrColour>,
 }
 
 impl<'a> SceneGrade<'a> {
@@ -339,7 +339,7 @@ impl<'a> SceneGrade<'a> {
             levels: *levels,
             reference,
             exposure,
-            matched: adjust.colour(colour),
+            colour,
             adjust,
             as_shot,
         }
@@ -361,7 +361,7 @@ impl<'a> SceneGrade<'a> {
         output: crate::gpu::Output,
     ) -> crate::gpu::Grade<'a> {
         crate::gpu::Grade {
-            colour: self.matched,
+            colour: self.colour,
             exposure: self.exposure,
             adjust: self.adjust.clone(),
             as_shot: self.as_shot,

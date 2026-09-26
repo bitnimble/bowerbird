@@ -197,8 +197,8 @@ test('every soft proof crosses to the module and keeps drawing', async ({ page }
  */
 test('says why an id it cannot open failed', async ({ page }) => {
   const missing = 'nosuchid';
-  // `?edit` skips the viewer's empty state so the editor's own open path is what fails.
-  await page.goto(`${route(PathSegment.photos(), missing)}?edit=1`);
+  // `/edit` skips the viewer's empty state so the editor's own open path is what fails.
+  await page.goto(route(PathSegment.photos(), missing, PathSegment.edit()));
 
   const failure = editorFailure(page);
   await expect(failure).toBeVisible();
@@ -626,7 +626,7 @@ test('an exposure survives a reload, and the undo that follows it', async ({ pag
  * photograph stopped it matching, which reads as closed - but the flag was still set, so
  * stepping back matched again and re-entered the editor nobody had asked for, on a page that
  * had no triage or rating controls while it was there, and paid another full-sensor decode
- * for the privilege. It is read off `?edit` now, which a step drops on its own.
+ * for the privilege. It is read off `/edit` in the address, which a step drops on its own.
  *
  * Stepped away while still editing, with no Escape first. Escape clears the flag, so a
  * version of this that pressed it went green against the bug it was written for: what has to
@@ -683,8 +683,8 @@ test('opening and closing the editor leaves the history alone', async ({ page })
   await page.goto(route(PathSegment.photos(), photoId));
   await expect(page.getByRole('button', { name: 'More' })).toBeEnabled();
 
-  // Through the menu the reader uses, because it is `startEdit` that puts anything in the
-  // history and `?edit` in the address arrives without having called it.
+  // Through the menu the reader uses, because it is the Edit row's link that puts anything in
+  // the history and `/edit` in the address arrives without having followed it.
   const before = await page.evaluate(() => history.length);
   await photoAction(page, 'Actions', 'Edit', { exact: true });
   await expect(editTools(page)).toBeVisible();
@@ -704,7 +704,7 @@ test('opening and closing the editor leaves the history alone', async ({ page })
  * the pipeline exists. The first draw is submitted immediately after.
  */
 async function open(page: Page): Promise<void> {
-  await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
+  await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
   await waitForEditorLive(page);
 }
 

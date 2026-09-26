@@ -1792,6 +1792,8 @@ pub struct Grade<'a> {
     /// large a share of the picture that blur covers is a property of the photograph, and a crop
     /// left to answer it from its own dimensions applies a different Clarity from the export.
     pub photograph_long: crate::px::Span<crate::px::Output>,
+    /// The camera match, whatever the profile: its exposure, curve and saturation are where the
+    /// sliders start on both. [`Grade::matched`] is the part a None profile leaves out.
     pub colour: Option<&'a HdrColour>,
     /// `tone::Levels`, as the uniform's `white`, `source_level` and `black_floor`.
     pub white: crate::light::Light<crate::light::Level>,
@@ -1980,6 +1982,12 @@ impl<'a> Grade<'a> {
         }
     }
 
+    /// The match's colour as this grade renders it: none under a None profile, whose tone still
+    /// comes off `colour`.
+    pub fn matched(&self) -> Option<&'a HdrColour> {
+        self.adjust.colour(self.colour)
+    }
+
     /// The photograph this frame is of, which is its own unless a crop cut the decode down.
     pub fn photograph(&self) -> (usize, usize) {
         self.window.map_or((self.width, self.height), |w| w.photograph.raw())
@@ -2044,8 +2052,9 @@ pub struct Adjust {
     pub blacks: f64,
     pub tone_curve: Option<ToneCurve>,
     pub vibrance: f64,
-    /// `sat_adjust` in the shader: `saturation` there is the camera match's own multiplier.
-    pub saturation: f64,
+    /// `sat_adjust` in the shader: `saturation` there is the camera match's own multiplier. None
+    /// is the camera's, as for the exposure.
+    pub saturation: Option<f64>,
     /// `texture_adjust` in the shader, where a member called `texture` would read as a type.
     pub texture: f64,
     pub clarity: f64,
@@ -2058,6 +2067,12 @@ pub struct Adjust {
     pub temperature: Option<f64>,
     pub tint: Option<f64>,
     pub colour_profile: ColourProfile,
+}
+
+/// A chroma gain on the Saturation slider's scale, where 0 leaves chroma alone and -100 is grey, in
+/// the whole steps the document stores.
+pub fn saturation_slider(gain: crate::light::Gain) -> f64 {
+    ((gain.raw() - 1.0) * 100.0).round()
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, serde::Deserialize)]
@@ -2447,7 +2462,7 @@ impl Gpu {
         let candidates = zeroed(4 + PEAK_CANDIDATES * 4);
 
         let identity = HdrColour::identity();
-        let described = grade.colour.unwrap_or(&identity);
+        let described = grade.matched().unwrap_or(&identity);
         let matrix: Vec<u8> =
             described.matrix.iter().flatten().flat_map(|v| (*v as f32).to_le_bytes()).collect();
         let matrix = buffer(&matrix, wgpu::BufferUsages::STORAGE);
@@ -2540,11 +2555,11 @@ impl Gpu {
                 absent_texture,
             ]),
             identity,
-            colour: grade.colour.cloned(),
+            colour: grade.matched().cloned(),
         };
         // The largest size is uploaded first, so the one measurement is taken off the frame
         // with the most of the photograph in it.
-        if grade.colour.is_some() && peak.claim() {
+        if grade.matched().is_some() && peak.claim() {
             uploaded.measure_peak(grade);
         }
         uploaded
@@ -2609,7 +2624,7 @@ impl Gpu {
     /// One black texel where the grade carries no colour: `matched_nits` is the only
     /// reader and `matched` gates it off, so a neutral upload skips the whole-frame pass.
     fn mean_frame(&self, samples: &Buffer, grade: &Grade<'_>) -> Texture {
-        if grade.colour.is_none() {
+        if grade.matched().is_none() {
             return self.black_texel("mean_frame");
         }
         let (block, phase, cells) = mean_grid(grade);
@@ -2668,7 +2683,7 @@ impl Gpu {
         described: &HdrColour,
         bound: &ChromaModelInputs<'_>,
     ) -> Texture {
-        if grade.colour.is_none() {
+        if grade.matched().is_none() {
             return self.black_texel("chroma smoothed");
         }
         let (_, cells) = grid_for(grade, chroma_shrink(grade.photograph_long).raw() as u32);
@@ -3189,7 +3204,7 @@ impl Uploaded<'_> {
     ///
     /// Nothing on the rendition path calls this: one exposure, measured once.
     pub fn peak_from_candidates(&self, grade: &Grade<'_>) {
-        let words = uniform_words(&Grade { canvas: None, ..grade.clone() }, grade.colour.unwrap_or(&self.identity));
+        let words = uniform_words(&Grade { canvas: None, ..grade.clone() }, grade.matched().unwrap_or(&self.identity));
         let revision = self.peak_revision.load(std::sync::atomic::Ordering::Relaxed);
         if self.peak_cached.borrow().as_ref().is_some_and(|cached| cached.0 == revision && cached.1 == words) {
             return;
@@ -3222,7 +3237,7 @@ impl Uploaded<'_> {
     fn chroma_smoothed_for(&self, grade: &Grade<'_>) -> std::cell::Ref<'_, wgpu::TextureView> {
         let wanted = Illuminant::of(grade);
         if self.chroma_smoothed.borrow().0 != wanted {
-            let described = grade.colour.unwrap_or(&self.identity);
+            let described = grade.matched().unwrap_or(&self.identity);
             let rebuilt = self.gpu.chroma_smoothed(
                 &self.samples,
                 grade,
@@ -3257,7 +3272,7 @@ impl Uploaded<'_> {
             return &self.detail_absent;
         }
         self.detail.get_or_init(|| {
-            let described = grade.colour.unwrap_or(&self.identity);
+            let described = grade.matched().unwrap_or(&self.identity);
             let (texture, view) = self.gpu.build_detail(
                 &self.samples,
                 &uniform(grade, described),
@@ -3282,7 +3297,7 @@ impl Uploaded<'_> {
         if route.reaches_the_quantile() {
             self.peak_revision.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
-        let described = grade.colour.unwrap_or(&self.identity);
+        let described = grade.matched().unwrap_or(&self.identity);
         let mut recording = self.gpu.record();
         let (edits, balance) = self.written(grade, described);
         // Ahead of the passes below, which grade through the whole colour transform: a balance
@@ -3439,14 +3454,14 @@ impl Uploaded<'_> {
             "the uniform describes a different frame than the one uploaded",
         );
         assert!(
-            match (grade.colour, self.colour.as_ref()) {
+            match (grade.matched(), self.colour.as_ref()) {
                 (None, None) => true,
                 (Some(a), Some(b)) => a == b,
                 _ => false,
             },
             "the lattice and the curves bound here are the ones this frame went up with",
         );
-        let described = grade.colour.unwrap_or(&self.identity);
+        let described = grade.matched().unwrap_or(&self.identity);
         // Sized for what is *written*, which a geometry can make larger than the frame: a
         // straighten's bounding box is wider than the picture it turns, so an uncropped frame at
         // 45 degrees writes about half again what it reads.
@@ -3737,7 +3752,7 @@ impl Uploaded<'_> {
         let view_grade = Grade { canvas, ..grade.clone() };
         let grade = &view_grade;
         let shown = grade.canvas.expect("a draw needs a canvas to draw onto");
-        let described = grade.colour.unwrap_or(&self.identity);
+        let described = grade.matched().unwrap_or(&self.identity);
         // What this binds belongs to the upload and the pyramid rather than to the recording, so
         // it takes a count on each: a caller that drops either before submitting would otherwise
         // be handing the queue a destroyed resource.
@@ -3997,6 +4012,7 @@ const EDIT_FIELDS: &[&str] = &[
     "reader_curve[CURVE_POINTS]",
     "camera_curve[CURVE_POINTS]",
     "camera_exposure",
+    "camera_saturation",
     "band_top",
     "band_rows",
 ];
@@ -4050,9 +4066,10 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
         Output::Srgb => 1,
         Output::Rolled => 2,
     });
-    w.push(u32::from(grade.colour.is_some()));
+    let matched = grade.matched().is_some();
+    w.push(u32::from(matched));
     f(&mut w, colour.saturation);
-    w.push(u32::from(grade.colour.is_some() && colour.chroma.is_some()));
+    w.push(u32::from(matched && colour.chroma.is_some()));
     w.push(colour.curves[0].len() as u32);
     f(&mut w, colour.ceiling);
     w.push(shape.map_or(2, |s| s.chroma_count as u32));
@@ -4100,7 +4117,8 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     f(&mut w, grade.adjust.whites);
     f(&mut w, grade.adjust.blacks);
     f(&mut w, grade.adjust.vibrance);
-    f(&mut w, grade.adjust.saturation);
+    let camera_saturation = grade.colour.map_or(0.0, |c| saturation_slider(c.camera_saturation));
+    f(&mut w, grade.adjust.saturation.unwrap_or(camera_saturation));
     f(&mut w, grade.adjust.texture);
     f(&mut w, grade.adjust.clarity);
     f(&mut w, grade.adjust.dehaze);
@@ -4149,9 +4167,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     // the thumb is still the photograph's and has to be read in its UV.
     w.push(shape.map_or(2, |s| s.surround_count as u32));
     f(&mut w, shape.map_or(1.0, |s| s.surround_scale));
-    w.push(u32::from(
-        grade.colour.is_some() && colour.chroma.is_some() && !colour.surround.data.is_empty(),
-    ));
+    w.push(u32::from(matched && colour.chroma.is_some() && !colour.surround.data.is_empty()));
     let surround_window = grade.surround_window.or(grade.window);
     let s_origin = surround_window.map_or((0, 0), |s| s.origin.raw());
     let (s_width, s_height) =
@@ -4170,7 +4186,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
     w.push(mean_grid(grade).0);
     // Built beside every matched frame; the pass that builds it, and the probes, clear this
     // in their own copies.
-    w.push(u32::from(smoothed && grade.colour.is_some()));
+    w.push(u32::from(smoothed && matched));
     w.push(chroma_shrink(grade.photograph_long).raw() as u32);
     f(&mut w, colour.anchor);
     f(&mut w, crate::tone::floor_share(grade.floor, grade.white).raw());
@@ -4188,6 +4204,7 @@ fn uniform_words_with(grade: &Grade<'_>, colour: &HdrColour, smoothed: bool) -> 
         w.resize(w.len() + (crate::light::CURVE_MAX_POINTS - points.len()) * 4, 0);
     }
     f(&mut w, camera_exposure.raw());
+    f(&mut w, camera_saturation);
     let written = grade.written();
     w.push(written.top.raw() as u32);
     w.push(written.rows.raw() as u32);
@@ -4370,7 +4387,7 @@ mod tests {
             |a| a.whites = 1.0,
             |a| a.blacks = 1.0,
             |a| a.vibrance = 1.0,
-            |a| a.saturation = 1.0,
+            |a| a.saturation = Some(1.0),
         ];
         for set in others {
             let mut adjust = super::Adjust::none();
@@ -5157,15 +5174,14 @@ mod tests {
         let told = crate::hdr_fit::HdrColour {
             exposure: Stops::measured(0.7),
             curve: vec![[0.0, 0.0], [0.35, 0.25], [0.7, 0.78], [1.0, 0.96]],
+            camera_saturation: crate::light::Gain::of_ratio(1.2),
             ..fitted.clone()
         };
-        let graded = |colour: &crate::hdr_fit::HdrColour,
-                      exposure: Option<Stops>,
-                      tone_curve: Option<super::ToneCurve>| {
+        let graded_as = |colour: Option<&crate::hdr_fit::HdrColour>, exposure: Option<Stops>, adjust: super::Adjust| {
             let grade = super::Grade {
-                colour: Some(colour),
+                colour,
                 exposure,
-                adjust: super::Adjust { tone_curve, ..super::Adjust::none() },
+                adjust,
                 output: super::Output::Rolled,
                 ..super::Grade::new(
                     width,
@@ -5184,14 +5200,35 @@ mod tests {
             let peak = gpu.scene_peak();
             gpu.upload(&frame, &grade, &peak).encode(&grade)
         };
+        let graded = |colour: &crate::hdr_fit::HdrColour,
+                      exposure: Option<Stops>,
+                      tone_curve: Option<super::ToneCurve>| {
+            graded_as(Some(colour), exposure, super::Adjust { tone_curve, ..super::Adjust::none() })
+        };
+        let written_out = super::Adjust {
+            tone_curve: Some(super::ToneCurve::PchipCbrt3 { points: told.curve.clone() }),
+            saturation: Some(super::saturation_slider(told.camera_saturation)),
+            ..super::Adjust::none()
+        };
+        let worst = |a: &[u16], b: &[u16]| a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+
         let plain = graded(&fitted, None, None);
         let untouched = graded(&told, None, None);
         assert!(plain == untouched, "an unedited photo's curve moved the match");
-        let undone = graded(&told, Some(told.exposure), Some(super::ToneCurve::PchipCbrt3 {
-            points: told.curve.clone(),
-        }));
-        let worst = plain.iter().zip(&undone).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
-        assert!(worst <= 2, "the camera's own curve, written out, moved the match by {worst} codes");
+        let undone = graded_as(Some(&told), Some(told.exposure), written_out.clone());
+        let moved = worst(&plain, &undone);
+        assert!(moved <= 2, "the camera's own sliders, written out, moved the match by {moved} codes");
+
+        // A None profile drops the match and keeps where its sliders start: the neutral arm at the
+        // camera's exposure, curve and saturation, with nothing matched at all.
+        let none = super::Adjust { colour_profile: super::ColourProfile::None, ..super::Adjust::none() };
+        let unmatched = graded_as(Some(&told), None, none);
+        let neutral_at_camera = graded_as(None, Some(told.exposure), super::Adjust {
+            colour_profile: super::ColourProfile::None,
+            ..written_out
+        });
+        assert!(unmatched == neutral_at_camera, "a None profile moved a slider off the camera's");
+        assert!(worst(&unmatched, &graded_as(None, None, super::Adjust::none())) > 100, "the camera's sliders did nothing");
 
         let one_stop = crate::hdr_fit::HdrColour {
             exposure: Stops::measured(1.0),

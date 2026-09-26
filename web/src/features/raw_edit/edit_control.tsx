@@ -64,22 +64,30 @@ export function EditControl({
             {value}
           </Text>
         : <TypedReadout label={label} value={value} typing={typing} />}
-        {/* Held in the row rather than removed from it, so crossing the rest position does
-            not shuffle the label and the number sideways under the pointer. */}
-        <Tooltip label={EditControlStrings.resetControl(label)}>
-          <button
-            type="button"
-            {...stylex.props(styles.reset, focusRing.ring, reset == null && styles.resetClean)}
-            aria-label={EditControlStrings.resetControl(label)}
-            disabled={reset == null}
-            onClick={reset ?? undefined}
-          >
-            <RotateCcw size={12} {...stylex.props(styles.resetIcon)} />
-          </button>
-        </Tooltip>
+        <ResetButton label={EditControlStrings.resetControl(label)} reset={reset} />
       </div>
       {children}
     </div>
+  );
+}
+
+/**
+ * Held in its row rather than removed from it, so crossing the rest position does not shuffle
+ * what sits beside it sideways under the pointer.
+ */
+export function ResetButton({ label, reset }: { label: string; reset: (() => void) | null }): JSX.Element {
+  return (
+    <Tooltip label={label}>
+      <button
+        type="button"
+        {...stylex.props(styles.reset, focusRing.ring, reset == null && styles.resetClean)}
+        aria-label={label}
+        disabled={reset == null}
+        onClick={reset ?? undefined}
+      >
+        <RotateCcw size={12} {...stylex.props(styles.resetIcon)} />
+      </button>
+    </Tooltip>
   );
 }
 

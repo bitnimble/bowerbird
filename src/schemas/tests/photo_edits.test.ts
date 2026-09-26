@@ -15,9 +15,12 @@ function doc(over: Partial<EditDoc> = {}): EditDoc {
 }
 
 describe('tone curve document', () => {
-  it('defaults exposure and the curve to the camera while other tone sliders start at zero', () => {
-    expect(neutralEdits()).toMatchObject({ exposure: null, contrast: 0, whites: 0, blacks: 0, toneCurve: null });
+  it('defaults exposure, the curve and saturation to the camera while other sliders start at zero', () => {
+    expect(neutralEdits()).toMatchObject({
+      exposure: null, contrast: 0, whites: 0, blacks: 0, toneCurve: null, saturation: null, vibrance: 0,
+    });
     expect(EditDocSchema.parse({ exposure: 0 }).exposure).toBe(0);
+    expect(EditDocSchema.parse({ saturation: 0 }).saturation).toBe(0);
   });
 
   it('keeps ordered points within the curve axes', () => {

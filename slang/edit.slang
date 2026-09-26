@@ -238,6 +238,8 @@ public struct Edit {
     public float4 reader_curve[CURVE_POINTS];
     public float4 camera_curve[CURVE_POINTS];
     public float camera_exposure;
+    /// On `sat_adjust`'s scale.
+    public float camera_saturation;
     /// The output rows `encode` writes, from `band_top`: all of them unless a picture too large to
     /// grade whole is graded a band at a time.
     public uint band_top;

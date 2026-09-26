@@ -1,10 +1,10 @@
 import * as stylex from '@stylexjs/stylex';
-import { RotateCcw } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DIFFUSE_WHITE_CODE, TONE_CURVE_KIND, type ToneCurve, type ToneCurvePoints } from '../../../../../src/schemas/photo_edits';
 import { focusRing } from '../../../ui/focus_ring';
 import type { EditStore } from '../edit/edit_store';
+import { ResetButton } from '../edit_control';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
 import type { StageStore } from '../stage/stage_store';
 import { IDENTITY_CURVE, clamp, evaluate, insertInWidestGap, insertPoint, movePoint, nudgePoint, removePoint, tangents } from './tone_curve';
@@ -25,7 +25,7 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const headerKnown = stage.headerKnown;
   const disabled = !headerKnown || !stage.editable;
-  const points = edit.doc?.toneCurve?.points ?? stage.cameraCurveShown?.points ?? IDENTITY_CURVE;
+  const points = edit.doc?.toneCurve?.points ?? stage.cameraCurve?.points ?? IDENTITY_CURVE;
   const remove = (index: number | null): void => {
     if (disabled || drag.current != null || index == null) return;
     const next = removePoint(points, index);
@@ -89,13 +89,10 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
   return <div {...stylex.props(styles.editor)}>
     <div {...stylex.props(styles.header)}>
       <h3 {...stylex.props(styles.heading)}>{strings.heading()}</h3>
-      <button
-        type="button"
-        {...stylex.props(styles.reset, focusRing.ring)}
-        aria-label={strings.reset()}
-        disabled={disabled || edit.doc?.toneCurve == null}
-        onClick={() => presenter.settleToneCurve(null)}
-      ><RotateCcw size={14} /></button>
+      <ResetButton
+        label={strings.reset()}
+        reset={disabled || edit.doc?.toneCurve == null ? null : () => presenter.settleToneCurve(null)}
+      />
     </div>
     <svg
       {...stylex.props(styles.plot, focusRing.ring, disabled && styles.disabled)}
@@ -161,10 +158,7 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
       {headerKnown && points.map(([x, y], index) => {
         const name = index === 0 ? strings.blackPoint()
           : index === points.length - 1 ? strings.whitePoint() : strings.curvePoint(index);
-        return <g
-          key={index}
-          {...stylex.props(pointMarker)}
-        >
+        return <g key={index} {...stylex.props(pointMarker)}>
           <circle
             cx={x * 100}
             cy={(1 - y) * 100}
@@ -208,14 +202,16 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({ edit, stage, 
               }
             }}
           />
-          <circle
-            cx={x * 100}
-            cy={(1 - y) * 100}
-            r="3.5"
+          {/* A zero-length round-capped line, so the dot is the slider thumb's size in pixels
+              however wide the plot is drawn. */}
+          <line
+            x1={x * 100}
+            y1={(1 - y) * 100}
+            x2={x * 100}
+            y2={(1 - y) * 100}
             {...stylex.props(styles.point, activeIndex === index && styles.pointActive)}
             aria-hidden="true"
           />
-          <circle cx={x * 100} cy={(1 - y) * 100} r="5.5" {...stylex.props(styles.pointRing)} aria-hidden="true" />
         </g>;
       })}
     </svg>

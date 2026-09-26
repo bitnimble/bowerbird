@@ -38,9 +38,8 @@
 //!   depending on which rendition is being written. Neither gets constants; a number enters them
 //!   through [`Light::measured`] at the boundary that measured it.
 //!
-//! Where 1.0 *is* diffuse white the domain is [`WhiteAtOne`], which is what lets the reader's
-//! sliders be written once and run over the scene on the neutral arm and over the camera's
-//! rendering on the matched one.
+//! Where 1.0 *is* diffuse white the domain is [`WhiteAtOne`], which is what the reader's sliders
+//! are written against on both arms.
 //!
 //! **Light adds; a code does not.** [`Linear`] is the domains where a weighted sum is the light
 //! the samples carry, and it is the only place `+` and a [`Gain`] are defined. A mean of PQ codes
@@ -82,17 +81,10 @@ pub enum Scene {}
 
 /// The camera's own rendering: past its tone curve, its matrix and its chroma lattice.
 ///
-/// **Anchored on nothing a constant can name.** The fit's target is the body's own JPEG, so
-/// diffuse white comes out wherever that body put it - the match measures it per frame, and across
-/// two fixtures of this repo it is two stops apart.
+/// **Anchored on nothing a constant can name.** The fit's target is the body's own JPEG, so the
+/// scene's diffuse white comes out wherever that body put it - across two fixtures of this repo,
+/// two stops apart. The camera's exposure carries that level (`hdr_fit::camera_curve`).
 pub enum Rendered {}
-
-/// [`Rendered`] over that measured white, where diffuse white is 1 again.
-///
-/// The matched arm's half of [`WhiteAtOne`]: the reader's sliders are placed against 1.0, so
-/// running them here rather than in [`Rendered`] is what makes one set of controls mean one thing
-/// whether or not the fit landed.
-pub enum Graded {}
 
 /// Absolute nits at the display, past the roll-off and bounded by the target's peak.
 pub enum DisplayNits {}
@@ -128,7 +120,6 @@ impl Linear for Assembled {}
 impl Linear for SceneNits {}
 impl Linear for Scene {}
 impl Linear for Rendered {}
-impl Linear for Graded {}
 impl Linear for DisplayNits {}
 impl Linear for Illuminance {}
 impl Linear for Signal {}
@@ -147,7 +138,6 @@ pub trait Standard {}
 impl Standard for Assembled {}
 impl Standard for SceneNits {}
 impl Standard for Scene {}
-impl Standard for Graded {}
 impl Standard for DisplayNits {}
 impl Standard for Illuminance {}
 impl Standard for P3Linear {}
@@ -156,13 +146,10 @@ impl Standard for Pq {}
 /// A domain where 1.0 is diffuse white.
 ///
 /// **What lets the reader's sliders be written once.** The tone zones are placed in stops under
-/// white and the contrast turns about middle grey, so both arms of the grade normalise into one of
-/// these before `adjust.slang` runs - the neutral arm into [`Scene`] and the matched arm into
-/// [`Graded`]. Middle grey is not the same number in the two, which is why the pivot is passed in
-/// rather than assumed.
+/// white and the contrast turns about middle grey, so both arms of the grade reach [`Scene`] before
+/// `adjust.slang` runs, the matched one by taking the camera's own tone back off.
 pub trait WhiteAtOne: Standard + Linear {}
 impl WhiteAtOne for Scene {}
-impl WhiteAtOne for Graded {}
 
 /// A domain measured in absolute nits, which is the only thing ST 2084 codes.
 ///

@@ -31,7 +31,7 @@ use half::f16;
 /// is preferred over a fresh fit, and nothing ever clears it - so a library holding both would
 /// grade two photographs by two rules with nothing to say which was which. Discarding them costs
 /// one re-fit per photograph on next open, about half a second, once.
-const VERSION: u8 = 17;
+const VERSION: u8 = 18;
 const MAGIC: [u8; 3] = *b"BBP";
 
 const KIND_MATCH: u8 = 0;
@@ -536,6 +536,7 @@ fn put_colour(out: &mut Vec<u8>, colour: &HdrColour) {
     put_f32(out, colour.exposure.raw());
     put_u32(out, colour.curve.len() as u32);
     for point in &colour.curve { put_f32s(out, point); }
+    put_f32(out, colour.camera_saturation.raw());
 
     match &colour.chroma {
         None => out.push(0),
@@ -605,6 +606,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
     if count > 4096 { return None; }
     let mut curve = Vec::with_capacity(count);
     for _ in 0..count { curve.push([at.f32()?, at.f32()?]); }
+    let camera_saturation = crate::light::Gain::of_ratio(at.f32()?);
 
     let (chroma, surround) = match at.u8()? {
         0 => (None, crate::hdr_fit::SurroundThumb::none()),
@@ -644,7 +646,11 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
         }
     };
 
-    if !exposure.raw().is_finite() || !crate::light::curve_is_valid(&curve) {
+    // `camera_undone` divides by the saturation.
+    if !exposure.raw().is_finite()
+        || !crate::light::curve_is_valid(&curve)
+        || !(camera_saturation.raw() > 0.0 && camera_saturation.raw().is_finite())
+    {
         return Some(None);
     }
     Some(Some(HdrColour {
@@ -656,6 +662,7 @@ fn take_colour(at: &mut Reader<'_>) -> Option<Option<HdrColour>> {
         delta_e,
         exposure,
         curve,
+        camera_saturation,
         chroma,
         surround,
     }))
@@ -963,6 +970,7 @@ pub(crate) mod tests {
                 exposure: crate::light::Stops::measured(0.625),
                 curve: [[0.0, 0.04], [0.35, 0.3], [0.68, 0.72], [1.0, 1.0]]
                     .map(|point| point.map(|value| f64::from(value as f32))).to_vec(),
+                camera_saturation: crate::light::Gain::of_ratio(1.125),
                 // Densified, as every map a fit hands out is: the writer stores its coarse
                 // decimation and the reader densifies back, so this round-trips exactly.
                 chroma: ChromaMap::from_parts(&nodes, [0.11, 0.22], [3.5, 4.5])
@@ -1080,6 +1088,7 @@ pub(crate) mod tests {
         }
         assert_eq!(is_colour.curve.len(), was_colour.curve.len());
         assert_eq!(is_colour.exposure, was_colour.exposure);
+        assert_eq!(is_colour.camera_saturation.raw(), was_colour.camera_saturation.raw());
         assert_eq!(is_colour.curve, was_colour.curve);
         for (read, wrote) in is_colour.curve.iter().zip(&was_colour.curve) {
             assert!(read.iter().zip(wrote).all(|(a, b)| (a - b).abs() < 1e-6), "{read:?} against {wrote:?}");

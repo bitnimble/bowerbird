@@ -133,6 +133,8 @@ pub struct PreparedHeader {
     /// The camera match's tone curve. None where no colour match applies.
     pub camera_curve: Option<crate::gpu::ToneCurve>,
     pub camera_exposure: Option<crate::light::Stops>,
+    /// On the Saturation slider's scale.
+    pub camera_saturation: Option<f64>,
     /// The mosaic's noise, handed back on every loupe tile and every band of a re-prepare - so a
     /// crop is denoised at the strength its own export would use rather than at whatever its few
     /// hundred thousand photosites happen to imply.
@@ -597,6 +599,17 @@ impl Opened {
     }
 }
 
+/// [`PreparedHeader`]'s `camera_curve`, `camera_exposure` and `camera_saturation`.
+pub(crate) fn camera_defaults(
+    colour: Option<&crate::hdr_fit::HdrColour>,
+) -> (Option<crate::gpu::ToneCurve>, Option<crate::light::Stops>, Option<f64>) {
+    (
+        colour.map(|c| crate::gpu::ToneCurve::PchipCbrt3 { points: c.curve.clone() }),
+        colour.map(|c| c.exposure),
+        colour.map(|c| crate::gpu::saturation_slider(c.camera_saturation)),
+    )
+}
+
 /// The frame the header describes, without the pixels it describes them for.
 struct Framed {
     width: usize,
@@ -655,6 +668,8 @@ async fn payload(
         false => None,
     };
 
+    let (camera_curve, camera_exposure, camera_saturation) =
+        camera_defaults(matched.as_ref().and_then(|m| m.colour.as_ref()));
     PreparedHeader {
         width: prepared.width,
         height: prepared.height,
@@ -668,10 +683,9 @@ async fn payload(
         mosaic,
         as_shot,
         detail: request.detail().resolved(noise_fit),
-        camera_curve: matched.as_ref().and_then(|m| m.colour.as_ref()).map(|c| {
-            crate::gpu::ToneCurve::PchipCbrt3 { points: c.curve.clone() }
-        }),
-        camera_exposure: matched.as_ref().and_then(|m| m.colour.as_ref()).map(|c| c.exposure),
+        camera_curve,
+        camera_exposure,
+        camera_saturation,
         noise_fit,
         defocus,
         photo_analysis,

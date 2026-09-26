@@ -389,30 +389,6 @@ Colour<SceneNits> lit_by_reader(Colour<SceneNits> nits)
     return in_gamut(balanced(nits));
 }
 
-/// What the match makes of the frame's own diffuse white.
-///
-/// **The fit's target is the camera's own rendering, so this is not 1.0 and is not a constant.**
-/// `curves_at` lands diffuse white wherever that body's JPEG put it, which is a different level
-/// on every photograph - measured across two frames of this repo's fixtures, two stops apart.
-/// Everything `adjusted` does is placed against 1.0: the four tone zones, the dehaze's airlight,
-/// and the `detail` blur it compares a pixel against, which `base_luma` supplies in that domain
-/// already. So the matched arm divides by this on the way in and multiplies back on the way out,
-/// or the sliders are measured against a white that moves per photo - which reads as highlights
-/// covering the whole picture on one frame and shadows reaching nothing on another.
-///
-/// **Through `lit_by_reader`, because white is white under the light being graded.** Measure it
-/// on the unbalanced frame while the pixels take the balanced path and the normalisation is for
-/// a different illuminant than the picture: everything `adjusted` places then sits at the wrong
-/// level, and the brightest part of the frame rolls off hardest. On a daylight frame at 2000K
-/// that inverted the top of the range outright - the scene's own white graded darker than a stop
-/// under it, 9483 against 10299.
-Light<Rendered> matched_white()
-{
-    let white = measured<SceneNits>(float3(edit.reference));
-    return measured<Rendered>(
-        max(luma_of(apply_matrix(curves_at(lit_by_reader(white), gain(1.0)))).v, 1e-6));
-}
-
 /// The frame's own luma at a pixel, scene-relative, before the match and before the exposure.
 ///
 /// What `detail` blurred, and so the only value a difference against that blur is
@@ -426,9 +402,8 @@ public Light<Scene> base_luma(Colour<SceneNits> nits)
 /// The matched colour in nits, before any roll-off. Shared with the peak pass so the two
 /// cannot measure one thing and grade another.
 ///
-/// The reader's own adjustments go in between, while the colour is still scene-relative -
-/// `finish_chroma` leaves diffuse white at 1.0, which is the space `adjusted` is written
-/// against. Inside this function rather than at its callers precisely because the peak pass
+/// The reader's own adjustments go in between, on the scene `camera_undone` takes the match back
+/// to, which is the space `adjusted` is written against. Inside this function rather than at its callers precisely because the peak pass
 /// calls it too: a highlight lift has to move the knee it will be rolled against, or the
 /// roll-off would clip exactly what the slider just raised.
 ///
@@ -456,24 +431,22 @@ public Colour<DisplayNits> matched_nits(Colour<SceneNits> nits, float2 at)
                           float3(-CHROMA_MOVES_BY), float3(CHROMA_MOVES_BY));
         matched = pow(max(luma + mine + moved, float3(0.0)), float3(CHROMA_GAMMA));
     }
-    // Into `Graded` on the way in and back out on the way out, which is the whole of why the
-    // sliders read the same on a frame the fit landed on and one it declined.
-    let white = matched_white();
-    let rendered = measured<Graded>(matched / white.v);
-    Colour<Graded> graded;
-    if (edit.curve_is_camera != 0 && edit.exposure == edit.camera_exposure && sliders_at_rest()) {
-        graded = rendered;
-    } else {
-        Colour<Graded> untoned;
+    let rendered = measured<Rendered>(matched);
+    var graded = matched;
+    if (!sliders_at_camera()) {
+        // Back to the scene and through the sliders there, which is the whole of why they read
+        // the same on a frame the fit landed on and one it declined.
+        Colour<Scene> untoned;
         camera_undone(rendered, untoned);
         Gain residual;
         camera_floor_residual(rendered, residual);
-        adjusted(times(untoned, gain_of(stops(edit.exposure))), base_luma(nits), at, graded);
-        graded.v *= residual.g;
+        Colour<Scene> adjusted_scene;
+        adjusted(times(untoned, gain_of(stops(edit.exposure))), base_luma(nits), at, adjusted_scene);
+        graded = adjusted_scene.v * residual.g;
     }
     // Last, on the colour a still will code: the matrix and the lattice are free to send a colour
     // past the floor, and this is the one place it is brought back before anything quantises it.
-    return in_gamut(measured<DisplayNits>(graded.v * white.v * edit.reference));
+    return in_gamut(measured<DisplayNits>(graded * edit.reference));
 }
 
 /// The match, scene-relative: everything of `matched_nits` that depends on the frame and the

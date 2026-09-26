@@ -709,6 +709,7 @@ describe('the level a zoom is served at', () => {
         asShot: null,
         detail: [0, 0],
         cameraExposure: null,
+        cameraSaturation: null,
         cameraCurve: null,
         defocus: [0, 0],
         ...headerOverrides,
@@ -747,26 +748,29 @@ describe('the level a zoom is served at', () => {
   /** A quarter of the picture, off-centre, which the coarse level can only magnify. */
   const QUARTER = { x: 2000, y: 1500, width: 2000, height: 1500 };
 
-  test('a public window fetch carries camera exposure and curve into the panel', async () => {
+  test('a public window fetch carries the camera tone into the panel under either profile', async () => {
     const cameraCurve: NonNullable<PreparedHeader['cameraCurve']> = {
       kind: TONE_CURVE_KIND, points: [[0, 0.1], [0.5, 0.55], [1, 1]],
     };
-    headerOverrides = { detail: [24, 76], cameraExposure: 0.347, cameraCurve };
+    headerOverrides = { detail: [24, 76], cameraExposure: 0.347, cameraSaturation: 18, cameraCurve };
     presenter.showRegion(QUARTER);
     await settled();
-    expect(stage.cameraCurveShown).toEqual(cameraCurve);
+    expect(stage.cameraCurve).toEqual(cameraCurve);
     expect(stage.measured?.exposure).toBe(0.347);
+    expect(stage.measured?.saturation).toBe(18);
     presenter.setColourProfile('none');
-    expect(stage.cameraCurveShown).toBeNull();
-    expect(stage.measured?.exposure).toBe(0);
+    expect(stage.cameraCurve).toEqual(cameraCurve);
+    expect(stage.measured?.exposure).toBe(0.347);
+    expect(stage.measured?.saturation).toBe(18);
   });
 
-  test('a public window without a camera match shows zero exposure and identity curve', async () => {
+  test('a public window without a camera match shows zero exposure and saturation and identity curve', async () => {
     presenter.showRegion(QUARTER);
     await settled();
     expect(stage.cameraExposure).toBeNull();
-    expect(stage.cameraCurveShown).toBeNull();
+    expect(stage.cameraCurve).toBeNull();
     expect(stage.measured?.exposure).toBe(0);
+    expect(stage.measured?.saturation).toBe(0);
   });
 
   test('a public window fetch holds levels only with a measured floor', async () => {

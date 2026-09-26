@@ -7,15 +7,15 @@
 // `peak` measures the scene peak through the same function, so a highlight lift moves
 // the knee with it rather than being clipped by a knee placed on the unadjusted frame.
 //
-// **Two domains, and the signature is what says which is which.** `adjusted` runs in any
-// `IWhiteAtOne` - `Scene` for the neutral arm, which has it in hand before it multiplies by the
-// reference, and `Graded` for the matched one, which normalises on the way in because a camera's
-// rendering puts white wherever that body's JPEG had it. But *where a pixel sits* is asked of the
-// frame as it arrived, through `base_luma`, and never of the colour: hence the `Light<Scene>`
-// beside a `Colour<D>`. A rendering leaves middle grey about a stop under its white where the
-// scene's own is nearly two and a half, so zones placed against the graded pixel are squeezed
-// into a third of the room and land on top of each other. The scene's stops are the same axis on
-// every photograph, which is what makes one set of constants right for all of them.
+// **One domain on both arms.** `adjusted` runs in `Scene`: the neutral arm has it in hand before
+// it multiplies by the reference, and the matched one gets back to it by taking the camera's
+// exposure, curve and saturation off (`camera_undone`), so the sliders act on the same thing
+// whether or not the fit landed. But *where a pixel sits* is asked of the frame as it arrived,
+// through `base_luma`, and never of the colour: hence the `Light<Scene>` beside a `Colour<D>`. A
+// rendering leaves middle grey about a stop under its white where the scene's own is nearly two
+// and a half, so zones placed against the graded pixel are squeezed into a third of the room and
+// land on top of each other. The scene's stops are the same axis on every photograph, which is
+// what makes one set of constants right for all of them.
 //
 // **Tone acts on luma, carried onto the colour's ratios.** Scaling the three channels by a curve of
 // each channel turns a saturated red into a different hue as it brightens. One curve, evaluated
@@ -594,7 +594,9 @@ void camera_curve_inverse(CurveCode code, out CurveCode inverse)
     inverse.v = last.x;
 }
 
-public void camera_undone<D : IWhiteAtOne>(Colour<D> colour, out Colour<D> undone)
+/// The match with the camera's exposure, curve and saturation taken back off, for the reader's own
+/// to go on in their place.
+public void camera_undone(Colour<Rendered> colour, out Colour<Scene> undone)
 {
     let luma = dot(LUMA, colour.v);
     if (luma <= 0.0) { undone.v = colour.v; return; }
@@ -609,10 +611,11 @@ public void camera_undone<D : IWhiteAtOne>(Colour<D> colour, out Colour<D> undon
     Gain exposure;
     exposure.g = exp2(edit.camera_exposure);
     let untoned = light.g / exposure.g;
-    undone.v = colour.v * (untoned / luma);
+    let unsaturated = float3(luma) + (colour.v - float3(luma)) / (1.0 + edit.camera_saturation / 100.0);
+    undone.v = unsaturated * (untoned / luma);
 }
 
-public void camera_floor_residual<D : IWhiteAtOne>(Colour<D> colour, out Gain residual)
+public void camera_floor_residual(Colour<Rendered> colour, out Gain residual)
 {
     let luma = dot(LUMA, colour.v);
     CurveCode code;
@@ -623,12 +626,23 @@ public void camera_floor_residual<D : IWhiteAtOne>(Colour<D> colour, out Gain re
     residual.g = luma <= 0.0 || luma >= floor ? 1.0 : luma / floor;
 }
 
-public bool sliders_at_rest()
+bool unmatched_sliders_at_rest()
 {
     return edit.contrast == 0.0 && edit.highlights == 0.0 && edit.shadows == 0.0
         && edit.whites == 0.0 && edit.blacks == 0.0 && edit.vibrance == 0.0
-        && edit.sat_adjust == 0.0 && edit.texture_adjust == 0.0
-        && edit.clarity == 0.0 && edit.dehaze == 0.0;
+        && edit.texture_adjust == 0.0 && edit.clarity == 0.0 && edit.dehaze == 0.0;
+}
+
+public bool sliders_at_rest()
+{
+    return unmatched_sliders_at_rest() && edit.sat_adjust == 0.0;
+}
+
+/// Whether every slider stands where the camera match put it, which renders the match untouched.
+public bool sliders_at_camera()
+{
+    return edit.curve_is_camera != 0 && edit.exposure == edit.camera_exposure
+        && edit.sat_adjust == edit.camera_saturation && unmatched_sliders_at_rest();
 }
 
 public bool reader_curve_is_identity()

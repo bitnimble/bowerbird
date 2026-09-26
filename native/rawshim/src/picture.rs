@@ -169,6 +169,8 @@ pub fn prepared(
         .defocus
         .map_or((0.0, 0.0), |pair| (pair.red, pair.blue));
     let keep = crate::photo_analysis::encode(&filled);
+    let (camera_curve, camera_exposure, camera_saturation) =
+        crate::edit::camera_defaults(matched.as_ref().and_then(|m| m.colour.as_ref()));
 
     Ok(crate::edit::Prepared {
         header: crate::edit::PreparedHeader {
@@ -186,10 +188,9 @@ pub fn prepared(
             mosaic: job.composite.is_none() && !crate::decode_rendered::is_rendered(&job.raw_file_path),
             as_shot,
             detail: job.detail().resolved(noise_fit),
-            camera_curve: matched.as_ref().and_then(|m| m.colour.as_ref()).map(|c| {
-                crate::gpu::ToneCurve::PchipCbrt3 { points: c.curve.clone() }
-            }),
-            camera_exposure: matched.as_ref().and_then(|m| m.colour.as_ref()).map(|c| c.exposure),
+            camera_curve,
+            camera_exposure,
+            camera_saturation,
             noise_fit,
             defocus,
             photo_analysis: Some(keep),
@@ -251,6 +252,8 @@ fn windowed(
         .from_render
         .defocus
         .map_or((0.0, 0.0), |pair| (pair.red, pair.blue));
+    let (camera_curve, camera_exposure, camera_saturation) =
+        crate::edit::camera_defaults(prepared.matched.as_ref().and_then(|m| m.colour.as_ref()));
     Ok(crate::edit::Prepared {
         header: crate::edit::PreparedHeader {
             width: kept_width,
@@ -265,10 +268,9 @@ fn windowed(
             mosaic: !crate::decode_rendered::is_rendered(&job.raw_file_path),
             as_shot: prepared.as_shot,
             detail: job.detail().resolved(noise_fit),
-            camera_curve: prepared.matched.as_ref().and_then(|m| m.colour.as_ref()).map(|c| {
-                crate::gpu::ToneCurve::PchipCbrt3 { points: c.curve.clone() }
-            }),
-            camera_exposure: prepared.matched.as_ref().and_then(|m| m.colour.as_ref()).map(|c| c.exposure),
+            camera_curve,
+            camera_exposure,
+            camera_saturation,
             noise_fit,
             defocus,
             photo_analysis: Some(crate::photo_analysis::encode(&known)),

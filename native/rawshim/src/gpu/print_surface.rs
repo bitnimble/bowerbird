@@ -151,7 +151,7 @@ impl Uploaded<'_> {
     }
 
     fn print_pigment(&self, recording: &mut Recording<'_>, grade: &Grade<'_>, pyramid: &crate::base::Pyramid) -> Texture {
-        let words = uniform_words(grade, grade.colour.unwrap_or(&self.identity));
+        let words = uniform_words(grade, grade.matched().unwrap_or(&self.identity));
         let peak_revision = self.peak_revision.load(std::sync::atomic::Ordering::Relaxed);
         let mut cached = self.print_surface.borrow_mut();
         if let Some(pigment) = cached.pigment.as_ref() {

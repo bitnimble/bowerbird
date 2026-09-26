@@ -252,6 +252,7 @@ pub struct HdrColour {
     pub delta_e: f64,
     pub exposure: crate::light::Stops,
     pub curve: Vec<[f64; 2]>,
+    pub camera_saturation: crate::light::Gain,
 }
 
 /// Nodes across each chroma axis and up the level axis.
@@ -1367,6 +1368,7 @@ impl HdrColour {
             delta_e: 0.0,
             exposure: crate::light::Stops::ZERO,
             curve: crate::light::IDENTITY_CURVE.to_vec(),
+            camera_saturation: crate::light::Gain::ONE,
         }
     }
 }
@@ -1377,6 +1379,9 @@ pub enum Stage {
     Tone,
     ToneMatrix,
     Full,
+    /// Not the model: the neutral arm at the match's exposure and curve, which is what the
+    /// Saturation slider acts on when the profile is None.
+    CameraTone,
 }
 
 /// A stage's output per sample, on the device: the colour, then its luma - the layout
@@ -2561,6 +2566,9 @@ pub(crate) fn invert3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
 /// camera and is covering for a stage that went wrong. The resolution is below what an
 /// eye resolves, so the last few iterations of the search would be spent on nothing.
 const SATURATION_RANGE: (f64, f64) = (0.6, 1.5);
+/// The Saturation slider's own reach, less its grey end: the neutral arm starts further from the
+/// camera than the model's curves and matrix leave the scalar.
+const CAMERA_SATURATION_RANGE: (f64, f64) = (0.5, 2.0);
 const SATURATION_RESOLUTION: f64 = 0.002;
 
 /// Steps of the coarse sweep, and how much better than leaving the chroma alone the
@@ -2586,7 +2594,7 @@ const NEUTRAL_MARGIN: f64 = 0.02;
 /// and the section then converges to that bracket's edge instead of into the dip.
 const SWEEP_STRIDE: usize = 8;
 
-/// The chroma blend, at the strength that best matches the camera.
+/// The chroma blend over `stage`'s colours, at the strength that best matches the camera.
 ///
 /// Fitted against deltaE rather than solved for the mean chroma ratio, which is what
 /// this did and is a proxy that fails exactly when the stages above it leave a residual:
@@ -2626,10 +2634,14 @@ async fn fitted_saturation(
     colour: &HdrColour,
     render: &Source,
     pairs: &Pairs,
+    stage: Stage,
 ) -> Option<f64> {
     let samples = gathered(gpu, render, &pairs.indices, pairs.at.len(), None);
-    let below = evaluate_over(gpu, colour, &samples, pairs.at.len(), Stage::ToneMatrix);
-    let (low, high) = SATURATION_RANGE;
+    let below = evaluate_over(gpu, colour, &samples, pairs.at.len(), stage);
+    let (low, high) = match stage {
+        Stage::CameraTone => CAMERA_SATURATION_RANGE,
+        Stage::Tone | Stage::ToneMatrix | Stage::Full => SATURATION_RANGE,
+    };
     let scoring = scoring_over(gpu, pairs, below.buffer);
     // Flat rather than balanced, which is what every comparison in this function reads.
     let flat = async |sweep: &[f64]| scored_on(&scoring, sweep).await;
@@ -2646,7 +2658,7 @@ async fn fitted_saturation(
     // whole set, so what this changes is which bracket, not what the answer is inside it.
     let sample = pairs.every(gpu, SWEEP_STRIDE);
     let taken = gathered(gpu, render, &sample.indices, sample.at.len(), None);
-    let sampled = evaluate_over(gpu, colour, &taken, sample.at.len(), Stage::ToneMatrix);
+    let sampled = evaluate_over(gpu, colour, &taken, sample.at.len(), stage);
     let swept =
         scored_on(&scoring_over(gpu, &sample, sampled.buffer), &probes).await?;
 
@@ -4864,7 +4876,7 @@ async fn fit_colour(
     // One scalar on top, because a 3x3 cannot express a saturation that varies with
     // level and the camera's does. It stays one number for the reason on the field
     // itself.
-    colour.saturation = fitted_saturation(gpu, &colour, &source, &train).await?;
+    colour.saturation = fitted_saturation(gpu, &colour, &source, &train, Stage::ToneMatrix).await?;
     lap("saturation");
 
     // Then the hue-dependent part, kept only if it earns its place. Least squares on
@@ -5019,6 +5031,22 @@ async fn fit_colour(
 
     colour.delta_e = scored.0;
     lap("thumb");
+
+    // A failed tone or saturation leaves its slider at the neutral arm's own rather than costing
+    // the colour and lens fits above.
+    if let Some((exposure, curve, _)) = camera_curve(gpu, &colour).await {
+        colour.exposure = exposure;
+        colour.curve = curve;
+    }
+    lap("camera tone");
+    if let Some(saturation) =
+        fitted_saturation(gpu, &colour, &source, &train, Stage::CameraTone).await
+    {
+        let slider = crate::gpu::saturation_slider(crate::light::Gain::of_ratio(saturation));
+        colour.camera_saturation =
+            crate::light::Gain::of_ratio(f64::from((1.0 + slider / 100.0) as f32));
+    }
+    lap("camera saturation");
     Some(colour)
 }
 
@@ -5063,6 +5091,7 @@ async fn fit_model(
         delta_e: f64::INFINITY,
         exposure: crate::light::Stops::ZERO,
         curve: crate::light::IDENTITY_CURVE.to_vec(),
+        camera_saturation: crate::light::Gain::ONE,
     };
     lap("curves");
 
@@ -5210,13 +5239,8 @@ pub async fn fit_linearised(
     // The normalisation is the only per-fit thing about the plane, and it rides the warp that
     // reads it: a pass of its own would be the whole plane back to the host and up again, between
     // two passes that both already have it.
-    let mut colour =
+    let colour =
         fit_model_planes(gpu, plane, 1.0 / levels.white.raw(), wide_jpeg, &lens).await?;
-    let (exposure, curve) = camera_curve(gpu, &colour).await
-        .map(|(exposure, curve, _)| (exposure, curve))
-        .unwrap_or_else(|| (crate::light::Stops::ZERO, crate::light::IDENTITY_CURVE.to_vec()));
-    colour.exposure = exposure;
-    colour.curve = curve;
     Some(HdrMatch { lens, colour: Some(colour) })
 }
 
@@ -5236,18 +5260,17 @@ async fn camera_curve(
     gpu: &'static crate::gpu::Gpu,
     colour: &HdrColour,
 ) -> Option<(crate::light::Stops, Vec<[f64; 2]>, f64)> {
-    use crate::light::{CurveCode, Gain, Light, Rendered, Stops};
+    use crate::light::{CurveCode, Gain, Stops};
     let pivot = crate::light::PIVOT;
-    let white = Light::<Rendered>::measured(f64::from(
-        evaluated(gpu, colour, &[[1.0; 4]], Stage::ToneMatrix).await?[0][3]));
-    let at_pivot = Light::<Rendered>::measured(f64::from(
-        evaluated(gpu, colour, &[[pivot.raw() as f32; 4]], Stage::Full).await?[0][3]));
-    if !white.is_finite() || !at_pivot.is_finite()
-        || white <= Light::ZERO || at_pivot <= Light::ZERO {
+    // Over the grade's white, which the model's output is a share of, and not the match's own: a
+    // None profile renders this tone without the match, so a level left in the match's white would
+    // move the whole picture when it is switched.
+    let over_white = |rendered: f32| Gain::of_ratio(f64::from(rendered.max(0.0)));
+    let exposed_pivot =
+        over_white(evaluated(gpu, colour, &[[pivot.raw() as f32; 4]], Stage::Full).await?[0][3]);
+    if !exposed_pivot.raw().is_finite() || exposed_pivot.raw() <= CAMERA_MIN_PIVOT_SHARE.raw() {
         return None;
     }
-    let exposed_pivot = at_pivot / white;
-    if exposed_pivot.raw() <= CAMERA_MIN_PIVOT_SHARE.raw() { return None; }
     let bounded = (exposed_pivot.raw() / pivot.raw()).log2()
         .clamp(-CAMERA_EXPOSURE_LIMIT.raw(), CAMERA_EXPOSURE_LIMIT.raw());
     let exposure = Stops::measured(f64::from(bounded as f32));
@@ -5274,10 +5297,7 @@ async fn camera_curve(
         .into_iter()
         .zip(responses)
         .map(|(x, output)| {
-            let rendered = Light::<Rendered>::measured(f64::from(output[3].max(0.0)));
-            let y = CurveCode::of_white_ratio(rendered / white)
-                .raw()
-                .clamp(0.0, 1.0);
+            let y = CurveCode::of_white_ratio(over_white(output[3])).raw().clamp(0.0, 1.0);
             [x, y]
         })
         .collect();
@@ -5879,9 +5899,8 @@ mod tests {
         let colour = HdrColour::identity();
         let (exposure, curve, error) = pollster::block_on(camera_curve(gpu, &colour)).unwrap();
         let pivot = crate::light::PIVOT.raw();
-        let white = pollster::block_on(evaluated(gpu, &colour, &[[1.0; 4]], Stage::ToneMatrix)).unwrap()[0][3];
         let grey = pollster::block_on(evaluated(gpu, &colour, &[[pivot as f32; 4]], Stage::Full)).unwrap()[0][3];
-        let expected = f64::from((f64::from(grey) / f64::from(white) / pivot).log2() as f32);
+        let expected = f64::from((f64::from(grey) / pivot).log2() as f32);
         assert_eq!(exposure.raw(), expected);
         assert!(curve.iter().any(|p| p[0] > 0.0 && p[0] < 1.0 && p[0] == p[1]));
         assert!(curve.iter().flatten().all(|&v| v == f64::from(v as f32)));
@@ -6697,8 +6716,10 @@ mod tests {
         let pairs = Pairs::over(searching(), &render, &jpeg);
         let colour = HdrColour { curves: [ramp.clone(), ramp.clone(), ramp], ..HdrColour::identity() };
         let source = source_of(searching(), &render);
-        let found = pollster::block_on(fitted_saturation(searching(), &colour, &source, &pairs))
-            .expect("the device scores");
+        let found = pollster::block_on(
+            fitted_saturation(searching(), &colour, &source, &pairs, Stage::ToneMatrix),
+        )
+        .expect("the device scores");
         assert!((found - 1.0).abs() < 1e-9, "invented a saturation out of a flat frame: {found}");
     }
 
@@ -6773,9 +6794,38 @@ mod tests {
             let pairs = Pairs::over(searching(), &render, &target);
             let neutral = HdrColour { saturation: 1.0, ..applied };
             let source = source_of(searching(), &render);
-            let found =
-                pollster::block_on(fitted_saturation(searching(), &neutral, &source, &pairs))
-                    .expect("the device scores");
+            let found = pollster::block_on(
+                fitted_saturation(searching(), &neutral, &source, &pairs, Stage::ToneMatrix),
+            )
+            .expect("the device scores");
+            assert!((found - want).abs() < 0.02, "wanted {want}, found {found}");
+        }
+    }
+
+    #[test]
+    fn the_camera_saturation_is_found_on_the_neutral_arm_past_the_models_range() {
+        let (render, _) = ramped_planes([0.5, 0.3, 0.18]);
+        // 1.7 is outside `SATURATION_RANGE`, which the model's own scalar is held to.
+        for want in [0.8, 1.0, 1.7] {
+            let data = render
+                .data
+                .chunks(3)
+                .flat_map(|px| {
+                    let luma: f64 = (0..3).map(|c| LUMA[c] * px[c]).sum();
+                    px.iter().map(move |v| luma + (v - luma) * want).collect::<Vec<_>>()
+                })
+                .collect();
+            let target = Plane { width: render.width, height: render.height, data };
+            let pairs = Pairs::over(searching(), &render, &target);
+            let source = source_of(searching(), &render);
+            let found = pollster::block_on(fitted_saturation(
+                searching(),
+                &HdrColour::identity(),
+                &source,
+                &pairs,
+                Stage::CameraTone,
+            ))
+            .expect("the device scores");
             assert!((found - want).abs() < 0.02, "wanted {want}, found {found}");
         }
     }

@@ -60,7 +60,7 @@ test.beforeAll(async ({ browser }) => {
  * back, and that the editor reached the same conclusion the decode did.
  */
 test('opens in the editor, grades on the GPU through the camera match, and offers the Detail sliders', async ({ page }) => {
-  await page.goto(`${route(PathSegment.photos(), photoId)}?edit=1`);
+  await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
   await waitForEditorLive(page, 150_000);
 
   await expect(editDiagnostics(page)).toHaveAttribute('data-adapter', /./);

@@ -71,7 +71,7 @@ fn a_tick_names_every_slider_the_way_this_host_reads_it() {
         points: vec![[0.0, 0.04], [0.35, 0.3], [0.7, 0.78], [1.0, 1.0]],
     }));
     assert_eq!(adjust.vibrance, -66.0);
-    assert_eq!(adjust.saturation, 77.0);
+    assert_eq!(adjust.saturation, Some(77.0));
     assert_eq!(adjust.texture, -88.0);
     assert_eq!(adjust.clarity, 99.0);
     assert_eq!(adjust.dehaze, -12.5);

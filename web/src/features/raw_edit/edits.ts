@@ -20,8 +20,8 @@ export interface Region {
 /**
  * Every slider, on Camera Raw's own scales, as the document holds them - `gpu::Adjust`.
  *
- * A null white balance half is resolved by `white_balance.slang`. A null tone curve uses the
- * camera match's curve.
+ * A null white balance half is resolved by `white_balance.slang`. A null tone curve or saturation
+ * uses the camera match's.
  */
 export interface EditAdjust {
   contrast: number;
@@ -31,7 +31,7 @@ export interface EditAdjust {
   blacks: number;
   toneCurve: ToneCurve | null;
   vibrance: number;
-  saturation: number;
+  saturation: number | null;
   texture: number;
   clarity: number;
   dehaze: number;

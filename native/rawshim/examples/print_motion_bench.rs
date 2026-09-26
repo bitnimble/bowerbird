@@ -116,7 +116,7 @@ fn main() -> Result<(), String> {
             scene.yaw_degrees = 14.0 * (index as f64 * 0.09).sin();
             scene.pitch_degrees = -35.0 + 6.0 * (index as f64 * 0.11).cos();
             let start = Instant::now();
-            if grade.colour.is_some() {
+            if grade.matched().is_some() {
                 uploaded.peak_from_candidates(&grade);
             }
             let mut recording = gpu.record();
