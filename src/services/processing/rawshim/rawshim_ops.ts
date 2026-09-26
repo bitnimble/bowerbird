@@ -19,7 +19,8 @@ import { shim } from './rawshim';
 
 // #[repr(C)] BbHeader: u32 width/height, i32 orientation, f32 iso/shutter/aperture
 // /focal, 4 bytes padding, i64 timestamp, f64 latitude/longitude, then NUL-padded
-// char arrays: u8 make[64], model[64], lens[128], then u32 sequence kind/group/index/count.
+// char arrays: u8 make[64], model[64], lens[128], then u32 sequence kind/group/index/count,
+// then f32 35mm-equivalent focal, which the catalogue does not read, and 4 bytes padding.
 const HEADER = {
   width: 0,
   height: 4,
@@ -38,7 +39,7 @@ const HEADER = {
   sequenceGroup: 316,
   sequenceIndex: 320,
   sequenceCount: 324,
-  size: 328,
+  size: 336,
 } as const;
 
 /** `header::SEQUENCE_*`. */

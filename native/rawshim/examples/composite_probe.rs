@@ -842,12 +842,7 @@ fn plane_for(path: &str) -> Option<String> {
 /// What the body says its focal is, in this photograph's own pixels.
 fn focal_px(path: &str) -> Option<f64> {
     let header = rawshim::header::read_path(path)?;
-    let crop = lensdb::crop_factor(
-        rawshim::header::name(&header.camera_make),
-        rawshim::header::name(&header.camera_model),
-    )?;
-    (header.focal > 0.0)
-        .then(|| f64::from(header.focal) * crop * header.width.max(header.height) as f64 / 36.0)
+    rawshim::composite_job::focal_in_pixels(&header, rawshim::header::name(&header.camera_model))
 }
 
 /// How far the frames' own centres climb across the canvas, in degrees.

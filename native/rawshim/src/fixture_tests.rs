@@ -2501,6 +2501,7 @@ mod camera_match {
                 crate::header::name(&header.lens_model),
                 header.focal,
                 header.aperture,
+                header.crop(),
                 header.width as usize,
                 header.height as usize,
             )
@@ -2523,6 +2524,7 @@ mod camera_match {
                 crate::header::name(&header.lens_model),
                 24.0,
                 2.8,
+                header.crop(),
                 header.width as usize,
                 header.height as usize,
             );

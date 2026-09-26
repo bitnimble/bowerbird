@@ -1095,22 +1095,11 @@ fn optics_of(
     (aperture, width_mm_of(focal, equivalent))
 }
 
-/// The picture's width across the silicon, from the two focal lengths whose ratio is the crop
-/// factor, or [`crate::dust::FULL_FRAME_MM`] where they do not give one.
-///
-/// A body that shoots a smaller frame out of a larger sensor reports the equivalent of the *cropped*
-/// picture, which is the width the crop is, and so the width that goes with the photosites decoded.
+/// The picture's width across the silicon, or [`crate::dust::FULL_FRAME_MM`] where the two focal
+/// lengths do not give a crop factor.
 fn width_mm_of(focal: f32, equivalent: f32) -> f32 {
-    let crop = match focal > 0.0 && equivalent > 0.0 {
-        true => equivalent / focal,
-        false => 1.0,
-    };
-    // Medium format at one end and a phone-sized compact at the other; outside that a body has
-    // written one of the two focal lengths in units the other is not in.
-    match crop.is_finite() && (0.5..=8.0).contains(&crop) {
-        true => crate::dust::FULL_FRAME_MM / crop,
-        false => crate::dust::FULL_FRAME_MM,
-    }
+    crate::header::crop_of(focal, equivalent)
+        .map_or(crate::dust::FULL_FRAME_MM, |crop| crate::dust::FULL_FRAME_MM / crop)
 }
 
 async fn decode_source(

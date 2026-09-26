@@ -37,7 +37,7 @@ const REVERSE: bool = false;
 /// cut from, so a reader whose lens landed since can point at a fresher one.
 pub const DATA: &str = "BOWERBIRD_LENSFUN_DATA";
 
-/// A database entry and the crop factor of the body it was matched for.
+/// A database entry and the crop factor of the picture it was matched for.
 #[derive(Clone, Copy)]
 struct Resolved {
     lens: &'static Lens,
@@ -143,14 +143,35 @@ fn covers(min_focal: f32, max_focal: f32, min_aperture: f32, focal: f32, apertur
 }
 
 /// The best entry the database has for this body and lens string.
-fn search(make: &str, model: &str, lens: &str, focal: f32, aperture: f32) -> Option<Resolved> {
+fn search(
+    make: &str,
+    model: &str,
+    lens: &str,
+    focal: f32,
+    aperture: f32,
+    stated: Option<f32>,
+) -> Option<Resolved> {
     let camera = body(make, model)?;
+    let crop =
+        picture_crop((camera.crop_factor > 0.0).then_some(camera.crop_factor), stated).unwrap_or(0.0);
     // Ordered most- to least-likely, so this takes the best entry the file does not contradict
     // rather than re-ranking.
-    lenses(camera, lens)
+    lenses(camera, crop, lens)
         .into_iter()
         .find(|entry| covers(entry.focal_min, entry.focal_max, entry.aperture_min, focal, aperture))
-        .map(|lens| Resolved { lens, crop: camera.crop_factor })
+        .map(|lens| Resolved { lens, crop })
+}
+
+/// The crop factor of the picture itself: the body's, unless the file states a different format,
+/// which a full-frame body shooting in APS-C mode does.
+fn picture_crop(body: Option<f32>, stated: Option<f32>) -> Option<f32> {
+    match (body, stated) {
+        // EXIF's 35mm focal is an integer, so a stated ratio sits a few percent off the body's
+        // own figure at short focal lengths without being another format.
+        (Some(body), Some(stated)) if (stated / body - 1.0).abs() < 0.05 => Some(body),
+        (_, Some(stated)) => Some(stated),
+        (body, None) => body,
+    }
 }
 
 fn body(make: &str, model: &str) -> Option<&'static Camera> {
@@ -200,7 +221,7 @@ fn cameras(make: &str, model: &str) -> Vec<&'static Camera> {
 /// requires every word of the query to appear in the entry, where we ask for the looser search a
 /// camera's punctuation needs: "F2.8" against a database that writes "F/2.8" is a word the entry
 /// does not have.
-fn lenses(camera: &Camera, model: &str) -> Vec<&'static Lens> {
+fn lenses(camera: &Camera, crop: f32, model: &str) -> Vec<&'static Lens> {
     let mut pattern = Lens { model: model.to_owned(), ..Lens::default() };
     pattern.guess_parameters();
     let fuzzy = FuzzyStrCmp::new(&pattern.model, REQUIRE_EVERY_WORD);
@@ -215,7 +236,7 @@ fn lenses(camera: &Camera, model: &str) -> Vec<&'static Lens> {
     let mut scored: Vec<(i32, &'static Lens)> = db()
         .lenses
         .iter()
-        .map(|entry| (match_score(&pattern, entry, camera, &fuzzy, &compatible), entry))
+        .map(|entry| (match_score(&pattern, entry, camera, crop, &fuzzy, &compatible), entry))
         .filter(|(score, _)| *score > 0)
         .collect();
     scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
@@ -243,13 +264,14 @@ fn match_score(
     pattern: &Lens,
     entry: &Lens,
     camera: &Camera,
+    crop: f32,
     fuzzy: &FuzzyStrCmp,
     compatible: &[&str],
 ) -> i32 {
     let mut score = 0;
 
     if entry.crop_factor > 0.0 {
-        match crop_bucket(camera.crop_factor, entry.crop_factor) {
+        match crop_bucket(crop, entry.crop_factor) {
             0 => return 0,
             bucket => score += bucket,
         }
@@ -330,43 +352,54 @@ fn compare_num(asked: f32, has: f32) -> i32 {
 /// for every other - a 24-70 shot at 24 caches an entry the 70mm frames then read as a
 /// contradiction and correct nothing for. Which frame got there first is arrival order, so a
 /// library rendered in parallel corrected different photos on different runs.
-fn resolve(make: &str, model: &str, lens: &str, focal: f32, aperture: f32) -> Option<Resolved> {
-    let key = format!("{make}|{model}|{lens}|{focal}|{aperture}");
+fn resolve(
+    make: &str,
+    model: &str,
+    lens: &str,
+    focal: f32,
+    aperture: f32,
+    stated: Option<f32>,
+) -> Option<Resolved> {
+    let key = format!("{make}|{model}|{lens}|{focal}|{aperture}|{stated:?}");
     if let Some(hit) = cache().lock().ok()?.get(&key).copied() {
         return hit;
     }
-    let found = search(make, model, lens, focal, aperture);
+    let found = search(make, model, lens, focal, aperture, stated);
     if let Ok(mut cache) = cache().lock() {
         cache.insert(key, found);
     }
     found
 }
 
-/// How much smaller this body's sensor is than 35mm, which is what turns a focal length in
-/// millimetres into one in pixels.
+/// How much smaller this picture is than 35mm, which is what turns a focal length in millimetres
+/// into one in pixels.
 ///
 /// **A panorama's own question.** The alignment solves a focal from correspondences, and over a
 /// narrow field it barely can: a rotation and a translation differ by the perspective across the
 /// frame, and a long lens has almost none. The body knows what the pictures cannot say.
 ///
-/// The body alone, unlike every other search here: a crop factor is a property of the sensor,
-/// and asking through a lens would answer None for a body whose lens the database has never
-/// listed. None where lensfun has never heard of the body, and the caller falls back to an
-/// assumed field of view.
-pub fn crop_factor(make: &str, model: &str) -> Option<f64> {
+/// Asked of the body alone, unlike every other search here: asking through a lens would answer None
+/// for a body whose lens the database has never listed. `stated` is the file's own crop factor
+/// where it gives one. None where neither the file nor lensfun says, and the caller falls back to
+/// an assumed field of view.
+pub fn crop_factor(make: &str, model: &str, stated: Option<f32>) -> Option<f64> {
+    picture_crop(body_crop(make, model), stated).map(f64::from)
+}
+
+fn body_crop(make: &str, model: &str) -> Option<f32> {
     let key = format!("{make}|{model}");
     if let Some(hit) = cropped().lock().ok()?.get(&key).copied() {
         return hit;
     }
-    let found = body(make, model).map(|it| it.crop_factor).filter(|it| *it > 0.0).map(f64::from);
+    let found = body(make, model).map(|it| it.crop_factor).filter(|it| *it > 0.0);
     if let Ok(mut cache) = cropped().lock() {
         cache.insert(key, found);
     }
     found
 }
 
-fn cropped() -> &'static Mutex<HashMap<String, Option<f64>>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, Option<f64>>>> = OnceLock::new();
+fn cropped() -> &'static Mutex<HashMap<String, Option<f32>>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<f32>>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -420,18 +453,22 @@ fn enabling(
 
 /// The radial correction for one shot, as a fraction of the radius at each of `KNOTS` radii.
 ///
+/// `crop` is the file's own crop factor where it states one, as for [`crop_factor`].
+///
 /// None when no plausible lens matches, or when the match carries no distortion calibration at
 /// this focal length - in either case the caller fits instead.
+#[allow(clippy::too_many_arguments)]
 pub fn distortion_knots(
     make: &str,
     model: &str,
     lens: &str,
     focal: f32,
     aperture: f32,
+    crop: Option<f32>,
     width: usize,
     height: usize,
 ) -> Option<Vec<f64>> {
-    let resolved = resolve(make, model, lens, focal, aperture)?;
+    let resolved = resolve(make, model, lens, focal, aperture, crop)?;
     let (diagonal, long, short) = Diagonal::of(width, height);
     let modifier = enabling(&resolved, focal, long, short, Modifier::enable_distortion_correction)?;
 
@@ -460,16 +497,18 @@ pub fn distortion_knots(
 /// None when nothing plausible matches or the entry carries no TCA calibration - which is most
 /// of them, since lensfun's TCA coverage is far thinner than its distortion coverage. The caller
 /// falls back to measuring it off the frame.
+#[allow(clippy::too_many_arguments)]
 pub fn tca_knots(
     make: &str,
     model: &str,
     lens: &str,
     focal: f32,
     aperture: f32,
+    crop: Option<f32>,
     width: usize,
     height: usize,
 ) -> Option<[Vec<f64>; 2]> {
-    let resolved = resolve(make, model, lens, focal, aperture)?;
+    let resolved = resolve(make, model, lens, focal, aperture, crop)?;
     let (diagonal, long, short) = Diagonal::of(width, height);
     let modifier = enabling(&resolved, focal, long, short, Modifier::enable_tca_correction)?;
 
@@ -540,6 +579,23 @@ mod tests {
         // A full-frame body against an APS-C profile: the measurement stops well inside the
         // corners this body reads, so there is nothing to extrapolate from.
         assert_eq!(crop_bucket(1.0, 1.53), 0);
+    }
+
+    #[test]
+    fn a_full_frame_body_in_apsc_mode_is_an_apsc_picture() {
+        assert_eq!(picture_crop(Some(1.0), Some(1.5)), Some(1.5));
+        assert_eq!(crop_bucket(1.5, 1.53), 3, "an APS-C profile serves it");
+        // GFX in 35mm mode.
+        assert_eq!(picture_crop(Some(0.79), Some(1.0)), Some(1.0));
+    }
+
+    #[test]
+    fn a_rounded_equivalent_focal_keeps_the_body_figure() {
+        // 18mm on a 1.534 body writes 27mm.
+        assert_eq!(picture_crop(Some(1.534), Some(27.0 / 18.0)), Some(1.534));
+        assert_eq!(picture_crop(Some(1.534), None), Some(1.534));
+        assert_eq!(picture_crop(None, Some(1.5)), Some(1.5));
+        assert_eq!(picture_crop(None, None), None);
     }
 
     #[test]
