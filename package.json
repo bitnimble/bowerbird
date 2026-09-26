@@ -11,6 +11,8 @@
     "release:check": "bun run scripts/release-check.ts",
     "release:check:docker": "bun run scripts/release-check.ts docker",
     "release:check:android": "bun run scripts/release-check.ts android",
+    "release:check:macos": "bun run scripts/release-check.ts macos",
+    "release:check:windows": "bun run scripts/release-check.ts windows",
     "release:check:remote": "git push -f origin HEAD:refs/heads/release-check && gh workflow run release.yml --ref release-check -f only=macos,windows",
     "dev:docker": "bun run build:native && bun run build:wasm && docker rm -f bowerbird-dev bowerbird-web-dev; docker compose -f docker-compose.dev.yml up --build",
     "lint": "oxlint",

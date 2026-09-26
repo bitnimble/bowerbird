@@ -326,13 +326,18 @@ installed, forever.
 
 **`bun run release:check` builds what a tag would, before there is one.** It builds HEAD in a
 detached worktree, since a tag releases the commit and an uncommitted edit would otherwise decide
-the answer. The container is `docker build` on the same Dockerfile, and the APK is that
-Dockerfile's `android` stage, which repeats the workflow's `android` job and writes the APK to
-`dist/android-aarch64/`. macOS and
-Windows have no container that builds them faithfully - the one needs Apple's SDK and bundler,
-the other MSVC and a Windows checkout - so `release:check:remote` pushes HEAD to the
-`release-check` branch and runs the workflow there for those two, which builds without
-releasing.
+the answer. The container is `docker build` on the same Dockerfile, and the apps are its
+`android`, `macos` and `windows` stages, which run the workflow's own scripts and write to
+`dist/` as the workflow lays it out.
+
+The desktop stages cross-build from Linux, so they test the scripts and the Rust for those
+targets rather than reproducing the release: macOS goes through osxcross and yields the `.app`
+without a `.dmg`, from an SDK packaged out of Xcode that Apple does not let anyone redistribute
+(`BOWERBIRD_MACOS_SDK` names it, and `release:check` leaves macOS out without one); Windows goes
+through cargo-xwin and NSIS. Both build the server's native library without `renditions`,
+vcpkg building the codecs only for the machine it runs on. `release:check:remote` is the faithful
+check for those two: it pushes HEAD to the `release-check` branch and runs the workflow there,
+which builds without releasing.
 
 Comparison is dotted-numeric with a suffix ranked below its own release, so `1.2.0` beats
 `1.2.0-rc1` and shipping `1.2.0` does not leave every release candidate thinking it is

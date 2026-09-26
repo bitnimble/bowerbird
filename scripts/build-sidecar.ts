@@ -140,14 +140,17 @@ function shipTheAddon(triple: string): void {
  */
 function shipTheClosure(triple: string): void {
   if (triple.includes('windows')) return;
-  // Each arm drives the target's own loader tools, which only the target has: a macOS check run
-  // from Linux would reach for `otool` and fail as a missing command rather than as the cross
-  // build it is.
-  const platform = triple.includes('apple') ? 'darwin' : 'linux';
-  if (platform !== process.platform) {
+  // Each arm drives the target's own loader tools: `otool` reads a Mach-O on any machine that has
+  // one (LLVM's `llvm-otool` under that name), where `ldd` only reads what this machine can load.
+  if (triple.includes('apple')) {
+    if (spawnSync('sh', ['-c', 'command -v otool']).status !== 0) {
+      throw new Error(`the libraries ${triple} needs are read with otool, which is not on the path`);
+    }
+    return askNothingOfMacos();
+  }
+  if (process.platform !== 'linux') {
     throw new Error(`the libraries ${triple} needs can only be read on ${triple}: assemble that app there`);
   }
-  if (triple.includes('apple')) return askNothingOfMacos();
   underOrigin();
 }
 
