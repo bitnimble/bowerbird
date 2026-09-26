@@ -1020,6 +1020,31 @@ export class PhotosPresenter {
   }
 
   @action.bound
+  startSweep(index: number): void {
+    this.selectionPresenter.startSweep(index);
+  }
+
+  @action.bound
+  sweepTo(index: number): void {
+    this.selectionPresenter.sweepTo(index);
+  }
+
+  @action.bound
+  startMemberSweep(id: string): void {
+    this.selectionPresenter.startMemberSweep(id);
+  }
+
+  @action.bound
+  sweepMembersTo(id: string): void {
+    this.selectionPresenter.sweepMembersTo(id);
+  }
+
+  @action.bound
+  endSweep(): void {
+    this.selectionPresenter.endSweep();
+  }
+
+  @action.bound
   selectSpan(span: Span): void {
     this.selectionPresenter.selectSpan(span);
   }

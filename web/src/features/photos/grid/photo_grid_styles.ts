@@ -57,6 +57,10 @@ export const viewport = stylex.create({
     paddingBottom: size.padB,
     scrollbarWidth: 'none',
     '::-webkit-scrollbar': { display: 'none' },
+    // A long press picks a tile (`TouchSweep`), and would otherwise select the name under the
+    // finger or raise iOS's link callout.
+    userSelect: { default: null, [COARSE]: 'none' },
+    WebkitTouchCallout: { default: null, [COARSE]: 'none' },
   },
   barred: {
     paddingBottom: `calc(${size.padB} + ${BULK_BAR_H})`,

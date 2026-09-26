@@ -9,6 +9,9 @@ import type { StacksStore } from './stacks_store';
 import type { ViewerStore } from '../viewer/viewer_store';
 
 export class SelectionPresenter {
+  private sweepBase: SelectionRanges | null = null;
+  private memberSweepBase: ReadonlySet<string> | null = null;
+
   constructor(
     private readonly listing: ListingStore,
     private readonly store: MarksStore,
@@ -88,6 +91,48 @@ export class SelectionPresenter {
     // *after* extending: focus is the fallback anchor, so focusing first would
     // make every range start and end on the photo just clicked.
     this.focusAt(index);
+  }
+
+  // A long press: picks the photo under the finger and anchors the drag after it.
+  @action.bound
+  startSweep(index: number): void {
+    this.focusAt(index);
+    this.toggle(index);
+    this.sweepBase = this.store.selection;
+  }
+
+  // From the selection the sweep started on rather than the current one, so a
+  // finger dragged back shrinks the span again.
+  @action.bound
+  sweepTo(index: number): void {
+    const anchor = this.store.lastToggled;
+    if (this.sweepBase == null || anchor == null || index < 0) return;
+    const [from, to] = anchor.position <= index ? [anchor.position, index] : [index, anchor.position];
+    this.store.selection = anchor.selected ? this.sweepBase.add(from, to) : this.sweepBase.remove(from, to);
+    this.focusAt(index);
+  }
+
+  // The same inside an open band, whose members have no position.
+  @action.bound
+  startMemberSweep(id: string): void {
+    const photo = this.stacks.memberById(id);
+    if (photo == null) return;
+    this.toggleMember(photo);
+    this.memberSweepBase = this.store.selectedMembers;
+  }
+
+  @action.bound
+  sweepMembersTo(id: string): void {
+    const photo = this.stacks.memberById(id);
+    if (this.memberSweepBase == null || photo == null) return;
+    const span = this.memberSpan(photo, this.memberSweepBase);
+    if (span != null) this.store.selectedMembers = span;
+  }
+
+  @action.bound
+  endSweep(): void {
+    this.sweepBase = null;
+    this.memberSweepBase = null;
   }
 
   /**
@@ -240,23 +285,27 @@ export class SelectionPresenter {
   @action.bound
   extendMembersTo(photo: PhotoSummary): void {
     const open = this.stacks.bandOf(photo);
-    const ids = open?.photos.map((member) => member.id) ?? [];
+    if (open != null) this.nameBandMembers(open);
+    const span = this.memberSpan(photo, this.store.selectedMembers);
+    // Nothing in this band to reach back to - a first shift-click, or an anchor
+    // left in a band that has since closed - so it is an ordinary pick.
+    if (span == null) this.toggleMember(photo);
+    else this.store.selectedMembers = span;
+  }
+
+  // `base` with the members between the anchor and `photo` given the anchor's verb.
+  private memberSpan(photo: PhotoSummary, base: ReadonlySet<string>): Set<string> | null {
+    const ids = this.stacks.bandOf(photo)?.photos.map((member) => member.id) ?? [];
     const anchor = this.store.lastToggledMember;
     const to = ids.indexOf(photo.id);
     const from = anchor == null ? -1 : ids.indexOf(anchor.id);
-    // Nothing in this band to reach back to - a first shift-click, or an anchor
-    // left in a band that has since closed - so it is an ordinary pick.
-    if (open == null || anchor == null || to < 0 || from < 0) {
-      this.toggleMember(photo);
-      return;
-    }
-    this.nameBandMembers(open);
-    const selected = new Set(this.store.selectedMembers);
+    if (anchor == null || to < 0 || from < 0) return null;
+    const selected = new Set(base);
     for (const id of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) {
       if (anchor.selected) selected.add(id);
       else selected.delete(id);
     }
-    this.store.selectedMembers = selected;
+    return selected;
   }
 
   // A selected stack row stands for every photograph under it, so taking one
