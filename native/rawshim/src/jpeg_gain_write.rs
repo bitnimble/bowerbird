@@ -16,7 +16,7 @@
 use crate::avif_gain_write::{AVIF_RESULT_OK, GainMap, HDR_CICP, SDR_CICP, UNSPECIFIED, decode, orientation_tag, said};
 use crate::raw;
 
-const AVIF_PIXEL_FORMAT_YUV400: raw::avifPixelFormat = 4;
+const AVIF_PIXEL_FORMAT_YUV400: raw::avifPixelFormat = raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV400;
 
 const APP1: u8 = 0xE1;
 const APP2: u8 = 0xE2;
@@ -337,7 +337,7 @@ mod tests {
             H,
             &crate::avif::StillOptions {
                 cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
-                format: 1,
+                format: raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
                 quantizer: 20,
                 speed: 10,
             },

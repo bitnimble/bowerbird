@@ -262,13 +262,11 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
         .allowlist_function("avifImageSetViewRect")
         .allowlist_function("avifImageSetMetadataExif")
         .allowlist_type("avifCropRect")
-        .allowlist_type("avifPlanesFlag")
         .allowlist_function("avifEncoderCreate")
         .allowlist_function("avifEncoderDestroy")
         .allowlist_function("avifEncoderWrite")
         .allowlist_function("avifEncoderAddImageGrid")
         .allowlist_function("avifEncoderFinish")
-        .allowlist_type("avifAddImageFlag")
         .allowlist_function("avifEncoderSetCodecSpecificOption")
         .allowlist_function("avifRWDataFree")
         .allowlist_function("avifResultToString")
@@ -305,7 +303,11 @@ fn avif_functions(builder: bindgen::Builder) -> bindgen::Builder {
 fn server_bindings(include: &Path) -> bindgen::Bindings {
     let builder = bindgen::Builder::default()
         .header("wrapper.h")
-        .clang_arg(format!("-I{}", include.display()));
+        .clang_arg(format!("-I{}", include.display()))
+        // A C enum is `int` under MSVC and `unsigned` elsewhere, so a bare constant that
+        // type-checks against a `uint32_t` here fails only on Windows. As a newtype, it fails here.
+        .default_enum_style(bindgen::EnumVariation::NewType { is_bitfield: false, is_global: false })
+        .prepend_enum_name(false);
     jxl_functions(avif_functions(builder))
         .generate()
         .expect("bindgen failed against the pinned libavif and libjxl headers")

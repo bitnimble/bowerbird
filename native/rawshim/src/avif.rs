@@ -32,15 +32,11 @@ pub struct StillOptions {
     pub speed: i32,
 }
 
-// **Each C enum's constant takes the type bindgen gave that enum, rather than naming a width.** An
-// enum with no negative member is `unsigned int` to the Unixes and `int` to MSVC, so one written
-// `u32` here is one the same comparison rejects on Windows. The two below that stay `u32` are
-// flag sets rather than enums, `uint32_t` on every target.
-const AVIF_RANGE_LIMITED: raw::avifRange = 0;
+const AVIF_RANGE_LIMITED: raw::avifRange = raw::avifRange::AVIF_RANGE_LIMITED;
 /// What an ordinary 8-bit picture uses, and what libheif was writing. Limited range
 /// spends 7% of the code values on headroom a still has no use for, and it costs
 /// measurably: the same quantizer scored SSIM 0.878 limited against 0.902 full.
-const AVIF_RANGE_FULL: raw::avifRange = 1;
+const AVIF_RANGE_FULL: raw::avifRange = raw::avifRange::AVIF_RANGE_FULL;
 /// The depth every HDR still is written at, and it is twelve rather than ten because ten is
 /// not finer than the eight-bit SDR it replaces: at the luminance of a daylit sky one 10-bit
 /// PQ code is 1.13% of the light it sits on against sRGB 8-bit's 1.15%, since PQ spends the
@@ -52,9 +48,9 @@ const AVIF_RANGE_FULL: raw::avifRange = 1;
 /// hardware takes. Chrome decodes it by both the `<img>` and `ImageDecoder` routes, measured;
 /// `stage_gpu.ts` reads the frame's depth back off the format and scales for it.
 const AVIF_DEPTH: u32 = 12;
-const AVIF_PIXEL_FORMAT_YUV444: raw::avifPixelFormat = 1;
-const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat = 3;
-const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = 0;
+const AVIF_PIXEL_FORMAT_YUV444: raw::avifPixelFormat = raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444;
+const AVIF_PIXEL_FORMAT_YUV420: raw::avifPixelFormat = raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV420;
+const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = raw::avifRGBFormat::AVIF_RGB_FORMAT_RGB;
 /// libsharpyuv's solver for the 4:2:0 chroma, in place of a 2x2 box average; a no-op at 4:4:4.
 ///
 /// **The box average is what speckles a saturated red.** Chroma is stored once per 2x2 and Y'
@@ -67,11 +63,15 @@ const AVIF_RGB_FORMAT_RGB: raw::avifRGBFormat = 0;
 /// *lossless* 4:2:0 encode, and was unchanged through 4:4:4. The solver picks the block's chroma
 /// so that the reconstruction lands closest to the source given each pixel's own Y', which is the
 /// leak term.
-const AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV: raw::avifChromaDownsampling = 4;
+const AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV: raw::avifChromaDownsampling =
+    raw::avifChromaDownsampling::AVIF_CHROMA_DOWNSAMPLING_SHARP_YUV;
 /// The curve that solver works under, sRGB's for every file, a PQ still's included.
 const SHARP_YUV_TRANSFER: u16 = 13;
-const AVIF_RESULT_OK: raw::avifResult = 0;
+const AVIF_RESULT_OK: raw::avifResult = raw::avifResult::AVIF_RESULT_OK;
+// A flag set is a `uint32_t` typedef beside its enum, so its bits are written as that typedef: the
+// enum's `.0` is `unsigned` to the Unixes and `int` to MSVC, and fits only on the first.
 const AVIF_PLANES_YUV: raw::avifPlanesFlags = 1;
+const AVIF_ADD_IMAGE_FLAG_SINGLE: raw::avifAddImageFlags = 1 << 1;
 const AVIF_TRANSFORM_IROT: u32 = 1 << 2;
 /// `avifImageContentTypeFlag`'s gain map bit, which decoding one is off without.
 const AVIF_IMAGE_CONTENT_GAIN_MAP: u32 = 1 << 2;
@@ -760,7 +760,7 @@ fn encode_grid<T: Clone>(
             rows,
             pointers.as_ptr(),
             // Each cell's encoder is freed as soon as the cell is written, not held to the end.
-            raw::avifAddImageFlag_AVIF_ADD_IMAGE_FLAG_SINGLE,
+            AVIF_ADD_IMAGE_FLAG_SINGLE,
         );
         if status != AVIF_RESULT_OK {
             return Err(format!("libavif could not encode the grid: {}", message(status)));
@@ -861,7 +861,7 @@ fn written(status: raw::avifResult, output: &Output) -> Result<Vec<u8>, String> 
 pub(crate) unsafe fn message(status: raw::avifResult) -> String {
     let text = unsafe { raw::avifResultToString(status) };
     if text.is_null() {
-        return format!("result {status}");
+        return format!("result {}", status.0);
     }
     unsafe { std::ffi::CStr::from_ptr(text) }.to_string_lossy().into_owned()
 }
@@ -941,7 +941,7 @@ mod tests {
                 .max()
                 .unwrap_or(0);
             // A twelve-bit step is sixteen codes.
-            assert!(worst <= 16, "format {format}: a code {worst} away from libavif's");
+            assert!(worst <= 16, "{format:?}: a code {worst} away from libavif's");
         }
     }
 
