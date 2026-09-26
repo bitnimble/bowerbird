@@ -18,10 +18,9 @@ test('the home page opens the welcome wizard until it is finished', async ({ pag
   await expect(page.getByRole('heading', { name: 'Welcome to Bowerbird' })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Sidebar' })).toHaveCount(0);
 
-  // Whether the backup step is there depends on whether an earlier spec left a library.
-  const finish = page.getByRole('button', { name: 'Finish setup' });
-  while (!(await finish.isVisible())) await page.getByRole('button', { name: /^(Next|Skip)$/ }).click();
-  await finish.click();
+  // Next or Skip, depending on whether an earlier spec left a library.
+  await page.getByRole('button', { name: /^(Next|Skip)$/ }).click();
+  await page.getByRole('button', { name: 'Finish setup' }).click();
   await expect(page).not.toHaveURL(WELCOME);
 
   await page.goto(route());

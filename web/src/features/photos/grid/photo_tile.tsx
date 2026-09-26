@@ -10,6 +10,7 @@ import {
   useListingStore,
   useMarksStore,
   usePresenters,
+  useReplicationStore,
   useStacksStore,
   useViewerStore,
 } from '../../../app/stores_context';
@@ -81,6 +82,7 @@ export const PhotoTile = observer(function PhotoTile({
   const marks = useMarksStore();
   const stacks = useStacksStore();
   const viewer = useViewerStore();
+  const replication = useReplicationStore();
   const { photos } = usePresenters();
   const navigate = useNavigate();
   const [loaded, setLoaded] = useState(false);
@@ -332,9 +334,13 @@ export const PhotoTile = observer(function PhotoTile({
           />
 
           <div {...stylex.props(tile.badges)}>
-            {/* A photograph with no local copy has not gone - the RAW comes back when something
-                needs it (§14.5) - so the snowflake, never the word that says the opposite. */}
-            {photo.is_offloaded ?
+            {/* A stack's tile is not one file, so what a file's state says belongs to its band's
+                tiles. A photograph with no local copy has not gone - the RAW comes back when
+                something needs it (§14.5) - so the snowflake, never the word that says the opposite. */}
+            {disclosure ? null
+            : (photo.is_missing || photo.is_offloaded) && replication.fetching.has(photo.id) ?
+              <span {...stylex.props(tile.badge, tile.fetching)}>{PhotoDetailStrings.stateFetching()}</span>
+            : photo.is_offloaded ?
               <Tooltip label={PhotoDetailStrings.stateOnBackupHint()}>
                 <span {...stylex.props(tile.badge, tile.onBackup)} aria-label={PhotoDetailStrings.stateOnBackup()}>
                   <Snowflake size={BADGE_ICON} />

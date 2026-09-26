@@ -32,6 +32,7 @@ export const PhotoDetailStrings = {
   triageStack: () => 'Triage stack',
   /** What a photograph is in, wherever that is said: a badge on a tile, a row in this panel. */
   stateMissing: () => 'missing',
+  stateFetching: () => 'fetching',
   // Drawn as a snowflake on a tile, where this is the whole of what says so to a screen reader.
   stateOnBackup: () => 'on the backup',
   /** Why an edit or an export of this photo takes longer than it used to. */

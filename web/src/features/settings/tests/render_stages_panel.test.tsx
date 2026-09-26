@@ -96,6 +96,13 @@ test('global camera matching off shows both dependent stages inactive', async ()
   }
 });
 
+test('the total is what the stages this rendition runs cost together', async () => {
+  const stages = { read: 10, dust: 20, denoise: 30, demosaic: 40, lens: 1000, colour: 2000, defringe: 50, sharpen: 60, encode: 70 };
+  await open({ full: { total: 0, stages, measured_at: new Date().toISOString() } });
+  // `full` leaves out the lens and the colour match.
+  expect(screen.getByText('Total').parentElement?.textContent).toBe('Total~280 ms');
+});
+
 test('a stage quotes the estimate until this device has measured one', async () => {
   await open();
   expect(screen.getByText('Estimated')).toBeTruthy();

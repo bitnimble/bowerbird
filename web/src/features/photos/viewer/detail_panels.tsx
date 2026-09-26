@@ -322,7 +322,8 @@ export const RawPanel = observer(function RawPanel({ photoId, defaultOpen, style
               }),
             ],
           ] as MetaRow[])),
-        ...(photo != null && !isComposite(shape) && !photo.has_original ?
+        // An offloaded original needs no asking: whatever reads it fetches it from the backup (§14.4).
+        ...(photo != null && !isComposite(shape) && !photo.has_original && !photo.is_offloaded ?
           ([[PhotoDetailStrings.original(), <RemoteOriginal photoId={photo.id} libraryId={photo.library_id} />]] as MetaRow[])
         : []),
       ]}

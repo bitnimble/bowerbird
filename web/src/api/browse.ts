@@ -1,4 +1,4 @@
-import { type BrowseResponse, BrowseResponseSchema } from '../../../src/schemas/browse';
+import { type BrowseResponse, BrowseResponseSchema, CreateFolderRequestSchema } from '../../../src/schemas/browse';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { request } from './request';
 
@@ -10,5 +10,13 @@ export const browseApi = {
       BrowseResponseSchema,
       'GET',
       `${route(PathSegment.api(), PathSegment.browse())}${path == null ? '' : `?path=${encodeURIComponent(path)}`}`,
+    ),
+  /** Answers with the new folder's own listing. */
+  createFolder: (parent: string, name: string): Promise<BrowseResponse> =>
+    request(
+      BrowseResponseSchema,
+      'POST',
+      route(PathSegment.api(), PathSegment.browse()),
+      CreateFolderRequestSchema.parse({ parent, name }),
     ),
 };

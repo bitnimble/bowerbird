@@ -4,6 +4,8 @@ import {
   BackupRunResponseSchema,
   BackupStatusSchema,
   BackupStatusesSchema,
+  FetchBackStatusSchema,
+  RemoveBackupQuerySchema,
   SetBackupRequestSchema,
   SetLocalBudgetRequestSchema,
   type BackupStatus,
@@ -35,10 +37,21 @@ export class BackupApi {
       return c.json(respond(BackupStatusSchema, await this.backups.setTarget(body.library_id, body.path, body.name)));
     });
 
+    // Fetching every offloaded original back first is minutes, like a pass.
     app.delete(route(PathSegment.param('libraryId')), async (c) => {
-      await this.backups.removeTarget(this.libraryId(c.req.param('libraryId')));
+      const { fetch_first } = RemoveBackupQuerySchema.parse(c.req.query());
+      takeAsLongAsItTakes(c);
+      await this.backups.removeTarget(this.libraryId(c.req.param('libraryId')), fetch_first != null);
       return c.body(null, 204);
     });
+
+    app.get(route(PathSegment.param('libraryId'), PathSegment.fetch()), (c) =>
+      c.json(
+        respond(FetchBackStatusSchema, {
+          progress: this.backups.fetchBackProgress(this.libraryId(c.req.param('libraryId'))),
+        }),
+      ),
+    );
 
     app.put(route(PathSegment.param('libraryId'), PathSegment.budget()), async (c) => {
       const libraryId = this.libraryId(c.req.param('libraryId'));

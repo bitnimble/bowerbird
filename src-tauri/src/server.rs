@@ -259,7 +259,7 @@ pub fn open_app_data_dir(app: tauri::AppHandle<crate::Runtime>) -> Result<(), St
     open_folder(&dir).map_err(|err| format!("could not open {}: {err}", dir.display()))
 }
 
-fn open_folder(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn open_folder(dir: &Path) -> std::io::Result<()> {
     let manager = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(windows) {

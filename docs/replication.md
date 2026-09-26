@@ -11,9 +11,9 @@ staging - and it is what lets a laptop hold a ceiling's worth of its library and
 
 Replication is the protocol name. In product copy, a library syncs between devices and is backed
 up to a folder; a scan reads its files into the catalogue (§9 of DESIGN.md). Code keeps the
-protocol under `replication_*`, while `ScanService` owns the disk scan. Settings offers "Scan
-library" for the disk, "Sync now" under Synced devices for the network, and "Back up now" under
-Backup for the folder.
+protocol under `replication_*`, while `ScanService` owns the disk scan. A library's jobs in
+Settings are "Scan library" for the disk, "Sync library" for the network, and "Back up originals"
+for the folder.
 
 ## 1. Goals and non-goals
 
@@ -28,8 +28,8 @@ Goals:
   peers, all peers replicating a library hold identical replicated state for it (values *and*
   stamps), regardless of pair order, crashes, and interleavings.
 - Catalogue state replicates **automatically** whenever a peer is reachable. Originals (RAWs)
-  move **manually only**, with one exception: opening a photo whose original is remote fetches
-  and keeps it (§7.5).
+  move when asked for: pressed for, opened (§7.5), fetched once by a replica that keeps them as it
+  is added (§9.1), or on every session for a library set to send and fetch them (§10).
 - Per-peer storage policy for originals: the server keeps everything, a laptop keeps what it
   imported plus what it fetched, and a laptop with a backup folder keeps what fits the ceiling it
   was given (§14.5). The catalogue always replicates in full on every peer.
@@ -734,9 +734,11 @@ the table self-heals.
 
 ### 7.3 Transfer
 
-Manual, explicit, both directions where topology allows (§6.4). **Push is defined as a diff,
-not a selection of files**: "send originals <peer> lacks", scoped to a selection, a shoot, or
-the library, computed from `blob_locations`. That makes it idempotent (restart recovery is
+Explicit, both directions where topology allows (§6.4): pressed for, or queued by a session in a
+library set to send and fetch originals (§10), which asks for the same library-wide diff in each
+direction the two sides' §7.10 answers allow. **Push is defined as a diff, not a selection of
+files**: "send originals <peer> lacks", scoped to a selection, a shoot, or the library, computed
+from `blob_locations`. That makes it idempotent (restart recovery is
 pressing it again), makes partial completion a number rather than a mystery, and gives the
 replication strip its headline ("Macbook holds 2,000 originals Home server lacks"). The queue
 survives app restart and laptop sleep; per-item progress, pause, resume; ranged GET,
@@ -1006,14 +1008,10 @@ browser reaches, and is proxied to the API behind it. The production image serve
 from the bun server for the same reason: one published address that answers both, or the address
 the reader is told to type shows nothing.
 
-On the device that has the library: **"Sync to another device"** shows the addresses
-to dial and nothing else. The first is the origin the reader's own browser is on - the only
-candidate that is known to work, and the only one that survives a reverse proxy or a hostname -
-followed by this machine's interfaces, marked as guesses. In a bridged container those are the
-container's own network and reach nothing, which is exactly why they are not offered as facts.
-
 On the joining device: **"Connect to another Bowerbird"** is three steps. The address; the list of what
-that device offers; then the folder and whether to keep originals (§7.10).
+that device offers; then the folder, which the picker can create, and whether to keep originals
+(§7.10). A replica that keeps them queues a fetch of every original the device it joined holds as
+soon as the catalogue has landed.
 
 **Nothing is presented and nothing is exchanged to earn the pairing** - the network is the
 boundary and no part of this is a security boundary (§11.1). Asking a peer what it holds is a
@@ -1051,8 +1049,13 @@ and this sentence is the one that belongs in the user docs in bold.
 
 ## 10. UI
 
-- **Device sync strip** per synced library: per-device last sync, in-flight state, "Sync now",
-  awaiting-originals counts in both directions, and errors. Sits beside the scan strip.
+- **Device sync strip** per synced library: per-device last sync, in-flight state,
+  awaiting-originals counts in both directions, and errors. What is moving - a session, fetches,
+  sends, a backup pass - is also said on the library's own status line beside its scan, and
+  "Sync library" is a library job.
+- **"Automatically send and fetch originals"** per library, off by default: every session that
+  reaches a device also queues the originals either side lacks, in each direction the two sides'
+  §7.10 answers allow.
 - **Transfer manager**: the persistent queue: per-item progress, pause/resume/cancel, errors.
 - **Conflict page**: candidate cards (§5.3), fetch-to-preview when the original is remote.
 - **Remote badge** names the holding peer ("Original on: Macbook"); opening fetches with
@@ -1060,8 +1063,8 @@ and this sentence is the one that belongs in the user docs in bold.
 - **Availability filter** ("original on this device") in the existing filter menu. No
   availability *sort*: sorts are collection-owned and replicated; availability is per-peer.
 - **Peer list** (§6.5): rename, forget, holdings, last seen.
-- **Adding one** (§9.1): "Sync to another device" shows this device's addresses; "Add synced
-  library" takes an address, lists what that device offers, and takes a local folder.
+- **Adding one** (§9.1): "Connect to another Bowerbird" takes an address, lists what that device
+  offers, and takes a local folder.
 - A library with no peers renders none of this: no strip, no badges, no conflict page, zero new
   states for the single-server user.
 
@@ -1256,6 +1259,11 @@ as permission to delete the only other copy. The same read is what makes unpairi
 photographs a ceiling has already given back have no local bytes and are owed nothing, so
 re-pairing the drive is the only thing that can find them, and it does.
 
+**Stopping a backup offers to fetch those photographs back first.** With that chosen, every
+original only the folder holds is pulled onto this device under the pass's own exclusion, so a cull
+cannot give one back mid-fetch, and the folder is forgotten only once none is left there alone. One
+that does not come back keeps the folder paired and says how many.
+
 Nothing overwrites, either. A name already taken by something that is not this photograph is
 skipped and reported, as §7.7 has it.
 
@@ -1310,8 +1318,8 @@ disk is full and never in a hot path.
 
 What is left behind is `is_missing` with a `backup_locations` row, which is `is_offloaded` on the
 wire: a snowflake on the tile, the state line in the detail panel, and a count in the backup panel.
-Everything still works - the renditions are here, the photograph sorts, rates, culls and shows -
-and anything that needs the RAW fetches it, slowly, once.
+Everything still works - the renditions are here, the photograph sorts, rates, culls, shows and
+opens in the editor - and anything that needs the RAW fetches it, slowly, once.
 
 ### 14.6 What is not built here
 

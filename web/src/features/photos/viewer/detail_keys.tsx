@@ -11,10 +11,15 @@ export const DetailKeys = observer(function DetailKeys({
   photoId,
   mode,
   onExitPreview,
+  onToggleStrip,
+  onTogglePanels,
 }: {
   photoId: string;
   mode: DetailMode;
   onExitPreview: () => void;
+  /** Absent where the viewer offers no such toggle: a phone, and the editor. */
+  onToggleStrip?: () => void;
+  onTogglePanels?: () => void;
 }): null {
   const store = useViewerStore();
   const { photos } = usePresenters();
@@ -54,6 +59,8 @@ export const DetailKeys = observer(function DetailKeys({
       }
       else if (e.key === 'o') void photos.chooseRendition(photoId, 'full');
       else if (e.key === 'p') void photos.chooseRendition(photoId, 'max');
+      else if (e.key === '[' && onToggleStrip != null) onToggleStrip();
+      else if (e.key === ']' && onTogglePanels != null) onTogglePanels();
       else if (e.key === 'ArrowLeft') step('prev');
       else if (e.key === 'ArrowRight') step('next');
       // Fullscreen owns Escape: there it leaves the fullscreen frame, not the photo.
@@ -65,7 +72,7 @@ export const DetailKeys = observer(function DetailKeys({
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [step, judge, navigate, back, photoId, photos, mode, onExitPreview]);
+  }, [step, judge, navigate, back, photoId, photos, mode, onExitPreview, onToggleStrip, onTogglePanels]);
 
   return null;
 });

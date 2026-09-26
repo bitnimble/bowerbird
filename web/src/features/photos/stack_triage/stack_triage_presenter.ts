@@ -114,10 +114,11 @@ export class StackTriagePresenter {
     // fetch the way a collection's rows do.
     if (this.store.stackId !== stackId) return;
 
-    // Deleted members are excluded server-side; missing ones are dropped here,
+    // Deleted members are excluded server-side; missing ones are dropped here (an offloaded one is
+    // on its backup, not missing),
     // and before the count that decides `too-few` - a stack of two with one
     // missing is nothing to compare, not a tournament of one.
-    const usable = members.filter((photo) => !photo.is_missing);
+    const usable = members.filter((photo) => !photo.is_missing || photo.is_offloaded);
     const stored = loadSession(stackId);
     const live = new Set(usable.map((photo) => photo.id));
     // Pruned, never re-derived. Re-deriving the pool from the member list would

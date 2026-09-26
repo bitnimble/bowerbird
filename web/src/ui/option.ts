@@ -23,6 +23,8 @@ export interface Option<T extends string> {
   disabled?: boolean;
   // Where a disabled row says what would make it selectable.
   tooltip?: string;
+  // In a menu: a row whose action opens something beside the menu rather than in place of it.
+  keepsMenuOpen?: boolean;
   // In a menu: a row that goes somewhere, drawn as this element (a router `Link`) so it opens in
   // a new tab like any other link. Selecting it follows the link rather than calling `onSelect`.
   link?: ReactElement;

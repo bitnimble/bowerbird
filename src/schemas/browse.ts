@@ -2,6 +2,17 @@ import { z } from 'zod';
 
 export const BrowseQuerySchema = z.object({ path: z.string().optional() });
 
+export const CreateFolderRequestSchema = z.object({
+  parent: z.string().min(1),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .refine((name) => !/[/\\]/.test(name) && name !== '.' && name !== '..', 'a folder name cannot be a path'),
+});
+export type CreateFolderRequest = z.infer<typeof CreateFolderRequestSchema>;
+
 // One level of the server's filesystem, for the folder picker that adds a
 // library. Directories only: the picker chooses where photographs live, and
 // listing the files inside would be exposing the catalogue's contents to answer

@@ -1,5 +1,5 @@
-// A read-only library cannot be paired, replicated or take a fetched original, so the panel's
-// actions for those are greyed and say why.
+// A read-only library cannot take a fetched original, so the panel's action for it is greyed and
+// says why.
 import { afterEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { useEffect } from 'react';
@@ -58,16 +58,12 @@ function refusal(name: string): string | null {
   return button.disabled ? button.getAttribute('aria-description') : null;
 }
 
-test('a read-only library greys pairing, replicating and fetching, and says why', async () => {
+test('a read-only library greys fetching, and says why', async () => {
   await openPanel(true);
-  for (const name of ['Sync to another device', 'Sync now', 'Fetch originals']) {
-    expect(refusal(name)).toBe('Turn off read-only mode to use this action.');
-  }
+  expect(refusal('Fetch originals')).toBe('Turn off read-only mode to use this action.');
 });
 
-test('a writable library offers them', async () => {
+test('a writable library offers it', async () => {
   await openPanel(false);
-  for (const name of ['Sync to another device', 'Sync now', 'Fetch originals']) {
-    expect(refusal(name)).toBeNull();
-  }
+  expect(refusal('Fetch originals')).toBeNull();
 });

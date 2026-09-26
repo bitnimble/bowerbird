@@ -18,6 +18,7 @@ export function MenuAction<T extends string>({
         {...stylex.props(menuStyles.item, option.destructive === true && menuStyles.destructive)}
         disabled={option.disabled === true}
         aria-current={option.active === true}
+        closeOnClick={option.keepsMenuOpen !== true}
         render={option.link}
         onClick={option.link == null ? () => onSelect(option.value) : undefined}
       >

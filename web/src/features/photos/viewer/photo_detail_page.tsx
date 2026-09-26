@@ -225,21 +225,21 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     if (mode === 'print') stopPreview();
   };
 
-  function togglePanels(): void {
+  const togglePanels = useCallback((): void => {
     setPanelsOpen((was) => {
       const next = !was;
       writeSetting(PANELS_KEY, next ? '1' : '0');
       return next;
     });
-  }
+  }, []);
 
-  function toggleStrip(): void {
+  const toggleStrip = useCallback((): void => {
     setStripOpen((was) => {
       const next = !was;
       writeSetting(STRIP_KEY, next ? '1' : '0');
       return next;
     });
-  }
+  }, []);
 
   // Only once the read for *this* photo has come back empty. The fetch starts in
   // an effect, so the render that first sees a new id has nothing loaded and
@@ -388,7 +388,13 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
   return (
     <Page style={styles.page}>
-      <DetailKeys photoId={photoId} mode={mode} onExitPreview={stopPreview} />
+      <DetailKeys
+        photoId={photoId}
+        mode={mode}
+        onExitPreview={stopPreview}
+        onToggleStrip={mobile || previewing ? undefined : toggleStrip}
+        onTogglePanels={mobile || previewing ? undefined : togglePanels}
+      />
       <DetailNav
         photoId={photoId}
         toolsRef={setToolsSlot}

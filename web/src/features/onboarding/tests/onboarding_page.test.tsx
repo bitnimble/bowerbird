@@ -3,7 +3,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { type Library } from '../../../../../src/schemas/libraries';
 import { PathSegment, route } from '../../../../../src/schemas/route';
 import { DEFAULT_SETTINGS, type UpdateSettingsRequest } from '../../../../../src/schemas/settings';
-import { backupApi } from '../../../api/backup';
 import { librariesApi } from '../../../api/libraries';
 import { settingsApi } from '../../../api/settings';
 import { restoreApiAfterTests } from '../../../test_api';
@@ -24,7 +23,6 @@ async function open(libraries: Library[], saves = true): Promise<UpdateSettingsR
   const writes: UpdateSettingsRequest[] = [];
   librariesApi.list = () => Promise.resolve(libraries);
   librariesApi.getDefaults = () => Promise.resolve({} as Awaited<ReturnType<typeof librariesApi.getDefaults>>);
-  backupApi.list = () => Promise.resolve({ backups: [] });
   settingsApi.update = (patch) => {
     writes.push(patch);
     return saves ? Promise.resolve({ ...DEFAULT_SETTINGS, ...patch }) : Promise.reject(new Error('offline'));
@@ -49,7 +47,7 @@ async function press(name: string): Promise<void> {
   });
 }
 
-test('with no library, the wizard skips backup and finishing records onboarding as done', async () => {
+test('with no library, finishing records onboarding as done', async () => {
   const writes = await open([]);
   expect(screen.getByText('Step 1 of 2')).toBeTruthy();
   await press('Skip');
@@ -67,11 +65,10 @@ test('a finish that fails to save stays on the wizard', async () => {
   expect(screen.queryByText(HOME)).toBeNull();
 });
 
-test('with a library, the step after it is its backup', async () => {
+test('with a library, the step after it is the preferences', async () => {
   await open([LIBRARY]);
-  expect(screen.getByText('Step 1 of 3')).toBeTruthy();
+  expect(screen.getByText('Step 1 of 2')).toBeTruthy();
   expect(screen.getByRole('list', { name: 'Libraries' }).textContent).toContain('/nowhere/reef');
   await press('Next');
-  expect(screen.getByRole('heading', { name: 'Reef' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Choose folder' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Preferences' })).toBeTruthy();
 });

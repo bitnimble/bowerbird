@@ -30,7 +30,7 @@ import {
 import { observer } from 'mobx-react-lite';
 import { Link, useNavigate } from 'react-router-dom';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
-import { canOpenOriginalWith, canRevealFile } from '../../../api/transport';
+import { canOpenOriginalWith, canRevealFile, opensWithAMenu } from '../../../api/transport';
 import { useIsMobile, useIsTouch } from '../../../app/device';
 import { useListingStore, usePresenters, useViewerStore } from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
@@ -86,7 +86,12 @@ type Send = 'share' | 'original' | 'openWith' | 'reveal' | 'export';
 const DOWNLOADS: Option<Send>[] = [
   { value: 'share', label: PhotoDetailStrings.share(), icon: <Share2 size={ICON} /> },
   { value: 'original', label: PhotoDetailStrings.downloadOriginal(), icon: <FileType size={ICON} /> },
-  { value: 'openWith', label: PhotoDetailStrings.openWith(), icon: <AppWindow size={ICON} /> },
+  {
+    value: 'openWith',
+    label: PhotoDetailStrings.openWith(),
+    icon: <AppWindow size={ICON} />,
+    keepsMenuOpen: typeof navigator !== 'undefined' && opensWithAMenu(),
+  },
   { value: 'reveal', label: PhotoDetailStrings.openContainingFolder(), icon: <FolderOpen size={ICON} /> },
   { value: 'export', label: BulkBarStrings.exportPhotos(), icon: <HardDriveDownload size={ICON} /> },
 ];
@@ -239,7 +244,7 @@ export const DetailNav = observer(function DetailNav({
   const mobile = useIsMobile();
   const touch = useIsTouch();
   const photo = store.detailFor(photoId);
-  const editable = isComposite(store.photoFor(photoId)) || (photo?.has_original ?? true);
+  const editable = isComposite(store.photoFor(photoId)) || (photo == null || photo.has_original || photo.is_offloaded);
   const editing = mode === 'edit';
   // The print mockup renders through the editor's session, so it takes the editor's chrome
   // rules - no filmstrip, no rendition choice - while leaving the grade's own controls out.
@@ -360,8 +365,9 @@ export const DetailNav = observer(function DetailNav({
               // frames have gone opens and fails inside the editor with the server's reason -
               // which is worse than a disabled control and better than a bare 404.
               //
-              // Everything else needs its original, unknown until the detail arrives and yes for
-              // almost every photograph: a library nobody replicates holds its own.
+              // Everything else needs its original here or on a backup, which the editor's read
+              // fetches back (§14.4). Unknown until the detail arrives, and yes for almost every
+              // photograph: a library nobody replicates holds its own.
               editable,
               editHref,
               hidden: photo?.is_hidden ?? false,
@@ -586,7 +592,7 @@ export const DetailNav = observer(function DetailNav({
         </Button>
       )}
 
-      <OverflowMenu label={PhotoDetailStrings.more()} sections={sections} />
+      <OverflowMenu hotkey label={PhotoDetailStrings.more()} sections={sections} />
     </Row>
   );
 });

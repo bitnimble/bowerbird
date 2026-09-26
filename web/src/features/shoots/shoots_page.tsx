@@ -56,6 +56,7 @@ const ShootsOverflow = observer(function ShootsOverflow(): JSX.Element {
 
   return (
     <OverflowMenu
+      hotkey
       label={ShootsPageStrings.shootOptions()}
       sections={[
         menuSection({

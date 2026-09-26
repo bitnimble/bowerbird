@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderPlus, Link2 } from 'lucide-react';
 import { route } from '../../../../src/schemas/route';
@@ -13,7 +13,6 @@ import { Page } from '../../ui/page';
 import { Panel } from '../../ui/panel';
 import { Row, Spacer } from '../../ui/row';
 import { Text } from '../../ui/text';
-import { BackupPanel } from '../backup/backup_panel';
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
 import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
 import { libraryLabel } from '../libraries/library_label';
@@ -42,26 +41,25 @@ const styles = stylex.create({
   },
 });
 
-type Step = 'library' | 'backup' | 'preferences';
+type Step = 'library' | 'preferences';
+
+const STEPS: Step[] = ['library', 'preferences'];
 
 export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
   const store = useLibrariesStore();
-  const { libraries, backup } = usePresenters();
+  const { libraries } = usePresenters();
   const write = useSettingWriter();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>('library');
 
   useEffect(() => {
     void libraries.load();
-    void backup.load();
-  }, [libraries, backup]);
+  }, [libraries]);
 
-  const none = store.libraries.length === 0;
-  const steps: Step[] = none ? ['library', 'preferences'] : ['library', 'backup', 'preferences'];
-  const index = steps.indexOf(step);
-  const previous = steps[index - 1];
-  const next = steps[index + 1];
-  const skipping = step === 'library' && none;
+  const index = STEPS.indexOf(step);
+  const previous = STEPS[index - 1];
+  const next = STEPS[index + 1];
+  const skipping = step === 'library' && store.libraries.length === 0;
 
   async function finish(): Promise<void> {
     if (await write({ onboarding_complete: true })) navigate(route(), { replace: true });
@@ -71,11 +69,10 @@ export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
     <div {...stylex.props(styles.scroll)}>
       <Page style={styles.page}>
         <Text variant="label" as="p">
-          {OnboardingStrings.stepOf(index + 1, steps.length)}
+          {OnboardingStrings.stepOf(index + 1, STEPS.length)}
         </Text>
 
         {step === 'library' && <LibraryStep />}
-        {step === 'backup' && <BackupStep />}
         {step === 'preferences' && <PreferencesStep />}
 
         <Row style={styles.actions}>
@@ -131,21 +128,6 @@ const LibraryStep = observer(function LibraryStep(): JSX.Element {
       </Row>
       <AddLibraryDialog open={adding} onOpenChange={setAdding} />
       <AddReplicaDialog open={joining} onOpenChange={setJoining} />
-    </div>
-  );
-});
-
-const BackupStep = observer(function BackupStep(): JSX.Element {
-  const store = useLibrariesStore();
-
-  return (
-    <div {...stylex.props(styles.section)}>
-      {store.libraries.map((library) => (
-        <Fragment key={library.id}>
-          <Heading>{libraryLabel(library)}</Heading>
-          <BackupPanel library={library} />
-        </Fragment>
-      ))}
     </div>
   );
 });

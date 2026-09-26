@@ -22,6 +22,7 @@ function runnerFor(peer: Peer): ReplicationRunner {
     () => {},
     () => {},
     () => {},
+    () => Promise.resolve(0),
   );
 }
 

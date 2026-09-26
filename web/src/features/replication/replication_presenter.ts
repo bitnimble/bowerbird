@@ -3,7 +3,7 @@ import { type EvictResult, type Transfer } from '../../../../src/schemas/blobs';
 import { type EditConflict } from '../../../../src/schemas/photo_edits';
 import { type PhotoTarget } from '../../../../src/schemas/photos';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
-import { type AllPeersResponse, type BrowsedRemote, type PairedPeer, type PeersResponse, type ReachableAddress } from '../../../../src/schemas/replication';
+import { type AllPeersResponse, type BrowsedRemote, type PeersResponse } from '../../../../src/schemas/replication';
 import { blobsApi } from '../../api/blobs';
 import { photoEditsApi } from '../../api/photo_edits';
 import { replicationApi } from '../../api/replication';
@@ -11,6 +11,7 @@ import { ApiError } from '../../api/request';
 import type { LibrariesPresenter } from '../libraries/libraries_presenter';
 import type { LibrariesStore } from '../libraries/libraries_store';
 import type { PhotosPresenter } from '../photos/photos_presenter';
+import { SettingsStrings } from '../settings/settings_page.strings';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { ReplicationPresenterStrings } from './replication_presenter.strings';
 import type { ReplicationStore } from './replication_store';
@@ -68,6 +69,8 @@ export class ReplicationPresenter {
     // A divergence is made by a session another device started, so it is
     // announced rather than asked for - and the sidebar is where it lands (§5.3).
     await this.loadConflicts('background');
+    // A session may have queued originals, which nobody here asked for.
+    await this.refreshTransfers();
   }
 
   /** Every library that replicates, in one request, plus what they have diverged over. */
@@ -79,6 +82,7 @@ export class ReplicationPresenter {
       return;
     }
     await this.loadConflicts(activity);
+    await this.refreshTransfers();
   }
 
   async loadPeers(libraryId: string, activity: RequestActivity = 'interactive'): Promise<void> {
@@ -89,7 +93,7 @@ export class ReplicationPresenter {
       this.toasts.showError(ReplicationPresenterStrings.couldNotReadDevices(), message(err));
       return;
     }
-    this.putPeers(libraryId, answer.peers, answer.sync_originals);
+    this.putPeers(libraryId, answer);
   }
 
   /**
@@ -112,6 +116,17 @@ export class ReplicationPresenter {
     }
     await this.loadPeers(libraryId);
     await this.refreshTransfers();
+  }
+
+  /** Whether every session also sends and fetches the originals either side lacks. */
+  async setAutoTransferOriginals(libraryId: string, value: boolean): Promise<void> {
+    try {
+      await replicationApi.setAutoTransferOriginals(libraryId, value);
+    } catch (err) {
+      this.toasts.showError(SettingsStrings.couldNotSaveSetting(), message(err));
+      return;
+    }
+    await this.loadPeers(libraryId);
   }
 
   async rename(libraryId: string, peerId: string, name: string): Promise<void> {
@@ -150,16 +165,6 @@ export class ReplicationPresenter {
     await this.loadPeers(libraryId);
   }
 
-  /** What to read out to the other device (§9.1). */
-  async loadReachable(): Promise<void> {
-    try {
-      const { addresses } = await replicationApi.reachableAddresses();
-      this.putReachable(addresses);
-    } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotWorkOutAddress(), message(err));
-    }
-  }
-
   /** What a peer is offering (§9.1). A read: nothing is recorded on either side. */
   async browse(address: string): Promise<BrowsedRemote | null> {
     this.clearError();
@@ -171,7 +176,10 @@ export class ReplicationPresenter {
     }
   }
 
-  /** Pairs with one of them and takes its catalogue, which is the whole add (§9.1). */
+  /**
+   * Pairs with one of them and takes its catalogue, which is the whole add (§9.1). A replica that
+   * keeps originals has them queued by the server once the catalogue lands.
+   */
   async addReplica(address: string, libraryId: string, rootPath: string, syncOriginals: boolean): Promise<boolean> {
     this.clearError();
     try {
@@ -179,6 +187,7 @@ export class ReplicationPresenter {
       this.toasts.show(ReplicationPresenterStrings.syncedLibraryAdded(replica.applied));
       await this.libraries.load();
       await this.loadPeers(replica.library_id);
+      await this.refreshTransfers();
       return true;
     } catch (err) {
       this.failedToLink(message(err));
@@ -205,6 +214,7 @@ export class ReplicationPresenter {
     } finally {
       this.busy(null);
     }
+    await this.refreshTransfers();
   }
 
   async loadConflicts(activity: RequestActivity = 'interactive'): Promise<void> {
@@ -378,9 +388,10 @@ export class ReplicationPresenter {
   }
 
   @action.bound
-  private putPeers(libraryId: string, peers: PairedPeer[], syncOriginals: boolean): void {
-    this.store.peersByLibrary.set(libraryId, peers);
-    this.store.syncOriginalsByLibrary.set(libraryId, syncOriginals);
+  private putPeers(libraryId: string, answer: PeersResponse): void {
+    this.store.peersByLibrary.set(libraryId, answer.peers);
+    this.store.syncOriginalsByLibrary.set(libraryId, answer.sync_originals);
+    this.store.autoTransferByLibrary.set(libraryId, answer.auto_transfer_originals);
   }
 
   @action.bound
@@ -392,11 +403,9 @@ export class ReplicationPresenter {
     this.store.syncOriginalsByLibrary = new Map(
       libraries.map((library) => [library.library_id, library.sync_originals]),
     );
-  }
-
-  @action.bound
-  private putReachable(addresses: ReachableAddress[]): void {
-    this.store.reachable = addresses;
+    this.store.autoTransferByLibrary = new Map(
+      libraries.map((library) => [library.library_id, library.auto_transfer_originals]),
+    );
   }
 
   @action.bound

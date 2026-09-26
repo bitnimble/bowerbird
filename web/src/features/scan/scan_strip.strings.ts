@@ -1,6 +1,10 @@
 import { type LibraryScanStatus } from '../../../../src/schemas/libraries';
 import type { ScanCounting } from './scan_store';
 
+function originals(count: number): string {
+  return `${count} ${count === 1 ? 'original' : 'originals'}`;
+}
+
 export const ScanStripStrings = {
   status: (status: LibraryScanStatus['status']) =>
     status === 'processing' ? 'processing'
@@ -18,4 +22,13 @@ export const ScanStripStrings = {
   added: (count: number) => ` · +${count}`,
   moved: (count: number) => ` · ${count} moved`,
   missing: (count: number) => ` · ${count} missing`,
+
+  syncing: () => 'syncing',
+  fetching: (count: number) => `fetching ${originals(count)}`,
+  fetchingFromBackup: () => 'fetching originals from the backup',
+  sending: (count: number) => `sending ${originals(count)}`,
+  backingUp: (count: number) => `backing up ${originals(count)}`,
+  backingUpNow: () => 'backing up',
+  /** `continues` where it follows the scan's own words. */
+  moving: (parts: string[], continues: boolean) => `${continues ? ' · ' : ''}${parts.join(' · ')}`,
 };

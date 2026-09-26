@@ -118,6 +118,21 @@ export function setSyncsOriginals(db: Database, libraryId: string, value: boolea
   if (changed === 0) throw new AppError('NOT_FOUND', `library ${libraryId} is not replicated`);
 }
 
+/** Whether every session with a device also queues the originals either side lacks. */
+export function autoTransfersOriginals(db: Database, libraryId: string): boolean {
+  const row = db
+    .query('SELECT auto_transfer_originals FROM replication_libraries WHERE library_id = ?')
+    .get(libraryId) as { auto_transfer_originals: number } | null;
+  return row != null && row.auto_transfer_originals !== 0;
+}
+
+export function setAutoTransfersOriginals(db: Database, libraryId: string, value: boolean): void {
+  const changed = db
+    .query('UPDATE replication_libraries SET auto_transfer_originals = ? WHERE library_id = ?')
+    .run(value ? 1 : 0, libraryId).changes;
+  if (changed === 0) throw new AppError('NOT_FOUND', `library ${libraryId} is not replicated`);
+}
+
 /**
  * What a peer said about its own disk at the last handshake (§7.10), so this
  * side can stop offering to send bytes it would refuse. Advisory only: the
@@ -188,12 +203,13 @@ export function pairedPeers(db: Database, libraryId: string): PairedPeer[] {
  */
 export function everyPairing(db: Database): AllPeersResponse['libraries'] {
   const rows = db
-    .query('SELECT library_id, sync_originals FROM replication_libraries ORDER BY library_id')
-    .all() as { library_id: string; sync_originals: number }[];
+    .query('SELECT library_id, sync_originals, auto_transfer_originals FROM replication_libraries ORDER BY library_id')
+    .all() as { library_id: string; sync_originals: number; auto_transfer_originals: number }[];
   return rows.map((row) => ({
     library_id: row.library_id,
     peers: pairedPeers(db, row.library_id),
     sync_originals: row.sync_originals !== 0,
+    auto_transfer_originals: row.auto_transfer_originals !== 0,
   }));
 }
 

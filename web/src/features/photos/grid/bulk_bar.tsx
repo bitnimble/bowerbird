@@ -13,6 +13,7 @@ import {
   Layers2,
   ListChecks,
   Plus,
+  RefreshCw,
   RotateCcw,
   RotateCw,
   Sparkles,
@@ -32,7 +33,6 @@ import {
   useShootsStore,
 } from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
-import { CheckMenu } from '../../../ui/check_menu';
 import { ICON } from '../../../ui/icon';
 import { menuSection } from '../../../ui/menu_section';
 import type { Option } from '../../../ui/option';
@@ -316,13 +316,13 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
           reader is asking about at six figures anyway, and a count is not
           something the client can answer there - the stacks in the rows it has
           never held stand for a number only the server knows. */}
-      <Text variant="mono" style={styles.count}>
-        {store.allSelected ? BulkBarStrings.allSelected() : BulkBarStrings.countSelected(count)}
-      </Text>
       <Button variant="ghost" onClick={photos.clearSelection}>
         <X size={ICON} />
         {BulkBarStrings.clear()}
       </Button>
+      <Text variant="mono" style={styles.count}>
+        {store.allSelected ? BulkBarStrings.allSelected() : BulkBarStrings.countSelected(count)}
+      </Text>
 
       {/* The cull's own two decisions, over the selection, for the same reason
           they are on every tile: routing a burst's verdict through the tiles one
@@ -351,33 +351,8 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
         </Button>
       ) : (
         <>
-          {/* §7.6. Named per peer because that is what the action is: the copy
-              here goes only once the one over there answers for itself, so which
-              peer is asked is the whole decision. */}
-          {peers.length > 0 && (
-            <CheckMenu
-              closeOnSelect
-              disabled={readOnly}
-              tooltip={readOnlyRefusal}
-              trigger={
-                <>
-                  <HardDrive size={ICON} />
-                  {BulkBarStrings.removeLocalCopy()}
-                </>
-              }
-              options={peers.map((p) => ({ value: p.peer_id, label: BulkBarStrings.keptOn(p.name) }))}
-              selected={[]}
-              onToggle={(peerId) => {
-                const target = photos.selectionTarget();
-                if (target == null || libraryId == null) return;
-                const name = replicationStore.peerName(libraryId, peerId);
-                if (!window.confirm(BulkBarStrings.removeLocalCopyWarning(name, count, store.allSelected))) return;
-                void replication.removeLocalCopies(target, libraryId, peerId);
-              }}
-            />
-          )}
-
           <OverflowMenu
+            hotkey
             label={BulkBarStrings.moreActions()}
             sections={[
               menuSection({
@@ -412,7 +387,12 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                     label={MergePageStrings.mergePhotos()}
                     icon={<PanoramaIcon size={ICON} />}
                     options={[
-                      { value: 'panorama' as const, label: MergePageStrings.toPanorama() },
+                      {
+                        value: 'panorama' as const,
+                        label: MergePageStrings.toPanorama(),
+                        disabled: count < 2,
+                        tooltip: count < 2 ? MergePageStrings.selectAtLeastTwo() : undefined,
+                      },
                       {
                         value: 'assembly' as const,
                         label: MergePageStrings.takeBestParts(),
@@ -489,6 +469,35 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                   }
                 },
               }),
+              // §7.6. Named per peer because that is what the action is: the copy here goes only
+              // once the one over there answers for itself, so which peer is asked is the whole
+              // decision.
+              ...(peers.length > 0 ?
+                [
+                  menuSection({
+                    content: (
+                      <Submenu
+                        label={BulkBarStrings.sync()}
+                        icon={<RefreshCw size={ICON} />}
+                        options={peers.map((p) => ({
+                          value: p.peer_id,
+                          label: BulkBarStrings.removeLocalCopyKeptOn(p.name),
+                          icon: <HardDrive size={ICON} />,
+                        }))}
+                        onSelect={(peerId) => {
+                          const target = photos.selectionTarget();
+                          if (target == null || libraryId == null) return;
+                          const name = replicationStore.peerName(libraryId, peerId);
+                          if (!window.confirm(BulkBarStrings.removeLocalCopyWarning(name, count, store.allSelected))) return;
+                          void replication.removeLocalCopies(target, libraryId, peerId);
+                        }}
+                        disabled={readOnly}
+                        tooltip={readOnlyRefusal}
+                      />
+                    ),
+                  }),
+                ]
+              : []),
               menuSection({
                 content: <SendToFrameTv onSend={(tvId) => void frameTv.sendSelection(tvId)} />,
                 options: photoOptions({

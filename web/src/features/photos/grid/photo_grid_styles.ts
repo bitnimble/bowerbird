@@ -561,6 +561,9 @@ export const tile = stylex.create({
   missing: {
     color: color.ochre,
   },
+  fetching: {
+    color: color.glass,
+  },
   deleted: {
     color: color.rose,
   },

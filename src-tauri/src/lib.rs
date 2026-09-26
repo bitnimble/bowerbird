@@ -68,6 +68,7 @@ pub fn run() {
             export::pick_export_folder,
             export::export_to_folder,
             open_with::open_original_with,
+            reveal::open_folder,
             reveal::reveal_file,
             reveal::reveal_original,
             server::app_data_dir,

@@ -285,7 +285,12 @@ export type PushPageResponse = z.infer<typeof PushPageResponseSchema>;
 
 export const RenamePeerRequestSchema = z.object({ name: z.string().trim().min(1).max(120) });
 
-export const SyncOriginalsRequestSchema = z.object({ sync_originals: z.boolean() });
+export const SyncOriginalsRequestSchema = z
+  .object({
+    sync_originals: z.boolean().optional(),
+    auto_transfer_originals: z.boolean().optional(),
+  })
+  .refine((body) => body.sync_originals != null || body.auto_transfer_originals != null, 'nothing to change');
 
 export const SyncOriginalsResponseSchema = z.object({ cancelled: z.number().int() });
 export type SyncOriginalsResponse = z.infer<typeof SyncOriginalsResponseSchema>;
@@ -312,6 +317,8 @@ export const PeersResponseSchema = z.object({
   peers: z.array(PairedPeerSchema),
   /** Whether this device keeps the RAW files of this library (§7.10). */
   sync_originals: z.boolean(),
+  /** Whether every session also sends and fetches the originals either side lacks. */
+  auto_transfer_originals: z.boolean(),
 });
 export type PeersResponse = z.infer<typeof PeersResponseSchema>;
 
@@ -334,20 +341,6 @@ export type ReplicateResult = z.infer<typeof ReplicateResultSchema>;
 
 export const SoleHoldingsResponseSchema = z.object({ photos: z.array(z.string()) });
 export type SoleHoldingsResponse = z.infer<typeof SoleHoldingsResponseSchema>;
-
-/** An address to offer, and how much this server actually knows about it. */
-export const ReachableAddressSchema = z.object({
-  url: z.string(),
-  /**
-   * `browser` is the origin the reader is on: known to work, because they are
-   * using it. `interface` is a guess assembled from a local NIC.
-   */
-  kind: z.enum(['browser', 'interface']),
-});
-export type ReachableAddress = z.infer<typeof ReachableAddressSchema>;
-
-export const ReachableAddressesSchema = z.object({ addresses: z.array(ReachableAddressSchema) });
-export type ReachableAddresses = z.infer<typeof ReachableAddressesSchema>;
 
 /** Asking a peer what it has, which changes nothing on either side (§9.1). */
 export const BrowseRemoteRequestSchema = z.object({

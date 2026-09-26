@@ -4,6 +4,7 @@ export const BackupPresenterStrings = {
   couldNotStop: () => "Couldn't stop backing up",
   couldNotSetLimit: () => "Couldn't set the storage limit",
   couldNotBackUp: () => "Couldn't back up",
+  couldNotOpenFolder: () => "Couldn't open the backup folder",
   upToDate: () => 'The backup is up to date.',
   copied: (photos: number) => `Copied ${photos} ${photos === 1 ? 'photo' : 'photos'} to the backup.`,
   removedLocalCopies: (removed: number) =>

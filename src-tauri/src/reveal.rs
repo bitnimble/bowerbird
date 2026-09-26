@@ -16,6 +16,16 @@ pub async fn reveal_original(photo_id: String) -> Result<(), String> {
     reveal(&crate::open_with::original_path(&photo_id).await?)
 }
 
+/// The folder itself, opened, rather than selected in its parent.
+#[tauri::command]
+pub fn open_folder(path: String) -> Result<(), String> {
+    let dir = Path::new(&path);
+    if !dir.is_dir() {
+        return Err(format!("{} is not a folder on this device", dir.display()));
+    }
+    crate::server::open_folder(dir).map_err(|e| format!("could not open {}: {e}", dir.display()))
+}
+
 fn reveal(file: &Path) -> Result<(), String> {
     // Handed a path that is not there, a manager opens somebody's home folder instead.
     if !file.exists() {

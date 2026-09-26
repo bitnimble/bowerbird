@@ -187,6 +187,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                 presenter={browser.presenter}
                 label={AddLibraryStrings.libraryRootPath()}
                 placeholder={AddReplicaStrings.rootPlaceholder()}
+                canCreate
                 onPathChange={setPath}
               />
               <Text variant="mono" as="p">

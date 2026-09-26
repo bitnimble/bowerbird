@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
-import { CornerLeftUp, Folder } from 'lucide-react';
+import { CornerLeftUp, Folder, FolderPlus } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { ICON } from '../../ui/icon';
@@ -58,18 +58,26 @@ export const FolderBrowser = observer(function FolderBrowser({
   presenter,
   label,
   placeholder,
+  canCreate = false,
   onPathChange,
 }: {
   store: FolderBrowserStore;
   presenter: FolderBrowserPresenter;
   label: string;
   placeholder?: string;
+  canCreate?: boolean;
   /** Every folder the walk lands on, and every path typed into the box. */
   onPathChange: (path: string) => void;
 }): JSX.Element {
   const listing = store.listing;
   const [draft, setDraft] = useState('');
+  const [naming, setNaming] = useState<string | null>(null);
   const typedTo = useRef<string | null>(null);
+
+  async function create(): Promise<void> {
+    if (naming == null) return;
+    if (await presenter.createFolder(naming)) setNaming(null);
+  }
 
   // The box is the answer and browsing is one way of filling it in, so every
   // move through the tree writes the folder it landed on back into it. A walk
@@ -128,7 +136,40 @@ export const FolderBrowser = observer(function FolderBrowser({
           }}
           onKeyDown={(e) => e.key === 'Enter' && void presenter.open(draft.trim())}
         />
+        {canCreate && (
+          <Button
+            iconOnly
+            aria-label={FolderBrowserStrings.createFolder()}
+            aria-expanded={naming != null}
+            disabled={listing == null}
+            onClick={() => setNaming(naming == null ? '' : null)}
+          >
+            <FolderPlus size={ICON} />
+          </Button>
+        )}
       </div>
+      {naming != null && (
+        <div {...stylex.props(styles.bar)}>
+          <TextField
+            grow
+            autoFocus
+            label={FolderBrowserStrings.folderName()}
+            value={naming}
+            onChange={setNaming}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void create();
+              if (e.key === 'Escape') {
+                // The dialog around the picker closes on Escape too.
+                e.stopPropagation();
+                setNaming(null);
+              }
+            }}
+          />
+          <Button disabled={naming.trim() === '' || store.loading} onClick={() => void create()}>
+            {FolderBrowserStrings.create()}
+          </Button>
+        </div>
+      )}
       <div {...stylex.props(styles.list)}>
         {store.error != null && <Text variant="mono">{store.error}</Text>}
         {listing?.directories.length === 0 && <Text variant="muted">{FolderBrowserStrings.noFolders()}</Text>}

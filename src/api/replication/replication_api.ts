@@ -15,7 +15,6 @@ import {
   PushDoneRequestSchema,
   PushPageRequestSchema,
   PushPageResponseSchema,
-  ReachableAddressesSchema,
   RemoteLibrariesSchema,
   RenamePeerRequestSchema,
   ReplicaSummarySchema,
@@ -26,22 +25,10 @@ import {
   UnpairRequestSchema,
 } from '../../schemas/replication';
 import { PathSegment, route } from '../../schemas/route';
-import { reachableAddresses } from '../../services/replication/addresses';
 import { takeAsLongAsItTakes } from '../long_requests';
 import { respond } from '../respond';
 import type { ReplicationRunner } from '../../services/replication/replication_runner';
 import type { ReplicationService } from '../../services/replication/replication_service';
-
-// A same-origin fetch sends no Origin header, so the referer is what names the
-// page the reader is on.
-function originOf(referer: string | undefined): string | null {
-  if (referer == null) return null;
-  try {
-    return new URL(referer).origin;
-  } catch {
-    return null;
-  }
-}
 
 export class ReplicationApi {
   readonly routes: Hono;
@@ -89,14 +76,6 @@ export class ReplicationApi {
       return c.body(null, 204);
     });
 
-    // What to type into the other device (§9.1). The origin is the browser's own,
-    // because the API cannot know which address reaches the *web* server in front
-    // of it - which in the usual container is the only one published at all.
-    app.get(route(PathSegment.reachable()), (c) => {
-      const url = c.req.header('origin') ?? originOf(c.req.header('referer')) ?? null;
-      return c.json(respond(ReachableAddressesSchema, { addresses: reachableAddresses(url) }));
-    });
-
     // A peer saying to forget it, which is also how a half-made pairing is rolled
     // back when the local half fails (§8.4, §9.1).
     app.post(route(PathSegment.unpair()), async (c) => {
@@ -138,13 +117,16 @@ export class ReplicationApi {
         respond(PeersResponseSchema, {
           peers: this.replication.peers(libraryId),
           sync_originals: this.replication.syncsOriginals(libraryId),
+          auto_transfer_originals: this.replication.autoTransfersOriginals(libraryId),
         }),
       );
     });
 
     app.patch(route(PathSegment.libraries(), PathSegment.param('libraryId'), PathSegment.originals()), async (c) => {
       const libraryId = c.req.param('libraryId');
-      const { sync_originals } = SyncOriginalsRequestSchema.parse(await c.req.json());
+      const { sync_originals, auto_transfer_originals } = SyncOriginalsRequestSchema.parse(await c.req.json());
+      if (auto_transfer_originals != null) this.replication.setAutoTransfersOriginals(libraryId, auto_transfer_originals);
+      if (sync_originals == null) return c.json(respond(SyncOriginalsResponseSchema, { cancelled: 0 }));
       this.replication.setSyncsOriginals(libraryId, sync_originals);
       // The queue would otherwise go on delivering exactly what this turned off.
       const stopped = sync_originals ? 0 : await this.cancelIncoming(libraryId);

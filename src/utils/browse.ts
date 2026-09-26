@@ -1,4 +1,4 @@
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../errors';
 import type { BrowseResponse } from '../schemas/browse';
@@ -19,6 +19,18 @@ export async function browseAbsolute(dir: string, writable?: (dir: string) => bo
     directories: names.map((name) => ({ name, path: path.join(dir, name) })),
     writable: writable?.(dir),
   };
+}
+
+export async function createFolder(dir: string): Promise<void> {
+  try {
+    await mkdir(dir);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') throw new AppError('CONFLICT', `${dir} already exists`);
+    if (code === 'ENOENT' || code === 'ENOTDIR') throw new AppError('NOT_FOUND', `no such directory: ${path.dirname(dir)}`);
+    if (code === 'EACCES' || code === 'EPERM') throw new AppError('VALIDATION_ERROR', `cannot create ${dir}: permission denied`);
+    throw err;
+  }
 }
 
 // Every folder the library contains, in the root-relative paths a shoot's

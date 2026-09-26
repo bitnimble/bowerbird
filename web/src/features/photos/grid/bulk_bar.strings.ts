@@ -50,8 +50,8 @@ export const BulkBarStrings = {
   addToNewAlbum: () => 'Add to new album…',
   removeFrom: (name: string) => `Remove from ${name}`,
 
-  removeLocalCopy: () => 'Remove local copy',
-  keptOn: (peerName: string) => `Kept on ${peerName}`,
+  sync: () => 'Sync',
+  removeLocalCopyKeptOn: (peerName: string) => `Remove local copy (kept on ${peerName})`,
   removeLocalCopyWarning: (peerName: string, count: number, allSelected: boolean) =>
     `Remove ${
       count < 2 ? 'this local copy'

@@ -5,7 +5,6 @@ export const SyncedDevicesStrings = {
   /** Both said here and in the add-replica dialog, which offers the same choice. */
   keepsOriginals: () => 'Keeps originals and the catalogue on this device.',
   catalogueOnly: () => 'Keeps the catalogue and renditions here. Editing fetches originals as needed.',
-  syncToAnotherDevice: () => 'Sync to another device',
+  autoTransferOriginals: () => 'Automatically send and fetch originals',
   syncing: () => 'Syncing…',
-  syncNow: () => 'Sync now',
 };

@@ -325,7 +325,7 @@ describe('a photo with no local copy', () => {
     await device.mirror.setTarget(LIB, device.backupRoot);
     device.mirror.setBudget(LIB, 1);
     await device.mirror.run(LIB);
-    await device.mirror.removeTarget(LIB);
+    await device.mirror.removeTarget(LIB, false);
     expect(device.backups.holders(LIB, 'p1')).toEqual([]);
 
     await device.mirror.setTarget(LIB, device.backupRoot);
@@ -366,5 +366,38 @@ describe('a photo with no local copy', () => {
     const library = device.libraries.getById(LIB)!;
 
     await expect(device.originals.open(library, photo)).rejects.toThrow(/not available/);
+  });
+});
+
+describe('stopping a backup', () => {
+  it('can fetch every original back onto this device before it forgets the folder', async () => {
+    const device = makeDevice();
+    addPhoto(device, 'p1', 'trip/one.arw', 'RAW-one', '2026-01-01T00:00:00.000Z');
+    await device.mirror.setTarget(LIB, device.backupRoot);
+    device.mirror.setBudget(LIB, 1);
+    await device.mirror.run(LIB);
+    expect(photoRow(device, 'p1').is_missing).toBe(1);
+
+    const stopping = device.mirror.removeTarget(LIB, true);
+    expect(device.mirror.fetchBackProgress(LIB)).toMatchObject({ done: 0, total: 1 });
+    await stopping;
+    expect(device.mirror.fetchBackProgress(LIB)).toBeNull();
+
+    expect(readFileSync(path.join(device.root, 'trip/one.arw'), 'utf8')).toBe('RAW-one');
+    expect(photoRow(device, 'p1').is_missing).toBe(0);
+    expect(device.mirror.status(LIB)).toBeNull();
+  });
+
+  it('keeps the folder when an original cannot come back', async () => {
+    const device = makeDevice();
+    addPhoto(device, 'p1', 'trip/one.arw', 'RAW-one', '2026-01-01T00:00:00.000Z');
+    await device.mirror.setTarget(LIB, device.backupRoot);
+    device.mirror.setBudget(LIB, 1);
+    await device.mirror.run(LIB);
+    rmSync(path.join(device.backupRoot, 'trip/one.arw'));
+
+    await expect(device.mirror.removeTarget(LIB, true)).rejects.toThrow("1 photo didn't come back");
+
+    expect(device.mirror.status(LIB)).not.toBeNull();
   });
 });

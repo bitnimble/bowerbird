@@ -1,6 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useEffect } from 'react';
 import { HardDriveDownload, HardDriveUpload } from 'lucide-react';
 import { type Library } from '../../../../src/schemas/libraries';
 import { Button } from '../../ui/button';
@@ -37,14 +36,9 @@ export const ReplicationStrip = observer(function ReplicationStrip({
   presenter: ReplicationPresenter;
 }): JSX.Element | null {
   const peers = store.peersOf(library.id);
-  const hasPeers = peers.length > 0;
   const keepsOriginals = store.syncsOriginals(library.id);
 
-  useEffect(() => {
-    if (hasPeers) void presenter.refreshTransfers();
-  }, [hasPeers, presenter]);
-
-  if (!hasPeers) return null;
+  if (peers.length === 0) return null;
 
   return (
     <>

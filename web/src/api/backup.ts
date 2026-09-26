@@ -4,6 +4,8 @@ import {
   type BackupStatus,
   BackupStatusSchema,
   BackupStatusesSchema,
+  type FetchBackProgress,
+  FetchBackStatusSchema,
   SetBackupRequestSchema,
   SetLocalBudgetRequestSchema,
 } from '../../../src/schemas/backup';
@@ -21,8 +23,21 @@ export const backupApi = {
       route(PathSegment.api(), PathSegment.backup()),
       SetBackupRequestSchema.parse({ library_id: libraryId, path }),
     ),
-  remove: (libraryId: string): Promise<void> =>
-    request(NothingSchema, 'DELETE', route(PathSegment.api(), PathSegment.backup(), libraryId)),
+  // Fetching every offloaded original back first is minutes, like a pass.
+  remove: (libraryId: string, fetchFirst: boolean): Promise<void> =>
+    request(
+      NothingSchema,
+      'DELETE',
+      `${route(PathSegment.api(), PathSegment.backup(), libraryId)}${fetchFirst ? '?fetch_first=1' : ''}`,
+    ),
+  fetchBackProgress: (libraryId: string): Promise<FetchBackProgress | null> =>
+    request(
+      FetchBackStatusSchema,
+      'GET',
+      route(PathSegment.api(), PathSegment.backup(), libraryId, PathSegment.fetch()),
+      undefined,
+      { activity: 'background' },
+    ).then((status) => status.progress),
   setBudget: (libraryId: string, bytes: number | null): Promise<BackupStatus> =>
     request(
       BackupStatusSchema,

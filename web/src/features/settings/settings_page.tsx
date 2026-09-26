@@ -412,7 +412,7 @@ function AppDataFolder(): JSX.Element | null {
         }}
       >
         <FolderOpen size={ICON} />
-        {SettingsStrings.openAppDataFolder()}
+        {SettingsStrings.openFolder()}
       </Button>
     </SettingRow>
   );

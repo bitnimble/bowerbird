@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
-import type { BackupRunResponse, BackupStatus } from '../../schemas/backup';
+import type { BackupRunResponse, BackupStatus, FetchBackProgress } from '../../schemas/backup';
 import { newId } from '../../schemas/id';
 import type { Library } from '../../schemas/libraries';
 import { deleteStagedBlob } from '../../utils/deletions';
@@ -46,6 +46,7 @@ const SCRUB_PER_PASS = 500;
 export class Mirror {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly running = new Set<string>();
+  private readonly fetchingBack = new Map<string, readonly string[]>();
 
   constructor(
     private readonly db: Database,
@@ -165,12 +166,69 @@ export class Mirror {
   /**
    * Forgets the folder. Nothing on it is touched: a backup somebody unpairs is a backup they still
    * have, and this app has never deleted from one (§14.3).
+   *
+   * @param fetchFirst brings back every original only the folder holds before forgetting it, and
+   * forgets nothing if any of them did not come back.
    */
-  async removeTarget(libraryId: string): Promise<void> {
+  async removeTarget(libraryId: string, fetchFirst: boolean): Promise<void> {
     const peer = this.targetOf(libraryId);
     if (peer == null) throw new AppError('NOT_FOUND', `library ${libraryId} has no backup folder`);
+    if (fetchFirst) await this.fetchBack(peer);
     await this.transfers.cancelFor(libraryId, peer.peerId);
     this.forget(libraryId, peer.peerId);
+  }
+
+  /** Null unless `removeTarget` is fetching this library's originals back. */
+  fetchBackProgress(libraryId: string): FetchBackProgress | null {
+    const pulls = this.fetchingBack.get(libraryId);
+    if (pulls == null) return null;
+    const tracked = new Set(pulls);
+    const items = this.transfers.list(libraryId).filter((t) => tracked.has(t.id));
+    const moving = items.find((t) => t.state === 'active');
+    return {
+      done: items.filter((t) => t.state !== 'queued' && t.state !== 'active').length,
+      total: items.length,
+      current:
+        moving == null ? null : (
+          { path: this.pathOf(moving.photo_id), bytes_done: moving.bytes_done, bytes_total: moving.bytes_total }
+        ),
+    };
+  }
+
+  private pathOf(photoId: string): string {
+    const row = this.db.query("SELECT json_extract(recipe, '$.path') AS path FROM photos WHERE id = ?").get(photoId) as {
+      path: string | null;
+    } | null;
+    return row?.path ?? photoId;
+  }
+
+  private async fetchBack(peer: PassivePeer): Promise<void> {
+    // Held like a pass, so the cull cannot give copies back while this is fetching them.
+    if (this.running.has(peer.libraryId)) {
+      throw new AppError('CONFLICT', 'A backup is running for this library. Try again when it finishes.');
+    }
+    this.running.add(peer.libraryId);
+    try {
+      assertMirrorOf(peer.root, peer.libraryId, this.library(peer.libraryId).name);
+      const owed = new Set(this.backups.offloadedTo(peer.libraryId, peer.peerId));
+      this.transfers.queuePull(peer.libraryId, peer.peerId, [...owed]);
+      // Each of these pulls rather than the whole queue, which may hold other libraries' work.
+      const pulls = this.transfers
+        .list(peer.libraryId)
+        .filter((t) => t.direction === 'pull' && t.peer_id === peer.peerId && owed.has(t.photo_id));
+      this.fetchingBack.set(peer.libraryId, pulls.map((t) => t.id));
+      await Promise.all(pulls.map((t) => this.transfers.settled(t.id)));
+      const left = this.backups.offloadedTo(peer.libraryId, peer.peerId).length;
+      if (left > 0) {
+        throw new AppError(
+          'CONFLICT',
+          `${left} ${left === 1 ? "photo didn't" : "photos didn't"} come back from ${peer.root}. It's still your backup folder. Check it's connected and try again.`,
+        );
+      }
+    } finally {
+      this.running.delete(peer.libraryId);
+      this.fetchingBack.delete(peer.libraryId);
+    }
   }
 
   private forget(libraryId: string, peerId: string): void {

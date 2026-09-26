@@ -2,6 +2,7 @@ import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import { newId } from '../../schemas/id';
+import type { TransferDirection } from '../../schemas/blobs';
 import type { BrowsedRemote, ReplicaSummary, ReplicateResult } from '../../schemas/replication';
 import type { BlobLocations } from '../blobs/blob_locations';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
@@ -10,12 +11,12 @@ import { LEASE_REFRESH_MS, type SyncLocksRepository } from '../sync/coordination
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import { collectTombstones } from './gc';
 import { drainMaterialisations, unsettled } from './materialise';
-import { reachablePeers, recordPeerOutcome } from './pairing';
+import { autoTransfersOriginals, pairedPeers, reachablePeers, recordPeerOutcome, syncsOriginals } from './pairing';
 import { addReplica, browseRemote, pullFromRemote, pushToRemote } from './remote';
 
 // What drives replication on this machine (docs/replication.md §6.4, §9): birth a
 // replica, and run sessions against the peers it can dial. The catalogue
-// replicates by itself; originals never do (§7.3).
+// replicates by itself; originals only where a library is set to exchange them.
 
 const log = new Logger('replication');
 
@@ -51,6 +52,8 @@ export class ReplicationRunner {
      * this a peer that stopped answering is news only to whoever reloads the page.
      */
     private readonly replicated: (libraryId: string) => void,
+    /** Queues the originals one side holds that the other lacks, answering how many. */
+    private readonly transferOriginals: (libraryId: string, peerId: string, direction: TransferDirection) => Promise<number>,
   ) {}
 
   /** §9.1: what a peer is offering, which registers nothing on either side. */
@@ -63,6 +66,7 @@ export class ReplicationRunner {
     const cloned = await addReplica(this.db, trimmed(address), libraryId, rootPath, syncOriginals);
     try {
       const result = await this.replicate(cloned.libraryId);
+      if (syncOriginals) await this.queueOriginals(cloned.libraryId, cloned.peer, 'pull');
       return { library_id: cloned.libraryId, peer_id: cloned.peer, applied: result.applied };
     } finally {
       // After the clone, not before it: announcing a library starts its first
@@ -91,6 +95,41 @@ export class ReplicationRunner {
     }
   }
 
+  async replicate(libraryId: string): Promise<ReplicateResult> {
+    try {
+      const { applied, peers, reached } = await this.session(libraryId);
+      if (autoTransfersOriginals(this.db, libraryId)) {
+        for (const peerId of reached) await this.exchangeOriginals(libraryId, peerId);
+      }
+      return { applied, peers };
+    } finally {
+      // Whatever the session managed, including nothing: an outcome is recorded
+      // against each peer before anything here can throw, so a run that gave up
+      // part-way is exactly the one with something to say. After the originals are
+      // queued, or a page reading the transfers on this news finds none and stops.
+      this.replicated(libraryId);
+    }
+  }
+
+  private async exchangeOriginals(libraryId: string, peerId: string): Promise<void> {
+    const library = this.libraries.getById(libraryId);
+    if (library == null) return;
+    if (!library.read_only && syncsOriginals(this.db, libraryId)) await this.queueOriginals(libraryId, peerId, 'pull');
+    if (pairedPeers(this.db, libraryId).some((peer) => peer.peer_id === peerId && peer.wants_originals)) {
+      await this.queueOriginals(libraryId, peerId, 'push');
+    }
+  }
+
+  // The catalogue has already landed, so a queue that refuses is a transfer to retry, not a failed sync.
+  private async queueOriginals(libraryId: string, peerId: string, direction: TransferDirection): Promise<void> {
+    try {
+      const queued = await this.transferOriginals(libraryId, peerId, direction);
+      if (queued > 0) log.info('queued originals', { library: libraryId, peer: peerId, direction, queued });
+    } catch (error) {
+      log.warn('could not queue originals', { library: libraryId, peer: peerId, direction, err: String(error) });
+    }
+  }
+
   /**
    * One session with every peer this library can reach, then the close-out every
    * run owes whether or not it dialled anybody.
@@ -99,7 +138,7 @@ export class ReplicationRunner {
    * photograph is at: a merge landing a shoot rename mid-walk would have the scan
    * read the moved files as new photographs and the old ones as gone.
    */
-  async replicate(libraryId: string): Promise<ReplicateResult> {
+  private async session(libraryId: string): Promise<ReplicateResult & { reached: string[] }> {
     // No peers to dial is not nothing to do. A peer that only ever gets dialled -
     // the server, whose paired rows carry no address (§6.4) - takes changes by
     // push, and a push queues file moves and leaves graves without collecting
@@ -126,6 +165,7 @@ export class ReplicationRunner {
     try {
       {
         let applied = 0;
+        const reached: string[] = [];
         const edited = new Set<string>();
         for (const peer of peers) {
           this.locks.refresh(libraryId, owner);
@@ -139,6 +179,7 @@ export class ReplicationRunner {
             applied += taken.applied;
             for (const photoId of taken.edited) edited.add(photoId);
             recordPeerOutcome(this.db, libraryId, peer.peerId, null);
+            reached.push(peer.peerId);
             log.info('replicated', {
               library: libraryId,
               peer: peer.peerId,
@@ -171,15 +212,11 @@ export class ReplicationRunner {
         // moves the watermark graves are collected below (§8.3).
         await guard(() => collectTombstones(this.db, libraryId));
         await libraryMutex.run(libraryId, () => this.materialise(libraryId));
-        return { applied, peers: peers.length };
+        return { applied, peers: peers.length, reached };
       }
     } finally {
       clearInterval(held);
       this.locks.release(libraryId, owner);
-      // Whatever the session managed, including nothing: an outcome is recorded
-      // against each peer before anything here can throw, so a run that gave up
-      // part-way is exactly the one with something to say.
-      this.replicated(libraryId);
     }
   }
 
@@ -200,7 +237,6 @@ export class ReplicationRunner {
     return unsettled(this.db, libraryId);
   }
 
-  /** Catalogues replicate on their own; the bytes never do (§7.3). */
   start(): void {
     this.timer ??= setInterval(() => void this.replicateAll(), AUTO_EVERY_MS);
     this.timer.unref?.();

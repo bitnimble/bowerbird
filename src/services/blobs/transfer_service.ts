@@ -202,6 +202,13 @@ export class TransferService {
     return queued;
   }
 
+  /** Fetches named originals from one holder, with no failing over to another. */
+  queuePull(libraryId: string, peer: string, photoIds: readonly string[]): number {
+    const queued = this.enqueue(libraryId, peer, 'pull', photoIds);
+    this.kick();
+    return queued;
+  }
+
   /** The same diff the other way: fetch what `peer` holds that this replica lacks. */
   async pullDiff(libraryId: string, peer: string, scope: BlobScope): Promise<number> {
     const library = this.library(libraryId);

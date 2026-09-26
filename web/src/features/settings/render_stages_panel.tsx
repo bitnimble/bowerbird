@@ -80,6 +80,9 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
   const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
   const busy = settings.isBenchmarking(rendition);
   const cameraMatching = settings.settings?.match_embedded_jpeg !== false;
+  const runs = (stage: RenderStage): boolean =>
+    (!['lens', 'colour'].includes(stage) || cameraMatching) && (!isOptional(stage) || !skipped.includes(stage));
+  const total = RENDER_STAGES.filter(runs).reduce((sum, stage) => sum + ms[stage], 0);
 
   return (
     <Panel title={SettingsStrings.renderStages()}>
@@ -103,14 +106,19 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
             : stage === 'colour' && skipped.includes('lens') ? SettingsStrings.colourNeedsLens()
             : undefined
           }
-          runs={(!['lens', 'colour'].includes(stage) || cameraMatching) && (!isOptional(stage) || !skipped.includes(stage))}
+          runs={runs(stage)}
           onChange={
             isOptional(stage) ?
-              (runs) => void libraries.setRenderStage(library.id, rendition, stage, runs)
+              (next) => void libraries.setRenderStage(library.id, rendition, stage, next)
             : undefined
           }
         />
       ))}
+
+      <SettingRow label={SettingsStrings.stagesTotal()}>
+        <Text variant="muted">{SettingsStrings.totalCost(total)}</Text>
+        <span {...stylex.props(styles.noBox)} />
+      </SettingRow>
 
       <Row style={styles.measure}>
         <Text variant="muted">

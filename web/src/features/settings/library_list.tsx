@@ -1,14 +1,23 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
-import { CircleStop, Image, Layers, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { CircleStop, HardDriveUpload, Image, Layers, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { type Library } from '../../../../src/schemas/libraries';
-import { useLibrariesStore, usePresenters, useScanStore } from '../../app/stores_context';
+import {
+  useBackupStore,
+  useLibrariesStore,
+  usePresenters,
+  useReplicationStore,
+  useScanStore,
+} from '../../app/stores_context';
 import { libraryLabel } from '../libraries/library_label';
+import { BulkBarStrings } from '../photos/grid/bulk_bar.strings';
 import { PhotoDetailStrings } from '../photos/viewer/photo_detail_page.strings';
 import { RENDITION_SOURCES } from '../photos/renditions';
 import { BackupPanel } from '../backup/backup_panel';
+import { BackupStrings } from '../backup/backup_panel.strings';
 import { SyncedDevicesPanel } from '../replication/synced_devices_panel';
+import { SyncedDevicesStrings } from '../replication/synced_devices_panel.strings';
 import { ScanStrip } from '../scan/scan_strip';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
@@ -109,7 +118,7 @@ export const LibraryList = observer(function LibraryList(): JSX.Element {
                 : SettingsStrings.scannedAt(relativeTime(library.last_synced_at)),
               )}
             </ListMeta>
-            {scan.libraryId === library.id && <ScanStrip />}
+            <ScanStrip library={library} />
             <Advanced summary={SettingsStrings.librarySettings()}>
               <FolderSettings library={library} />
               <RenditionSettings library={library} />
@@ -464,14 +473,43 @@ const LibraryNumberField = observer(function LibraryNumberField({
 // something you reach for every visit.
 const LibraryJobs = observer(function LibraryJobs({ library }: { library: Library }): JSX.Element {
   const scan = useScanStore();
-  const { scan: scanPresenter, libraries } = usePresenters();
+  const replication = useReplicationStore();
+  const backupStore = useBackupStore();
+  const { scan: scanPresenter, libraries, replication: replicationPresenter, backup } = usePresenters();
   const busy = scan.isBusy && scan.libraryId === library.id;
   const renders = library.rendition_source === 'render';
+  const syncing = replication.replicating === library.id;
+  const backingUp = backupStore.running === library.id;
 
   return (
     <Advanced summary={SettingsStrings.libraryJobs()}>
 
       <Panel flush>
+        {replication.hasPeers(library.id) && (
+          <SettingRow
+            label={SettingsStrings.syncLibrary()}
+            disabledReason={
+              library.read_only ? BulkBarStrings.notOnReadOnlyLibrary()
+              : syncing ? SettingsStrings.jobBusy()
+              : undefined
+            }
+          >
+            <Button disabled={syncing || library.read_only} onClick={() => void replicationPresenter.replicate(library.id)}>
+              <RefreshCw size={ICON} />
+              {syncing ? SyncedDevicesStrings.syncing() : SettingsStrings.run()}
+            </Button>
+          </SettingRow>
+        )}
+
+        {backupStore.statusOf(library.id) != null && (
+          <SettingRow label={SettingsStrings.backUpOriginals()} disabledReason={backingUp ? SettingsStrings.jobBusy() : undefined}>
+            <Button disabled={backingUp} onClick={() => void backup.runNow(library.id)}>
+              <HardDriveUpload size={ICON} />
+              {backingUp ? BackupStrings.backingUp() : SettingsStrings.run()}
+            </Button>
+          </SettingRow>
+        )}
+
         <SettingRow
           label={SettingsStrings.scanLibrary()}
           hint={SettingsStrings.scanLibraryHint()}

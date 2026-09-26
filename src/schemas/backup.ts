@@ -28,6 +28,20 @@ export const SetBackupRequestSchema = z.object({
 });
 export type SetBackupRequest = z.infer<typeof SetBackupRequestSchema>;
 
+export const RemoveBackupQuerySchema = z.object({ fetch_first: z.enum(['1']).optional() });
+
+/** How far stopping a backup has got with fetching its originals back, while it is. */
+export const FetchBackProgressSchema = z.object({
+  done: z.number().int(),
+  total: z.number().int(),
+  current: z
+    .object({ path: z.string(), bytes_done: z.number().int(), bytes_total: z.number().int().nullable() })
+    .nullable(),
+});
+export type FetchBackProgress = z.infer<typeof FetchBackProgressSchema>;
+
+export const FetchBackStatusSchema = z.object({ progress: FetchBackProgressSchema.nullable() });
+
 export const SetLocalBudgetRequestSchema = z.object({
   /** Null is no ceiling: every original stays on this device (§14.5). */
   local_budget_bytes: z.number().int().positive().nullable(),

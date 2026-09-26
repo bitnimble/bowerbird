@@ -21,7 +21,14 @@ import { RenditionsRepository } from '../../../services/processing/renditions/re
 import { StackMembership } from '../../../services/stacks/stack_membership';
 import { DEFAULT_SKEW_MS } from '../../../services/replication/clock';
 import { forgetLibrary } from '../../../services/replication/gc';
-import { pairedPeers, peerAddress, setSyncsOriginals, syncsOriginals } from '../../../services/replication/pairing';
+import {
+  autoTransfersOriginals,
+  pairedPeers,
+  peerAddress,
+  setAutoTransfersOriginals,
+  setSyncsOriginals,
+  syncsOriginals,
+} from '../../../services/replication/pairing';
 import { addReplica, browseRemote, openRemote, pullFromRemote, pushToRemote } from '../../../services/replication/remote';
 import { ReplicationRunner } from '../../../services/replication/replication_runner';
 import { ReplicationService } from '../../../services/replication/replication_service';
@@ -64,6 +71,7 @@ function serve(db: Database, now: () => number = Date.now): Server {
     () => {},
     () => {},
     () => {},
+    () => Promise.resolve(0),
   );
   app.route(
     route(PathSegment.api(), PathSegment.replication()),
@@ -323,11 +331,11 @@ describe('refused handshakes (§6.2, §2.2)', () => {
   // cannot tell `!==` from `>`. The schema half is the one that matters most - a
   // peer on another migration merges rows against columns it does not have.
   it.each([
-    ['a downlevel protocol', { protocol: 0, schema: latestMigrationMillis() }],
-    ['an uplevel protocol', { protocol: REPLICATION_PROTOCOL + 1, schema: latestMigrationMillis() }],
-    ['a downlevel schema', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() - 1 }],
-    ['an uplevel schema', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() + 1 }],
-  ])('refuses %s by name', async (_what, versions) => {
+    ['a downlevel protocol', { protocol: 0, schema: latestMigrationMillis() }, 'on this device'],
+    ['an uplevel protocol', { protocol: REPLICATION_PROTOCOL + 1, schema: latestMigrationMillis() }, 'on the other device'],
+    ['a downlevel schema', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() - 1 }, 'on this device'],
+    ['an uplevel schema', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() + 1 }, 'on the other device'],
+  ])('refuses %s, naming the device to update', async (_what, versions, update) => {
     const { origin, clone } = await pairedClone();
     const response = await post(origin.url, route(PathSegment.handshake()), {
       ...versions,
@@ -339,7 +347,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
     expect(response.status).toBe(409);
     const body = (await response.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe('CONFLICT');
-    expect(body.error.message).toContain('update the app');
+    expect(body.error.message).toContain(`Update Bowerbird ${update}`);
   });
 
   it('refuses a peer whose clock is out past the skew guard', async () => {
@@ -579,6 +587,7 @@ describe('browse, then add (§9.1)', () => {
       },
       () => {},
       () => {},
+      () => Promise.resolve(0),
     );
 
     const summary = await runner.add(origin.url, LIB, cloneRoot(), true);
@@ -612,6 +621,7 @@ describe('browse, then add (§9.1)', () => {
       (library) => announced.push(library.id),
       () => {},
       () => {},
+      () => Promise.resolve(0),
     );
 
     await expect(runner.add(origin.url, LIB, cloneRoot(), true)).rejects.toThrow('already running');
@@ -636,6 +646,7 @@ describe('browse, then add (§9.1)', () => {
       },
       () => {},
       () => {},
+      () => Promise.resolve(0),
     );
 
     const summary = await runner.add(origin.url, LIB, cloneRoot(), true);
@@ -764,6 +775,107 @@ describe('sync RAWs to this device (§7.10)', () => {
     await pullFromRemote(clone.replica, origin.url);
 
     expect(pairedPeers(origin.db, LIB)[0]!.wants_originals).toBe(false);
+  });
+});
+
+describe('originals moved by a session', () => {
+  function recordingRunner(db: Database, asked: string[]): ReplicationRunner {
+    return new ReplicationRunner(
+      db,
+      new SyncLocksRepository(db),
+      new LibrariesRepository(db),
+      new BlobLocations(db),
+      () => {},
+      () => {},
+      () => {},
+      (libraryId, peer, direction) => {
+        asked.push(`${direction} ${libraryId} ${peer}`);
+        return Promise.resolve(0);
+      },
+    );
+  }
+
+  it('fetches the originals of a replica that keeps them, from the device it joined', async () => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+    const clone = serve(catalogue());
+    const asked: string[] = [];
+
+    await recordingRunner(clone.db, asked).add(origin.url, LIB, cloneRoot(), true);
+
+    expect(asked).toEqual([`pull ${LIB} ${peerIdOf(origin.db)}`]);
+  });
+
+  it('fetches nothing for a replica that keeps only the catalogue', async () => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+    const clone = serve(catalogue());
+    const asked: string[] = [];
+
+    await recordingRunner(clone.db, asked).add(origin.url, LIB, cloneRoot(), false);
+
+    expect(asked).toEqual([]);
+  });
+
+  it('sends and fetches on every session once the library is set to', async () => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+    const clone = serve(catalogue());
+    const asked: string[] = [];
+    const runner = recordingRunner(clone.db, asked);
+    await runner.add(origin.url, LIB, cloneRoot(), true);
+
+    asked.length = 0;
+    await runner.replicate(LIB);
+    expect(asked).toEqual([]);
+
+    setAutoTransfersOriginals(clone.db, LIB, true);
+    await runner.replicate(LIB);
+    expect(asked).toEqual([`pull ${LIB} ${peerIdOf(origin.db)}`, `push ${LIB} ${peerIdOf(origin.db)}`]);
+  });
+
+  // A page reads the transfer queue when it hears a session ended, and polls only while it finds one moving.
+  it('turns automatic transfer on by itself, and refuses a request that changes nothing', async () => {
+    const { clone } = await pairedClone(1);
+    const patch = (body: unknown): Promise<Response> =>
+      fetch(
+        `${clone.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), LIB, PathSegment.originals())}`,
+        { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+      );
+
+    expect((await patch({})).ok).toBe(false);
+    expect(autoTransfersOriginals(clone.db, LIB)).toBe(false);
+
+    expect(await (await patch({ auto_transfer_originals: true })).json()).toEqual({ cancelled: 0 });
+    expect(autoTransfersOriginals(clone.db, LIB)).toBe(true);
+    expect(syncsOriginals(clone.db, LIB)).toBe(true);
+  });
+
+  it('announces the session only once its originals are queued', async () => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+    const clone = serve(catalogue());
+    const happened: string[] = [];
+    const runner = new ReplicationRunner(
+      clone.db,
+      new SyncLocksRepository(clone.db),
+      new LibrariesRepository(clone.db),
+      new BlobLocations(clone.db),
+      () => {},
+      () => {},
+      () => happened.push('announced'),
+      (_libraryId, _peer, direction) => {
+        happened.push(direction);
+        return Promise.resolve(0);
+      },
+    );
+    await runner.add(origin.url, LIB, cloneRoot(), false);
+    setAutoTransfersOriginals(clone.db, LIB, true);
+
+    happened.length = 0;
+    await runner.replicate(LIB);
+
+    expect(happened).toEqual(['push', 'announced']);
   });
 });
 

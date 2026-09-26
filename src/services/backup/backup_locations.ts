@@ -179,6 +179,18 @@ export class BackupLocations {
       .all(libraryId, peerId) as MisplacedCopy[];
   }
 
+  /** The photographs whose only copy is on this backup. */
+  offloadedTo(libraryId: string, peerId: string): string[] {
+    return (
+      this.db
+        .query(
+          `SELECT p.id FROM photos p JOIN backup_locations b ON b.library_id = p.library_id AND b.photo_id = p.id
+            WHERE p.library_id = ? AND b.peer_id = ? AND p.is_missing = 1 ORDER BY p.id`,
+        )
+        .all(libraryId, peerId) as { id: string }[]
+    ).map((row) => row.id);
+  }
+
   /** How many of this library's originals live only on a backup now (§14.5). */
   offloaded(libraryId: string): number {
     return (

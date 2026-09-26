@@ -269,6 +269,15 @@ const replicationRunner = new ReplicationRunner(
   replicaBorn,
   rebuildEdited,
   replicationChanged,
+  async (libraryId, peerId, direction) => {
+    const scope = { library: true } as const;
+    const queued =
+      direction === 'pull' ?
+        await transferService.pullDiff(libraryId, peerId, scope)
+      : await transferService.pushDiff(libraryId, peerId, scope);
+    transferService.kick();
+    return queued;
+  },
 );
 const replicationService = new ReplicationService(db, blobLocations, Date.now, rebuildEdited, replicationChanged);
 const mirror = new Mirror(db, librariesRepo, backupLocations, transferService, new Cull(db, transferService));

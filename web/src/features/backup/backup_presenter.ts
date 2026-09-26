@@ -1,13 +1,16 @@
 import { action } from 'mobx';
-import { type BackupStatus } from '../../../../src/schemas/backup';
+import { type BackupStatus, type FetchBackProgress } from '../../../../src/schemas/backup';
 import { backupApi } from '../../api/backup';
 import { ApiError } from '../../api/request';
+import { openFolder } from '../../api/transport';
 import type { PhotosPresenter } from '../photos/photos_presenter';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { BackupPresenterStrings } from './backup_presenter.strings';
 import type { BackupStore } from './backup_store';
 
 type Feedback = Pick<ToastsPresenter, 'show' | 'showError'>;
+
+const FETCH_BACK_POLL_MS = 500;
 type GridToRefresh = Pick<PhotosPresenter, 'reload'>;
 
 function message(err: unknown): string {
@@ -24,6 +27,9 @@ function told(copied: number, removed: number): string {
 }
 
 export class BackupPresenter {
+  private watching = false;
+  private nextRead: ReturnType<typeof setTimeout> | null = null;
+
   constructor(
     private readonly store: BackupStore,
     private readonly photos: GridToRefresh,
@@ -48,12 +54,33 @@ export class BackupPresenter {
     }
   }
 
-  async remove(libraryId: string): Promise<void> {
+  /** @param fetchFirst brings every original only the backup holds back to this device first. */
+  async remove(libraryId: string, fetchFirst: boolean): Promise<void> {
+    if (fetchFirst) {
+      this.fetchingBack(libraryId);
+      this.watchFetchBack(libraryId);
+    }
     try {
-      await backupApi.remove(libraryId);
+      await backupApi.remove(libraryId, fetchFirst);
       this.forget(libraryId);
     } catch (err) {
       this.toasts.showError(BackupPresenterStrings.couldNotStop(), message(err));
+      // Whatever did come back is on this device now, stopped or not.
+      if (fetchFirst) await this.load();
+    } finally {
+      if (fetchFirst) {
+        this.stopWatching();
+        this.fetchingBack(null);
+        await this.photos.reload();
+      }
+    }
+  }
+
+  async openFolder(path: string): Promise<void> {
+    try {
+      await openFolder(path);
+    } catch (err) {
+      this.toasts.showError(BackupPresenterStrings.couldNotOpenFolder(), message(err));
     }
   }
 
@@ -89,6 +116,40 @@ export class BackupPresenter {
   @action.bound
   private starting(libraryId: string | null): void {
     this.store.running = libraryId;
+  }
+
+  private watchFetchBack(libraryId: string): void {
+    this.watching = true;
+    void this.readFetchBack(libraryId);
+  }
+
+  private async readFetchBack(libraryId: string): Promise<void> {
+    try {
+      const progress = await backupApi.fetchBackProgress(libraryId);
+      if (!this.watching) return;
+      this.putProgress(progress);
+    } catch {
+      // A missed read is the next read's to make up.
+    }
+    if (!this.watching) return;
+    this.nextRead = setTimeout(() => void this.readFetchBack(libraryId), FETCH_BACK_POLL_MS);
+  }
+
+  private stopWatching(): void {
+    this.watching = false;
+    if (this.nextRead != null) clearTimeout(this.nextRead);
+    this.nextRead = null;
+  }
+
+  @action.bound
+  private fetchingBack(libraryId: string | null): void {
+    this.store.fetchingBack = libraryId;
+    this.store.fetchBackProgress = null;
+  }
+
+  @action.bound
+  private putProgress(progress: FetchBackProgress | null): void {
+    this.store.fetchBackProgress = progress;
   }
 
   @action.bound

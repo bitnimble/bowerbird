@@ -27,6 +27,9 @@ export const replicationLibraries = sqliteTable('replication_libraries', {
   // replicated unit: it is a statement about one device's disk, and a laptop that wants only the
   // catalogue must not have that answer overwritten by the desktop's.
   syncOriginals: integer('sync_originals').notNull().default(1),
+  // Whether every session with a device also queues the originals either side lacks. As local as
+  // the flag above: it spends this device's disk and network.
+  autoTransferOriginals: integer('auto_transfer_originals').notNull().default(0),
   // What this library's originals may take up on this disk before the cull gives the oldest of
   // them back (§14.5). Null is no ceiling, which is every library until somebody sets one, and it
   // is as local as the flag above for the same reason.

@@ -25,6 +25,7 @@ import type { BlobLocations } from '../blobs/blob_locations';
 import { DEFAULT_SKEW_MS } from './clock';
 import {
   assertPaired,
+  autoTransfersOriginals,
   deviceName,
   everyPairing,
   forgetPairedPeer,
@@ -34,6 +35,7 @@ import {
   recordPeerAppetite,
   registerPeer,
   renamePeer,
+  setAutoTransfersOriginals,
   setSyncsOriginals,
   syncsOriginals,
 } from './pairing';
@@ -134,12 +136,17 @@ export class ReplicationService {
 
   handshake(request: HandshakeRequest): HandshakeResponse {
     // Version first, so a downlevel peer hears "update the app" rather than a
-    // half-understood refusal about its pairing.
+    // half-understood refusal about its pairing. Worded for the device that dialled:
+    // the message reaches its reader verbatim.
     if (request.protocol !== REPLICATION_PROTOCOL || request.schema !== latestMigrationMillis()) {
+      const callerIsOlder =
+        request.protocol < REPLICATION_PROTOCOL ||
+        (request.protocol === REPLICATION_PROTOCOL && request.schema < latestMigrationMillis());
       throw new AppError(
         'CONFLICT',
-        `protocol ${request.protocol} (schema ${request.schema}) does not match this server's ` +
-          `${REPLICATION_PROTOCOL} (schema ${latestMigrationMillis()}); update the app`,
+        callerIsOlder ?
+          "This device's version of Bowerbird is older than the other device's. Update Bowerbird on this device, then sync again."
+        : "The other device's version of Bowerbird is older than this one. Update Bowerbird on the other device, then sync again.",
       );
     }
     assertPaired(this.db, request.library_id, request.peer_id);
@@ -148,7 +155,7 @@ export class ReplicationService {
     if (skew > DEFAULT_SKEW_MS) {
       throw new AppError(
         'CLOCK_SKEW',
-        `the two clocks disagree by ${Math.round(skew / 1000)}s; fix the system time before replicating`,
+        `The clocks on the two devices differ by ${Math.round(skew / 1000)} seconds. Correct the time on both, then sync again.`,
       );
     }
     // The peer stating what it holds, which is what tombstone GC is bounded by (§8.3).
@@ -257,6 +264,15 @@ export class ReplicationService {
 
   setSyncsOriginals(libraryId: string, value: boolean): void {
     setSyncsOriginals(this.db, libraryId, value);
+    this.changed(libraryId);
+  }
+
+  autoTransfersOriginals(libraryId: string): boolean {
+    return autoTransfersOriginals(this.db, libraryId);
+  }
+
+  setAutoTransfersOriginals(libraryId: string, value: boolean): void {
+    setAutoTransfersOriginals(this.db, libraryId, value);
     this.changed(libraryId);
   }
 

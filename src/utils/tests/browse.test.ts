@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { foldersUnder } from '../browse';
+import { browseAbsolute, createFolder, foldersUnder } from '../browse';
 import { libraryScope, type LibraryScope } from '../scope';
 
 function withRoot(run: (root: string) => Promise<void>) {
@@ -71,6 +71,25 @@ describe('foldersUnder', () => {
       const found = await foldersUnder(scope(root));
 
       expect(found).toEqual(['Trip', 'Trip/Import', 'Trip/Import/loop']);
+    }),
+  );
+});
+
+describe('createFolder', () => {
+  it(
+    'makes the folder, and refuses one already there',
+    withRoot(async (root) => {
+      await createFolder(path.join(root, 'Trip'));
+
+      expect((await browseAbsolute(root)).directories.map((d) => d.name)).toEqual(['Trip']);
+      await expect(createFolder(path.join(root, 'Trip'))).rejects.toThrow('already exists');
+    }),
+  );
+
+  it(
+    'refuses a parent that is not there',
+    withRoot(async (root) => {
+      await expect(createFolder(path.join(root, 'gone/Trip'))).rejects.toThrow('no such directory');
     }),
   );
 });

@@ -175,6 +175,11 @@ export function canOpenOriginalWith(): boolean {
   return shellInvoke() != null && !/Android/i.test(navigator.userAgent);
 }
 
+/** macOS has no chooser dialog, so the shell pops a menu of applications at the pointer instead. */
+export function opensWithAMenu(): boolean {
+  return canOpenOriginalWith() && /Mac/i.test(navigator.userAgent);
+}
+
 /** Android's shell has no file manager to show a file in. */
 export function canRevealFile(): boolean {
   return shellInvoke() != null && !/Android/i.test(navigator.userAgent);
@@ -185,6 +190,13 @@ export async function revealFile(path: string): Promise<void> {
   const invoke = shellInvoke();
   if (invoke == null) throw new Error('showing a file in its folder is the desktop app’s to do');
   await invoke('reveal_file', { path });
+}
+
+/** Opens a folder in the reader's own file manager. */
+export async function openFolder(path: string): Promise<void> {
+  const invoke = shellInvoke();
+  if (invoke == null) throw new Error('opening a folder is the desktop app’s to do');
+  await invoke('open_folder', { path });
 }
 
 /** The same for a photo's RAW, which rejects where the library's disk is not this device's. */

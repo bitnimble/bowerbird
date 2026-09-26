@@ -1,6 +1,7 @@
 import { Menu } from '@base-ui-components/react/menu';
 import * as stylex from '@stylexjs/stylex';
 import { Ellipsis, EllipsisVertical } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { buttonProps } from './button';
 import { ICON } from './icon';
 import { MenuAction, MenuItems } from './menu_items';
@@ -16,9 +17,47 @@ const styles = stylex.create({
   narrow: { display: { default: 'none', [NARROW]: 'block' } },
 });
 
+/** `\` opens and closes the newest overflow menu on screen: the bulk bar's over the grid's, the viewer's over the page under it. */
+class OverflowMenuKey {
+  private readonly toggles: (() => void)[] = [];
+
+  register(toggle: () => void): () => void {
+    if (this.toggles.length === 0) window.addEventListener('keydown', this.onKey);
+    this.toggles.push(toggle);
+    return () => {
+      this.toggles.splice(this.toggles.lastIndexOf(toggle), 1);
+      if (this.toggles.length === 0) window.removeEventListener('keydown', this.onKey);
+    };
+  }
+
+  private readonly onKey = (e: KeyboardEvent): void => {
+    if (e.key !== '\\' || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (target != null && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
+    const toggle = this.toggles.at(-1);
+    if (toggle == null) return;
+    e.preventDefault();
+    toggle();
+  };
+}
+
+const overflowMenuKey = new OverflowMenuKey();
+
 // Every menu a bar offers, in one popup under one button, each still under its
 // own heading.
-export function OverflowMenu({ label, sections }: { label: string; sections: MenuSection[] }): JSX.Element {
+export function OverflowMenu({
+  label,
+  sections,
+  hotkey = false,
+}: {
+  label: string;
+  sections: MenuSection[];
+  /** For the one menu that is a page's or a bar's, rather than one of a list's rows. */
+  hotkey?: boolean;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  useEffect(() => (hotkey ? overflowMenuKey.register(() => setOpen((was) => !was)) : undefined), [hotkey]);
+
   // Lifted out of their sections to the foot of the menu. A rule below its own
   // heading is enough to fence one off in a menu of its own, but here it would
   // still sit a row above the next section's ordinary actions, halfway up a long
@@ -35,7 +74,7 @@ export function OverflowMenu({ label, sections }: { label: string; sections: Men
     .filter((section) => section.options.length > 0 || section.content != null);
 
   return (
-    <Menu.Root>
+    <Menu.Root open={open} onOpenChange={setOpen}>
       <Tooltip label={label}>
         <Menu.Trigger {...buttonProps('default', true)} aria-label={label}>
           {/* Both drawn and one shown, rather than a media query read in JS: nothing here

@@ -83,7 +83,6 @@ export const PathSegment = {
   qualityCheck: segment('quality-check'),
   queued: segment('queued'),
   range: segment('range'),
-  reachable: segment('reachable'),
   rebuildTiles: segment('rebuild-tiles'),
   redo: segment('redo'),
   refreshMetadata: segment('refresh-metadata'),

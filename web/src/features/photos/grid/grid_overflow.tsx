@@ -113,7 +113,7 @@ export const GridOverflow = observer(function GridOverflow(): JSX.Element {
     }),
   ];
 
-  return <OverflowMenu label={GridControlsStrings.gridOptions()} sections={sections} />;
+  return <OverflowMenu hotkey label={GridControlsStrings.gridOptions()} sections={sections} />;
 });
 
 const MODES: Option<ViewMode>[] = [

@@ -25,7 +25,7 @@ const PEER: PairedPeer = {
 };
 
 function peersAnswer(peers: PairedPeer[], syncOriginals = true): Promise<PeersResponse> {
-  return Promise.resolve({ peers, sync_originals: syncOriginals });
+  return Promise.resolve({ peers, sync_originals: syncOriginals, auto_transfer_originals: false });
 }
 
 function candidate(sessionId: string, device: string): EditConflict {
@@ -75,7 +75,10 @@ function harness(): Harness {
 
 beforeEach(() => {
   replicationApi.listPeers = () => peersAnswer([PEER]);
-  replicationApi.listAllPeers = () => Promise.resolve({ libraries: [{ library_id: 'lib', peers: [PEER], sync_originals: true }] });
+  replicationApi.listAllPeers = () =>
+    Promise.resolve({
+      libraries: [{ library_id: 'lib', peers: [PEER], sync_originals: true, auto_transfer_originals: false }],
+    });
   blobsApi.listTransfers = () => Promise.resolve([]);
   photoEditsApi.listConflicts = () => Promise.resolve([]);
 });
@@ -97,6 +100,31 @@ test('a session that applied changes re-reads the grid, because rows moved under
 
   expect(reloads()).toBe(1);
   expect(reloadActivities).toEqual([undefined]);
+});
+
+test('a session re-reads the transfer queue, which it may have filled with originals', async () => {
+  const { presenter, store } = harness();
+  replicationApi.replicate = () => Promise.resolve({ applied: 0, peers: 1 });
+  blobsApi.listTransfers = () =>
+    Promise.resolve([{ id: 't', library_id: 'lib', photo_id: 'photo', direction: 'pull', state: 'done' } as Transfer]);
+
+  await presenter.replicate('lib');
+
+  expect(store.transfersOf('lib').map((t) => t.id)).toEqual(['t']);
+});
+
+test('what is being fetched is the photos with a pull queued or running', () => {
+  const { store } = harness();
+  runInAction(() => {
+    store.transfers = [
+      { id: 'a', photo_id: 'queued', direction: 'pull', state: 'queued' },
+      { id: 'b', photo_id: 'running', direction: 'pull', state: 'active' },
+      { id: 'c', photo_id: 'landed', direction: 'pull', state: 'done' },
+      { id: 'd', photo_id: 'sending', direction: 'push', state: 'active' },
+    ] as Transfer[];
+  });
+
+  expect([...store.fetching]).toEqual(['queued', 'running']);
 });
 
 test('a completed transfer refreshes the grid as background work', async () => {
@@ -212,7 +240,9 @@ test('the whole install is one request, and a library with no peers is not in it
   let asks = 0;
   replicationApi.listAllPeers = () => {
     asks++;
-    return Promise.resolve({ libraries: [{ library_id: 'lib', peers: [PEER], sync_originals: false }] });
+    return Promise.resolve({
+      libraries: [{ library_id: 'lib', peers: [PEER], sync_originals: false, auto_transfer_originals: true }],
+    });
   };
 
   await presenter.reload();
@@ -220,6 +250,8 @@ test('the whole install is one request, and a library with no peers is not in it
   expect(asks).toBe(1);
   expect(store.hasPeers('lib')).toBe(true);
   expect(store.syncsOriginals('lib')).toBe(false);
+  expect(store.autoTransfersOriginals('lib')).toBe(true);
+  expect(store.autoTransfersOriginals('solo')).toBe(false);
   expect(store.hasPeers('solo')).toBe(false);
   expect(store.syncsOriginals('solo')).toBe(true);
 });
