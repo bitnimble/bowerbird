@@ -591,9 +591,8 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
     let front = frame_front_depth();
     let focal = print_focal(canvas, frame_outer_half(photo_half));
     let radians = min(canvas.x, canvas.y) * focal;
-    let mirror = float3(lamp.xy, 2.0 * depth - lamp.z) - eye;
-    let lamp_angle = print.surface.y / length(mirror);
-    let middle = paper_pixel(normalize(mirror), canvas, focal);
+    let lamp_angle = print.surface.y / length(float3(lamp.xy, 2.0 * depth - lamp.z) - eye);
+    let middle = paper_pixel(mirrored_image(lamp, eye, depth, !sheet), canvas, focal);
     if (length(pixel - middle) / radians > 1.5 * lamp_angle + 12.0 * FLARE_REACH) { return 0.0; }
     // A rough sheet spreads the lamp over a lobe wider than the lamp, and its image dims by as much.
     let alpha = print.material.x * print.material.x;
@@ -610,7 +609,7 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
             if (dot(at, at) > 1.0) { continue; }
             let face = paper_inverse(lamp_face(at, tangent, bitangent));
             if (face.z <= depth) { continue; }
-            let image = normalize(float3(face.xy, 2.0 * depth - face.z) - eye);
+            let image = mirrored_image(face, eye, depth, !sheet);
             let crossing = eye + image * ((depth - eye.z) / image.z);
             if (any(abs(crossing.xy) > bound)) { continue; }
             if (framed && (frame_occluded(crossing, -image, aperture, front)
@@ -636,6 +635,20 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
     return sharpness * patch * flare;
 }
 
+/// The direction from `eye` to `face`'s image in the plane at `depth`, tipped by the pane's wave
+/// where `wavy` exactly as [`glass_reflected_light`] tips it.
+float3 mirrored_image(float3 face, float3 eye, float depth, bool wavy)
+{
+    var image = normalize(float3(face.xy, 2.0 * depth - face.z) - eye);
+    if (!wavy) { return image; }
+    for (uint i = 0; i < 2; i += 1) {
+        let crossing = eye + image * ((depth - eye.z) / image.z);
+        let normal = normalize(float3(-glass_wave(crossing.xy * print.surface.z), 1.0));
+        image = normalize(face - 2.0 * dot(face - crossing, normal) * normal - eye);
+    }
+    return image;
+}
+
 public float3 framed_from_coefficients(float3 reflectance, PrintHit hit, float roughness,
     float4 direct, float2 footprint)
 {
@@ -645,7 +658,11 @@ public float3 framed_from_coefficients(float3 reflectance, PrintHit hit, float r
     if (hit.material == BACK) {
         return float3(0.12, 0.085, 0.055) * (ambient.v + source.v * direct.w);
     }
-    if (hit.material == RIM && (print.illumination.w < 0.5 || hit.normal.z < 0.5)) { return rim; }
+    if (hit.material == RIM && (print.illumination.w < 0.5 || hit.normal.z < 0.5)) {
+        let behind_glass = hit.normal.z < 0.5 && dot(hit.normal.xy, hit.position.xy) < 0.0
+            && hit.position.z < frame_glass_depth();
+        return behind_glass ? rim * glass_transmittance(hit.view.z) + glass_reflected_light(hit) : rim;
+    }
     let glass_coverage = print.illumination.w < 0.5 ? 1.0
         : frame_rectangle_coverage(hit.position.xy, frame_aperture(hit.half), footprint);
     if (glass_coverage == 0.0) { return rim; }
