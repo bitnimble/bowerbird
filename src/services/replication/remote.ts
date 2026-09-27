@@ -30,6 +30,7 @@ import {
   deviceName,
   markReplicated,
   recordPeerAppetite,
+  recordPeerName,
   recordPeerVersion,
   registerPeer,
   syncsOriginals,
@@ -239,6 +240,7 @@ async function handshake(replica: Replica, base: string, direction: 'pull' | 'pu
         direction,
         library_id: replica.libraryId,
         peer_id: peerId(replica.db),
+        name: deviceName(replica.db),
         clock_ms: Date.now(),
         coverage: packVector(coverage(replica.db, replica.libraryId)),
         wants_originals: syncsOriginals(replica.db, replica.libraryId),
@@ -253,6 +255,7 @@ async function handshake(replica: Replica, base: string, direction: 'pull' | 'pu
   const shaken = HandshakeResponseSchema.parse(answer);
   recordPeerVersion(replica.db, replica.libraryId, shaken.peer_id, shaken);
   recordPeerAppetite(replica.db, replica.libraryId, shaken.peer_id, shaken.wants_originals);
+  recordPeerName(replica.db, replica.libraryId, shaken.peer_id, shaken.name);
   return shaken;
 }
 

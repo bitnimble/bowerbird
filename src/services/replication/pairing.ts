@@ -102,7 +102,8 @@ export function registerPeer(
 ): void {
   db.query(
     `INSERT INTO replication_peers (library_id, peer_id, name, paired_at, address, kind) VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT (library_id, peer_id) DO UPDATE SET name = excluded.name, kind = excluded.kind,
+     ON CONFLICT (library_id, peer_id) DO UPDATE SET kind = excluded.kind,
+       name = CASE WHEN replication_peers.named_here THEN replication_peers.name ELSE excluded.name END,
        -- Kept when the new row carries none, so a peer dialling in does not erase
        -- the address we reach it on.
        address = COALESCE(excluded.address, replication_peers.address)`,
@@ -256,9 +257,18 @@ export function recordPeerOutcome(db: Database, libraryId: string, peerId: strin
 
 export function renamePeer(db: Database, libraryId: string, peerId: string, name: string): void {
   const changed = db
-    .query('UPDATE replication_peers SET name = ? WHERE library_id = ? AND peer_id = ?')
+    .query('UPDATE replication_peers SET name = ?, named_here = 1 WHERE library_id = ? AND peer_id = ?')
     .run(name, libraryId, peerId).changes;
   if (changed === 0) throw new AppError('NOT_FOUND', `peer ${peerId} is not paired with library ${libraryId}`);
+}
+
+/** What a peer calls itself, unless it was named on this device. Whether that changed its name here. */
+export function recordPeerName(db: Database, libraryId: string, peerId: string, name: string): boolean {
+  return (
+    db
+      .query('UPDATE replication_peers SET name = ? WHERE library_id = ? AND peer_id = ? AND named_here = 0 AND name != ?')
+      .run(name, libraryId, peerId, name).changes > 0
+  );
 }
 
 /**

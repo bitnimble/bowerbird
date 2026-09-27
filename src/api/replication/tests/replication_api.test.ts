@@ -25,7 +25,9 @@ import {
   autoTransfersOriginals,
   pairedPeers,
   peerAddress,
+  renamePeer,
   setAutoTransfersOriginals,
+  setDeviceName,
   setSyncsOriginals,
   syncsOriginals,
 } from '../../../services/replication/pairing';
@@ -349,7 +351,8 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       direction,
       library_id: LIB,
       peer_id: peerIdOf(clone.db),
-      clock_ms: Date.now(),
+      name: 'Laptop',
+      clock_ms:Date.now(),
       coverage: {},
     });
     expect(response.status).toBe(426);
@@ -369,7 +372,8 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       direction,
       library_id: LIB,
       peer_id: peerIdOf(clone.db),
-      clock_ms: Date.now(),
+      name: 'Laptop',
+      clock_ms:Date.now(),
       coverage: {},
     });
     expect(response.status).toBe(200);
@@ -433,7 +437,8 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       direction: 'pull',
       library_id: LIB,
       peer_id: peerIdOf(clone.db),
-      clock_ms: Date.now(),
+      name: 'Laptop',
+      clock_ms:Date.now(),
       coverage: {},
     });
     expect(pairedPeers(origin.db, LIB).map((peer) => peer.outdated)).toEqual([outdated]);
@@ -474,7 +479,8 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       direction: 'pull',
       library_id: LIB,
       peer_id: peerIdOf(clone.db),
-      clock_ms: Date.now() + 2 * DEFAULT_SKEW_MS,
+      name: 'Laptop',
+      clock_ms:Date.now() + 2 * DEFAULT_SKEW_MS,
       coverage: {},
     });
     expect(await response.json()).toMatchObject({ error: { code: 'CLOCK_SKEW' } });
@@ -488,6 +494,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
       direction: 'pull',
       library_id: LIB,
       peer_id: newId(),
+      name: 'Stranger',
       clock_ms: Date.now(),
       coverage: {},
     });
@@ -521,6 +528,27 @@ describe("this device's name", () => {
 
     const blank = await fetch(at, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{"name":" "}' });
     expect(blank.status).toBe(400);
+  });
+
+  it('reaches devices already paired at the next sync, in both directions', async () => {
+    const { origin, clone } = await pairedClone();
+    setDeviceName(origin.db, 'Studio iMac');
+    setDeviceName(clone.db, 'Travel laptop');
+
+    await pullFromRemote(clone.replica, origin.url);
+
+    expect(pairedPeers(clone.db, LIB).map((peer) => peer.name)).toEqual(['Studio iMac']);
+    expect(pairedPeers(origin.db, LIB).map((peer) => peer.name)).toEqual(['Travel laptop']);
+  });
+
+  it('leaves a device named on this side as it was named here', async () => {
+    const { origin, clone } = await pairedClone();
+    renamePeer(clone.db, LIB, peerIdOf(origin.db), 'Home server');
+    setDeviceName(origin.db, 'Studio iMac');
+
+    await pullFromRemote(clone.replica, origin.url);
+
+    expect(pairedPeers(clone.db, LIB).map((peer) => peer.name)).toEqual(['Home server']);
   });
 });
 

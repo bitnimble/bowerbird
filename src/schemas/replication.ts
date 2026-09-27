@@ -227,10 +227,12 @@ export type RemoteLibraries = z.infer<typeof RemoteLibrariesSchema>;
 export const BrowsedRemoteSchema = RemoteLibrariesSchema.extend({ clock_skew_ms: z.number() });
 export type BrowsedRemote = z.infer<typeof BrowsedRemoteSchema>;
 
+const DeviceNameTextSchema = z.string().trim().min(1).max(120);
+
 export const PairRequestSchema = z.object({
   library_id: IdSchema,
   peer_id: PeerIdSchema,
-  name: z.string().trim().min(1).max(120),
+  name: DeviceNameTextSchema,
 });
 export type PairRequest = z.infer<typeof PairRequestSchema>;
 
@@ -253,6 +255,7 @@ export const HandshakeRequestSchema = BuildVersionSchema.extend({
   direction: z.enum(['pull', 'push']),
   library_id: IdSchema,
   peer_id: PeerIdSchema,
+  name: DeviceNameTextSchema,
   clock_ms: z.number().int().nonnegative(),
   coverage: VectorSchema,
   wants_originals: WantsOriginalsSchema,
@@ -261,6 +264,7 @@ export type HandshakeRequest = z.infer<typeof HandshakeRequestSchema>;
 
 export const HandshakeResponseSchema = BuildVersionSchema.extend({
   peer_id: PeerIdSchema,
+  name: DeviceNameTextSchema,
   clock_ms: z.number().int(),
   coverage: VectorSchema,
   wants_originals: WantsOriginalsSchema,
@@ -307,7 +311,7 @@ export type PushDoneRequest = z.infer<typeof PushDoneRequestSchema>;
 export const PushPageResponseSchema = z.object({ deferred: z.array(StampSchema) });
 export type PushPageResponse = z.infer<typeof PushPageResponseSchema>;
 
-export const RenamePeerRequestSchema = z.object({ name: z.string().trim().min(1).max(120) });
+export const RenamePeerRequestSchema = z.object({ name: DeviceNameTextSchema });
 
 export const DeviceNameSchema = RenamePeerRequestSchema;
 export type DeviceName = z.infer<typeof DeviceNameSchema>;

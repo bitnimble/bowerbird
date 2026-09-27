@@ -33,6 +33,7 @@ import {
   markReplicated,
   pairedPeers,
   recordPeerAppetite,
+  recordPeerName,
   recordPeerVersion,
   registerPeer,
   renamePeer,
@@ -169,9 +170,11 @@ export class ReplicationService {
     // The peer stating what it holds, which is what tombstone GC is bounded by (§8.3).
     recordPeer(this.db, request.library_id, request.peer_id, unpackVector(request.coverage));
     recordPeerAppetite(this.db, request.library_id, request.peer_id, request.wants_originals);
+    if (recordPeerName(this.db, request.library_id, request.peer_id, request.name)) this.changed(request.library_id);
     return {
       ...ours,
       peer_id: peerId(this.db),
+      name: deviceName(this.db),
       clock_ms: this.now(),
       coverage: packVector(coverage(this.db, request.library_id)),
       wants_originals: syncsOriginals(this.db, request.library_id),

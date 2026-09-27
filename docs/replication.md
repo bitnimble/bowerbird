@@ -82,7 +82,9 @@ server's rolling DB backups (§8.2, DESIGN.md §4.9) are the recovery story for 
 
 Each install mints a `peer_id` once (16-char id, §2.3) with a user-visible device name
 ("Macbook", "Home server"). App-level, not per-library: one machine is one peer however many
-libraries it replicates. Re-pairing after a reinstall mints a **fresh** peer_id; the old one is
+libraries it replicates. Both sides of every handshake state their name, so a rename reaches
+paired devices at the next sync, except on a device where that peer was renamed by hand, whose
+name for it stands. Re-pairing after a reinstall mints a **fresh** peer_id; the old one is
 forgotten (§6.5), never resumed.
 
 ### 2.2 Hybrid logical clock
