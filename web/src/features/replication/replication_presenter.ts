@@ -1,4 +1,4 @@
-import { action, reaction, type IReactionDisposer } from 'mobx';
+import { action, reaction, when, type IReactionDisposer } from 'mobx';
 import { type EvictResult, type Transfer } from '../../../../src/schemas/blobs';
 import { type EditConflict } from '../../../../src/schemas/photo_edits';
 import { type PhotoTarget } from '../../../../src/schemas/photos';
@@ -29,6 +29,7 @@ function message(err: unknown): string {
 export class ReplicationPresenter {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private polling = false;
+  private queueUnreadable = false;
   private following: IReactionDisposer | null = null;
 
   constructor(
@@ -302,18 +303,26 @@ export class ReplicationPresenter {
     await this.photos.reload();
   }
 
-  /** §7.5: opening a photo whose original is remote is the user asking for it. */
-  async fetchOriginal(photoId: string): Promise<void> {
-    const pending = this.store.pullFor(photoId);
-    if (pending != null && (pending.state === 'queued' || pending.state === 'active')) return;
+  /** §7.5: opening a photo whose original is remote is the user asking for it. False where it could not be asked for. */
+  async fetchOriginal(photoId: string): Promise<boolean> {
+    if (this.store.fetching.has(photoId)) return true;
     try {
       const transfer = await blobsApi.fetchOriginal(photoId);
       if (transfer != null) this.putTransfer(transfer);
     } catch (err) {
       this.toasts.showError(ReplicationPresenterStrings.couldNotFetchOriginal(), message(err));
-      return;
+      return false;
     }
     await this.refreshTransfers();
+    return true;
+  }
+
+  /** Fetches the original, resolving true once it is on this device. */
+  async fetchOriginalAndWait(photoId: string): Promise<boolean> {
+    if (!(await this.fetchOriginal(photoId))) return false;
+    await when(() => !this.store.fetching.has(photoId));
+    const settled = this.store.pullFor(photoId);
+    return settled == null || settled.state === 'done';
   }
 
   async pause(id: string): Promise<void> {
@@ -368,9 +377,13 @@ export class ReplicationPresenter {
     try {
       transfers = await blobsApi.listTransfers();
     } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotReadTransferQueue(), message(err));
+      if (!this.queueUnreadable) this.toasts.showError(ReplicationPresenterStrings.couldNotReadTransferQueue(), message(err));
+      this.queueUnreadable = true;
+      // Kept asking: a fetch-and-edit waits on the pull this read would have seen finish.
+      if (this.store.anyInFlight) this.timer = setTimeout(() => void this.refreshTransfers(), POLL_MS);
       return;
     }
+    this.queueUnreadable = false;
     this.putTransfers(transfers);
 
     // A pull that finished landed an original on this disk: the rows' is_missing

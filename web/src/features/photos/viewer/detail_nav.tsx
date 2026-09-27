@@ -32,7 +32,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { canOpenOriginalWith, canRevealFile, opensWithAMenu } from '../../../api/transport';
 import { useIsMobile, useIsTouch } from '../../../app/device';
-import { useListingStore, usePresenters, useViewerStore } from '../../../app/stores_context';
+import {
+  useLibrariesStore,
+  useListingStore,
+  usePresenters,
+  useReplicationStore,
+  useViewerStore,
+} from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
 import { ICON } from '../../../ui/icon';
 import { menuSection } from '../../../ui/menu_section';
@@ -147,6 +153,8 @@ function actions({
   rerendering,
   renders,
   editable,
+  fetchingOriginal,
+  readOnly,
   editHref,
   hidden,
   merged,
@@ -154,6 +162,9 @@ function actions({
   rerendering: boolean;
   renders: boolean;
   editable: boolean;
+  fetchingOriginal: boolean;
+  /** A library that cannot take the original, which a photo that is not editable has to fetch. */
+  readOnly: boolean;
   editHref: string;
   /** Whether this photograph is already put away, which is which way the one hide row points. */
   hidden: boolean;
@@ -161,18 +172,24 @@ function actions({
   merged: boolean;
 }): Option<Action>[] {
   return [
-    {
-      value: 'edit',
-      // There has to be something here to open, and for a photograph that is its own file: the
-      // pictures on this screen may have come from a peer's renditions (§7.9). A composite is
-      // editable without one - what it opens is the canvas its recipe composes, prepared where
-      // the frames are. Said on the control rather than left to fail, because what failing looks
-      // like from inside the editor is a 404 with no way out of it.
-      label: editable ? PhotoDetailStrings.edit() : PhotoDetailStrings.editNeedsOriginal(),
-      icon: <SlidersHorizontal size={ICON} />,
-      disabled: !editable,
-      ...(editable ? { link: <Link to={editHref} replace /> } : {}),
-    },
+    // There has to be something here to open, and for a photograph that is its own file: the
+    // pictures on this screen may have come from a peer's renditions (§7.9). A composite is
+    // editable without one - what it opens is the canvas its recipe composes, prepared where
+    // the frames are. Anything else fetches its original first, because what opening without
+    // one looks like from inside the editor is a 404 with no way out of it.
+    editable ?
+      { value: 'edit', label: PhotoDetailStrings.edit(), icon: <SlidersHorizontal size={ICON} />, link: <Link to={editHref} replace /> }
+    : {
+        value: 'edit',
+        label: fetchingOriginal ? PhotoDetailStrings.fetchingOriginal() : PhotoDetailStrings.fetchOriginalAndEdit(),
+        icon:
+          fetchingOriginal ?
+            <RefreshCw size={ICON} {...stylex.props(menuStyles.spin)} />
+          : <HardDriveDownload size={ICON} />,
+        disabled: fetchingOriginal || readOnly,
+        keepsMenuOpen: true,
+        ...(readOnly ? { tooltip: BulkBarStrings.notOnReadOnlyLibrary() } : {}),
+      },
     // Offered for any composite, panorama included: which kind of recipe this is is the merge
     // page's own question, and it answers it by failing to load with the server's reason rather
     // than by a field the viewer would have to carry.
@@ -239,7 +256,9 @@ export const DetailNav = observer(function DetailNav({
 }): JSX.Element {
   const listing = useListingStore();
   const store = useViewerStore();
-  const { photos, export: exportPhotos, feedback, frameTv } = usePresenters();
+  const replicationStore = useReplicationStore();
+  const libraries = useLibrariesStore();
+  const { photos, export: exportPhotos, feedback, frameTv, replication } = usePresenters();
   const step = useStep();
   const navigate = useNavigate();
   const mobile = useIsMobile();
@@ -370,11 +389,19 @@ export const DetailNav = observer(function DetailNav({
               // fetches back (§14.4). Unknown until the detail arrives, and yes for almost every
               // photograph: a library nobody replicates holds its own.
               editable,
+              fetchingOriginal: replicationStore.fetching.has(photoId),
+              readOnly: photo != null && libraries.byId.get(photo.library_id)?.read_only === true,
               editHref,
               hidden: photo?.is_hidden ?? false,
               merged: isComposite(store.photoFor(photoId)),
             }),
             onSelect: (action) => {
+              if (action === 'edit') {
+                void replication.fetchOriginalAndWait(photoId).then((fetched) => {
+                  if (fetched && store.open?.id === photoId) navigate(editHref, { replace: true });
+                });
+                return;
+              }
               if (action === 'editMerge') {
                 navigate(mergeEditPath(photoId, listing.source));
                 return;
@@ -598,7 +625,9 @@ export const DetailNav = observer(function DetailNav({
         </Button>
       )}
 
-      <OverflowMenu hotkey label={PhotoDetailStrings.more()} sections={sections} />
+      {/* Keyed on the mode: the three modes are one mounted page, so a menu kept open through a
+          fetch would otherwise still be open over the editor it opened. */}
+      <OverflowMenu key={mode} hotkey label={PhotoDetailStrings.more()} sections={sections} />
     </Row>
   );
 });

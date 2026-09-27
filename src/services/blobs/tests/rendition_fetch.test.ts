@@ -11,7 +11,7 @@ import { PathSegment, route } from '../../../schemas/route';
 import { dataPathForLibraryId, getRenditionPath, originalPathOf } from '../../../utils/paths';
 import { renditionVariant, type Rendition } from '../../processing/renditions/renditions';
 import { LibrariesRepository } from '../../libraries/libraries_repository';
-import { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
+import { type BasicPhoto, PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_repository';
 import { PhotoProcessingRepository, type RenditionStamps } from '../../photos/renditions/photo_processing_repository';
 import type { PeerJpeg } from '../../photos/renditions/photo_rendition_service';
@@ -42,6 +42,7 @@ interface Peer {
   db: Database;
   root: string;
   photoScan: PhotoScanRepository;
+  photoPaths: PhotoPathsRepository;
   photoProcessing: PhotoProcessingRepository;
   libraries: LibrariesRepository;
   locations: BlobLocations;
@@ -49,6 +50,8 @@ interface Peer {
   camera: Map<string, string>;
   fetch: RenditionFetchService;
   routes: Hono;
+  /** Every fetched copy this peer told its clients had changed, as `stage of photo`. */
+  announced: string[];
 }
 
 const net = new Map<string, Hono>();
@@ -100,7 +103,10 @@ function makePeer(name: string): Peer {
     new BackupLocations(db),
     transport,
   );
-  const fetch = new RenditionFetchService(db, photoPaths, photoProcessing, libraries, locations, transport);
+  const announced: string[] = [];
+  const fetch = new RenditionFetchService(db, photoPaths, photoProcessing, libraries, locations, transport, (photoId, written) =>
+    announced.push(`${written.stage} of ${photoId}`),
+  );
   const camera = new Map<string, string>();
   const originalHere = (photoId: string): boolean => {
     const photo = photoPaths.getBasicById(photoId);
@@ -112,15 +118,15 @@ function makePeer(name: string): Peer {
   // this disk at the range asked and stamped with the edits it rendered - never a tile, which is
   // the queue's - and otherwise passed on.
   const renderer = {
-    buildForPeer: async (photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[]): Promise<void> => {
-      if (!originalHere(photoId)) return fetch.relay(photoId, rendition, hdr, via);
+    buildForPeer: async (photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[], force = false): Promise<void> => {
+      if (!originalHere(photoId)) return fetch.relay(photoId, rendition, hdr, via, force);
       if (rendition === 'grid') return;
       const photo = photoPaths.getBasicById(photoId);
       const lib = photo == null ? null : libraries.getById(photo.library_id);
       if (lib == null) return;
       const target = getRenditionPath(lib, photoId, rendition, hdr);
       mkdirSync(path.dirname(target), { recursive: true });
-      writeFileSync(target, `${renditionVariant(rendition, hdr)} of ${photoId}`);
+      writeFileSync(target, `${renditionVariant(rendition, hdr)} of ${photoId}${force ? ', forced' : ''}`);
       const editedFrom = photoProcessing.renditionStamps(photoId, rendition)?.edited_from ?? null;
       photoProcessing.markCopyBuilt(photoId, BUILT_AT, editedFrom, renditionVariant(rendition, hdr));
     },
@@ -158,12 +164,14 @@ function makePeer(name: string): Peer {
     db,
     root,
     photoScan,
+    photoPaths,
     photoProcessing,
     libraries,
     locations,
     camera,
     routes: api.routes,
     fetch,
+    announced,
   };
 }
 
@@ -396,6 +404,16 @@ describe('fetching a rendition through a peer', () => {
       expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1');
     });
 
+    it('passes a forced render on, past the copy it holds itself', async () => {
+      const { b, c } = chain();
+      await c.fetch.ensureCurrent('photo1', 'max');
+
+      await c.fetch.ensureCurrent('photo1', 'max', true);
+
+      expect(readFileSync(getRenditionPath(library(c), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1, forced');
+      expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1, forced');
+    });
+
     it("passes on the camera's JPEG", async () => {
       const { a, c } = chain();
       a.camera.set('photo1', 'CAMERA-JPEG');
@@ -437,16 +455,49 @@ describe('fetching a rendition through a peer', () => {
     });
   });
 
-  it('takes every picture from a peer on a library that keeps no originals, even with the original here', async () => {
-    const a = makePeer('a');
-    const b = makePeer('b');
-    addPhoto(a, 'photo1', 'Day1/one.arw', 'RAW-one');
-    addPhoto(b, 'photo1', 'Day1/one.arw', 'RAW-one');
-    pair(a, b, 'photo1');
+  it('takes pictures from a peer on a library that keeps no originals', async () => {
+    const { b } = holderAndReplica();
     b.db.query('UPDATE replication_libraries SET sync_originals = 0 WHERE library_id = ?').run(b.lib);
 
     await b.fetch.ensureCurrent('photo1', 'full');
 
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe('full-hdr of photo1');
+  });
+
+  it('takes a photo from a peer on a library that keeps no originals, until its original is fetched here', () => {
+    const { b } = holderAndReplica();
+    const photo = (): BasicPhoto => {
+      const row = b.photoPaths.getBasicById('photo1');
+      if (row == null) throw new Error('photo not found');
+      return row;
+    };
+    expect(b.fetch.takesFromPeer(library(b), photo())).toBe(false);
+
+    b.db.query('UPDATE replication_libraries SET sync_originals = 0 WHERE library_id = ?').run(b.lib);
+    expect(b.fetch.takesFromPeer(library(b), photo())).toBe(true);
+
+    mkdirSync(path.join(b.root, 'Day1'), { recursive: true });
+    writeFileSync(path.join(b.root, 'Day1/one.arw'), 'RAW-one');
+    expect(b.fetch.takesFromPeer(library(b), photo())).toBe(false);
+  });
+
+  it('has the holder render again when forced, and tells clients the copy they hold has changed', async () => {
+    const { b } = holderAndReplica();
+    await b.fetch.ensureCurrent('photo1', 'full');
+    expect(b.announced).toEqual([]);
+
+    await b.fetch.ensureCurrent('photo1', 'full', true);
+
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe('full-hdr of photo1, forced');
+    expect(b.announced).toEqual(['renditions of photo1']);
+  });
+
+  it('says a forced render did not happen when no peer can answer, keeping the copy it had', async () => {
+    const { a, b } = holderAndReplica();
+    await b.fetch.ensureCurrent('photo1', 'full');
+    net.delete(a.id);
+
+    await expect(b.fetch.ensureCurrent('photo1', 'full', true)).rejects.toThrow(/no peer holds a current/);
     expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe('full-hdr of photo1');
   });
 
