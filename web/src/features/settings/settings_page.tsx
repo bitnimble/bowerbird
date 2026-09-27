@@ -2,7 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { FolderOpen, FolderPlus, Link2, RefreshCw, Sparkles } from 'lucide-react';
+import { Activity, FolderOpen, FolderPlus, Link2, RefreshCw, Sparkles } from 'lucide-react';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { type Settings, type ViewerRenditionMode } from '../../../../src/schemas/settings';
 import {
@@ -21,6 +21,8 @@ import {
   usePresenters,
   useUpdatesStore,
 } from '../../app/stores_context';
+import { DiagnosticsDialog } from '../feedback/diagnostics_dialog';
+import { DiagnosticsStrings } from '../feedback/diagnostics_dialog.strings';
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
 import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
 import { renditionLabel } from '../photos/renditions';
@@ -530,6 +532,19 @@ function AppDataFolder(): JSX.Element | null {
   );
 }
 
+function DiagnosticsRow(): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <SettingRow label={DiagnosticsStrings.diagnostics()}>
+      <Button onClick={() => setOpen(true)}>
+        <Activity size={ICON} />
+        {DiagnosticsStrings.showDiagnostics()}
+      </Button>
+      <DiagnosticsDialog open={open} onOpenChange={setOpen} />
+    </SettingRow>
+  );
+}
+
 const SystemTab = observer(function SystemTab(): JSX.Element {
   const store = useAppSettingsStore();
   const write = useSettingWriter();
@@ -575,40 +590,43 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
         </>
       }
       right={
-        settings != null && (
-          <>
-            <GroupTitle>{SettingsStrings.groupMaintenance()}</GroupTitle>
-            <Panel flush>
-              <NumberSetting
-                field="prune_every_days"
-                label={SettingsStrings.pruneEveryDays()}
-                suffix="days"
-                hint={SettingsStrings.zeroTurnsItOff()}
-                min={0}
-              />
-              <NumberSetting
-                field="backup_every_days"
-                label={SettingsStrings.backupEveryDays()}
-                suffix="days"
-                hint={SettingsStrings.zeroTurnsItOff()}
-                min={0}
-              />
-              <NumberSetting
-                field="backup_keep"
-                label={SettingsStrings.backupKeep()}
-                min={1}
-                disabledReason={settings.backup_every_days > 0 ? undefined : SettingsStrings.backupsOff()}
-              />
-              <NumberSetting
-                field="export_history_limit"
-                label={SettingsStrings.exportHistoryLimit()}
-                hint={SettingsStrings.exportHistoryLimitHint()}
-                min={1}
-              />
-              <AppDataFolder />
-            </Panel>
-          </>
-        )
+        <>
+          <GroupTitle>{SettingsStrings.groupMaintenance()}</GroupTitle>
+          <Panel flush>
+            {settings != null && (
+              <>
+                <NumberSetting
+                  field="prune_every_days"
+                  label={SettingsStrings.pruneEveryDays()}
+                  suffix="days"
+                  hint={SettingsStrings.zeroTurnsItOff()}
+                  min={0}
+                />
+                <NumberSetting
+                  field="backup_every_days"
+                  label={SettingsStrings.backupEveryDays()}
+                  suffix="days"
+                  hint={SettingsStrings.zeroTurnsItOff()}
+                  min={0}
+                />
+                <NumberSetting
+                  field="backup_keep"
+                  label={SettingsStrings.backupKeep()}
+                  min={1}
+                  disabledReason={settings.backup_every_days > 0 ? undefined : SettingsStrings.backupsOff()}
+                />
+                <NumberSetting
+                  field="export_history_limit"
+                  label={SettingsStrings.exportHistoryLimit()}
+                  hint={SettingsStrings.exportHistoryLimitHint()}
+                  min={1}
+                />
+              </>
+            )}
+            <AppDataFolder />
+            <DiagnosticsRow />
+          </Panel>
+        </>
       }
     />
   );
