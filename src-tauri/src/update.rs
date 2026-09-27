@@ -101,4 +101,11 @@ mod tests {
             assert!(script.contains(&format!("'{shell}'")), "build-payload.ts no longer writes {shell}");
         }
     }
+
+    #[test]
+    fn the_server_exits_with_the_code_the_shell_hands_over_on() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/services/updates/update_service.ts");
+        let service = std::fs::read_to_string(path).unwrap();
+        assert!(service.contains(&format!("STAGED_EXIT_CODE = {};", super::STAGED)));
+    }
 }

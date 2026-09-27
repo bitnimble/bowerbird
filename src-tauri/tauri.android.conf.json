@@ -4,6 +4,14 @@
     "devUrl": "http://localhost:5199",
     "beforeDevCommand": "bun run --cwd web dev --port 5199"
   },
+  "app": {
+    "security": {
+      "headers": {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp"
+      }
+    }
+  },
   "bundle": {
     "externalBin": [],
     "resources": []

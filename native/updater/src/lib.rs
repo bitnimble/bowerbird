@@ -218,11 +218,7 @@ fn swap(plan: &Plan) -> Result<(), String> {
 /// Takes back what [`swap`] did, newest first.
 fn unswap(install: &Path, swapped: &[(&OsStr, bool)]) {
     for (name, had) in swapped.iter().rev() {
-        let live = install.join(name);
-        let _ = remove_any(&live);
-        if *had {
-            let _ = rename(&beside(install, name, PREVIOUS), &live);
-        }
+        let _ = if *had { put_back(install, name) } else { remove_any(&install.join(name)) };
     }
 }
 
@@ -231,12 +227,29 @@ fn unswap(install: &Path, swapped: &[(&OsStr, bool)]) {
 /// Read off the install rather than remembered, so an elevated copy of this helper can do it
 /// with nothing but the directory. An entry the payload added, which replaced nothing, stays.
 fn restore(install: &Path) -> Result<(), String> {
-    for (held, name) in marked(install, PREVIOUS)? {
-        let live = install.join(&name);
-        remove_any(&live)
-            .and_then(|()| rename(&install.join(&held), &live))
-            .map_err(|err| format!("could not put {} back: {err}", live.display()))?;
+    let mut failed = None;
+    for (_, name) in marked(install, PREVIOUS)? {
+        if let Err(err) = put_back(install, &name) {
+            failed.get_or_insert(format!("could not put {} back: {err}", install.join(&name).display()));
+        }
     }
+    failed.map_or(Ok(()), Err)
+}
+
+/// The entry held aside as previous, back in place of the live one.
+fn put_back(install: &Path, name: &OsStr) -> io::Result<()> {
+    let live = install.join(name);
+    let aside = beside(install, name, INCOMING);
+    remove_any(&aside)?;
+    if live.symlink_metadata().is_ok() {
+        rename(&live, &aside)?;
+    }
+    // Aside rather than deleted until the old one is in: a failed rename would otherwise leave no app.
+    if let Err(err) = rename(&beside(install, name, PREVIOUS), &live) {
+        let _ = rename(&aside, &live);
+        return Err(err);
+    }
+    let _ = remove_any(&aside);
     Ok(())
 }
 
@@ -710,6 +723,26 @@ mod tests {
         assert_eq!(read(plan.install.join("Bowerbird")), "old shell");
         assert_eq!(read(plan.install.join("resources/server.js")), "old");
         assert!(marked(&plan.install, PREVIOUS).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_restore_that_fails_on_one_entry_leaves_it_live_and_restores_the_rest() {
+        let dir = scratch();
+        let plan = plan(&dir);
+        install(&plan, &[("a", "old a"), ("b", "old b")]);
+        stage(&plan, &[("a", "new a"), ("b", "new b")]);
+        swap(&plan).unwrap();
+        // A leftover beside `a` that cannot be cleared, so `a` cannot be put back.
+        let stuck = beside(&plan.install, OsStr::new("a"), INCOMING);
+        install(&plan, &[(".a.bowerbird-incoming/locked/file", "")]);
+        fs::set_permissions(stuck.join("locked"), fs::Permissions::from_mode(0o555)).unwrap();
+
+        let failed = run_phase(&plan, Phase::Restore);
+        fs::set_permissions(stuck.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(failed.is_err());
+        assert_eq!(read(plan.install.join("a")), "new a");
+        assert_eq!(read(plan.install.join("b")), "old b");
     }
 
     #[test]

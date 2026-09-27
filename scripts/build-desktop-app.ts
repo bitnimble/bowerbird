@@ -1,14 +1,7 @@
 // Builds the desktop binary the e2e run drives (see `e2e-tauri/playwright.config.ts`).
 //
-// One thing a normal build does not do: `tauri/custom-protocol`, which serves the embedded
-// `frontendDist` instead of the dev URL. It is the feature the Tauri CLI passes for a real
-// build, and the switch that takes the binary out of dev mode.
-//
-// It used to pass `withGlobalTauri` by env as well, with a comment saying that kept it out
-// of a shipped build. It does not and cannot: `tauri.conf.json` sets it for every build, and
-// has to, because `transport.ts` reaches the shell through `window.__TAURI__.core.invoke` -
-// so the override set what was already set and the comment described the opposite of what
-// ships.
+// One thing a normal build does not do: `tauri/custom-protocol`, the feature the Tauri CLI
+// passes for a real build and the switch that takes the binary out of dev mode.
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
 
