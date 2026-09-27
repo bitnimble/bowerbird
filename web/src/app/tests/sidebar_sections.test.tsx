@@ -59,6 +59,7 @@ const PEER: PairedPeer = {
   last_replicated_at: null,
   last_error: null,
   wants_originals: true,
+  outdated: null,
 };
 
 // The stores belong to the provider, so the one library these rows are of is

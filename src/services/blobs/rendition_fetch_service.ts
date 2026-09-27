@@ -11,8 +11,8 @@ import { getDataPath, getRenditionPath, originalPathOf } from '../../utils/paths
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../photos/renditions/photo_processing_repository';
-import { renditionVariant, type Rendition } from '../processing/renditions/renditions';
-import { pairedPeers } from '../replication/pairing';
+import { renditionVariant, storedAsHdr, type Rendition } from '../processing/renditions/renditions';
+import { pairedPeers, syncsOriginals } from '../replication/pairing';
 import type { BlobLocations } from './blob_locations';
 import { contentHash } from '../../utils/hash';
 import { appendToStage } from './blob_store';
@@ -21,9 +21,12 @@ import type { PeerTransport } from './peer';
 
 // Renditions from a peer (docs/replication.md §7.9): a device holding the
 // catalogue but not the original serves tiles and renditions anyway, by fetching
-// a peer's built copy and caching it as an ordinary rendition file.
+// the copy a peer renders and caching it as an ordinary rendition file.
 
 const log = new Logger('blobs');
+
+// The holder renders before it answers, and a `max` on a software Vulkan driver takes minutes.
+const RENDER_ON_PEER_MS = 10 * 60_000;
 
 /**
  * The pipeline's own staleness rule (`queueEditedSince`), as one predicate both
@@ -58,7 +61,7 @@ export class RenditionFetchService {
 
   /**
    * The fall-back order, in one place (§7.9): a current local rendition is kept;
-   * failing that, a peer's built rendition is fetched and cached; fetching the
+   * failing that, a peer's rendition is fetched and cached; fetching the
    * whole original to build locally is **never** done here - that is the
    * explicit §7.5 action, and walking a device into it over a missing tile is
    * exactly the accident the order exists to rule out. No peer able to answer is
@@ -69,14 +72,14 @@ export class RenditionFetchService {
     if (photo == null) return;
     const library = this.libraries.getById(photo.library_id);
     if (library == null) return;
-    // The local pipeline owns every photo whose original is here: it builds on
-    // request, rebuilds on edit and sweeps what it rebuilt. A fetched copy would
-    // fight it, and a locally built rendition is preferred anyway.
+    // On a library that keeps its originals, the local pipeline owns every photo whose original
+    // is here: it builds on request, rebuilds on edit and sweeps what it rebuilt. A fetched copy
+    // would fight it, and a locally built rendition is preferred anyway.
     const original = originalPathOf(library, photo);
-    // ponytail: a composed row is treated as the local pipeline's whatever this device holds,
-    // which is what a panorama gets today. It is right only while every source is here - the
-    // check that says so wants the sources on the row, so it lands with them.
-    if (original == null || existsSync(original)) return;
+    // ponytail: a composed row there is treated as the local pipeline's whatever this device
+    // holds. It is right only while every source is here - the check that says so wants the
+    // sources on the row, so it lands with them.
+    if (!this.alwaysFromPeer(library.id) && (original == null || existsSync(original))) return;
 
     const key = `${photoId}:${rendition}`;
     const running = this.fetching.get(key);
@@ -86,10 +89,18 @@ export class RenditionFetchService {
     return run;
   }
 
+  /**
+   * Whether every picture of this library's photos comes from a peer (§7.10): a device set not
+   * to keep its originals renders nothing of its own, even of an original fetched here by hand.
+   */
+  alwaysFromPeer(libraryId: string): boolean {
+    return !syncsOriginals(this.db, libraryId);
+  }
+
   private async fetchIfStale(photo: BasicPhoto, library: Library, rendition: Rendition): Promise<void> {
-    // The dynamic range this device's library builds (§3.2, per-peer): a holder
-    // that built only the other range does not have the file, which is a miss.
-    const hdr = rendition !== 'grid' && library.rendition_hdr;
+    // The dynamic range this device's library shows (§3.2, per-peer), which the holder renders
+    // at if it has not already.
+    const hdr = storedAsHdr(rendition, library.rendition_hdr);
     const target = getRenditionPath(library, photo.id, rendition, hdr);
     const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(rendition, hdr));
     const builtFrom = stamps?.built_from ?? null;
@@ -105,8 +116,14 @@ export class RenditionFetchService {
       await this.fetch(photo, library, rendition, hdr, target, editedFrom);
     } catch (error) {
       // On a device that cannot rebuild, the stale picture beats a hole; the
-      // next request asks again.
-      if (!cached) throw error;
+      // next request asks again. A peer's copy from before an edit that has not
+      // reached it yet - which is every edit made here while the two cannot sync
+      // (§8.5) - is that stale picture when nothing is cached, and is recorded at
+      // what it was built from, so it still reads as owed.
+      if (!cached) {
+        await this.fetch(photo, library, rendition, hdr, target, null);
+        return;
+      }
       log.warn('kept a stale fetched rendition; no peer holds a current one', {
         photo: photo.id,
         rendition,
@@ -125,7 +142,12 @@ export class RenditionFetchService {
   ): Promise<void> {
     for (const peer of this.candidates(library.id, photo.id)) {
       try {
-        const res = await this.transport.request(peer, `${route(photo.id, PathSegment.rendition(), rendition)}${hdr ? '?hdr=1' : ''}`);
+        const res = await this.transport.request(
+          peer,
+          `${route(photo.id, PathSegment.rendition(), rendition)}${hdr ? '?hdr=1' : ''}`,
+          undefined,
+          RENDER_ON_PEER_MS,
+        );
         if (!res.ok || res.body == null) continue;
         // Bounded, not merely well shaped: it is written to a column that decides
         // staleness from here on, so a peer reporting a stamp dated centuries ahead

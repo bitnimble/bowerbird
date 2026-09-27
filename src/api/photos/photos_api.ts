@@ -24,6 +24,7 @@ import {
 import { PathSegment, route } from '../../schemas/route';
 import { AppError } from '../../errors';
 import { respond } from '../respond';
+import { takeAsLongAsItTakes } from '../long_requests';
 import { isRendition } from '../../services/processing/renditions/renditions';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
 import type { PhotoMutationService } from '../../services/photos/mutations/photo_mutation_service';
@@ -163,6 +164,7 @@ export class PhotosApi {
       // changed since it was built - the file is the cache, so nothing else would
       // ever rebuild it.
       const force = c.req.query('force') === 'true';
+      takeAsLongAsItTakes(c);
       await this.renditions.buildRendition(c.req.param('id'), rendition, force);
       return c.body(null, 204);
     });

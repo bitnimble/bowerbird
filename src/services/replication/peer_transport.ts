@@ -30,7 +30,7 @@ export class PairedPeers implements PeerTransport {
     return anyAddress(this.db, peerId) != null;
   }
 
-  async request(peerId: string, path: string, init?: RequestInit): Promise<Response> {
+  async request(peerId: string, path: string, init?: RequestInit, responseMs = PEER_RESPONSE_TIMEOUT_MS): Promise<Response> {
     // By peer rather than by library: a machine is at one address whichever of
     // its libraries is being asked about, and the caller here has a peer in hand
     // rather than a pairing.
@@ -43,7 +43,7 @@ export class PairedPeers implements PeerTransport {
     }
     // The caller's own signal still cancels, which is what a pause or a cancel
     // uses; the timeout is in addition to it rather than instead.
-    const deadline = AbortSignal.timeout(PEER_RESPONSE_TIMEOUT_MS);
+    const deadline = AbortSignal.timeout(responseMs);
     const signal = init?.signal == null ? deadline : AbortSignal.any([init.signal, deadline]);
     return fetch(`${address.replace(/\/+$/, '')}${route(PathSegment.api(), PathSegment.blobs())}${path}`, { ...init, signal });
   }
@@ -66,9 +66,9 @@ export class Peers implements PeerTransport {
     return this.passive.handles(peerId) ? this.passive.canReach(peerId) : this.active.canReach(peerId);
   }
 
-  request(peerId: string, path: string, init?: RequestInit): Promise<Response> {
+  request(peerId: string, path: string, init?: RequestInit, responseMs?: number): Promise<Response> {
     const transport = this.passive.handles(peerId) ? this.passive : this.active;
-    return transport.request(peerId, path, init);
+    return transport.request(peerId, path, init, responseMs);
   }
 }
 

@@ -2,7 +2,6 @@ import { afterEach, expect, it } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { dataPathForLibraryId } from '../../../../utils/paths';
-import { localOriginals } from '../../../blobs/originals_for_testing';
 import { ShareService } from '../share_service';
 
 const LIB = 'lib-share-service';
@@ -14,8 +13,6 @@ const shares = new ShareService(
       photo: { id: 'p1', file_path: null, recipe: { kind: 'file', path: 'a.arw' } },
     }),
   } as unknown as ConstructorParameters<typeof ShareService>[0],
-  localOriginals(),
-  { editOrientation: () => 0 },
   { shareable: () => Promise.resolve(new Uint8Array()) },
 );
 

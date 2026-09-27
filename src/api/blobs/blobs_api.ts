@@ -23,12 +23,20 @@ import { PathSegment, route } from '../../schemas/route';
 import { containsPath, getRenditionPath, originalPathOf } from '../../utils/paths';
 import type { BlobLocations } from '../../services/blobs/blob_locations';
 import { renditionCurrent } from '../../services/blobs/rendition_fetch_service';
-import { RENDITION_CONTENT_TYPE, isRendition, renditionVariant } from '../../services/processing/renditions/renditions';
+import {
+  RENDITION_CONTENT_TYPE,
+  isRendition,
+  renditionVariant,
+  storedAsHdr,
+} from '../../services/processing/renditions/renditions';
+import { isComposite } from '../../schemas/recipes';
+import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
 import { appendToStage, stagedSize, stagePath, stagingDir } from '../../services/blobs/blob_store';
 import { contentHash } from '../../utils/hash';
 import { acceptVerifiedBlob, type TransferService } from '../../services/blobs/transfer_service';
 import { deleteStagedBlob } from '../../utils/deletions';
 import { respond } from '../respond';
+import { takeAsLongAsItTakes } from '../long_requests';
 import type { PhotoMetadataRepository } from '../../services/photos/metadata/photo_metadata_repository';
 import type { BasicPhoto, PhotoPathsRepository } from '../../services/photos/paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../../services/photos/renditions/photo_processing_repository';
@@ -60,13 +68,15 @@ export class BlobsApi {
       if (!('photo_ids' in target)) throw new AppError('VALIDATION_ERROR', 'this server cannot resolve a selection');
       return target.photo_ids;
     },
+    /** What renders a copy a peer asks for (§7.9). Null serves only what is already on disk. */
+    private readonly renditions: Pick<PhotoRenditionService, 'buildForPeer' | 'embeddedJpegHere'> | null = null,
   ) {
     const app = new Hono();
 
     // What a peer calls: the bytes, their hash, a live possession check for
     // eviction, and the staged upload a push lands in.
     app.get(route(PathSegment.param('photoId'), PathSegment.original()), (c) => this.serveOriginal(c));
-    // A built rendition for a peer that cannot build one (§7.9). `hdr=1` names
+    // A rendition for a peer that cannot build one, rendered here if need be (§7.9). `hdr=1` names
     // the dynamic range, because that is a per-peer choice (§3.2) and the caller
     // wants the range its own library serves.
     app.get(route(PathSegment.param('photoId'), PathSegment.rendition(), PathSegment.param('rendition')), (c) => this.serveRendition(c));
@@ -172,7 +182,13 @@ export class BlobsApi {
     const { photo, library } = this.locate(c);
     const kind = c.req.param('rendition') ?? '';
     if (!isRendition(kind)) throw new AppError('NOT_FOUND', `unknown rendition: ${kind}`);
-    const hdr = c.req.query('hdr') === '1';
+    if (kind === 'embedded' && !isComposite(photo.recipe)) return this.serveEmbedded(c, photo);
+    const hdr = storedAsHdr(kind, c.req.query('hdr') === '1');
+    // The tile is built at import and rebuilt by the queue, and is refused below until it has been.
+    if (kind !== 'grid' && this.renditions != null) {
+      takeAsLongAsItTakes(c);
+      await this.renditions.buildForPeer(photo.id, kind, hdr);
+    }
     const abs = getRenditionPath(library, photo.id, kind, hdr);
     const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(kind, hdr));
     const builtFrom = stamps?.built_from ?? null;
@@ -198,6 +214,25 @@ export class BlobsApi {
       ...(offset > 0 ? { 'Content-Range': `bytes ${offset}-${size - 1}/${size}` } : {}),
     };
     return new Response(offset > 0 ? file.slice(offset) : file, { status: offset > 0 ? 206 : 200, headers });
+  }
+
+  // Lifted from the original on every ask, as this device's own viewer gets it, so it is current
+  // with every edit made here.
+  private async serveEmbedded(c: Context, photo: BasicPhoto): Promise<Response> {
+    const jpeg = (await this.renditions?.embeddedJpegHere(photo.id)) ?? null;
+    if (jpeg == null) throw new AppError('NOT_FOUND', `no camera JPEG here for ${photo.id}`);
+    const offset = rangeOffset(c.req.header('range'));
+    if (offset > jpeg.length) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${jpeg.length}-byte file`);
+    const builtFrom = this.photoProcessing.renditionStamps(photo.id, 'embedded')?.edited_from ?? null;
+    const headers: Record<string, string> = {
+      'Content-Type': 'image/jpeg',
+      'Content-Length': String(jpeg.length - offset),
+      'Accept-Ranges': 'bytes',
+      'X-Content-Hash': new Bun.CryptoHasher('sha256').update(jpeg).digest('hex'),
+      ...(builtFrom == null ? {} : { 'X-Rendition-Built-From': builtFrom }),
+      ...(offset > 0 ? { 'Content-Range': `bytes ${offset}-${jpeg.length - 1}/${jpeg.length}` } : {}),
+    };
+    return new Response(jpeg.subarray(offset), { status: offset > 0 ? 206 : 200, headers });
   }
 
   private async serveHash(c: Context): Promise<Response> {

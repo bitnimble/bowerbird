@@ -79,9 +79,15 @@ export class ReplicationStore {
     return this.transfers.some((t) => t.state === 'queued' || t.state === 'active');
   }
 
-  /** Whether a peer's last session with this library failed (§8.6). */
+  /** Whether a peer's last session with this library failed, or cannot happen until one of them is updated (§8.6). */
   hasSyncErrors(libraryId: string): boolean {
-    return this.peersOf(libraryId).some((peer) => peer.last_error != null);
+    return this.peersOf(libraryId).some((peer) => peer.last_error != null || peer.outdated != null);
+  }
+
+  /** The first device that has to be updated before this library can sync, this one before any other. */
+  outdatedPeerOf(libraryId: string): PairedPeer | null {
+    const outdated = this.peersOf(libraryId).filter((peer) => peer.outdated != null);
+    return outdated.find((peer) => peer.outdated === 'this_device') ?? outdated[0] ?? null;
   }
 
   /** Candidates group by photograph: one divergence is every card naming it. */

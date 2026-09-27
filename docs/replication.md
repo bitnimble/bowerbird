@@ -652,8 +652,9 @@ they describe (§8.2).
 Either side initiates; the flow is symmetric. One session between two peers covers every
 library both replicate.
 
-1. **Handshake**: protocol version (stamp widths included), app schema version, the shared
-   library ids, rw check, both clocks (skew guard), both coverage vectors. A downlevel peer is
+1. **Handshake**: protocol version (stamp widths included), app schema version, which way the
+   rows go, the shared library ids, rw check, both clocks (skew guard), both coverage vectors.
+   Rows only ever go from a schema to the same or a newer one (§8.5); a direction that cannot is
    refused with "update the app", never half-understood.
 2. **Stream**: each sender opens a **stable read snapshot** and streams, per library, every
    unit the receiver's vector lacks, in stamp order, in pages. The sender's claimed coverage is
@@ -853,18 +854,26 @@ build.
 
 A peer holding the catalogue and none of the RAWs has nothing to draw from - every tile and
 every rendition is built out of an original - and fetching whole originals to fill a grid is the
-one thing the manual-assets rule (§7.3) exists to prevent. So a *built rendition* is itself
-something a peer can serve: the holder answers with its own file, the asking side verifies the
-bytes against a hash the sender computed over them, and caches the result at exactly the path
-its own pipeline would have written. Everything downstream - the staleness rule, the URL
-versioning, the startup sweep - then reads a fetched copy as a built one.
+one thing the manual-assets rule (§7.3) exists to prevent. So a *rendition* is itself something a
+peer can serve: the holder renders `full` or `max` on request if it has no current copy, at the
+dynamic range the asking device shows, and lifts the camera JPEG out of the original for
+`embedded`. The asking side verifies the bytes against a hash the sender computed over them, and
+caches the result at exactly the path its own pipeline would have written. Everything downstream -
+the staleness rule, the URL versioning, the startup sweep - then reads a fetched copy as a built
+one. The grid tile is the exception: the holder builds it at import and rebuilds it from its
+queue, and serves only what that has made.
+
+A holder renders from what it holds and never asks a third device on a peer's behalf: two devices
+that each lack the original, asking each other, would each wait on the other's answer.
 
 Freshness is one predicate applied on both sides. The holder refuses a copy its own edits have
 moved past, because the caller cannot rebuild and would cache a stale picture as current; the
 caller checks what the sender reports it rendered (`X-Rendition-Built-From`) against the edit
 stamp *it* holds, which may be newer than anything the holder has replicated. When no peer can
 answer and a stale copy is already cached, the stale picture is kept: on a device that cannot
-rebuild it beats a hole, and the next request asks again.
+rebuild it beats a hole, and the next request asks again. With nothing cached, a holder's copy
+from before that edit is taken for the same reason, recorded at what it was built from so it still
+reads as owed.
 
 **What a render was built from is a stamp, not a time.** A build happens on whichever peer holds
 the original and an edit on whichever peer made it - a catalogue-only peer never builds anything
@@ -899,7 +908,9 @@ scrolls a decade of photographs gives back the ones it scrolled past first.
 Per replica, chosen when it is created and changeable afterwards. Off, the device holds the
 catalogue and lives on §7.9's renditions: everything is browsable, sortable, cullable and
 rateable, and none of it costs a 50MB transfer. This is what makes a phone a peer, and it is the
-same setting on a laptop that wants the library without the terabyte.
+same setting on a laptop that wants the library without the terabyte. Every picture such a device
+shows comes from a peer, the camera JPEG and a panorama's included, even of an original fetched
+here by hand.
 
 **Local, and deliberately not a replicated unit.** It is a statement about one device's disk, so
 a laptop that wants the catalogue only must not have that answer overwritten by the desktop's.
@@ -1002,11 +1013,24 @@ must not leave permanent lies behind:
 
 ### 8.5 Version skew
 
-Older app ↔ newer catalogue: unknown columns in replicated payloads are preserved and
-round-tripped, not stripped (`EditDoc` is already `.loose()` end to end; the same rule one
-layer up). Validation checks the fields it knows and passes through what it does not (§11.2).
-A breaking protocol change (including stamp-encoding widths) bumps the protocol version and the
-handshake refuses downlevel peers by name.
+Two devices a migration apart still sync, one way. An older build's rows merge into a newer
+catalogue: a column or a unit the sender has never heard of is absent from its payload, and apply
+keeps this peer's own value for anything absent, on insert and update alike. The reverse cannot
+work - a unit kind the older build has no table for fails its whole page - so a newer peer never
+sends to an older one. A laptop updated before the server it syncs with therefore still receives
+the server's work and keeps its own until the server is updated; a server updated first still
+takes the laptop's. Nothing is skipped in either direction, so no vector ever claims a row it
+lacks, and the first session after the update carries the rest.
+
+Pictures are not catalogue and ignore all of this: renditions and originals move over the blob
+routes (§7), which carry no version at all. A photograph edited on the side that cannot send is
+shown from a peer's copy built before the edit, marked stale, until the edit reaches a device that
+can rebuild it (§7.9).
+
+Each peer records the build the other last named in a handshake, refused ones included, so both
+ends say which device to update. A change an older build's rows cannot be merged under - a
+column renamed, removed, or given a new meaning - is a breaking protocol change, as is any change
+to stamp widths: it bumps the protocol version, and the handshake refuses both directions.
 
 ### 8.6 Visibility of failure
 

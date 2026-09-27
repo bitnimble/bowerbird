@@ -306,6 +306,7 @@ const blobsApi = new BlobsApi(
   buildArrived,
   (libraryId) => replicationService.syncsOriginals(libraryId),
   (target) => photoReadService.resolve(target),
+  photoRenditionService,
 );
 // Prune scan's per-library in-memory state when a library is deleted (unbounded otherwise).
 librariesService.addLifecycleListener(scanService);
@@ -357,7 +358,7 @@ compositesService.onProgress((progress) => eventsApi.announce('composite', progr
 const compositesApi = new CompositesApi(compositesService, photoReadService);
 const assembliesApi = new AssembliesApi(compositesService);
 const exportService = new ExportService(photoRenditionService, processingService, originals, settingsRepo, compositesService);
-const shareService = new ShareService(photoRenditionService, originals, photoReadService, exportService);
+const shareService = new ShareService(photoRenditionService, exportService);
 const frameTvService = new FrameTvService(
   settingsRepo,
   shareService,

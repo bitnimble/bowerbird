@@ -54,14 +54,21 @@ export const ReplicationStrip = observer(function ReplicationStrip({
         return (
           <Strip style={[styles.peer, index > 0 && styles.laterPeer]} key={peer.peer_id}>
             <StatusDot state={moving.length > 0 ? 'working' : 'idle'} />
-            <StripLabel tone={peer.last_error == null ? undefined : 'error'} tooltip={peer.last_error ?? undefined}>
+            <StripLabel
+              tone={peer.last_error == null && peer.outdated == null ? undefined : 'error'}
+              tooltip={peer.last_error ?? undefined}
+            >
               {ReplicationStripStrings.deviceLine(
                 peer.name,
                 peer.last_replicated_at == null ?
                   ReplicationStripStrings.neverSynced()
                 : ReplicationStripStrings.syncedAt(relativeTime(peer.last_replicated_at)),
               )}
-              {peer.last_error != null && ReplicationStripStrings.deviceError(peer.last_error)}
+              {peer.outdated === 'peer' ?
+                ReplicationStripStrings.updatePeer(peer.name)
+              : peer.outdated === 'this_device' ?
+                ReplicationStripStrings.updateThisDevice()
+              : peer.last_error != null && ReplicationStripStrings.deviceError(peer.last_error)}
               {sending > 0 && ReplicationStripStrings.sending(sending)}
               {fetching > 0 && ReplicationStripStrings.fetching(fetching)}
               {failed > 0 && ReplicationStripStrings.failed(failed)}

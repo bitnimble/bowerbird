@@ -15,7 +15,10 @@ export function applyErrorHandler(app: Hono): void {
 
   app.onError((err, c) => {
     if (err instanceof AppError) {
-      return c.json(respond(ErrorEnvelopeSchema, { error: { code: err.code, message: err.message } }), err.status);
+      return c.json(
+        respond(ErrorEnvelopeSchema, { error: { code: err.code, message: err.message, details: err.details } }),
+        err.status,
+      );
     }
     if (err instanceof z.ZodError) {
       return c.json(

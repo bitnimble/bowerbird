@@ -1,8 +1,8 @@
 import type { Database } from '../../db/driver';
-import { latestMigrationMillis } from '../../db/migrate';
 import { AppError } from '../../errors';
 import {
-  REPLICATION_PROTOCOL,
+  canSend,
+  outdatedSide,
   type AckRequest,
   type AllPeersResponse,
   type ChangesRequest,
@@ -33,11 +33,13 @@ import {
   markReplicated,
   pairedPeers,
   recordPeerAppetite,
+  recordPeerVersion,
   registerPeer,
   renamePeer,
   setAutoTransfersOriginals,
   setSyncsOriginals,
   syncsOriginals,
+  thisBuild,
 } from './pairing';
 import { peerId } from './stamps';
 import { page } from './stream';
@@ -138,15 +140,20 @@ export class ReplicationService {
     // Version first, so a downlevel peer hears "update the app" rather than a
     // half-understood refusal about its pairing. Worded for the device that dialled:
     // the message reaches its reader verbatim.
-    if (request.protocol !== REPLICATION_PROTOCOL || request.schema !== latestMigrationMillis()) {
-      const callerIsOlder =
-        request.protocol < REPLICATION_PROTOCOL ||
-        (request.protocol === REPLICATION_PROTOCOL && request.schema < latestMigrationMillis());
+    const ours = thisBuild();
+    // Before the refusal, so this side can say which device to update too.
+    recordPeerVersion(this.db, request.library_id, request.peer_id, request);
+    const outdated = outdatedSide(ours, request);
+    if (outdated != null) this.changed(request.library_id);
+    const sending = request.direction === 'pull';
+    if (!canSend(sending ? ours : request, sending ? request : ours)) {
       throw new AppError(
-        'CONFLICT',
-        callerIsOlder ?
+        'OUTDATED',
+        outdated === 'peer' ?
           "This device's version of Bowerbird is older than the other device's. Update Bowerbird on this device, then sync again."
         : "The other device's version of Bowerbird is older than this one. Update Bowerbird on the other device, then sync again.",
+        // What the caller records of this build, the refusal being all it will hear.
+        [ours],
       );
     }
     assertPaired(this.db, request.library_id, request.peer_id);
@@ -162,8 +169,7 @@ export class ReplicationService {
     recordPeer(this.db, request.library_id, request.peer_id, unpackVector(request.coverage));
     recordPeerAppetite(this.db, request.library_id, request.peer_id, request.wants_originals);
     return {
-      protocol: REPLICATION_PROTOCOL,
-      schema: latestMigrationMillis(),
+      ...ours,
       peer_id: peerId(this.db),
       clock_ms: this.now(),
       coverage: packVector(coverage(this.db, request.library_id)),

@@ -14,7 +14,7 @@ import type { Job } from '../../../../schemas/jobs';
 import type { SettingsRepository } from '../../../settings/settings_repository';
 import { DEFAULT_SETTINGS } from '../../../../schemas/settings';
 import type { ShootsRepository } from '../../../shoots/shoots_repository';
-import { getDataPath } from '../../../../utils/paths';
+import { getDataPath, getRenditionPath } from '../../../../utils/paths';
 import { resolveRenditionToBuild, resolveShownRendition, type RenditionContext } from '../photo_rendition_policy';
 import type { PhotoCompositesRepository } from '../../composites/photo_composites_repository';
 import type { PhotoMetadataRepository } from '../../metadata/photo_metadata_repository';
@@ -24,6 +24,7 @@ import type { PhotoNavigationRepository } from '../../listing/photo_navigation_r
 import type { PhotoListResult, PhotoListingRepository } from '../../listing/photo_listing_repository';
 import { PhotoReadService } from '../../listing/photo_read_service';
 import { PhotoRenditionService } from '../photo_rendition_service';
+import type { RenditionFetchService } from '../../../blobs/rendition_fetch_service';
 import { Logger } from '../../../../logger';
 
 const emptyResult: PhotoListResult = { photos: [], total: 0 };
@@ -38,6 +39,7 @@ function build(over: {
   albums?: Partial<AlbumsRepository>;
   processing?: Partial<ProcessingService>;
   settings?: Partial<ReturnType<SettingsRepository['get']>>;
+  fetchThrough?: Partial<RenditionFetchService>;
 }) {
   const photoPaths = {
     getBasicById: jest.fn(() => null),
@@ -86,7 +88,7 @@ function build(over: {
     processing,
     localOriginals(),
     undefined,
-    null,
+    over.fetchThrough == null ? null : (over.fetchThrough as RenditionFetchService),
   );
   const read = new PhotoReadService(
     photoListing,
@@ -207,7 +209,10 @@ describe('PhotoRenditionService.buildRendition', () => {
       expect(processing.renderOne).toHaveBeenCalledTimes(1);
       pending.forEach((resolve) => resolve());
       await both;
-      expect(logged.mock.calls).toContainEqual(['rendition already building', { photo: 'p1', rendition: 'full', forced: false }]);
+      expect(logged.mock.calls).toContainEqual([
+        'rendition already building',
+        { photo: 'p1', rendition: 'full', forced: false, hdr: null, forPeer: false },
+      ]);
       expect(logged.mock.calls).toContainEqual(['rendition cache', { photo: 'p1', rendition: 'full', hdr: false, cache: 'miss' }]);
 
       // And the next one renders again: the guard is for the overlap, not a cache.
@@ -296,6 +301,67 @@ describe('PhotoRenditionService.buildRendition', () => {
       await expect(service.buildRendition('pano', 'max')).rejects.toThrow(/compose/);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('renders a copy a peer asked for at the range that peer shows', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-for-peer-'));
+    const lib = { ...library, id: 'photos-for-peer', root_path: root };
+    try {
+      writeFileSync(path.join(root, 'a.arw'), 'raw');
+      const renderOne = jest.fn(async () => {});
+      const { service } = build({
+        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        libraries: { getById: jest.fn(() => lib) },
+        processing: { renderOne },
+      });
+
+      await service.buildForPeer('p1', 'max', true);
+
+      expect(renderOne).toHaveBeenLastCalledWith(path.join(root, 'a.arw'), 'p1', lib, 'max', true, 'render', false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Two devices that each lack the original would otherwise wait on one another.
+  it('never asks another device for a copy a peer asked this one for', async () => {
+    const ensureCurrent = jest.fn(async () => {});
+    const { service } = build({
+      photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: library.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+      libraries: { getById: jest.fn(() => library) },
+      fetchThrough: { alwaysFromPeer: () => true, ensureCurrent },
+    });
+
+    await expect(service.buildForPeer('p1', 'full', false)).rejects.toThrow(/nothing on this device/);
+    expect(ensureCurrent).not.toHaveBeenCalled();
+  });
+
+  it('takes every copy from a peer on a library that keeps no originals, even with the original here', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-from-peer-'));
+    const lib = { ...library, id: 'photos-from-peer', root_path: root };
+    try {
+      writeFileSync(path.join(root, 'a.arw'), 'raw');
+      const renderOne = jest.fn(async () => {});
+      const ensureCurrent = jest.fn(async () => {
+        const target = getRenditionPath(lib, 'p1', 'full', false);
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, 'from a peer');
+      });
+      const { service } = build({
+        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        libraries: { getById: jest.fn(() => lib) },
+        processing: { renderOne },
+        fetchThrough: { alwaysFromPeer: () => true, ensureCurrent },
+      });
+
+      await service.buildRendition('p1', 'full');
+
+      expect(ensureCurrent).toHaveBeenCalledWith('p1', 'full');
+      expect(renderOne).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(getDataPath(lib), { recursive: true, force: true });
     }
   });
 });

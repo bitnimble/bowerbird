@@ -18,6 +18,32 @@ export const PAGE_ROWS = 500;
 /** Bumped on any breaking wire change, the stamp widths included (§2.2). */
 export const REPLICATION_PROTOCOL = 1;
 
+/** What a build says about itself in a handshake, and what its peers record of it (§8.5). */
+export const BuildVersionSchema = z.object({
+  protocol: z.number().int().nonnegative(),
+  schema: z.number().int().nonnegative(),
+});
+export type BuildVersion = z.infer<typeof BuildVersionSchema>;
+
+/** Which of two devices has to be updated before they can sync, or null when neither does. */
+export const OutdatedSchema = z.enum(['this_device', 'peer']).nullable();
+export type Outdated = z.infer<typeof OutdatedSchema>;
+
+/**
+ * Whether a catalogue `from` sends can be merged by `to` (§8.5): the same protocol, and a schema no
+ * newer than the receiver's, whose apply keeps its own value for every column an older sender omits.
+ */
+export function canSend(from: BuildVersion, to: BuildVersion): boolean {
+  return from.protocol === to.protocol && from.schema <= to.schema;
+}
+
+export function outdatedSide(ours: BuildVersion, theirs: BuildVersion): Outdated {
+  if (theirs.protocol === ours.protocol && theirs.schema === ours.schema) return null;
+  const theyAreOlder =
+    theirs.protocol < ours.protocol || (theirs.protocol === ours.protocol && theirs.schema < ours.schema);
+  return theyAreOlder ? 'peer' : 'this_device';
+}
+
 // The widths are the clock's (12 hex digits of milliseconds, 4 of counter, a
 // 16-char peer id); a stamp of any other shape is from no build this protocol
 // admits, and letting one in would poison every byte comparison after it.
@@ -222,9 +248,9 @@ export type PairResponse = z.infer<typeof PairResponseSchema>;
 // a peer on a build that predates the setting has always taken originals.
 const WantsOriginalsSchema = z.boolean().default(true);
 
-export const HandshakeRequestSchema = z.object({
-  protocol: z.number().int().nonnegative(),
-  schema: z.number().int().nonnegative(),
+export const HandshakeRequestSchema = BuildVersionSchema.extend({
+  /** Which way the session's rows go, from the caller's side: across a schema gap only one way can. */
+  direction: z.enum(['pull', 'push']),
   library_id: IdSchema,
   peer_id: PeerIdSchema,
   clock_ms: z.number().int().nonnegative(),
@@ -233,9 +259,7 @@ export const HandshakeRequestSchema = z.object({
 });
 export type HandshakeRequest = z.infer<typeof HandshakeRequestSchema>;
 
-export const HandshakeResponseSchema = z.object({
-  protocol: z.number().int(),
-  schema: z.number().int(),
+export const HandshakeResponseSchema = BuildVersionSchema.extend({
   peer_id: PeerIdSchema,
   clock_ms: z.number().int(),
   coverage: VectorSchema,
@@ -310,6 +334,8 @@ export const PairedPeerSchema = z.object({
   // Whether that peer keeps RAW files for this library (§7.10), as of the last
   // handshake with it.
   wants_originals: z.boolean(),
+  // As of the last handshake either way, refused ones included.
+  outdated: OutdatedSchema,
 });
 export type PairedPeer = z.infer<typeof PairedPeerSchema>;
 

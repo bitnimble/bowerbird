@@ -32,6 +32,7 @@ function serving(renditionHdr: boolean, recipe: StoredRecipe = { kind: 'file', p
       photo: { id: 'p1', file_path: null, recipe },
     }),
     rebuildIfStale: () => undefined,
+    embeddedJpeg: () => Promise.resolve(null),
   };
   const exports = {
     shareable: (photoId: string, renditionPath: string, hdr: boolean) => {
@@ -47,7 +48,7 @@ function serving(renditionHdr: boolean, recipe: StoredRecipe = { kind: 'file', p
       photos as unknown as ConstructorParameters<typeof ImageApi>[1],
       null,
       localOriginals(),
-      new ShareService(photos as unknown as ConstructorParameters<typeof ShareService>[0], localOriginals(), { editOrientation: () => 0 }, exports),
+      new ShareService(photos as unknown as ConstructorParameters<typeof ShareService>[0], exports),
     ).routes,
   );
   applyErrorHandler(app);
@@ -111,7 +112,7 @@ it("shares a composite's stored camera view", async () => {
 });
 
 // A row that names a file lifts the camera's JPEG out of it, and nothing is transcoded.
-it("refuses the camera's JPEG of a file that is not here", async () => {
+it("refuses the camera's JPEG where there is none to be had", async () => {
   const { app, asked } = serving(false, { kind: 'file', path: 'nowhere/a.arw' });
 
   const answer = await app.request(route(PathSegment.image(), 'p1', PathSegment.share(), 'embedded'));

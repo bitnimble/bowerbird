@@ -22,6 +22,7 @@ const PEER: PairedPeer = {
   last_replicated_at: null,
   last_error: null,
   wants_originals: true,
+  outdated: null,
 };
 
 function peersAnswer(peers: PairedPeer[], syncOriginals = true): Promise<PeersResponse> {

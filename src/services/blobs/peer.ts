@@ -6,7 +6,8 @@
  * (`backup/passive_peers.ts`). The transfer queue knows only this.
  */
 export interface PeerTransport {
-  request(peerId: string, path: string, init?: RequestInit): Promise<Response>;
+  /** `responseMs` is how long the peer has to start answering, where that is longer than usual. */
+  request(peerId: string, path: string, init?: RequestInit, responseMs?: number): Promise<Response>;
   /**
    * Whether this device has any way to reach that peer at all.
    *

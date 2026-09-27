@@ -8,7 +8,8 @@ import { BlobsApi } from '../../../api/blobs/blobs_api';
 import { applyErrorHandler } from '../../../api/error_handler';
 import { runMigrations } from '../../../db/migrate';
 import { PathSegment, route } from '../../../schemas/route';
-import { dataPathForLibraryId, getRenditionPath } from '../../../utils/paths';
+import { dataPathForLibraryId, getRenditionPath, originalPathOf } from '../../../utils/paths';
+import { renditionVariant, type Rendition } from '../../processing/renditions/renditions';
 import { LibrariesRepository } from '../../libraries/libraries_repository';
 import { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_repository';
@@ -43,6 +44,8 @@ interface Peer {
   photoProcessing: PhotoProcessingRepository;
   libraries: LibrariesRepository;
   locations: BlobLocations;
+  /** The camera JPEG inside each original this peer holds. */
+  camera: Map<string, string>;
   fetch: RenditionFetchService;
   routes: Hono;
 }
@@ -96,7 +99,39 @@ function makePeer(name: string): Peer {
     new BackupLocations(db),
     transport,
   );
-  const api = new BlobsApi(photoPaths, photoMetadata, photoProcessing, libraries, locations, transfers);
+  const camera = new Map<string, string>();
+  // What the pipeline does for a peer, minus the pixels: renders from an original on this disk,
+  // at the range asked, stamped with the edits it rendered.
+  const renderer = {
+    buildForPeer: (photoId: string, rendition: Rendition, hdr: boolean): Promise<void> => {
+      const photo = photoPaths.getBasicById(photoId);
+      const lib = photo == null ? null : libraries.getById(photo.library_id);
+      const original = photo == null || lib == null ? null : originalPathOf(lib, photo);
+      if (lib == null || original == null || !existsSync(original)) return Promise.resolve();
+      const target = getRenditionPath(lib, photoId, rendition, hdr);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, `${renditionVariant(rendition, hdr)} of ${photoId}`);
+      const editedFrom = photoProcessing.renditionStamps(photoId, rendition)?.edited_from ?? null;
+      photoProcessing.markCopyBuilt(photoId, BUILT_AT, editedFrom, renditionVariant(rendition, hdr));
+      return Promise.resolve();
+    },
+    embeddedJpegHere: (photoId: string): Promise<Uint8Array | null> => {
+      const jpeg = camera.get(photoId);
+      return Promise.resolve(jpeg == null ? null : new TextEncoder().encode(jpeg));
+    },
+  };
+  const api = new BlobsApi(
+    photoPaths,
+    photoMetadata,
+    photoProcessing,
+    libraries,
+    locations,
+    transfers,
+    undefined,
+    undefined,
+    undefined,
+    renderer,
+  );
   applyErrorHandler(api.routes);
   const id = peerId(db);
   net.set(id, api.routes);
@@ -109,6 +144,7 @@ function makePeer(name: string): Peer {
     photoProcessing,
     libraries,
     locations,
+    camera,
     routes: api.routes,
     fetch: new RenditionFetchService(db, photoPaths, photoProcessing, libraries, locations, transport),
   };
@@ -273,14 +309,27 @@ describe('fetching a rendition through a peer', () => {
    * device holding a rendition no edit could ever sort above, and re-advertising
    * that stamp to the next peer. Contagious, permanent, and silent.
    */
-  it('refuses a rendition reported as built from a stamp the clock will not take', async () => {
+  it('never records a build stamp the clock will not take', async () => {
     const { a, b } = holderAndReplica();
     const centuriesAhead = `ffffffffffff0000${'peerpeerpeerpeer'}`;
     buildTile(a, 'photo1', 'TILE-BYTES', centuriesAhead);
     edited(b, 'photo1', EDITED_AFTER);
 
-    await expect(b.fetch.ensureCurrent('photo1', 'grid')).rejects.toThrow(/no peer holds a current/);
+    await b.fetch.ensureCurrent('photo1', 'grid');
     expect(b.photoProcessing.renditionStamps('photo1', 'grid')?.built_from).toBeNull();
+  });
+
+  // Every edit made here while the two devices cannot sync is one the holder never hears of.
+  it('shows the holder’s copy from before an edit made here rather than a hole, still owed', async () => {
+    const { a, b } = holderAndReplica();
+    buildTile(a, 'photo1', 'TILE-BYTES', BUILT_FROM);
+    edited(b, 'photo1', EDITED_AFTER);
+
+    await b.fetch.ensureCurrent('photo1', 'grid');
+
+    expect(readFileSync(tilePath(b, 'photo1'), 'utf8')).toBe('TILE-BYTES');
+    const stamps = b.photoProcessing.renditionStamps('photo1', 'grid');
+    expect(renditionCurrent(stamps?.built_from ?? null, stamps?.edited_from ?? null)).toBe(false);
   });
 
   it('refuses a copy the holder has itself edited past', async () => {
@@ -290,6 +339,37 @@ describe('fetching a rendition through a peer', () => {
 
     await expect(b.fetch.ensureCurrent('photo1', 'grid')).rejects.toThrow(/no peer holds a current/);
     expect(existsSync(tilePath(b, 'photo1'))).toBe(false);
+  });
+
+  it('has the holder render a copy it lacks, at the range this device shows', async () => {
+    const { b } = holderAndReplica();
+    b.db.query('UPDATE libraries SET rendition_hdr = 1 WHERE id = ?').run(b.lib);
+
+    await b.fetch.ensureCurrent('photo1', 'max');
+
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1');
+  });
+
+  it('has the holder lift the camera JPEG out of its original', async () => {
+    const { a, b } = holderAndReplica();
+    a.camera.set('photo1', 'CAMERA-JPEG');
+
+    await b.fetch.ensureCurrent('photo1', 'embedded');
+
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'embedded', false), 'utf8')).toBe('CAMERA-JPEG');
+  });
+
+  it('takes every picture from a peer on a library that keeps no originals, even with the original here', async () => {
+    const a = makePeer('a');
+    const b = makePeer('b');
+    addPhoto(a, 'photo1', 'Day1/one.arw', 'RAW-one');
+    addPhoto(b, 'photo1', 'Day1/one.arw', 'RAW-one');
+    pair(a, b, 'photo1');
+    b.db.query('UPDATE replication_libraries SET sync_originals = 0 WHERE library_id = ?').run(b.lib);
+
+    await b.fetch.ensureCurrent('photo1', 'full');
+
+    expect(readFileSync(getRenditionPath(library(b), 'photo1', 'full', true), 'utf8')).toBe('full-hdr of photo1');
   });
 
   it('keeps a stale cached copy rather than a hole when no peer can answer', async () => {

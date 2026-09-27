@@ -16,6 +16,9 @@ export type ErrorCode =
   // tolerates, so nothing may be stamped until the system time is fixed (§2.2 of
   // docs/replication.md).
   | 'CLOCK_SKEW'
+  // A peer runs a build this one cannot exchange that part of a catalogue with until one of them is
+  // updated (§8.5 of docs/replication.md).
+  | 'OUTDATED'
   // The thing asked for is somewhere this device cannot read at the moment - an original on a
   // backup drive nobody has plugged in (§14.4). Not NOT_FOUND: the file exists, and the answer
   // changes when the drive does, so a client says "plug it in" rather than "it is gone".
@@ -31,6 +34,7 @@ const STATUS: Record<ErrorCode, ContentfulStatusCode> = {
   IO_ERROR: 500,
   SYNC_IN_PROGRESS: 409,
   CLOCK_SKEW: 500,
+  OUTDATED: 426,
   UNAVAILABLE: 503,
   UNAUTHORIZED: 401,
   INTERNAL_ERROR: 500,
@@ -40,6 +44,7 @@ export class AppError extends Error {
   constructor(
     public readonly code: ErrorCode,
     message: string,
+    public readonly details?: unknown[],
   ) {
     super(message);
     this.name = 'AppError';

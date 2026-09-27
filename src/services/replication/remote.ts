@@ -1,11 +1,11 @@
 import type { Database } from '../../db/driver';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { latestMigrationMillis } from '../../db/migrate';
 import { AppError, type ErrorCode } from '../../errors';
 import { Logger } from '../../logger';
 import { ErrorEnvelopeSchema } from '../../schemas/error';
 import {
   AckRequestSchema,
+  BuildVersionSchema,
   ChangesRequestSchema,
   HandshakeRequestSchema,
   HandshakeResponseSchema,
@@ -16,7 +16,6 @@ import {
   PushDoneRequestSchema,
   PushPageRequestSchema,
   PushPageResponseSchema,
-  REPLICATION_PROTOCOL,
   RemoteLibrariesSchema,
   UnpairRequestSchema,
   type BrowsedRemote,
@@ -27,7 +26,15 @@ import { assertNoDataDirectoryOverlap, isWritable } from '../libraries/libraries
 import { DEFAULT_BIN_NAME } from '../../schemas/libraries';
 import { PathSegment, route } from '../../schemas/route';
 import { libraryMutex } from '../sync/coordination/library_mutex';
-import { deviceName, markReplicated, recordPeerAppetite, registerPeer, syncsOriginals } from './pairing';
+import {
+  deviceName,
+  markReplicated,
+  recordPeerAppetite,
+  recordPeerVersion,
+  registerPeer,
+  syncsOriginals,
+  thisBuild,
+} from './pairing';
 import { peerId } from './stamps';
 import {
   pullFrom,
@@ -221,24 +228,39 @@ function assertEmptyRoot(rootPath: string): void {
  * The exchange both directions of a session open with (§6.2), which is also
  * where each side learns whether the other keeps RAW files (§7.10).
  */
-async function handshake(replica: Replica, base: string): Promise<HandshakeResponse> {
-  const shaken = HandshakeResponseSchema.parse(
-    await post(
+async function handshake(replica: Replica, base: string, direction: 'pull' | 'push'): Promise<HandshakeResponse> {
+  let answer: unknown;
+  try {
+    answer = await post(
       base,
       route(PathSegment.handshake()),
       HandshakeRequestSchema.parse({
-        protocol: REPLICATION_PROTOCOL,
-        schema: latestMigrationMillis(),
+        ...thisBuild(),
+        direction,
         library_id: replica.libraryId,
         peer_id: peerId(replica.db),
         clock_ms: Date.now(),
         coverage: packVector(coverage(replica.db, replica.libraryId)),
         wants_originals: syncsOriginals(replica.db, replica.libraryId),
       }),
-    ),
-  );
+    );
+  } catch (error) {
+    const refusedBy = error instanceof AppError ? BuildVersionSchema.safeParse(error.details?.[0]) : null;
+    const peer = peerAt(replica.db, replica.libraryId, base);
+    if (refusedBy?.success === true && peer != null) recordPeerVersion(replica.db, replica.libraryId, peer, refusedBy.data);
+    throw error;
+  }
+  const shaken = HandshakeResponseSchema.parse(answer);
+  recordPeerVersion(replica.db, replica.libraryId, shaken.peer_id, shaken);
   recordPeerAppetite(replica.db, replica.libraryId, shaken.peer_id, shaken.wants_originals);
   return shaken;
+}
+
+function peerAt(db: Database, libraryId: string, address: string): string | null {
+  const row = db
+    .query('SELECT peer_id FROM replication_peers WHERE library_id = ? AND address = ?')
+    .get(libraryId, address) as { peer_id: string } | null;
+  return row?.peer_id ?? null;
 }
 
 /** Handshakes (§6.2) and returns the remote as a source `pullFrom` can drain. */
@@ -250,7 +272,7 @@ export async function openRemote(into: Replica, base: string): Promise<ChangeSou
   if (library.read_only !== 0) throw new AppError('READ_ONLY', 'replication requires a writable library');
 
   const self = peerId(into.db);
-  const shaken = await handshake(into, base);
+  const shaken = await handshake(into, base, 'pull');
   return {
     peer: shaken.peer_id,
     delivered: unpackVector(shaken.coverage),
@@ -276,7 +298,7 @@ export async function openRemote(into: Replica, base: string): Promise<ChangeSou
  */
 export async function pushToRemote(from: Replica, base: string, limit = PAGE_ROWS): Promise<PullResult> {
   const self = peerId(from.db);
-  const shaken = await handshake(from, base);
+  const shaken = await handshake(from, base, 'push');
   const sink: ChangeSink = {
     peer: shaken.peer_id,
     held: unpackVector(shaken.coverage),
@@ -336,6 +358,7 @@ const REMOTE_CODES: readonly ErrorCode[] = [
   'IO_ERROR',
   'SYNC_IN_PROGRESS',
   'CLOCK_SKEW',
+  'OUTDATED',
   'INTERNAL_ERROR',
 ];
 
@@ -377,5 +400,5 @@ async function send(base: string, path: string, init: RequestInit): Promise<unkn
   const code = envelope.success ? envelope.data.error.code : undefined;
   const known = REMOTE_CODES.find((candidate) => candidate === code) ?? 'INTERNAL_ERROR';
   const message = envelope.success ? envelope.data.error.message : `replication request failed (${response.status})`;
-  throw new AppError(known, message);
+  throw new AppError(known, message, envelope.success ? envelope.data.error.details : undefined);
 }

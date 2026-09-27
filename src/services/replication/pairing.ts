@@ -1,6 +1,14 @@
 import type { Database } from '../../db/driver';
+import { latestMigrationMillis } from '../../db/migrate';
 import { AppError } from '../../errors';
-import type { AllPeersResponse, PairedPeer, PeerKind } from '../../schemas/replication';
+import {
+  REPLICATION_PROTOCOL,
+  outdatedSide,
+  type AllPeersResponse,
+  type BuildVersion,
+  type PairedPeer,
+  type PeerKind,
+} from '../../schemas/replication';
 import type { BlobLocations } from '../blobs/blob_locations';
 import { forgetPeer } from './gc';
 import { stamp } from './stamps';
@@ -187,11 +195,35 @@ export function assertPaired(db: Database, libraryId: string, peerId: string): v
 export function pairedPeers(db: Database, libraryId: string): PairedPeer[] {
   const rows = db
     .query(
-      `SELECT peer_id, name, paired_at, last_replicated_at, last_error, wants_originals FROM replication_peers
+      `SELECT peer_id, name, paired_at, last_replicated_at, last_error, wants_originals, protocol, schema_version
+         FROM replication_peers
         WHERE library_id = ? AND kind = 'active' ORDER BY paired_at, peer_id`,
     )
-    .all(libraryId) as (Omit<PairedPeer, 'wants_originals'> & { wants_originals: number })[];
-  return rows.map((row) => ({ ...row, wants_originals: row.wants_originals !== 0 }));
+    .all(libraryId) as (Omit<PairedPeer, 'wants_originals' | 'outdated'> & {
+    wants_originals: number;
+    protocol: number | null;
+    schema_version: number | null;
+  })[];
+  const ours = thisBuild();
+  return rows.map(({ protocol, schema_version, ...row }) => ({
+    ...row,
+    wants_originals: row.wants_originals !== 0,
+    outdated: protocol == null || schema_version == null ? null : outdatedSide(ours, { protocol, schema: schema_version }),
+  }));
+}
+
+export function thisBuild(): BuildVersion {
+  return { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() };
+}
+
+/** What a peer said it runs, which is how either end knows which device to update. */
+export function recordPeerVersion(db: Database, libraryId: string, peerId: string, version: BuildVersion): void {
+  db.query('UPDATE replication_peers SET protocol = ?, schema_version = ? WHERE library_id = ? AND peer_id = ?').run(
+    version.protocol,
+    version.schema,
+    libraryId,
+    peerId,
+  );
 }
 
 /**

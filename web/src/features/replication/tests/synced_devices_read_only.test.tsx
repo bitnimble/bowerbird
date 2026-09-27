@@ -34,6 +34,7 @@ function Seed(): null {
               last_replicated_at: null,
               last_error: null,
               wants_originals: true,
+              outdated: null,
             },
           ],
         ],

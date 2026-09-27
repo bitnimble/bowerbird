@@ -126,6 +126,10 @@ export const replicationPeers = sqliteTable(
     // stopped working is the failure the trip depends on seeing.
     lastError: text('last_error'),
     wantsOriginals: integer('wants_originals').notNull().default(1),
+    // The build the peer last said it runs, refused handshakes included, so either end can say
+    // which device to update. NULL until a handshake has happened.
+    protocol: integer('protocol'),
+    schemaVersion: integer('schema_version'),
   },
   (t) => [primaryKey({ columns: [t.libraryId, t.peerId] }), check('replication_peers_kind', oneOf(t.kind, PEER_KINDS))],
 );

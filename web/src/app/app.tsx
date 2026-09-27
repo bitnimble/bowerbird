@@ -21,6 +21,7 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
+import type { PairedPeer } from '../../../src/schemas/replication';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { AlbumPhotosPage } from '../features/albums/album_photos_page';
 import { AlbumsPage } from '../features/albums/albums_page';
@@ -577,7 +578,7 @@ const LibraryNav = observer(function LibraryNav(): JSX.Element {
               <SidebarRow
                 to={route(PathSegment.settings(), PathSegment.libraries(), library.id, PathSegment.sync())}
                 icon={TriangleAlert}
-                name={AppStrings.syncErrors()}
+                name={syncTroubleName(replication.outdatedPeerOf(library.id))}
                 tone="warning"
                 depth={1}
               />
@@ -588,6 +589,11 @@ const LibraryNav = observer(function LibraryNav(): JSX.Element {
     </div>
   );
 });
+
+function syncTroubleName(outdated: PairedPeer | null): string {
+  if (outdated == null) return AppStrings.syncErrors();
+  return outdated.outdated === 'this_device' ? AppStrings.updateThisDevice() : AppStrings.updateDevice(outdated.name);
+}
 
 // Absent until there is something to decide: a replica with no divergences - which
 // is nearly always - should not carry a permanent reminder that they can happen.

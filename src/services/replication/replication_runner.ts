@@ -13,6 +13,7 @@ import { collectTombstones } from './gc';
 import { drainMaterialisations, unsettled } from './materialise';
 import { autoTransfersOriginals, pairedPeers, reachablePeers, recordPeerOutcome, syncsOriginals } from './pairing';
 import { addReplica, browseRemote, pullFromRemote, pushToRemote } from './remote';
+import type { PullResult } from './session';
 
 // What drives replication on this machine (docs/replication.md §6.4, §9): birth a
 // replica, and run sessions against the peers it can dial. The catalogue
@@ -169,33 +170,47 @@ export class ReplicationRunner {
         const edited = new Set<string>();
         for (const peer of peers) {
           this.locks.refresh(libraryId, owner);
+          const replica = { db: this.db, libraryId };
+          let refused: unknown = null;
+          let taken: PullResult | null = null;
+          let given: PullResult | null = null;
           try {
-            const replica = { db: this.db, libraryId };
-            const taken = await pullFromRemote(replica, peer.address, undefined, guard);
-            // Both directions over one dial: the peer that can be reached cannot
-            // reach back, so offering is this side's job too (§6.4). After the
-            // pull, so what goes over is measured against what just arrived.
-            const given = await pushToRemote(replica, peer.address);
+            taken = await pullFromRemote(replica, peer.address, undefined, guard);
+          } catch (error) {
+            refused = error;
+          }
+          // Both directions over one dial: the peer that can be reached cannot
+          // reach back, so offering is this side's job too (§6.4). After the
+          // pull, so what goes over is measured against what just arrived - and
+          // after a pull refused for this build being older, since the newer one
+          // still merges what this one sends (§8.5).
+          if (refused == null || (refused instanceof AppError && refused.code === 'OUTDATED')) {
+            try {
+              given = await pushToRemote(replica, peer.address);
+            } catch (error) {
+              refused ??= error;
+            }
+          }
+          if (taken != null) {
             applied += taken.applied;
             for (const photoId of taken.edited) edited.add(photoId);
-            recordPeerOutcome(this.db, libraryId, peer.peerId, null);
-            reached.push(peer.peerId);
-            log.info('replicated', {
-              library: libraryId,
-              peer: peer.peerId,
-              took: taken.applied,
-              gave: given.applied,
-              deferred: taken.deferred + given.deferred,
-            });
-          } catch (error) {
-            // One unreachable peer is not a failed sync: the others still have
-            // things to say, and this one is retried on the next run. Recorded
-            // rather than only logged, because a replica quietly out of touch for
-            // a fortnight is the failure this is for (§8.6).
-            const reason = error instanceof Error ? error.message : String(error);
-            recordPeerOutcome(this.db, libraryId, peer.peerId, reason);
-            log.warn('could not replicate with a peer', { library: libraryId, peer: peer.peerId, err: reason });
           }
+          if (taken != null || given != null) reached.push(peer.peerId);
+          // One unreachable peer is not a failed sync: the others still have
+          // things to say, and this one is retried on the next run. Recorded
+          // rather than only logged, because a replica quietly out of touch for
+          // a fortnight is the failure this is for (§8.6).
+          const reason = refused == null ? null : refused instanceof Error ? refused.message : String(refused);
+          recordPeerOutcome(this.db, libraryId, peer.peerId, reason);
+          if (reason != null) log.warn('could not replicate with a peer', { library: libraryId, peer: peer.peerId, err: reason });
+          if (taken == null && given == null) continue;
+          log.info('replicated', {
+            library: libraryId,
+            peer: peer.peerId,
+            took: taken?.applied ?? 0,
+            gave: given?.applied ?? 0,
+            deferred: (taken?.deferred ?? 0) + (given?.deferred ?? 0),
+          });
         }
         // The pictures on this device are built from the develop settings, so an
         // edit that arrives without them leaves this peer showing the frame as it

@@ -2,19 +2,14 @@ import { AppError } from '../../../errors';
 import { isComposite } from '../../../schemas/recipes';
 import type { ViewerRendition } from '../../../schemas/settings';
 import { getRenditionPath } from '../../../utils/paths';
-import type { Originals } from '../../blobs/originals';
-import type { PhotoReadService } from '../../photos/listing/photo_read_service';
 import type { PhotoRenditionService } from '../../photos/renditions/photo_rendition_service';
-import { readEmbeddedJpeg } from '../rawshim/raw_decoder';
 import { storedAsHdr } from '../renditions/renditions';
 import type { ExportService } from './export_service';
 
 /** A rendition as one JPEG anything can open, for a share sheet or a TV. */
 export class ShareService {
   constructor(
-    private readonly photoRenditions: Pick<PhotoRenditionService, 'locate'>,
-    private readonly originals: Originals,
-    private readonly photoRead: Pick<PhotoReadService, 'editOrientation'>,
+    private readonly photoRenditions: Pick<PhotoRenditionService, 'locate' | 'embeddedJpeg'>,
     private readonly exports: Pick<ExportService, 'shareable'>,
   ) {}
 
@@ -25,11 +20,9 @@ export class ShareService {
   async jpeg(photoId: string, rendition: ViewerRendition): Promise<Uint8Array> {
     const { photo, library } = this.photoRenditions.locate(photoId);
     if (rendition === 'embedded' && !isComposite(photo.recipe)) {
-      const originalPath = await this.originals.open(library, photo);
-      if (originalPath == null) throw new AppError('NOT_FOUND', `this photograph has no file to lift a JPEG out of: ${photoId}`);
-      const jpeg = readEmbeddedJpeg(originalPath, this.photoRead.editOrientation(photoId));
-      if (jpeg == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG: ${photoId}`);
-      return new Uint8Array(jpeg);
+      const jpeg = await this.photoRenditions.embeddedJpeg(photoId);
+      if (jpeg == null) throw new AppError('NOT_FOUND', `no camera JPEG to share for ${photoId}`);
+      return jpeg;
     }
     const renditionPath = getRenditionPath(library, photo.id, rendition, library.rendition_hdr);
     if (!(await Bun.file(renditionPath).exists())) throw new AppError('NOT_FOUND', `image not found on disk: ${photoId}`);

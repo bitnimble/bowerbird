@@ -23,6 +23,7 @@ import type { PhotoReadService } from '../../services/photos/listing/photo_read_
 import type { BasicPhoto } from '../../services/photos/paths/photo_paths_repository';
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
 import type { Missing, Shown } from '../../services/processing/workers/prepare_pool';
+import { takeAsLongAsItTakes } from '../long_requests';
 
 // Where a variant's bytes live, given the photo it belongs to. Passing this in
 // keeps `serve` about HTTP: adding a variant is a route, not another branch in
@@ -221,17 +222,21 @@ export class ImageApi {
       // row composed out of others is composited from its frames' and filed like any other copy,
       // there being no file to lift one out of. Every other rendition is ours either way.
       const { photo, library } = this.photoRenditions.locate(photoId);
-      if (rendition === 'embedded' && !isComposite(photo.recipe)) return this.serveEmbedded(photo, library, c);
-      // A photo with no local original cannot be built here; a peer's built copy
-      // is fetched and cached first, so the read below is an ordinary local one
-      // (docs/replication.md §7.9).
+      const lifted = rendition === 'embedded' && !isComposite(photo.recipe);
+      if (lifted && this.fetchThrough?.alwaysFromPeer(library.id) !== true) return this.serveEmbedded(photo, library, c);
+      // A photo with no local original, or any photo of a library that keeps none, is not built
+      // here; a peer's copy is fetched and cached first, so the read below is an ordinary local
+      // one (docs/replication.md §7.9). The peer may render it first, which can take minutes.
+      takeAsLongAsItTakes(c);
       await this.fetchThrough?.ensureCurrent(photoId, rendition);
       // Looking at a photograph is wanting it, and the cull works in that order (§14.5). The two
       // the viewer draws and not the grid tile: scrolling past a thumbnail is not using the photo,
       // and a page of a hundred would be a hundred writes.
       if (rendition === 'full' || rendition === 'max') this.originals.touch(photoId);
       this.photoRenditions.rebuildIfStale(photoId);
-      return this.serve(c, RENDITION_CONTENT_TYPE, (lib, each) =>
+      // A camera JPEG a peer lifted out of its original is kept as those bytes, under the name
+      // the camera view has.
+      return this.serve(c, lifted ? 'image/jpeg' : RENDITION_CONTENT_TYPE, (lib, each) =>
         getRenditionPath(lib, each.id, rendition, lib.rendition_hdr),
       );
     });
@@ -486,15 +491,15 @@ export class ImageApi {
     const stem = (soleInputOf(photo.recipe)?.split('/').pop() ?? photo.id).replace(/\.[^.]+$/, '');
 
     if (form === 'embedded') {
-      const original = await this.originals.open(library, photo);
-      const jpeg = original == null ? null : readEmbeddedJpeg(original, this.photoRead.editOrientation(photoId));
-      if (jpeg == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG: ${photoId}`);
+      const lifted = await this.photoRenditions.embeddedJpeg(photoId);
+      if (lifted == null) throw new AppError('NOT_FOUND', `this file has no embedded JPEG: ${photoId}`);
+      const jpeg = Buffer.from(lifted.buffer, lifted.byteOffset, lifted.byteLength);
       // Refused rather than sent as it is, for `serveScrubbedOriginal`'s reason: a preview
       // carries the same coordinates the original does.
       if (scrub && !scrubIdentifying(jpeg)) {
         throw new AppError('VALIDATION_ERROR', `identifying data cannot be removed from the preview of ${stem}`);
       }
-      return download(new Uint8Array(jpeg), 'image/jpeg', `${stem}-embedded.jpg`);
+      return download(lifted, 'image/jpeg', `${stem}-embedded.jpg`);
     }
 
     if (form !== 'full' && form !== 'max') throw new AppError('NOT_FOUND', `unknown download: ${form}`);

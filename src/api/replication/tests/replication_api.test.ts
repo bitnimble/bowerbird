@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { latestMigrationMillis, runMigrations } from '../../../db/migrate';
 import { newId } from '../../../schemas/id';
-import { REPLICATION_PROTOCOL } from '../../../schemas/replication';
+import { REPLICATION_PROTOCOL, type Outdated } from '../../../schemas/replication';
 import { PathSegment, route } from '../../../schemas/route';
 import { BlobLocations } from '../../../services/blobs/blob_locations';
 import { LibrariesRepository } from '../../../services/libraries/libraries_repository';
@@ -61,9 +61,8 @@ function catalogue(): Database {
   return db;
 }
 
-function serve(db: Database, now: () => number = Date.now): Server {
-  const app = new Hono();
-  const runner = new ReplicationRunner(
+function runnerFor(db: Database): ReplicationRunner {
+  return new ReplicationRunner(
     db,
     new SyncLocksRepository(db),
     new LibrariesRepository(db),
@@ -73,9 +72,13 @@ function serve(db: Database, now: () => number = Date.now): Server {
     () => {},
     () => Promise.resolve(0),
   );
+}
+
+function serve(db: Database, now: () => number = Date.now): Server {
+  const app = new Hono();
   app.route(
     route(PathSegment.api(), PathSegment.replication()),
-    new ReplicationApi(new ReplicationService(db, new BlobLocations(db), now, () => {}), runner).routes,
+    new ReplicationApi(new ReplicationService(db, new BlobLocations(db), now, () => {}), runnerFor(db)).routes,
   );
   applyErrorHandler(app);
   const server = Bun.serve({ port: 0, fetch: app.fetch });
@@ -330,24 +333,137 @@ describe('refused handshakes (§6.2, §2.2)', () => {
   // once cannot tell an `||` from either of its sides, and both wrong *upward*
   // cannot tell `!==` from `>`. The schema half is the one that matters most - a
   // peer on another migration merges rows against columns it does not have.
+  // A schema gap closes one direction only: the newer catalogue merges what an older one sends, and
+  // never the reverse (§8.5). A protocol gap closes both.
   it.each([
-    ['a downlevel protocol', { protocol: 0, schema: latestMigrationMillis() }, 'on this device'],
-    ['an uplevel protocol', { protocol: REPLICATION_PROTOCOL + 1, schema: latestMigrationMillis() }, 'on the other device'],
-    ['a downlevel schema', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() - 1 }, 'on this device'],
-    ['an uplevel schema', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() + 1 }, 'on the other device'],
-  ])('refuses %s, naming the device to update', async (_what, versions, update) => {
+    ['a downlevel protocol pulling', { protocol: 0, schema: latestMigrationMillis() }, 'pull', 'on this device'],
+    ['a downlevel protocol pushing', { protocol: 0, schema: latestMigrationMillis() }, 'push', 'on this device'],
+    ['an uplevel protocol pulling', { protocol: REPLICATION_PROTOCOL + 1, schema: latestMigrationMillis() }, 'pull', 'on the other device'],
+    ['an uplevel protocol pushing', { protocol: REPLICATION_PROTOCOL + 1, schema: latestMigrationMillis() }, 'push', 'on the other device'],
+    ['a downlevel schema pulling', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() - 1 }, 'pull', 'on this device'],
+    ['an uplevel schema pushing', { protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() + 1 }, 'push', 'on the other device'],
+  ])('refuses %s, naming the device to update', async (_what, versions, direction, update) => {
     const { origin, clone } = await pairedClone();
     const response = await post(origin.url, route(PathSegment.handshake()), {
       ...versions,
+      direction,
       library_id: LIB,
       peer_id: peerIdOf(clone.db),
       clock_ms: Date.now(),
       coverage: {},
     });
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(426);
     const body = (await response.json()) as { error: { code: string; message: string } };
-    expect(body.error.code).toBe('CONFLICT');
+    expect(body.error.code).toBe('OUTDATED');
     expect(body.error.message).toContain(`Update Bowerbird ${update}`);
+  });
+
+  it.each([
+    ['a downlevel schema pushing', latestMigrationMillis() - 1, 'push'],
+    ['an uplevel schema pulling', latestMigrationMillis() + 1, 'pull'],
+  ])('takes %s, the rows going from the older catalogue to the newer', async (_what, schema, direction) => {
+    const { origin, clone } = await pairedClone();
+    const response = await post(origin.url, route(PathSegment.handshake()), {
+      protocol: REPLICATION_PROTOCOL,
+      schema,
+      direction,
+      library_id: LIB,
+      peer_id: peerIdOf(clone.db),
+      clock_ms: Date.now(),
+      coverage: {},
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it('still sends this device’s work when the other runs a newer build and will not send back', async () => {
+    const { origin, clone } = await pairedClone();
+    await pullFromRemote(clone.replica, origin.url);
+    // Stands in for an origin one migration ahead: its pull refused as a newer build refuses one,
+    // everything else passed through to the real thing.
+    const newer = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = request.method === 'POST' ? await request.text() : undefined;
+        if (url.pathname.endsWith('/handshake') && (JSON.parse(body ?? '{}') as { direction?: string }).direction === 'pull') {
+          return Response.json(
+            {
+              error: {
+                code: 'OUTDATED',
+                message: "This device's version of Bowerbird is older than the other device's.",
+                details: [{ protocol: REPLICATION_PROTOCOL, schema: latestMigrationMillis() + 1 }],
+              },
+            },
+            { status: 426 },
+          );
+        }
+        const answer = await fetch(`${origin.url}${url.pathname}${url.search}`, {
+          method: request.method,
+          headers: request.headers,
+          body,
+        });
+        if (!url.pathname.endsWith('/handshake')) return answer;
+        return Response.json({ ...((await answer.json()) as object), schema: latestMigrationMillis() + 1 });
+      },
+    });
+    try {
+      const address = `http://localhost:${newer.port}`;
+      clone.db.query('UPDATE replication_peers SET address = ? WHERE library_id = ?').run(address, LIB);
+      new PhotoStateRepository(clone.db, new StackMembership(clone.db)).update('p2', { rating: 2 });
+
+      await runnerFor(clone.db).replicate(LIB);
+
+      expect(origin.db.query('SELECT rating FROM photos WHERE id = ?').get('p2')).toEqual({ rating: 2 });
+      const [peer] = pairedPeers(clone.db, LIB);
+      expect(peer?.outdated).toBe('this_device');
+      expect(peer?.last_error).toContain('older');
+    } finally {
+      newer.stop(true);
+    }
+  });
+
+  it.each<[string, number, Outdated]>([
+    ['older', latestMigrationMillis() - 1, 'peer'],
+    ['newer', latestMigrationMillis() + 1, 'this_device'],
+  ])('remembers that the caller runs an %s build, so this side can say which device to update', async (_what, schema, outdated) => {
+    const { origin, clone } = await pairedClone();
+    await post(origin.url, route(PathSegment.handshake()), {
+      protocol: REPLICATION_PROTOCOL,
+      schema,
+      direction: 'pull',
+      library_id: LIB,
+      peer_id: peerIdOf(clone.db),
+      clock_ms: Date.now(),
+      coverage: {},
+    });
+    expect(pairedPeers(origin.db, LIB).map((peer) => peer.outdated)).toEqual([outdated]);
+
+    // And forgets it once the caller arrives on this build.
+    await pullFromRemote(clone.replica, origin.url);
+    expect(pairedPeers(origin.db, LIB).map((peer) => peer.outdated)).toEqual([null]);
+    expect(pairedPeers(clone.db, LIB).map((peer) => peer.outdated)).toEqual([null]);
+  });
+
+  it('remembers the build a refusal names, so the device that dialled can say which one to update', async () => {
+    const { origin, clone } = await pairedClone();
+    const refusing = Bun.serve({
+      port: 0,
+      fetch: () =>
+        Response.json(
+          { error: { code: 'OUTDATED', message: 'refused', details: [{ protocol: REPLICATION_PROTOCOL, schema: 1 }] } },
+          { status: 426 },
+        ),
+    });
+    try {
+      const address = `http://localhost:${refusing.port}`;
+      clone.db.query('UPDATE replication_peers SET address = ? WHERE library_id = ?').run(address, LIB);
+      await expect(pullFromRemote(clone.replica, address)).rejects.toThrow('refused');
+      expect(pairedPeers(clone.db, LIB).map((peer) => [peer.peer_id, peer.outdated])).toEqual([
+        [peerIdOf(origin.db), 'peer'],
+      ]);
+    } finally {
+      refusing.stop(true);
+    }
   });
 
   it('refuses a peer whose clock is out past the skew guard', async () => {
@@ -355,6 +471,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
     const response = await post(origin.url, route(PathSegment.handshake()), {
       protocol: REPLICATION_PROTOCOL,
       schema: latestMigrationMillis(),
+      direction: 'pull',
       library_id: LIB,
       peer_id: peerIdOf(clone.db),
       clock_ms: Date.now() + 2 * DEFAULT_SKEW_MS,
@@ -368,6 +485,7 @@ describe('refused handshakes (§6.2, §2.2)', () => {
     const stranger = await post(origin.url, route(PathSegment.handshake()), {
       protocol: REPLICATION_PROTOCOL,
       schema: latestMigrationMillis(),
+      direction: 'pull',
       library_id: LIB,
       peer_id: newId(),
       clock_ms: Date.now(),

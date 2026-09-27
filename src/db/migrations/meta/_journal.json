@@ -78,6 +78,13 @@
       "when": 1790433066748,
       "tag": "0010_labels",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790500000000,
+      "tag": "0011_peer_versions",
+      "breakpoints": true
     }
   ]
 }
