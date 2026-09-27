@@ -38,3 +38,29 @@ test('answers a request carrying the token', async () => {
   expect(reply.status).toBe(200);
   expect(await reply.json()).toEqual([]);
 });
+
+const ORIGIN = 'http://127.0.0.1:4100';
+
+test('signs the page in once, and answers its cookie from then on', async () => {
+  const server = app();
+  const signIn = await server.request(`${ORIGIN}/api/libraries?token=secret`);
+  expect(signIn.status).toBe(302);
+  expect(signIn.headers.get('location')).toBe('/api/libraries');
+  const cookie = signIn.headers.get('set-cookie') ?? '';
+  expect(cookie).toContain('bowerbird_token_4100=secret');
+  expect(cookie).toContain('HttpOnly');
+  expect(cookie).toContain('SameSite=Strict');
+
+  const reply = await server.request(`${ORIGIN}/api/libraries`, { headers: { Cookie: cookie.split(';')[0]! } });
+  expect(reply.status).toBe(200);
+});
+
+test.each<{ name: string; url: string; headers: Record<string, string> }>([
+  { name: 'a wrong sign-in', url: `${ORIGIN}/?token=secreT`, headers: {} },
+  { name: 'a wrong cookie', url: `${ORIGIN}/api/libraries`, headers: { Cookie: 'bowerbird_token_4100=secreT' } },
+  { name: 'the cookie of a server on another port', url: `${ORIGIN}/api/libraries`, headers: { Cookie: 'bowerbird_token_4200=secret' } },
+])('refuses $name', async ({ url, headers }) => {
+  const reply = await app().request(url, { headers });
+  expect(reply.status).toBe(401);
+  expect(reply.headers.get('set-cookie')).toBeNull();
+});

@@ -8,12 +8,11 @@
 //   bun run scripts/write-release-manifest.ts --dist dist [--image-repo ghcr.io/…]
 //
 // `--dist` holds one directory per platform: the payload tarball, and whatever installer
-// that platform ships.
+// that platform ships. `--image-repo` says the container image was pushed there.
 import { readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { PlatformSchema, type ReleaseAsset, type ReleaseManifest } from '../src/schemas/updates';
 import { writeReleaseManifest } from '../src/services/updates/release_manifest';
-import { GITHUB_REPO } from '../src/services/updates/update_source';
 import { VERSION as version } from '../src/version';
 
 function flag(name: string): string | undefined {
@@ -56,16 +55,16 @@ for (const entry of readdirSync(dist, { withFileTypes: true })) {
     for await (const chunk of Bun.file(join(dir, payload)).stream()) hasher.update(chunk);
     asset.payload_sha256 = hasher.digest('hex');
   }
-  // The image is the container's installer: there is no file to download, and `docker
-  // pull` is what somebody does by hand when the in-place update is not on offer.
-  //
-  // The repository is named and the tag is not: `docker/metadata-action`'s `{{version}}`
-  // strips the `v` off a tag push, so the image is `…:0.2.0` - `…:v0.2.0` is a tag that
-  // was never pushed and a `docker pull` that 404s.
-  if (platform === 'docker-x86_64') asset.image = `${flag('image-repo') ?? `ghcr.io/${GITHUB_REPO}`}:${version}`;
 
   if (Object.keys(asset).length > 0) assets[platform] = asset;
 }
+
+// The image is the container's installer: there is no file to download, and a container is
+// updated by pulling it. The repository is named and the tag is not: `docker/metadata-action`'s
+// `{{version}}` strips the `v` off a tag push, so the image is `…:0.2.0` - `…:v0.2.0` is a tag
+// that was never pushed and a `docker pull` that 404s.
+const imageRepo = flag('image-repo');
+if (imageRepo != null) assets['docker-x86_64'] = { image: `${imageRepo}:${version}` };
 
 if (Object.keys(assets).length === 0) throw new Error(`${dist} holds no platform directories, so there is nothing to release`);
 

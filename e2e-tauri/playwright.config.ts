@@ -2,14 +2,11 @@ import { defineConfig } from '@playwright/test';
 import { APP_BINARY, CDP_URL, SHELL_ARGS } from './shell';
 
 // Drives the REAL desktop binary and the webview it embeds, which is the one thing the
-// Chromium `web/e2e` suite cannot cover: every request the page makes crosses IPC in this
-// build (`src-tauri/src/api.rs`), and IPC is the seam that suite has to stub.
+// Chromium `web/e2e` suite cannot cover: the shell starting its own server, signing its page
+// in to it, and answering the commands a page cannot (`src-tauri/src/lib.rs`).
 //
-// Attached to over CDP rather than driven through WebDriver. The shell used to carry
-// `tauri-plugin-wdio` and `tauri-plugin-wdio-webdriver` to serve WebDriver from inside
-// itself; both are gone, because a Chromium already speaks CDP and the plugins do not build
-// against the CEF branch. What that buys beyond compiling: the binary under test is now the
-// shipped configuration exactly, with no e2e-only plugin in it.
+// Attached to over CDP rather than driven through WebDriver: a Chromium already speaks it, so
+// the binary under test is the shipped configuration exactly, with no e2e-only plugin in it.
 //
 // `webServer` launches the binary and waits for the CDP port to answer, then kills it. On a
 // headless box the webview still needs a display, so `scripts/e2e-tauri-full.ts` wraps the

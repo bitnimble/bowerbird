@@ -82,6 +82,13 @@ mkdirSync(resources, { recursive: true });
 
 copyFileSync(binary, join(macos, EXE));
 chmodSync(join(macos, EXE), 0o755);
+const updater = join(releaseDir, 'bowerbird-updater');
+if (!existsSync(updater)) {
+  console.error(`[mac-build] built, but ${updater} is missing`);
+  process.exit(1);
+}
+copyFileSync(updater, join(macos, 'bowerbird-updater'));
+chmodSync(join(macos, 'bowerbird-updater'), 0o755);
 
 // No `Frameworks`, and nothing to patch into it: the only things left in the load commands
 // are macOS's own, so the linker's ad-hoc signature still describes the file it signed,
@@ -103,6 +110,8 @@ if (existsSync(sidecarSource) && existsSync(join(bundledServer, 'server', 'index
   copyFileSync(sidecarSource, join(macos, 'bowerbird-server'));
   chmodSync(join(macos, 'bowerbird-server'), 0o755);
   cpSync(bundledServer, join(resources, 'resources'), { recursive: true });
+  // The page the server serves (`server.rs`), which `tauri.conf.json` maps to `web` for the bundler.
+  cpSync(join(repoRoot, 'web', 'dist'), join(resources, 'web'), { recursive: true });
 } else {
   console.error(
     `[mac-build] no server at ${sidecarSource}: this .app will open and find no library. ` +

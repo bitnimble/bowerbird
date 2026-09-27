@@ -201,7 +201,17 @@ async function decodePicture(
   // the WebGPU painter can draw - and it draws the fitted frame whole, so nothing past the texture
   // edge every device allows.
   const fitsATexture = Math.max(natural.width, natural.height) <= MAX_CANVAS_EDGE;
-  if (WebCodecs == null && blob.type === 'image/avif' && fitsATexture && navigator.gpu != null && canDecodeAvifPlanes()) {
+  const planesRefusal = !canDecodeAvifPlanes()
+    ? `no shared memory (crossOriginIsolated ${globalThis.crossOriginIsolated})`
+    : navigator.gpu == null
+      ? 'no WebGPU'
+      : !fitsATexture
+        ? `${natural.width}x${natural.height} is past the ${MAX_CANVAS_EDGE} texture edge`
+        : null;
+  if (WebCodecs == null && blob.type === 'image/avif' && planesRefusal != null) {
+    console.warn(`stage: no ImageDecoder and ${planesRefusal}, so the AVIF is decoded as a bitmap, which tone maps HDR to SDR`);
+  }
+  if (WebCodecs == null && blob.type === 'image/avif' && planesRefusal == null) {
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const planes = await decodeAvifPlanes(bytes, { signal, ...priority, pixels: natural.width * natural.height });
     // Null for an abort as well, which the bitmap decode below would only repeat for nobody.

@@ -115,17 +115,16 @@ export async function deleteRestoreStaging(dbPath: string, target: string): Prom
 
 
 // One of the two scratch directories an update downloads and unpacks into (DESIGN §23.3).
-// Naming which, rather than passing a path, is what keeps `versions/` - the directory the
-// app is running out of - out of reach whatever else goes wrong.
+// Naming which, rather than passing a path, is what keeps anything else in `home` out of
+// reach whatever else goes wrong.
 //
 // That settles the leaf and not the root, which is the half worth checking: `home` is
-// `BOWERBIRD_HOME`, and `path.resolve` on a relative one silently anchors it to this
-// process's working directory rather than to anything the supervisor made. A leading `/`
-// dropped from an env file would then recursively delete `download` and `staged` out of
-// wherever the server happened to be started from.
+// `BOWERBIRD_UPDATES`, and `path.resolve` on a relative one silently anchors it to this
+// process's working directory. A leading `/` dropped from an env file would then
+// recursively delete `download` and `staged` out of wherever the server was started from.
 export async function deleteUpdateStaging(home: string, which: 'download' | 'staged'): Promise<void> {
   if (!path.isAbsolute(home)) {
-    throw new AppError('IO_ERROR', `refusing to remove ${which}: BOWERBIRD_HOME is not an absolute path (${home})`);
+    throw new AppError('IO_ERROR', `refusing to remove ${which}: BOWERBIRD_UPDATES is not an absolute path (${home})`);
   }
   await rm(path.join(home, which), { recursive: true, force: true });
 }

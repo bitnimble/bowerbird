@@ -1,4 +1,4 @@
-import { adapterName } from '../../adapter_name';
+import { readDiagnostics } from './diagnostics';
 import { type Attached, REQUEST_CEILING } from './photo_attachments';
 
 export interface BugReport {
@@ -48,7 +48,7 @@ class BugReporter {
     const carried = report.attachments.reduce((total, part) => total + part.data.byteLength, 0);
     if (carried > REQUEST_CEILING) throw new Error('this report is larger than Sentry will take');
 
-    sentry.setContext('bowerbird', await this.diagnostics());
+    sentry.setContext('bowerbird', { ...(await readDiagnostics()) });
     await sentry.sendFeedback(
       {
         message: report.message,
@@ -74,23 +74,6 @@ class BugReporter {
     return import.meta.env.VITE_SENTRY_DSN ?? '';
   }
 
-  private async diagnostics(): Promise<Record<string, string>> {
-    return {
-      display: `${window.screen.width}x${window.screen.height} at ${window.devicePixelRatio}x`,
-      browser: window.navigator.userAgent,
-      adapter: await this.adapter(),
-    };
-  }
-
-  private async adapter(): Promise<string> {
-    if (navigator.gpu == null) return 'no WebGPU';
-    try {
-      const found = await navigator.gpu.requestAdapter();
-      return found == null ? 'no adapter' : adapterName(found);
-    } catch {
-      return 'no adapter';
-    }
-  }
 }
 
 export const bugReporter = new BugReporter();

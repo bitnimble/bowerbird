@@ -298,7 +298,7 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
 | `GET` | `/api/events` | Server-sent events; `rendition` carries the id of a photo whose renditions were just written (§18.6) |
 | `GET` | `/api/updates` | What version this install is and which releases are newer, cached ten minutes (§23.5) |
 | `POST` | `/api/updates/check` | The same answer, without the cache |
-| `POST` | `/api/updates/apply` | Download the payload for this platform, check it, unpack it, and exit for the supervisor to restart into it (§23.3). Answers `202` first: the reply is the last thing this server does on the old version |
+| `POST` | `/api/updates/apply` | Download the payload for this platform, check it, unpack it, and exit for the desktop app to hand itself to the updater (§23.3). Answers `202` first: the reply is the last thing this server does on the old version |
 | `GET` | `/api/browse` | Directories inside `?path=`, or the home directory when it is omitted, for the folder picker that adds a library. Absolute paths, and unfenced: a library root can be on any mount, and `POST /api/libraries` already accepts any absolute path. The per-library form (§13.1) is fenced, because there a folder outside the root is wrong rather than merely unhelpful. Carries a `writable` boolean for the folder being listed - one per listing, not per child - so the dialog can tick and lock "don't change anything in this folder" for a root the server cannot write in (§4.1). |
 
 Two scopes, not three: the `libraries` row holds what belongs to one catalogue (the rendition source and HDR, §10.2), and `settings` holds everything app-wide - the viewer's `viewer_rendition_mode` and the rendition `remember` remembers, alongside the server's own tuning (§15). A key/value table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration; values are stored as text, and the default's type says what to read one back as. A value the build no longer understands reads as its default rather than failing the request: a bad row must not stop the viewer opening or the server booting.
@@ -390,17 +390,18 @@ catalogue can be opened.
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
 | `DATA_DIR` | `./data` | Where every generated file lives, one subdirectory per library (§6). Resolved absolute at load, created and tested for writability at startup |
 
-Four more are **not configuration and not for anybody to set**: they are how whatever
+Five more are **not configuration and not for anybody to set**: they are how whatever
 started this server tells it where it is (§23.3, §10.4). Every one of them is written by
-the supervisor or the desktop shell, and a deployment that sets them by hand is telling
-the server something untrue about itself.
+the desktop shell, the Dockerfile or the container's entrypoint, and a deployment that sets
+them by hand is telling the server something untrue about itself.
 
 | Variable | Set by | Description |
 |---|---|---|
-| `BOWERBIRD_SUPERVISED` | the supervisor | `1` when there is something in front of this process that can restart it, which is what decides whether an in-place update is offered at all |
-| `BOWERBIRD_HOME` | the supervisor | Where the versions live, and so where an update unpacks |
+| `BOWERBIRD_UPDATES` | the desktop shell | Where an update is staged, and set only where the app can hand itself to the updater, which is what decides whether an in-place update is offered at all |
 | `BOWERBIRD_PLATFORM` | the Dockerfile | Which release platform this install is, where it cannot be worked out from the kernel - the image runs the same Linux a desktop build does and installs an entirely different file |
 | `BOWERBIRD_NATIVE_LIB` | the shell, the container entrypoint | The pixel library to open, named rather than searched for: a packaged app has no source tree beside it, and the container's is whichever instruction-set variant won the startup probe (§10.4) |
+| `WEB_DIST` | the desktop shell | The web client to serve, which is the page the shell's webview loads from this server. Unset, `./web/dist` where it exists, which is the container's |
+| `BOWERBIRD_API_TOKEN` | the desktop shell | A secret every request must carry, as a bearer token or the cookie the shell's page is signed in with (`?token=` once, then redirected off the address), so nothing else on the machine can drive the library |
 
 Three more are genuinely optional. The first replaces the lens database the binary carries; the other two say where update checks are made (§23.5):
 

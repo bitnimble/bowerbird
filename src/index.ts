@@ -483,7 +483,8 @@ app.route(
   new QualityCheckApi(photoReadService, photoRenditionService, librariesService, settingsRepo, originals).routes,
 );
 
-// The web client, where a build of it sits beside this server (the container).
+// The web client, where a build of it sits beside this server (the container) or the desktop
+// shell names one, which is the page its webview loads.
 //
 // **Load-bearing for replication, not a convenience.** A peer is dialled at the
 // address a browser reaches it on (§9.1), and the deployment publishes one port -
@@ -627,3 +628,10 @@ log.info(`listening on http://${config.host}:${server.port}`, {
   processingConcurrency: settings.processing_concurrency,
   libraries: librariesRepo.list().length,
 });
+
+// The container's PID 1, where a signal with no handler is ignored: without these, `docker stop`
+// waits out its ten seconds and ends in SIGKILL.
+for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => process.exit(0));
+// Every exit, a staged update's included: an open catalogue is left in WAL mode, which is
+// what a crashed server looks like to `restore` and `isWalMode`.
+process.on('exit', () => db.close());

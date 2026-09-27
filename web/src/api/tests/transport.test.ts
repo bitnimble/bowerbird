@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { appDataDir, assetUrl, canRevealFile, openAppDataDir, subscribeEvents, type EventHandlers } from '../transport';
 import { PathSegment, route } from '../../../../src/schemas/route';
+import { BUNDLED, SERVED, loadedFrom, unload } from './page';
 
 const gridRendition = route(PathSegment.image(), 'abc', PathSegment.renditions(), 'grid');
 const events = route(PathSegment.api(), PathSegment.events());
@@ -19,16 +20,18 @@ const global = globalThis as {
 afterEach(() => {
   delete global.__TAURI_INTERNALS__;
   delete global.__TAURI__;
+  unload();
 });
 
 /** What `tauri/scripts/core.js` emits, verbatim, for each platform it distinguishes. */
-function shell(osName: 'windows' | 'android' | 'macos'): void {
+function shell(osName: 'android' | 'macos'): void {
   global.__TAURI_INTERNALS__ = {
     convertFileSrc: (file, protocol) =>
-      osName === 'windows' || osName === 'android'
+      osName === 'android'
         ? `http://${protocol}.localhost/${encodeURIComponent(file)}`
         : `${protocol}://localhost/${encodeURIComponent(file)}`,
   };
+  global.__TAURI__ = { core: { invoke: async () => null } };
 }
 
 describe('assetUrl', () => {
@@ -36,14 +39,20 @@ describe('assetUrl', () => {
     expect(assetUrl(gridRendition)).toBe(gridRendition);
   });
 
-  // The bug this exists for: the prefix was hardcoded to the macOS and Linux form, so on the
-  // two platforms this branch added builds for, every rendition, download and event stream
-  // resolved to a scheme the webview has no handler for.
+  // The desktop's page is its server's, so an `<img>` loads from it as it would in a browser.
+  test('is the path itself on a page its server serves, shell or not', () => {
+    loadedFrom(SERVED);
+    shell('macos');
+    expect(assetUrl(gridRendition)).toBe(gridRendition);
+  });
+
+  // The prefix is the injected script's to say: hardcoded to one form, every rendition,
+  // download and event stream resolved to a scheme the other platforms' webviews do not answer.
   test.each([
     ['macos', `bowerbird://localhost${gridRendition}`],
-    ['windows', `http://bowerbird.localhost${gridRendition}`],
     ['android', `http://bowerbird.localhost${gridRendition}`],
-  ] as const)('follows the platform: %s', (osName, expected) => {
+  ] as const)('follows the platform on a bundled page: %s', (osName, expected) => {
+    loadedFrom(BUNDLED);
     shell(osName);
     expect(assetUrl(gridRendition)).toBe(expected);
   });
@@ -51,12 +60,15 @@ describe('assetUrl', () => {
   // It is handed the empty string precisely because it percent-encodes what it is given, so
   // a path passed through it would come back with its slashes escaped.
   test('does not let the helper encode our path', () => {
-    shell('windows');
+    loadedFrom(BUNDLED);
+    shell('android');
     expect(assetUrl(events)).toBe(`http://bowerbird.localhost${events}`);
   });
 
   test('falls back to the bare path where the helper is absent', () => {
+    loadedFrom(BUNDLED);
     global.__TAURI_INTERNALS__ = {};
+    global.__TAURI__ = { core: { invoke: async () => null } };
     expect(assetUrl(events)).toBe(events);
   });
 });
@@ -114,7 +126,7 @@ describe('showing a file in its folder', () => {
   });
 });
 
-describe('subscribeEvents over IPC', () => {
+describe('subscribeEvents', () => {
   /** What `events_following` answers with when the stream is up. */
   const LIBRARY = 'http://127.0.0.1:3000';
 
@@ -142,6 +154,7 @@ describe('subscribeEvents over IPC', () => {
     let landed: () => void = () => {};
     const registered = new Promise<void>((resolve) => (landed = resolve));
 
+    loadedFrom(BUNDLED);
     global.__TAURI__ = {
       // `events_following` answers with the library it is streaming from, or null.
       core: { invoke: async () => following },
@@ -168,6 +181,36 @@ describe('subscribeEvents over IPC', () => {
       },
     };
   }
+
+  test('is the page’s own connection on a page its server serves, shell or not', () => {
+    const opened: string[] = [];
+    const eventSource = globalThis.EventSource;
+    globalThis.EventSource = class {
+      constructor(url: string) {
+        opened.push(url);
+      }
+      addEventListener(): void {}
+      close(): void {}
+    } as unknown as typeof EventSource;
+    try {
+      loadedFrom(SERVED);
+      let listened = false;
+      global.__TAURI__ = {
+        core: { invoke: async () => null },
+        event: {
+          listen: async () => {
+            listened = true;
+            return () => {};
+          },
+        },
+      };
+      subscribeEvents(handlers()).close();
+      expect(opened).toEqual([events]);
+      expect(listened).toBe(false);
+    } finally {
+      globalThis.EventSource = eventSource;
+    }
+  });
 
   test('routes each kind to its handler', async () => {
     const shell = shellEvents();

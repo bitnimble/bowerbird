@@ -2,7 +2,7 @@
 // update that writes to disk, and the order it writes in is the whole of what makes a kill
 // at any point survivable - so the order is what is asserted, not just the happy path.
 //
-// The supervisor is Rust and reads these same names (`native/launcher/src/lib.rs`), which
+// The updater is Rust and reads these same names (`native/updater/src/lib.rs`), which
 // nothing but prose holds it to. A rename here that is not made there is an update that
 // downloads, verifies and unpacks, and then never installs - so the names are spelled out
 // below rather than derived, and this is the file that fails when one of them moves.
@@ -59,8 +59,7 @@ test('a payload lands unpacked, with the marker written last', async () => {
     version: '0.2.0',
   });
 
-  // The contents at the root of `staged/`, which is what the supervisor renames into
-  // `versions/<v>` and then runs out of.
+  // The contents at the root of `staged/`, each of which the updater swaps into the install.
   expect(readFileSync(path.join(home, 'staged', 'bowerbird-app'), 'utf8')).toBe('the new app');
   expect(existsSync(path.join(home, 'staged', 'resources', 'server', 'index.js'))).toBe(true);
   expect(readFileSync(path.join(home, 'staged.version'), 'utf8').trim()).toBe('0.2.0');
@@ -69,7 +68,7 @@ test('a payload lands unpacked, with the marker written last', async () => {
 });
 
 // The marker is what says `staged/` is complete, so anything that fails must fail before
-// it is written - otherwise the supervisor installs a half-unpacked directory.
+// it is written - otherwise the updater installs a half-unpacked directory.
 test('a payload whose checksum is wrong stages nothing', async () => {
   const bytes = await tarball('not what was published');
   const origin = serve(() => new Response(bytes));

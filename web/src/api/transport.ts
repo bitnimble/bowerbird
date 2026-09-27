@@ -1,11 +1,10 @@
 /**
  * One request contract, two transports.
  *
- * The browser talks to the API over HTTP; the desktop shell hands the same request to its
- * own Rust, which today forwards it to the hosted Bowerbird server and tomorrow will
- * answer some of it from a local library. Neither the callers above this file nor the
- * Rust below it know which one is running - that is the point, and it is why offline mode
- * can arrive without touching a single call site.
+ * A page its server served - a browser tab, or the desktop app's own webview - talks to the
+ * API over HTTP; Android's bundled page hands the same request to the shell's Rust, which
+ * forwards it to the server the reader named. Neither the callers above this file nor the
+ * Rust below it know which one is running.
  *
  * The convergence is on HTTP's shape rather than on a bespoke one. A status, a set of
  * headers and some bytes is what the server already answers with, so a proxy is the
@@ -51,6 +50,17 @@ export function shellInvoke(): Invoke | null {
 }
 
 /**
+ * The shell's bridge where the page reaches its server through the shell: Android's page, which
+ * the shell bundles. The desktop's page is served by the app's own server and reaches it by URL,
+ * like a browser's.
+ */
+function proxy(): Invoke | null {
+  const page = globalThis.location as Location | undefined;
+  const bundled = page != null && (page.protocol === 'tauri:' || page.hostname === 'tauri.localhost');
+  return bundled ? shellInvoke() : null;
+}
+
+/**
  * One request, whichever side of the app is running.
  *
  * `cmd` names what is being asked for. Nothing reads it yet - every command proxies - and
@@ -64,7 +74,7 @@ export async function send(
   body?: unknown,
   { signal, activity = 'interactive' }: RequestOptions = {},
 ): Promise<Reply> {
-  const invoke = shellInvoke();
+  const invoke = proxy();
   return invoke == null
     ? await overHttp(method, path, body, { signal, activity })
     : await overIpc(invoke, { cmd, method, path, body, activity }, signal);
@@ -131,23 +141,23 @@ async function overIpc(invoke: Invoke, request: unknown, signal?: AbortSignal): 
 }
 
 /**
- * Where the shell is pointed, and where to point it.
+ * Where Android's shell is pointed, and where to point it.
  *
  * The one setting that cannot live with the others, because the others are on the far side
  * of it: asking the server where the server is does not work. So the shell keeps it beside
- * its own config, and the browser has no use for it at all - a page already knows its
- * origin.
+ * its own config, and a page served by its server has no use for it at all - it already
+ * knows its origin.
  */
 export async function serverOrigin(): Promise<string | null> {
-  const invoke = shellInvoke();
+  const invoke = proxy();
   if (invoke == null) return null;
   return z.string().parse(await invoke('server_origin', {}));
 }
 
 /** Returns what the shell settled on, which is trimmed and may be a default. */
 export async function setServerOrigin(value: string): Promise<string> {
-  const invoke = shellInvoke();
-  if (invoke == null) throw new Error('the server address is the desktop app’s to set');
+  const invoke = proxy();
+  if (invoke == null) throw new Error('the server address is the Android app’s to set');
   return z.string().parse(await invoke('set_server_origin', { value }));
 }
 
@@ -260,13 +270,13 @@ const KINDS = [
  * The library's events, over whichever transport is running.
  *
  * The one call that is not request/response, and so the one that cannot go through `send`
- * or through `assetUrl` either. A browser opens its own connection and this is an
- * `EventSource`; the shell cannot proxy the stream at all, because `UriSchemeResponder`
- * takes a whole response and this body never ends - so its Rust holds the stream and
- * forwards each event over IPC, and this is the seam that hides which of the two happened.
+ * or through `assetUrl` either. A page served by its server opens its own connection and this
+ * is an `EventSource`; Android's shell cannot proxy the stream at all, because
+ * `UriSchemeResponder` takes a whole response and this body never ends - so its Rust holds the
+ * stream and forwards each event over IPC, and this is the seam that hides which happened.
  */
 export function subscribeEvents(handlers: EventHandlers): EventStream {
-  const listen = listener();
+  const listen = proxy() == null ? null : listener();
   return listen == null ? overEventSource(handlers) : overIpcEvents(listen, handlers);
 }
 
@@ -286,7 +296,7 @@ function overEventSource(handlers: EventHandlers): EventStream {
   const source = new EventSource(route(PathSegment.api(), PathSegment.events()));
   // Which is also why the first connect is the baseline: a page served by the API cannot have
   // loaded while the API was unreachable, so only the connects after it are a server coming
-  // back. The shell is the build where that does not hold.
+  // back. Android's bundled page is where that does not hold.
   let seen = false;
   source.addEventListener('open', () => {
     handlers.open(seen);
@@ -370,17 +380,16 @@ function overIpcEvents(listen: Listen, handlers: EventHandlers): EventStream {
 /**
  * A URL an `<img>` or a download can load, which cannot go through `send`.
  *
- * The browser fetches those itself, so under the shell they need a scheme its Rust
- * answers. Same paths either way; only the prefix moves.
+ * The browser fetches those itself, so on Android's bundled page they need a scheme the
+ * shell's Rust answers. Same paths either way; only the prefix moves.
  *
- * And the prefix is not one string. A registered scheme is served at `bowerbird://localhost`
- * on macOS and Linux but at `http://bowerbird.localhost` on Windows and Android, which are
- * the two targets that gained a build here - hardcoding either form 404s every rendition,
- * download and event stream on the other. Only the injected script knows which, so it is
- * asked rather than guessed: `convertFileSrc` percent-encodes what it is handed, so it is
- * handed nothing and the path is appended after.
+ * And the prefix is asked rather than written: a registered scheme is served at
+ * `http://bowerbird.localhost` on Android and at `bowerbird://localhost` on Apple's
+ * platforms, and only the injected script knows which. `convertFileSrc` percent-encodes what
+ * it is handed, so it is handed nothing and the path is appended after.
  */
 export function assetUrl(path: string): string {
+  if (proxy() == null) return path;
   const convert = (
     globalThis as {
       __TAURI_INTERNALS__?: { convertFileSrc?: (file: string, protocol: string) => string };

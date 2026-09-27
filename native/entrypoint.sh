@@ -17,9 +17,6 @@
 # all: an exotic CPU must not turn into a container that will not boot.
 set -eu
 
-# Beside this script rather than an absolute path: an updated container runs the payload
-# out of a version directory under /data, and the variant it probes has to be that
-# version's library rather than the one the image was built with.
 NATIVE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SELECTED="$NATIVE_DIR/librawshim.selected.so"
 
@@ -53,9 +50,8 @@ done
 # neither can Bun.
 [ -e "$SELECTED" ] || echo "rawshim: using the portable baseline"
 
-# Named rather than searched for. The image's layout is no longer a fixed path - an
-# updated container runs out of a version directory under /data - and this is the only
-# thing that knows both which directory that is and which variant won the probe above.
+# Named rather than searched for: this is the only thing that knows which variant won the
+# probe above.
 if [ -e "$SELECTED" ]; then
   BOWERBIRD_NATIVE_LIB="$SELECTED"
 else

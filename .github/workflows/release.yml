@@ -101,9 +101,6 @@ jobs:
           echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
           echo "building: docker=$(wanted docker && echo yes || echo no) android=$(wanted android && echo yes || echo no) desktop=$desktop"
 
-  # The container, and the payload an installed one replaces itself with. Both come out
-  # of the same image, which is the point: what a running container updates to is exactly
-  # what a fresh `docker pull` would have given it.
   docker:
     needs: plan
     if: needs.plan.outputs.docker == 'true'
@@ -157,7 +154,6 @@ jobs:
           # those levels. An arm64 build has no target-cpu to give it.
           platforms: linux/amd64
           push: true
-          load: true
           # The web bundle is built inside the image, where the workflow's environment
           # does not reach.
           build-args: |
@@ -168,30 +164,6 @@ jobs:
           # its least-recently-used eviction takes these layers first.
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
-
-      # Taken out of the image rather than assembled beside it, so the tarball and the
-      # image cannot be built from different trees - which is the one way an in-place
-      # update could land a container on something `docker pull` would never produce.
-      - name: Take the payload out of the image
-        if: env.TAG != ''
-        run: |
-          set -eu
-          mkdir -p dist/docker-x86_64
-          image=$(echo '${{ steps.meta.outputs.tags }}' | head -n1)
-          # `load: true` above is what normally puts it in the daemon, and whether buildx
-          # can load and push in one invocation depends on its driver and its version - so
-          # this asks rather than assumes, and fetches what was just pushed if it has to.
-          docker image inspect "$image" >/dev/null 2>&1 || docker pull "$image"
-          id=$(docker create "$image")
-          docker cp "$id:/app/payload" ./payload
-          docker rm "$id"
-          tar -czf dist/docker-x86_64/bowerbird-payload-docker-x86_64.tar.gz -C ./payload .
-
-      - uses: actions/upload-artifact@v6
-        if: env.TAG != ''
-        with:
-          name: dist-docker-x86_64-payload
-          path: dist/
 
   # The editor's decoder, which every app's web build imports by path. Wasm, so one build serves
   # every platform, and `build:wasm` in an app job finds it already built from the same sources.
@@ -262,7 +234,6 @@ jobs:
           workspaces: |
             native/rawshim
             src-tauri
-            native/launcher
 
       # What the Dockerfile's `codecs` stage installs, which is what vcpkg does not fetch for
       # itself on Linux, plus libclang-dev for bindgen. The webkit and appindicator packages
@@ -495,7 +466,7 @@ jobs:
           path: dist
           pattern: dist-*
           merge-multiple: true
-      - run: bun run scripts/write-release-manifest.ts --dist dist --image-repo "ghcr.io/${{ github.repository }}"
+      - run: bun run scripts/write-release-manifest.ts --dist dist ${{ needs.docker.result == 'success' && format('--image-repo ghcr.io/{0}', github.repository) || '' }}
       - uses: softprops/action-gh-release@v3
         with:
           # The description of this release is the changelog the app shows (DESIGN §23.1),

@@ -1218,11 +1218,10 @@ in-memory SQLite catalogues and a function-call transport:
 3. **Transport + pairing + bootstrap**: endpoints, validation boundary, browse and pair (§9.1),
    peer list with forget, clone, **minimal status surface** (§8.6). Server↔server replication end
    to end.
-4. **Offline desktop**: bun server as Tauri sidecar. The seam is `origin()` in `api.rs`, which
-   all three channels (commands, `bowerbird://` assets, the SSE follower) already route
-   through, so pointing it at the sidecar carries everything; the genuinely new work is sidecar
-   lifecycle (spawn, health, shutdown; `externalBin` packaging) and the note that `origin` is
-   app-global: local-vs-remote is per-app, which matches this design. Loopback bind (§11.3).
+4. **Offline desktop**: bun server as Tauri sidecar, serving the page the shell's webview loads,
+   so requests, images and the event stream are plain same-origin HTTP as in a browser tab; the
+   work is sidecar lifecycle (spawn, health, shutdown; `externalBin` packaging) and the token the
+   shell signs its page in with. Loopback bind (§11.3).
 5. **Blobs**: locations, transfer queue + push-the-diff, fetch-on-open, materialisation queue +
    drain discipline, collision rules, remote badges, pipeline hand-off.
 6. **Conflict + lifecycle UI**: edit-conflict page, availability filter, manual evict,

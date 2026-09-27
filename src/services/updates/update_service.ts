@@ -17,13 +17,13 @@ import { downloadUrl, updateSource } from './update_source';
 const log = new Logger('updates');
 
 /**
- * What the app exits with to ask its supervisor to restart it (DESIGN §23.3).
+ * What this server exits with once an update is staged, for the desktop app to hand itself
+ * over to the updater (DESIGN §23.3).
  *
- * `launcher::RESTART` in `native/launcher/src/lib.rs` is the same number, and the two
- * have no way to share it. A change on one side alone is an update that unpacks, stages,
- * and then exits for good instead of coming back on the new version.
+ * `update::STAGED` in `src-tauri/src/update.rs` is the same number, and the two have no way
+ * to share it. A change on one side alone is an update that stages and then simply stops.
  */
-const RESTART_EXIT_CODE = 75;
+const STAGED_EXIT_CODE = 75;
 
 /** The release the manifest is attached to, so nothing has to guess a filename. */
 const MANIFEST_ASSET = 'release.yml';
@@ -55,19 +55,18 @@ const GithubReleaseSchema = z.object({
 type GithubRelease = z.infer<typeof GithubReleaseSchema>;
 
 /**
- * Whether this install can replace itself, and where it keeps the versions if it can.
+ * Where an update is staged, where this install can replace itself at all.
  *
- * Set by `native/launcher`, and by nothing else: an install with no supervisor in front
- * of it has nowhere to put a new payload and nothing to restart it, so it is told to
- * download the installer instead of being offered a button that could only half work.
+ * Set by the desktop app, and only where it can hand itself to the updater: anywhere else
+ * there is nothing to install a payload, so the reader is pointed at the installer or the
+ * image instead of being offered a button that could only half work.
  */
-function supervisorHome(): string | null {
-  const home = process.env.BOWERBIRD_HOME;
-  if (home == null || home.trim() === '' || process.env.BOWERBIRD_SUPERVISED !== '1') return null;
+function updatesHome(): string | null {
+  const home = process.env.BOWERBIRD_UPDATES;
+  if (home == null || home.trim() === '') return null;
   // Absolute or nothing. A relative one resolves against this process's working directory
-  // rather than against anything the supervisor made, so every path downstream would be
-  // somewhere else entirely - and "no supervisor" is a better answer than an update that
-  // unpacks into the wrong place and is then never found.
+  // rather than against anything the app made, so the payload would unpack somewhere the
+  // updater never looks.
   return path.isAbsolute(home) ? home : null;
 }
 
@@ -118,7 +117,7 @@ export class UpdateService {
     return {
       current: VERSION,
       newer,
-      can_install: supervisorHome() != null && newer.length > 0,
+      can_install: updatesHome() != null && newer.length > 0,
       install_hint: this.installHint(newer[0]),
       checked_at: this.checkedAt == null ? null : new Date(this.checkedAt).toISOString(),
       error: this.error,
@@ -126,15 +125,15 @@ export class UpdateService {
   }
 
   /**
-   * Downloads the newest release's payload, checks it, and unpacks it beside the running
-   * one - then exits so the supervisor can swap them in and start the new version.
+   * Downloads the newest release's payload, checks it, and unpacks it - then exits so the
+   * desktop app can hand itself to the updater, which swaps it in and starts the new version.
    *
-   * The exit is the last thing and it is deliberate: nothing on disk is replaced by this
+   * The exit is the last thing and it is deliberate: nothing installed is replaced by this
    * process, so a failure anywhere above leaves the install exactly as it was.
    */
   async apply(): Promise<void> {
-    const home = supervisorHome();
-    if (home == null) throw new Error('this install has no supervisor to restart it, so it cannot update itself');
+    const home = updatesHome();
+    if (home == null) throw new Error('this install cannot replace itself, so it cannot update in place');
     const release = this.newerReleases()[0];
     if (release == null) throw new Error('there is nothing newer than this version to install');
     if (this.downloading) throw new Error('an update is already being downloaded');
@@ -162,10 +161,10 @@ export class UpdateService {
       throw err;
     }
 
-    log.info('an update is staged; exiting for the supervisor to apply it', { version: release.version });
+    log.info('an update is staged; exiting for the updater to install it', { version: release.version });
     // After the response has gone out. The caller is a route handler, and a process that
     // exits inside one answers nothing at all.
-    setTimeout(() => process.exit(RESTART_EXIT_CODE), 250);
+    setTimeout(() => process.exit(STAGED_EXIT_CODE), 250);
   }
 
   private newerReleases(): ReleaseNote[] {
@@ -259,7 +258,7 @@ export interface Payload {
 }
 
 /**
- * Downloads a payload and leaves it where the supervisor will find it (DESIGN §23.3).
+ * Downloads a payload and leaves it where the updater will find it (DESIGN §23.3).
  *
  * Exported so it can be driven against a local server and a real tarball: this is the one
  * function here that writes to disk, and the order it writes in is what makes a kill at
@@ -307,13 +306,13 @@ export async function stagePayload(home: string, payload: Payload): Promise<void
   }
 
   // Unpacked into a directory of its own, then named at the end. A tar interrupted
-  // half way would otherwise leave a `staged` the supervisor would happily install.
+  // half way would otherwise leave a `staged` the updater would happily install.
   const unpacking = path.join(download, 'unpacking');
   mkdirSync(unpacking, { recursive: true });
   await untar(tarball, unpacking);
   renameSync(unpacking, path.join(home, 'staged'));
-  // Last, because this file is what the supervisor reads to decide there is anything
-  // to apply: written before the directory is complete, a kill mid-unpack installs it.
+  // Last, because this file is what the updater reads to decide there is anything
+  // to install: written before the directory is complete, a kill mid-unpack installs it.
   await Bun.write(path.join(home, 'staged.version'), `${payload.version}\n`);
   await deleteUpdateStaging(home, 'download');
 }

@@ -265,11 +265,6 @@ RUN set -eu; \
     rm -rf /build/target; \
   done
 
-# What PID 1 is, so that everything above this line can be replaced while the container
-# keeps running (DESIGN §23.3). The same crate the desktop app supervises itself with,
-# built here as its binary because there is no Tauri shell in a container to host it.
-RUN cargo build --release --manifest-path native/launcher/Cargo.toml --target-dir /build/launcher
-
 # The same crate again as wasm, which is what the editor ticks through in the
 # browser (§0.4: one implementation, and this is it running on the other host).
 # The web build imports the package directly, so it has to exist before vite runs.
@@ -466,47 +461,36 @@ FROM base AS runtime
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=3000
-# **Absolute, and that is load-bearing now.** Both default to a path relative to the
-# working directory, and the working directory is the running version's own - so left
-# unset, `docker run` with no compose file would put the catalogue inside the payload, and
-# the first update would move the working directory and quietly start an empty one beside
-# it. The two volumes `docker-compose.yml` mounts, which sets these to the same values.
+# The two volumes `docker-compose.yml` mounts, which sets these to the same values. Absolute,
+# so `docker run` with no compose file does not put the catalogue in the working directory.
 ENV DB_PATH=/config/bowerbird.db
 ENV DATA_DIR=/data
 # Said outright rather than sniffed for. The image runs the same Linux a desktop build
-# does and installs an entirely different file, so what an update means here - a new
-# payload under /data, or `docker pull` - cannot be worked out from the kernel.
+# does, and is updated by pulling a new image rather than by anything it downloads.
 ENV BOWERBIRD_PLATFORM=docker-x86_64
 
-# **Everything the app is lives under `payload/`, and nothing outside it does.** That
-# directory is what an update replaces: `bowerbird-launcher` unpacks a newer one onto the
-# data volume and runs that instead, and what is here is the version the image shipped
-# with and the one a lost or broken update falls back to (DESIGN §23.3).
-COPY --from=deps --chown=bun:bun /app/node_modules ./payload/node_modules
+COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
 # The baseline keeps the plain name: it is the fallback the loader ends at, and the
 # only one guaranteed to run.
-COPY --from=native --chown=bun:bun /build/x86-64/librawshim.so ./payload/native/librawshim.so
-COPY --from=native --chown=bun:bun /build/x86-64-v3/librawshim.so ./payload/native/librawshim.v3.so
-COPY --from=native --chown=bun:bun /build/x86-64-v4/librawshim.so ./payload/native/librawshim.v4.so
+COPY --from=native --chown=bun:bun /build/x86-64/librawshim.so ./native/librawshim.so
+COPY --from=native --chown=bun:bun /build/x86-64-v3/librawshim.so ./native/librawshim.v3.so
+COPY --from=native --chown=bun:bun /build/x86-64-v4/librawshim.so ./native/librawshim.v4.so
 # native/ stays writable rather than read-only: the entrypoint symlinks the variant
 # it picked into it on every start.
-COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts native/report_gpu.ts ./payload/native/
-RUN chmod +x ./payload/native/entrypoint.sh
-COPY --chown=bun:bun package.json bun.lock tsconfig.json VERSION ./payload/
-COPY --chown=bun:bun src ./payload/src
-COPY --chown=bun:bun assets/reference_frame.ARW ./payload/assets/reference_frame.ARW
-RUN bun -e 'import { assertReferenceFrame } from "./payload/src/services/processing/renditions/reference_frame.ts"; assertReferenceFrame("./payload/assets/reference_frame.ARW")'
+COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts native/report_gpu.ts ./native/
+RUN chmod +x ./native/entrypoint.sh
+COPY --chown=bun:bun package.json bun.lock tsconfig.json VERSION ./
+COPY --chown=bun:bun src ./src
+COPY --chown=bun:bun assets/reference_frame.ARW ./assets/reference_frame.ARW
+RUN bun -e 'import { assertReferenceFrame } from "./src/services/processing/renditions/reference_frame.ts"; assertReferenceFrame("./assets/reference_frame.ARW")'
 # `bun run restore` is the documented way back from a bad catalogue (§4.9), and the
 # backups it reads are on a named volume inside this image's world. Left out, the
 # only supported deployment is the one deployment that cannot restore its own
 # backups, discovered during the outage that needs it.
-COPY --chown=bun:bun scripts/restore-backup.ts ./payload/scripts/
+COPY --chown=bun:bun scripts/restore-backup.ts ./scripts/
 # The built client, which this server serves at / (see index.ts). Assets only:
 # the toolchain that produced them stays in the `web` stage.
-COPY --from=web --chown=bun:bun /app/web/dist ./payload/web/dist
-# Outside the payload, because it is the one thing an update must not be able to break:
-# a supervisor replaced by the payload it supervises is a bad release with no way back.
-COPY --from=native /build/launcher/release/bowerbird-launcher /app/bowerbird-launcher
+COPY --from=web --chown=bun:bun /app/web/dist ./web/dist
 # Where the loader looks by default, beside the hardware ICDs; the manifest names its library
 # relative to itself.
 COPY --from=swiftshader /app/native/rawshim/.swiftshader/libvk_swiftshader.so /app/native/rawshim/.swiftshader/vk_swiftshader_icd.json /usr/local/share/vulkan/icd.d/
@@ -521,20 +505,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 # host, so the common case needs no configuration; a host whose owner is not 1000
 # overrides it with `user:` in the compose file.
 USER bun
-# So that `docker exec … bun run restore` (§4.9) lands where the scripts and the
-# `node_modules` behind them are. Nothing about starting the app depends on it: the
-# ENTRYPOINT is absolute, and the supervisor sets the working directory of the version it
-# runs to that version's own directory.
-WORKDIR /app/payload
-# PID 1 is the supervisor, and the command below is what it runs - with `{payload}`
-# replaced by whichever version is current, and that directory as the working directory,
-# so the server resolves its own `node_modules` and its own pixel library rather than
-# some other version's. `docker run … <anything>` still works: CMD is still the command.
-#
-# The versions live on the data volume rather than in the container's writable layer,
-# which is the difference between an update that survives `docker compose up` and one
-# that is silently rolled back by the next recreate.
-ENTRYPOINT ["/app/bowerbird-launcher", "--home", "/data/updates", "--fallback", "/app/payload", "--"]
-# The entrypoint tunes the pixel library and then execs the rest, which is why it is
-# inside the payload: the variant it picks has to be the running version's.
-CMD ["{payload}/native/entrypoint.sh", "bun", "run", "src/index.ts"]
+# The entrypoint tunes the pixel library and then execs the command. `docker run … <anything>`
+# still works: CMD is still the command.
+ENTRYPOINT ["/app/native/entrypoint.sh"]
+CMD ["bun", "run", "src/index.ts"]

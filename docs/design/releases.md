@@ -12,7 +12,8 @@ A release is a git tag. `.github/workflows/release.yml` builds every platform fr
 attaches the binaries to a GitHub release, publishes the container to GHCR, and writes
 one small file - `release.yml` - that says which of those binaries belongs to which
 machine. An installed Bowerbird reads that file, decides whether there is anything newer
-than itself, downloads the payload for its own platform, and restarts into it.
+than itself, downloads the payload for its own platform, and hands itself to an updater that
+swaps the payload in and starts it.
 
 ### 23.1 The changelog is the release description
 
@@ -49,15 +50,15 @@ assets:
     installer: Bowerbird_0.2.0_android-arm64.apk
   docker-x86_64:
     image: ghcr.io/bitnimble/bowerbird:0.2.0
-    payload: bowerbird-payload-docker-x86_64.tar.gz
-    payload_sha256: 1a3…
 ```
 
-`installer` is what a person downloads and runs; `payload` is what an installed copy
-unpacks over itself. A platform may have either on its own - Android can never replace
-itself in place, and a payload with no installer is a build only an existing install can
-reach. A platform whose build failed is simply absent, and an install of that platform is
-told there is nothing for it rather than handed a 404.
+`installer` is what a person downloads and runs, and `image` is the container's; `payload` is
+what an installed copy swaps into its own install. A platform may have either on its own -
+Android and the container can never replace themselves in place, and a payload with no
+installer is a build only an existing install can reach. A platform whose build failed is
+simply absent, and an install of that platform is told there is nothing for it rather than
+handed a 404. The image is named only when the container job pushed it
+(`write-release-manifest.ts --image-repo`).
 
 It is **generated from the files about to be uploaded** (`scripts/write-release-manifest.ts`),
 not from a list somebody maintains, and read by a reader and a writer that live in one
@@ -65,99 +66,78 @@ module with a round-trip test holding them together (`release_manifest.ts`). The
 no library behind it; that test is the only thing stopping a change to one half from being
 a release every installed copy silently cannot read.
 
-### 23.3 The supervisor, and why the app does not update itself
+### 23.3 The updater, and why the app does not replace itself
 
-**What the operating system starts is never what an update replaces.**
+**What replaces an install is never a process running out of it.** The server downloads and
+checks a payload, unpacks it into `<home>/staged`, writes `staged.version` last, and exits
+`75`. The desktop app sees that exit, copies `bowerbird-updater` out of its install into
+`<home>`, starts the copy and exits. The updater waits for the app's process to be gone,
+swaps the payload's entries into the install, and starts the app again - the way Sparkle and
+Tauri's own updater replace a `.app`.
 
 ```
-<home>/
-  versions/<version>/   payloads, unpacked
-  current               which of them to run, or empty for the one that was installed
-  previous              what to fall back to when a new one will not start
-  staged/               a payload the app has just unpacked
-  staged.version        written last, and what says `staged/` is complete
+<home>/                          the app-data folder's `updates/`
+  staged/                        the payload, unpacked
+  staged.version                 written last, and what says `staged/` is complete
+  updater.log                    what the updater did, since it runs with nowhere to print
+  bowerbird-updater              the copy that runs
+<install>/                       the folder holding the `.app`, or the NSIS install directory
+  <entry>                        live
+  .<entry>.bowerbird-incoming    the payload's copy, moved in before anything is swapped
+  .<entry>.bowerbird-previous    the copy it replaced, until the new version has started
 ```
 
-`native/launcher` owns that directory and nothing else: it applies whatever is staged,
-starts the app out of the version `current` names, and starts it again when the app exits
-`75`. It knows nothing about GitHub, releases, or downloads - the app does all of that,
-unpacks into `staged/`, and exits.
-
-That division is the whole design. An update never rewrites a file that is currently open,
-which Windows refuses outright and which, half done, leaves nothing that can finish the job.
-It is also why neither `/Applications` nor `C:\Program Files` is touched: the versions live
-in the app-data folder, which is writable without an administrator.
-
-**One implementation, two entry points.** The container's PID 1 is the crate's own binary.
-The desktop app is the crate's *library*, called from `src-tauri/src/main.rs` before Tauri
-starts: one executable in two roles, told apart by `BOWERBIRD_PAYLOAD`, which only the
-supervisor sets. Doing it that way keeps the bundlers out of it - a dmg, an AppImage, a deb
-and an NSIS installer package exactly what they packaged before, and the thing the reader
-double-clicks is still the thing Tauri built.
+`native/updater` is the logic, with its own suite, and `src-tauri/src/bin/bowerbird-updater.rs`
+is the binary. Tauri bundles every binary in the crate beside the shell - `Contents/MacOS/` in
+the `.app`, the install directory on Windows - so the installers carry it with nothing added to
+them. It knows nothing about GitHub, releases or downloads.
 
 Things it does that are worth naming:
 
-- **One place decides a path, one function deletes.** `Slot` names everything the
-  supervisor keeps under `home`, `path_of` is the only thing that turns one into a path,
-  and `remove` is the only thing in the crate that deletes - so what is deletable is that
-  list, and reviewing the list is reviewing all of it. No caller ever holds a path it could
-  get wrong, and `versions/` itself is not reachable through it.
-  `remove` then checks anyway: the directory it is about to unlink from is resolved and
-  has to be inside `home`. `Slot` and `sanitise` between them bound the leaf, and nothing
-  bounds the root - `--home` and `BOWERBIRD_HOME` are taken as given. The *parent* is
-  resolved rather than the target, deliberately: `canonicalize` follows symlinks, so
-  resolving the target would read a planted `versions/x -> /etc` as a request to delete
-  `/etc`, refuse, and leave the link there for ever, when unlinking it is both safe and
-  the whole job.
-- **Rollback.** A version that exits non-zero within thirty seconds of starting - or that
-  cannot be started at all - is taken as a bad update rather than a crash, and `previous`
-  is put back; failing that, the version the app was installed with. Each step is taken
-  once, so a bad version whose predecessor is also bad ends rather than flipping between
-  the two for ever. A payload that runs for an hour and *then* crashes is a crash, and
-  rolling back would throw away whatever the reader did in that hour.
-  `previous` is *emptied* rather than removed as it is used: the guard against going round
-  again is that it and `current` agree, and a removal that failed and was ignored used to
-  leave it naming the version just stepped over. `current` is written before `previous`,
-  because those are two writes and a kill can land between them: selecting the target first
-  leaves `previous` stale at a value that now equals `current`, which reads as a re-install
-  and steps past, so the target is still tried. The other order leaves the version that just
-  failed selected with its predecessor already erased - started once more for nothing, and
-  then the rung between skipped.
-- **A restart is only a restart when something was staged.** 75 is BSD's `EX_TEMPFAIL` and
-  nothing stops an app exiting it for some other reason; taken on trust, that is a crash
-  loop with no rollback, since the restart is checked before the rollback is. So the
-  supervisor looks for `staged.version` before believing it.
-- **Falling back rather than failing.** With no `current`, or one naming a directory that
-  is not there, it runs the version that was installed. Deleting the versions directory is
-  therefore a supported way back.
-- **Signals.** PID 1 has no default disposition for SIGTERM, so the supervisor forwards it.
-  Without that, `docker stop` is discarded, the app never hears it, and every stop takes the
-  full ten seconds and ends in SIGKILL.
+- **A copy runs, not the installed binary**, because the updater in the install is one of the
+  entries a payload replaces.
+- **Every entry is moved in before any is swapped.** A rename, or a copy where `<home>` and the
+  install are on different volumes, so the slow part happens while the install is still whole.
+  Then each live entry is renamed aside and its replacement renamed in, and a failure part way
+  puts back every one already swapped and starts the version that was there.
+- **Only the payload's entries.** NSIS's `uninstall.exe`, or the other apps beside a bundle in
+  `/Applications`, are left alone. The shell is renamed on the way in: the payload calls it
+  `Bowerbird.app` or `bowerbird-app.exe`, and the install calls it whatever the installer or
+  the reader did, which `update.rs` passes as `--rename`.
+- **Rollback.** A version that exits non-zero within thirty seconds, or cannot be started, is a
+  bad update rather than a crash: every `.bowerbird-previous` is put back and the old version
+  started. One that runs for an hour and then crashes is a crash, and rolling back would throw
+  away whatever the reader did in that hour. Past the thirty seconds, or closed cleanly inside
+  them, the previous entries are deleted.
+- **An administrator only where the install needs one.** On Windows an install the updater
+  cannot write to - one under Program Files - is handed to an elevated copy of the updater
+  through UAC one phase at a time, the swap, the restore and the cleanup, so the app it starts
+  runs as the reader rather than as an administrator. On macOS such an install is never offered
+  an in-place update: a standard user's `/Applications`, or a bundle started from its disk image
+  or from Downloads, which macOS runs from a read-only copy. `update.rs` leaves
+  `BOWERBIRD_UPDATES` unset there, and the dialog offers the installer.
+- **On Windows every rename and delete is retried for ten seconds**, because a file stays locked
+  for a moment after the process that held it exits, and a virus scanner opens every new
+  executable it sees.
+- **macOS's App Management** (from macOS 13) stops one app changing another signed by a
+  different team. The updater and the bundle are signed together, so a Developer ID build is
+  inside the documented rule. An ad-hoc build has no team at all; one replacing its own bundle
+  was measured elsewhere to go through on macOS 26.2 with no prompt, which Apple documents
+  neither way.
+
+**The container is not updated in place.** It is updated the way containers are, by pulling
+the new image (`docker compose pull`), which the manifest names and the dialog says.
 
 ### 23.4 What a payload is
 
 Everything a release changes and nothing a release cannot replace. Not the installer's own
-work - the desktop entry, the registry keys, the icon the launcher was registered under -
-because none of that is what an update is for, and rewriting it is what needs an
-administrator.
+work - the Start menu entry, the registry keys - because none of that is what an update is
+for, and rewriting it is what needs an administrator.
 
 | Platform | Payload |
 |---|---|
-| linux | `bowerbird-app`, `bowerbird-server`, `resources/` |
-| windows | the same, plus the DLLs the shell resolves out of its own directory (§23.7.1) |
-| macOS | a whole `Bowerbird.app` |
-| docker | the image's `/app/payload`: the server, `node_modules`, the three rawshim variants, `web/dist` |
-
-macOS keeps the bundle rather than a bare binary, and that is not tidiness: a window, a menu
-bar and a dock icon come from being inside one, so an executable run loose out of
-Application Support is a different application to look at.
-
-The container's payload is **taken out of the image** rather than assembled beside it
-(`docker cp`), so the tarball and the image cannot be built from different trees - which is
-the one way an in-place update could land a container on something `docker pull` would never
-produce. It lands on the data volume rather than in the container's writable layer, which is
-the difference between an update that survives `docker compose up` and one that is silently
-rolled back by the next recreate.
+| windows | `bowerbird-app.exe`, `bowerbird-server.exe`, `bowerbird-updater.exe`, `resources/`, and the DLLs the shell resolves out of its own directory (§23.7.1) |
+| macOS | a whole `Bowerbird.app`, the server and the updater inside it |
 
 ### 23.5 Where the check runs
 
@@ -171,10 +151,11 @@ It fails **quietly**. A library on a machine with no route to the internet works
 and an hourly error toast about a feature nobody asked for is the kind of thing people turn
 an app off over. Settings shows the reason; the sidebar simply has no badge.
 
-`can_install` is the server reporting whether it has a supervisor in front of it
-(`BOWERBIRD_SUPERVISED`) - without one there is nowhere to unpack a payload and nothing to
-restart it, and the dialog offers the installer's download instead of a button that could
-only half work.
+`can_install` is the server reporting that there is something newer and that the desktop app
+told it where to stage an update (`BOWERBIRD_UPDATES`), which the app does only where it can
+replace itself (§23.3).
+Anywhere else - the container, Android, a macOS install it cannot write to - the dialog
+offers the installer or the image instead of a button that could only half work.
 
 **Where it looks is a setting, and it is two URLs rather than one** (`update_source.ts`).
 `BOWERBIRD_UPDATE_REPO` names a repository on github.com; `BOWERBIRD_UPDATE_URL` replaces
@@ -214,10 +195,10 @@ carries everything else.
   GitHub".
 
 Pressing the button downloads the payload, checks it against the manifest's SHA-256, unpacks
-it beside the running version and exits. The page then polls until the version answering is
-the new one, and reloads. It cannot reload at the click: the server is down between exiting
-and being started again, and a page reloaded into that is a blank screen with no way to tell
-it was ever working.
+it and exits, and the app hands itself to the updater. The page then polls until the version
+answering is the new one, and reloads. It cannot reload at the click: the server is down
+between exiting and being started again, and a page reloaded into that is a blank screen with
+no way to tell it was ever working.
 
 ### 23.7 What the platforms can and cannot do
 
@@ -227,7 +208,7 @@ it was ever working.
 | macos-arm64 | dmg | yes | yes |
 | windows-x86_64 | NSIS installer | yes | yes |
 | android-arm64 | apk | no | **no** |
-| docker-x86_64 | ghcr image | yes | yes |
+| docker-x86_64 | ghcr image | yes | no, `docker compose pull` |
 
 **The Linux desktop is paused, and the container is not.** A server reaches Linux through the
 image above, which is where every Linux reader is; the desktop arm was built for completeness and
@@ -296,8 +277,8 @@ runner rather than being chosen, and raising it is what moving off a retired ima
 **Windows has nothing to carry** of `rawshim.dll`'s own, the MSVC C++ runtime being the C runtime
 the shell already asks for. What still goes beside the executables is whatever the *shell* imports, Tauri's
 `WebView2Loader.dll` among them: `build-payload.ts` copies every DLL cargo left in the release
-directory into the tarball's root, where the supervisor unpacks it beside the executables it
-starts, so a fresh install and an in-place update resolve alike.
+directory into the tarball's root, which the updater swaps into the install directory beside
+the executables, so a fresh install and an in-place update resolve alike.
 
 **Android cannot replace itself at all.** An APK is read-only and the platform will not run
 code loaded from the data directory, so the dialog offers the download and the system

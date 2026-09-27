@@ -109,19 +109,19 @@ describe('deleteUpdateStaging', () => {
   it(
     'removes the scratch directory it was asked for, and only that one',
     withTmp(async (home) => {
-      for (const name of ['download', 'staged', 'versions']) {
+      for (const name of ['download', 'staged']) {
         mkdirSync(path.join(home, name), { recursive: true });
         writeFileSync(path.join(home, name, 'file'), '');
       }
+      writeFileSync(path.join(home, 'updater.log'), '');
       await deleteUpdateStaging(home, 'download');
       expect(existsSync(path.join(home, 'download'))).toBe(false);
-      // The two that are not scratch: `versions` is what the app is running out of.
       expect(existsSync(path.join(home, 'staged'))).toBe(true);
-      expect(existsSync(path.join(home, 'versions'))).toBe(true);
+      expect(existsSync(path.join(home, 'updater.log'))).toBe(true);
     }),
   );
 
-  // `BOWERBIRD_HOME` with its leading slash dropped is a real shape of typo, and
+  // `BOWERBIRD_UPDATES` with its leading slash dropped is a real shape of typo, and
   // `path.resolve` would anchor it to wherever the server was started from - so this
   // would recursively delete `download` out of the working directory instead.
   it('refuses a home that is not absolute', async () => {

@@ -101,7 +101,7 @@ test('an install that is refused leaves the button usable again', async () => {
 });
 
 // The reason the reload is not at the click: the server exits as soon as it has answered,
-// so every request between the click and the supervisor starting the new version fails.
+// so every request between the click and the updater starting the new version fails.
 // A page reloaded into that is a blank screen with no way to tell it was ever working.
 test('the page reloads only once the new version is the one answering', async () => {
   const { store, presenter, reloads } = open();

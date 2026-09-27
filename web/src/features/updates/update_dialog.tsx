@@ -92,8 +92,8 @@ export const UpdateDialog = observer(function UpdateDialog(): JSX.Element | null
 });
 
 /**
- * Where the install cannot replace itself: an Android build, a container, or a server
- * somebody started by hand with no supervisor in front of it.
+ * Where the install cannot replace itself: an Android build, a container, a macOS app in a
+ * folder it cannot write to, or a server somebody started by hand.
  *
  * A container gets a sentence rather than a link, because there is no file to fetch -
  * what it needs is a `docker pull` and a recreate, which is the operator's to run.

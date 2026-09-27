@@ -53,7 +53,7 @@ test('a report carries what was written, the version, and this machine', async (
 
   const [name, diagnostics] = contexts[0]!;
   expect(name).toBe('bowerbird');
-  expect(diagnostics).toMatchObject({ adapter: 'no WebGPU' });
+  expect(diagnostics).toMatchObject({ adapter: 'no WebGPU', hdrDisplay: false, crossOriginIsolated: false });
   expect((diagnostics as { browser: string }).browser).toContain('jsdom');
 
   expect(started).toHaveLength(1);

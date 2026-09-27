@@ -1,14 +1,9 @@
-//! One request contract, two transports - this is the shell's end of it.
+//! The shell's config, the requests it makes of the server itself, and Android's transport.
 //!
-//! The page hands every call to `api` rather than to `fetch`, and today every one of them
-//! is forwarded to the hosted Bowerbird server. That is deliberately the dull
-//! implementation: the point of the seam is that offline mode can answer some commands
-//! from a local library later without a single call site above changing, and `Request::cmd`
-//! is the name it will match on.
-//!
-//! The convergence is on HTTP's own shape - a status, some headers, some bytes - because
-//! that is what the server already answers with, so the proxy is the identity function and
-//! a local handler has an obvious contract to meet.
+//! Android's bundled page hands every call to `api` rather than to `fetch`, and loads its
+//! images from `bowerbird://`, and both are forwarded to the Bowerbird server the reader named.
+//! The convergence is on HTTP's own shape - a status, some headers, some bytes - because that is
+//! what the server already answers with, so the proxy is the identity function.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -35,9 +30,9 @@ static CONFIG: std::sync::RwLock<Option<Config>> = std::sync::RwLock::new(None);
 
 const DEFAULT_ORIGIN: &str = "http://127.0.0.1:3000";
 
-/// A server the reader (or a test run) has named, as opposed to the one this app runs.
-///
-/// `BOWERBIRD_SERVER` wins, so a test run does not disturb what the reader saved.
+/// A server Android's reader (or a test run) has named. `BOWERBIRD_SERVER` wins, so a test run
+/// does not disturb what the reader saved.
+#[cfg(mobile)]
 pub(crate) fn configured_origin() -> Option<String> {
     if let Ok(from_env) = std::env::var("BOWERBIRD_SERVER") {
         return Some(from_env);
@@ -48,15 +43,14 @@ pub(crate) fn configured_origin() -> Option<String> {
         .and_then(|held| held.as_ref().and_then(|c| c.server.clone()))
 }
 
-/// Where the page's requests go.
-///
-/// A named server first, then the one this app started for itself. The fallback
-/// below is what a development run reaches, where the reader is running a server by
-/// hand on the usual port and this app carries none.
+/// Where the shell's requests go: on Android a named server first, and otherwise the one
+/// this app started for itself. The fallback is a server run by hand on the usual port.
 pub(crate) fn origin() -> String {
-    configured_origin()
-        .or_else(crate::server::local_origin)
-        .unwrap_or_else(|| DEFAULT_ORIGIN.into())
+    #[cfg(mobile)]
+    if let Some(named) = configured_origin() {
+        return named;
+    }
+    crate::server::local_origin().unwrap_or_else(|| DEFAULT_ORIGIN.into())
 }
 
 /// Beside the executable where that is writable, and in the app's config directory
@@ -309,8 +303,6 @@ fn frame(head: &Head, body: &[u8]) -> Vec<u8> {
 ///
 /// An `<img>` or a download fetches its own bytes and cannot go through a command, so those
 /// URLs carry this scheme instead and land here with the same path the API serves.
-/// Registered rather than left to `http://` so the page holds no origin, and the shell stays
-/// the one thing that knows where the library is.
 ///
 /// Not the event stream, which cannot be answered this way at all and is `events.rs`.
 ///
@@ -424,11 +416,8 @@ const KEPT_FROM_LIBRARY: [&str; 7] = [
 /// And what the page's own request has to carry through for those to mean anything.
 const FORWARDED_TO_LIBRARY: [&str; 6] =
     ["accept", "range", "if-none-match", "if-modified-since", "cache-control", "x-bowerbird-activity"];
-const WEBVIEW_ORIGINS: [&str; 3] = [
-    "http://tauri.localhost",
-    "tauri://localhost",
-    "http://localhost:5199",
-];
+/// Android's bundled page, and Vite's in `tauri android dev`.
+const WEBVIEW_ORIGINS: [&str; 2] = ["http://tauri.localhost", "http://localhost:5199"];
 
 struct Fetched {
     status: u16,
@@ -461,7 +450,7 @@ async fn fetch(url: &str, forwarded: &[(String, String)]) -> Result<Fetched, req
         return Ok(Fetched {
             status: 501,
             headers: vec![("content-type".to_string(), "text/plain".to_string())],
-            body: b"the desktop shell cannot proxy an event stream".to_vec(),
+            body: b"the shell cannot proxy an event stream".to_vec(),
         });
     }
 
@@ -539,8 +528,8 @@ mod tests {
     #[test]
     fn asset_get_allows_only_the_requesting_webview_origin() {
         let response = tauri::http::Response::builder().status(404).body(Vec::new()).unwrap();
-        let response = with_asset_cors(response, Some("tauri://localhost"));
-        assert_eq!(response.headers()["access-control-allow-origin"], "tauri://localhost");
+        let response = with_asset_cors(response, Some("http://tauri.localhost"));
+        assert_eq!(response.headers()["access-control-allow-origin"], "http://tauri.localhost");
         assert_eq!(response.headers()["vary"], "Origin");
     }
 

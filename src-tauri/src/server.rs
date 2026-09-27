@@ -99,6 +99,20 @@ fn resource_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, Stri
         .map_err(|err| format!("could not locate the app's resources: {err}"))
 }
 
+/// The page the server serves, on the same terms: `BOWERBIRD_WEB` for a run out of `target/`.
+fn web_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, String> {
+    if let Ok(named) = std::env::var("BOWERBIRD_WEB") {
+        return Ok(PathBuf::from(named));
+    }
+    app.path()
+        .resource_dir()
+        .map(|dir| dir.join("web"))
+        .map_err(|err| format!("could not locate the app's resources: {err}"))
+}
+
+/// `SIGN_IN_PARAM` in `src/api/require_token.ts`.
+const SIGN_IN_PARAM: &str = "token";
+
 /// Where the catalogue, the renditions and the backups live.
 fn data_dir(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, String> {
     app.path()
@@ -116,12 +130,13 @@ fn library_name() -> &'static str {
     }
 }
 
-/// Starts the server and waits for it to answer, or explains why it could not.
+/// Starts the server and waits for it to answer, or explains why it could not, and returns the
+/// address that signs the page in.
 ///
 /// Blocking on purpose. Everything the page can ask for needs the server, so there is
 /// nothing useful to show until it is up; a window that paints and then fails every
 /// request looks broken in a way that "starting" does not.
-pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, String> {
+pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url, String> {
     let sidecar = sidecar_path().map_err(|err| format!("could not locate the server: {err}"))?;
     if !sidecar.exists() {
         return Err(format!(
@@ -146,7 +161,14 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, St
 
     let port = free_port().map_err(|err| format!("no port to start the server on: {err}"))?;
     let token = fresh_token()?;
-    let child = Command::new(&sidecar)
+    let mut command = Command::new(&sidecar);
+    if let Some(updates) = crate::update::home(app) {
+        command.env("BOWERBIRD_UPDATES", updates);
+    }
+    if cfg!(desktop) {
+        command.env("WEB_DIST", web_root(app)?);
+    }
+    let child = command
         .arg(&bundle)
         .env("PORT", port.to_string())
         .env("HOST", "127.0.0.1")
@@ -168,20 +190,23 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, St
     if let Ok(mut held) = RUNNING.lock() {
         *held = Some(child);
     }
-    watch_for_restart(app.clone());
+    watch_for_update(app.clone());
     wait_until_answering(&origin)?;
+    eprintln!("[bowerbird] serving this library locally on {origin}");
+    let mut signed_in = tauri::Url::parse(&origin).map_err(|err| format!("{origin} is not an address: {err}"))?;
+    signed_in.query_pairs_mut().append_pair(SIGN_IN_PARAM, &token);
     if let Ok(mut held) = LOCAL.lock() {
-        *held = Some(Local { origin: origin.clone(), token });
+        *held = Some(Local { origin, token });
     }
-    Ok(origin)
+    Ok(signed_in)
 }
 
-/// Turns the server asking for a restart into this app asking for one.
+/// Hands the app to the updater once the server has staged an update and exited.
 ///
 /// Polled rather than waited on, because `stop()` needs the same `Child` to kill it and
 /// only one of them can own it. Half a second is nothing against an update that has just
 /// downloaded a hundred megabytes, and the thread ends with the server it is watching.
-fn watch_for_restart(app: tauri::AppHandle<crate::Runtime>) {
+fn watch_for_update(app: tauri::AppHandle<crate::Runtime>) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(500));
         let Ok(mut held) = RUNNING.lock() else { return };
@@ -193,18 +218,19 @@ fn watch_for_restart(app: tauri::AppHandle<crate::Runtime>) {
         };
         match outcome {
             Ok(Some(status)) => {
-                // The supervisor's own number. This app is in the middle of that handshake
-                // rather than at either end of it - the server exits it, and the launcher in
-                // front of this process is the only thing that can act on it - so it passes
-                // the constant along rather than keeping a third copy of 75.
-                let restarting = status.code() == Some(launcher::RESTART);
+                let staged = status.code() == Some(crate::update::STAGED);
                 *held = None;
                 drop(held);
-                if restarting {
-                    // Not `app.exit`: Tauri ends its event loop with `ControlFlow::Exit`, which
-                    // is code 0 whatever it was asked for, and the supervisor reads 0 as a quit.
-                    app.cleanup_before_exit();
-                    std::process::exit(launcher::RESTART);
+                if !staged {
+                    return;
+                }
+                match crate::update::hand_over(&app) {
+                    Ok(()) => app.exit(0),
+                    Err(why) => {
+                        eprintln!("[bowerbird] {why}");
+                        // Without its server this window can do nothing, so it starts over rather than stay.
+                        app.restart();
+                    }
                 }
                 return;
             }
@@ -290,6 +316,13 @@ pub(crate) fn stop() {
 #[cfg(test)]
 mod tests {
     use super::Local;
+
+    #[test]
+    fn the_page_signs_in_with_the_parameter_the_server_reads() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/api/require_token.ts");
+        let server = std::fs::read_to_string(path).unwrap();
+        assert!(server.contains(&format!("SIGN_IN_PARAM = '{}'", super::SIGN_IN_PARAM)));
+    }
 
     #[test]
     fn the_token_goes_only_to_the_local_server() {
