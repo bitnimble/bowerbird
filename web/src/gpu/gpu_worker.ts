@@ -5,11 +5,14 @@ import init, {
   holdPicture,
   holdPlanes,
   holdPmridWeights,
+  holdPrintEnvironment,
   holdRaw,
   pageDevice,
   renderRendition,
 } from '../../../native/rawshim/pkg/rawshim';
 import { pmridWeightsUrl } from '../../../native/rawshim/pkg/pmrid_weights';
+import { printEnvironmentUrls } from '../../../native/rawshim/pkg/print_environments';
+import type { Environment } from '../features/raw_edit/print/print_scene';
 import { z } from 'zod';
 import type { OpenAsk, PrepareCrossing } from '../features/raw_edit/local_decode/local_open';
 import { cachedRecipes, PipelineWarmth } from '../features/raw_edit/stage/pipeline_warmth';
@@ -30,6 +33,7 @@ const device: Promise<GPUDevice | null> = openDevice();
 const painter: Promise<StagePainter> = device.then((opened) => new StagePainter(opened));
 const opens = new Map<number, Open>();
 let weights: Promise<void> | null = null;
+const environments = new Map<Environment, Promise<void>>();
 let lost: string | null = null;
 void device.then((opened) =>
   opened?.lost.then((info) => {
@@ -232,6 +236,7 @@ class Open {
         if (ask.geometry != null) editor.setGeometry(ask.geometry);
         if (ask.proof != null) editor.setProof(ask.proof.output, ask.proof.intent, ask.proof.displayPeakNits ?? undefined);
         if (ask.printerProfile !== undefined) editor.setPrinterProfile(ask.printerProfile ?? undefined);
+        if (ask.print != null) await printEnvironment(ask.print.environment);
         editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
         if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);
@@ -375,6 +380,21 @@ async function networkWeights(denoiser: PrepareCrossing['denoiser']): Promise<vo
       throw why;
     });
   await weights;
+}
+
+/** A print environment's map, fetched once for the tab the first time a scene names it. */
+async function printEnvironment(environment: Environment): Promise<void> {
+  const fetching = environments.get(environment) ?? fetch(printEnvironmentUrls[environment])
+    .then(async (answer) => {
+      if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText}`);
+      holdPrintEnvironment(environment, new Uint8Array(await answer.arrayBuffer()));
+    })
+    .catch((why: unknown) => {
+      environments.delete(environment);
+      throw why;
+    });
+  environments.set(environment, fetching);
+  await fetching;
 }
 
 async function decodedPlanes(avif: Uint8Array<ArrayBuffer>): Promise<PlanarPicture | null> {

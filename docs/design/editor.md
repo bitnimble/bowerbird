@@ -246,39 +246,47 @@ reflection at that angle: the flat proof shows it as it is, and the drawn sheet 
 out again (`coating_at_45_0`) because it draws the coating itself. The coating reads the room
 along its mirrored direction, blurred by its lobe, and a lobe wider than about a radian (matte)
 reads the room's average instead, as the diffuse body does, so that it carries no window.
-The ambient light is a room rather than a surround of one radiance: a box around the print, its
-walls and floor at half the ceiling, with daylight through windows six times the ceiling in both
-side walls and the wall behind the print. The wall behind the reader has none, so a pane faced
-square on never mirrors one. The ambient setting is the illuminance an upright print facing the
-reader stands in, and the room is scaled to deliver exactly that, so the shape above only decides
-which direction it arrives from. A sheen is then a reflection of the room and follows what the sheet
-is turned towards, and the windows are what makes that a reflection rather than a veil. A ceiling
-carrying the whole ambient stands at several times a white page, and a satin sheet tipped back
-mirrors it edge to edge at once; a window's image is a band that enters at the top as the sheet tips
-back and crosses it. The reader is in that room too, and is a body rather than
-a head: a third of a radian across and most of a radian tall, standing on the floor rather than
+The room is a photographed one: an equirectangular HDR map from Poly Haven, CC0, fetched by
+`bun run get:environments` and chosen from the Lighting panel - a room lit by its windows at midday
+(`poly_haven_studio`), open grass under a clear sun (`meadow_2`), and a hotel bedroom at dusk under
+warm downlights (`hotel_room`). The editor fetches the one a reader picks, from a hashed name beside
+the module as PMRID's weights are (`scripts/hash-pkg.ts`); the native tests read the getter's tree.
+Each map's brightest light is the lamp. `print_environment_build.slang` turns the map so that light
+hangs where the preset puts it, takes it out - every texel within a few degrees of it brighter than a
+threshold clipped to the threshold - and builds a mip chain, so the lamp is drawn once, by the direct
+term, rather than once there and again as a bright patch of the map. The preset is measured off the
+map rather than chosen: `each_environments_lamp_is_the_light_it_takes_out_of_its_map` holds its
+direction to within a degree of what the build took out, its lux against the room's to a tenth of
+the ratio the map has, and its temperature to the colour of that light. The hotel's downlights are
+greener than any temperature, which is as close as a lamp with no tint gets. Choosing an environment
+puts every lighting control back to its preset, which is also where each control's reset goes.
+The ambient setting is the illuminance an upright print facing the reader stands in, and the map is
+scaled to deliver exactly that, so the map only decides which direction and colour it arrives in. A
+sheen is a reflection of the map along the mirrored direction, read at the mip level its lobe spans,
+and follows what the sheet is turned towards; the other downlights and the windows are what makes it
+a reflection rather than a veil. What is behind the print is the same map along each camera ray, and
+it and every mirror image of it are 0.012 radians out of focus, as a 50mm lens at f/2.8 focused on
+the print leaves a room a few metres behind it. The map is read through a cubic B-spline rather than
+bilinearly, which drew its texel grid into a window brighter than white once the display's roll-off
+flattened each ramp. The reader is in that room too, and is a body rather than a
+head: a third of a radian across and most of a radian tall, standing on the floor rather than
 floating at eye level, so the silhouette hangs below the direction a square-on sheet mirrors into
-the eye and reaches half the wall's own radiance. A print faced straight therefore reflects a
+the eye and reaches half the room's own radiance. A print faced straight therefore reflects a
 silhouette rather than a room and holds its paper's own black, and one tilted down its own height
-still has the reader in it where one tilted up does not.
-The lamp lights that room as well as the print. What a luminaire throws past a sheet lands on the
-floor and the lower walls and comes back up, so the room carries a second, dimmer copy of itself
-under the lamp - a tenth of the accent level, and shaped from below where the ambient is shaped from
-above. It is modelled apart rather than folded in because a sheet tilted down reads the two in
-opposite order, and because it is the whole of the light reaching a print turned away from a lamp in
-an unlit room: measured, a sheet turned 30 degrees off a 1000-lux lamp with the ambient at zero
-holds a seventh of what it holds facing the lamp, and brightens again as it turns onto the floor.
-Both floors are calibrations a reader can see through the
-frame's glass, which mirrors whatever the model leaves in those directions: a dim wall and a dark
-body multiplied together put a framed print behind a black pane with the lamp's image the only
-thing in it. The silhouette washes out as the lobe reading it opens, in the ratio the two solid
-angles stand in, so it belongs to gloss and barely to matte. Nothing shadows the diffuse side,
-where the same cone is worth under a percent of the illuminance.
-The diffuse side reads the same room through its spherical harmonics to the second band, fitted
-over the whole sphere once per lamp, which is all a Lambert cosine keeps of any surround - windows
-included. The lamp's bounce is the same about the vertical, so its zonal bands suffice. A surround of
-one radiance instead puts the whole room's illuminance in the direction the reader's own reflection
-comes from, which lifts that black four times over and leaves every off-axis reflection a flat wash.
+still has the reader in it where one tilted up does not. The silhouette washes out as the lobe
+reading it opens, in the ratio the two solid angles stand in, so it belongs to gloss and barely to
+matte. Nothing shadows the diffuse side, where the same cone is worth under a percent of the
+illuminance.
+The diffuse side reads the same map through its spherical harmonics to the second band, per channel,
+fitted over the whole sphere once per lamp, which is all a Lambert cosine keeps of any surround -
+windows included. A surround of one radiance instead puts the whole room's illuminance in the
+direction the reader's own reflection comes from, which lifts that black four times over and leaves
+every off-axis reflection a flat wash. The map carries its own colour, and the light temperature
+tints the lamp alone.
+Only the brightest light is a lamp, because a lamp is the whole of the print's cost: the direct term
+samples it 64 to 128 times a pixel for the specular and, where it is wide or shadowed, for the
+diffuse too. Every other light in a map is lit through the mips, which is exact for the diffuse side
+and loses only the frame's shadow and the sharpest glint on gloss.
 Camera exposure meters the room against a sheet hung facing the reader, and never against the pose:
 a camera meters a room once, and re-metering as the print is turned holds the sheet at one
 brightness while moving everything that did not turn - the background with it - which reads as the
@@ -296,11 +304,13 @@ tick carries `(dynamic-range: high)` to the module, which aims every draw - a fr
 sheet - at SDR white when it is false, which is the rule the viewer's `displayHeadroom` keeps. It is
 asked per tick because a window dragged to another screen changes the answer, and Firefox answering
 `standard` on an HDR display is right here: the canvas is the one thing it composites in SDR.
-The featureless background follows ambient illumination and is black at zero ambient. Defaults
-use 500 lux ambient, a 1000-lux light one degree across - a ceiling downlight, near the
-sun's half degree - and 6500 K illumination. The lamp is placed by where it hangs rather than by
-its angle: across, up and forward from the sheet's centre in print lengths, by default 3.9 up and
-1.7 forward, which is over the reader's head rather than over the sheet. Angles alone left the
+The default is the daylit room: 500 lux of it, and a 133-lux downlight a degree and a half across,
+over the reader's head at 7800 K. The sunny meadow is 80000 lux of sun against 9570 of sky and
+grass, and the hotel room 30 of downlight against 15, which the exposure's floor leaves reading dim.
+Both lux controls slide in decades, from 1 to 150000, so a dim room and the sun each get a usable
+stretch of track. The lamp is placed by where it hangs rather than by
+its angle: across, up and forward from the sheet's centre in print lengths, at most ten, which is
+where the sun stands. Angles alone left the
 one question a reader asks of a room light - is it behind me or in front of the picture - with no
 control of its own. The source spans a tenth of a degree to ninety, slid
 in decades so a pinpoint lamp and a broad one each get a usable stretch of track. Below about a degree the

@@ -1,7 +1,7 @@
 import { action } from 'mobx';
 import { printerProfilesApi } from '../../../api/printer_profiles';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
-import { DEFAULT_PRINT_SCENE, paperAndInk, PRINT_ZOOM_RANGE, PrintSceneSchema, restingValue, type Ink, type Paper, type Presentation, type PrintControl } from './print_scene';
+import { DEFAULT_PRINT_SCENE, litBy, paperAndInk, PRINT_ZOOM_RANGE, PrintSceneSchema, restingValue, type Environment, type Ink, type Paper, type Presentation, type PrintControl } from './print_scene';
 import { browserPrintMotion, PrintMotion, type PrintMotionEnvironment, type PrintTilt } from './print_motion';
 import type { PrinterProfile, PrintStore } from './print_store';
 
@@ -299,6 +299,12 @@ export class PrintPresenter {
   @action.bound
   setPaper = (paper: Paper): void => {
     this.store.scene = { ...this.store.scene, ...paperAndInk(paper, this.store.scene.ink) };
+    this.redraw();
+  };
+
+  @action.bound
+  setEnvironment = (environment: Environment): void => {
+    this.store.scene = { ...this.store.scene, ...litBy(environment) };
     this.redraw();
   };
 

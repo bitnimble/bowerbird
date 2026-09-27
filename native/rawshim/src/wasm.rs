@@ -450,6 +450,15 @@ pub fn hold_pmrid_weights(bytes: Vec<u8>) {
     crate::pmrid::hold_weights(bytes);
 }
 
+/// A print environment's map, which the page fetches before the first scene that names it.
+#[wasm_bindgen(js_name = holdPrintEnvironment)]
+pub fn hold_print_environment(name: &str, bytes: Vec<u8>) -> Result<(), JsValue> {
+    let environment: crate::print::Environment = serde_json::from_value(serde_json::Value::from(name))
+        .map_err(|_| JsValue::from_str(&format!("rawshim: {name} is not a print environment")))?;
+    crate::print::environment::hold(environment, bytes);
+    Ok(())
+}
+
 /// Where a fill is read from, from where it lands, on the `px::Stored` grid.
 type Donor = [crate::px::Extent<crate::px::Stored>; 2];
 
@@ -1867,6 +1876,9 @@ impl HeldRaw {
     pub fn set_print(&self, scene: Option<String>) -> Result<(), JsValue> {
         let parsed = scene.as_deref().map(crate::print::Scene::parse).transpose()
             .map_err(|error| JsValue::from_str(&format!("rawshim: invalid print scene: {error}")))?;
+        if let Some(environment) = parsed.map(|scene| scene.environment).filter(|environment| !crate::print::environment::held(*environment)) {
+            return Err(JsValue::from_str(&format!("rawshim: the {} environment has not been fetched", environment.name())));
+        }
         self.print.set(parsed);
         Ok(())
     }

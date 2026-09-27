@@ -52,8 +52,8 @@ test('light size slides in decades, so a pinpoint lamp gets as much track as a b
   const size = screen.getByRole('slider', { name: 'Light size' });
   expect(size.getAttribute('min')).toBe('-1');
   expect(size.getAttribute('max')).toBe(String(Math.log10(90)));
-  expect(size.getAttribute('aria-valuenow')).toBe('0');
-  expect(size.getAttribute('aria-valuetext')).toBe('1.0°');
+  expect(size.getAttribute('aria-valuenow')).toBe(String(Math.log10(1.5)));
+  expect(size.getAttribute('aria-valuetext')).toBe('1.5°');
   // Halfway along the track is the geometric middle of the range, not 45°.
   act(() => presenter?.setControl('lightAngularDegrees', 10 ** ((-1 + Math.log10(90)) / 2)));
   expect(store.scene.lightAngularDegrees).toBeCloseTo(3, 5);
@@ -69,8 +69,20 @@ test('a moved slider offers its way back, and a slider at rest does not', () => 
   act(() => presenter?.setControl('lightForward', 4));
   expect(reset.disabled).toBe(false);
   act(() => reset.click());
-  expect(store.scene.lightForward).toBe(1.7);
+  expect(store.scene.lightForward).toBe(1.65);
   expect(reset.disabled).toBe(true);
+});
+
+test('the environment names the room the print hangs in, and its light moves with it', () => {
+  const store = new PrintStore();
+  presenter = new PrintPresenter(store, () => {}, null);
+  render(<PrintPanel store={store} presenter={presenter} disabled={false} section="lighting" />);
+  expect(screen.getByRole('combobox', { name: 'Environment' }).textContent).toBe('Daylit room');
+  act(() => presenter?.setEnvironment('meadow'));
+  expect(screen.getByRole('combobox', { name: 'Environment' }).textContent).toBe('Sunny meadow');
+  const intensity = screen.getByRole('slider', { name: 'Light intensity' });
+  expect(intensity.getAttribute('aria-valuetext')).toBe('80,000 lx');
+  expect(intensity.getAttribute('max')).toBe(String(Math.log10(150000)));
 });
 
 test('the rendering intent names the intent the print is drawn with', () => {

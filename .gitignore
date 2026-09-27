@@ -197,6 +197,8 @@ native/rawshim/.codecs
 native/rawshim/.swiftshader
 # PMRID's published weights, unpacked by `bun run get:pmrid` for the prototype that reads them.
 native/rawshim/.pmrid
+# The print preview's HDR environments, `bun run get:environments`.
+native/rawshim/.environments
 
 # Throwaway analysis scripts. `.oxlintrc.json` already ignores the .ts ones;
 # this keeps them out of commits, which a squash otherwise sweeps them into.

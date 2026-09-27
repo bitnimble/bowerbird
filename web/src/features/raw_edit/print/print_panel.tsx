@@ -12,7 +12,7 @@ import { EditControl } from '../edit_control';
 import { IntentChoice } from '../proof/intent_choice';
 import { styles as rows } from '../raw_edit_panel.stylex';
 import { PrintPanelStrings as strings } from './print_panel.strings';
-import { LAMP_REACH, restingValue, type Ink, type Paper, type PrintControl } from './print_scene';
+import { LAMP_REACH, MOST_LUX, restingValue, type Environment, type Ink, type Paper, type PrintControl } from './print_scene';
 import type { PrintStore } from './print_store';
 import type { PrintPresenter } from './print_presenter';
 
@@ -42,7 +42,7 @@ type Control = {
   format: (value: number) => string;
   /** What `format` multiplies the value by, so a number typed as it reads can be stored. */
   scale?: number;
-  /** Slide in decades instead of degrees, so a pinpoint lamp and a broad one both get a usable stretch of track. */
+  /** Slide in decades, so a pinpoint lamp and a broad one, or a dim room and the sun, both get a usable stretch of track. */
   log?: true;
 };
 
@@ -62,9 +62,15 @@ const PRINTER: Control[] = [
   { key: 'printResolutionPpi', min: 72, max: 1200, step: 1, format: strings.ppi },
   { key: 'inkSpreadMicrons', min: 0, max: 200, step: 1, format: strings.micrometres },
 ];
+const ENVIRONMENTS: Option<Environment>[] = [
+  { value: 'studio', label: strings.studio() },
+  { value: 'meadow', label: strings.meadow() },
+  { value: 'hotel', label: strings.hotel() },
+];
+
 const LIGHT: Control[] = [
-  { key: 'keyLux', min: 0, max: 10000, step: 10, format: strings.lux },
-  { key: 'fillLux', min: 0, max: 10000, step: 10, format: strings.lux },
+  { key: 'keyLux', min: 1, max: MOST_LUX, step: 0.01, format: strings.lux, log: true },
+  { key: 'fillLux', min: 1, max: MOST_LUX, step: 0.01, format: strings.lux, log: true },
   { key: 'lightTemperatureKelvin', min: 2000, max: 10000, step: 100, format: strings.kelvin },
   { key: 'lightAcross', min: -LAMP_REACH, max: LAMP_REACH, step: 0.05, format: strings.printLengths },
   { key: 'lightHeight', min: -LAMP_REACH, max: LAMP_REACH, step: 0.05, format: strings.printLengths },
@@ -126,7 +132,12 @@ export const PrintPanel = observer(function PrintPanel({ store, presenter, disab
       <IntentChoice value={store.scene.renderingIntent} onChange={presenter.setRenderingIntent} />
     </Panel>;
   }
-  if (section === 'lighting') return <Panel title={strings.lighting()} style={styles.group}>{controls(LIGHT)}</Panel>;
+  if (section === 'lighting') {
+    return <Panel title={strings.lighting()} style={styles.group}>
+      <Select label={strings.environment()} options={ENVIRONMENTS} value={store.scene.environment} onChange={presenter.setEnvironment} />
+      {controls(LIGHT)}
+    </Panel>;
+  }
   if (section === 'printer') {
     const profiles: Option<string>[] = [
       { value: GENERIC_PAPER, label: strings.genericPaper() },

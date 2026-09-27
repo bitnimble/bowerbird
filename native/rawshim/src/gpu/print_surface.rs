@@ -28,6 +28,8 @@ impl Pipelines {
                 Binding::Storage { read_only: true }.seen_by(1, wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT),
                 Binding::Storage { read_only: true }.seen_by(2, wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT),
                 Binding::Storage { read_only: true }.seen_by(3, wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT),
+                Binding::Detail.seen_by(4, wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT),
+                Binding::Sampler.seen_by(5, wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT),
             ],
         });
         let field_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -114,8 +116,10 @@ impl Uploaded<'_> {
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let albedo = self.print_albedo_for(scene.refractive_index as f32);
-        let calibration = self.print_light_for(scene.light_parameters(), scene.light_temperature_kelvin as f32);
+        let environment = self.print_environment_for(scene.environment);
+        let calibration = self.print_light_for(scene, &environment);
         recording.holding(&albedo);
+        recording.holding_texture(&environment);
         recording.holding(&calibration);
         let (parameters, proof) = self.print_scene_binding(recording, scene, display_peak);
         let pipelines = &self.gpu.print_surface;
@@ -126,6 +130,8 @@ impl Uploaded<'_> {
                 wgpu::BindGroupEntry { binding: 1, resource: albedo.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: calibration.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: proof.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&environment.view()) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&self.gpu.print_environment.sampler) },
             ],
         });
         let lighting = self.print_lighting(recording, scene, shape, &view, &scene_group);

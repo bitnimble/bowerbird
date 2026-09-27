@@ -91,6 +91,13 @@ float3 paper_ray(float2 pixel, float2 canvas, float focal)
     return paper_inverse(normalize(float3(at.x, -at.y, -focal)));
 }
 
+/// The world direction the camera looks along through `pixel`.
+public float3 print_view_ray(float2 pixel, float2 canvas, float2 shape)
+{
+    let focal = print_focal(canvas, frame_outer_half(shape / max(shape.x, shape.y)));
+    return paper_rotation(paper_ray(pixel, canvas, focal));
+}
+
 /// The canvas pixel [`paper_ray`] sends along `direction`, which has to lie ahead of the camera.
 public float2 paper_pixel(float3 direction, float2 canvas, float focal)
 {

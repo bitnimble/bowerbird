@@ -1,6 +1,6 @@
 use rawshim::gpu::{Canvas, Grade, Intent};
 use rawshim::light::Light;
-use rawshim::print::{Paper, Presentation, Scene};
+use rawshim::print::{Environment, Paper, Presentation, Scene};
 use rawshim::px::Size;
 use rawshim::snapshot::Snapshot;
 
@@ -27,9 +27,14 @@ fn main() -> Result<(), String> {
             .find_map(|arg| arg.strip_prefix(&format!("--{name}=")).map(str::to_owned))
             .map_or(Ok(default), |value| value.parse::<f64>().map_err(|_| format!("invalid {name}")))
     };
-    let key_lux = Light::exactly(number("key-lux", Scene::default().key_lux.raw())?);
-    let fill_lux = Light::exactly(number("fill-lux", Scene::default().fill_lux.raw())?);
-    let lamp_degrees = number("lamp-degrees", Scene::default().light_angular_degrees)?;
+    let environment = match std::env::args().find_map(|arg| arg.strip_prefix("--environment=").map(str::to_owned)) {
+        None => Environment::default(),
+        Some(name) => serde_json::from_value(serde_json::Value::from(name.as_str())).map_err(|_| format!("unknown environment {name}"))?,
+    };
+    let lit = Scene::default().in_environment(environment);
+    let key_lux = Light::exactly(number("key-lux", lit.key_lux.raw())?);
+    let fill_lux = Light::exactly(number("fill-lux", lit.fill_lux.raw())?);
+    let lamp_degrees = number("lamp-degrees", lit.light_angular_degrees)?;
     let view: Option<Vec<f64>> = std::env::args()
         .find_map(|arg| arg.strip_prefix("--view=").map(str::to_owned))
         .map(|list| list.split(',').map(|value| value.parse::<f64>().map_err(|_| "invalid view")).collect())
@@ -43,10 +48,11 @@ fn main() -> Result<(), String> {
             && !arg.starts_with("--profile=") && !arg.starts_with("--intent=") && !arg.starts_with("--adaptation=")
             && !arg.starts_with("--zoom=") && !arg.starts_with("--pitches=")
             && !arg.starts_with("--key-lux=") && !arg.starts_with("--fill-lux=") && !arg.starts_with("--lamp-degrees=")
-            && !arg.starts_with("--view=") && !arg.starts_with("--pan-x=") && !arg.starts_with("--pan-y="))
+            && !arg.starts_with("--view=") && !arg.starts_with("--pan-x=") && !arg.starts_with("--pan-y=")
+            && !arg.starts_with("--environment="))
         .collect();
     if !(3..=4).contains(&args.len()) {
-        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--flat] [--sdr] [--profile=printer.icc] [--adaptation=0.7] [--intent=perceptual|relative] [--zoom=1] [--pitches=8,0,-8] [--key-lux=1000] [--fill-lux=500] [--lamp-degrees=1] [--view=yaw,pitch,azimuth,elevation,distance] [--pan-x=0] [--pan-y=0]".to_owned());
+        return Err("usage: print_preview <photograph> <output-directory> [before-directory] [--framed] [--surface] [--flat] [--sdr] [--profile=printer.icc] [--adaptation=0.7] [--intent=perceptual|relative] [--zoom=1] [--pitches=8,0,-8] [--key-lux=1000] [--fill-lux=500] [--lamp-degrees=1] [--view=yaw,pitch,azimuth,elevation,distance] [--pan-x=0] [--pan-y=0] [--environment=studio|meadow|hotel]".to_owned());
     }
     let output = std::path::Path::new(&args[2]);
     std::fs::create_dir_all(output).map_err(|error| error.to_string())?;
@@ -110,13 +116,14 @@ fn main() -> Result<(), String> {
         for pitch in pitches {
             let scene = Scene {
                 rendering_intent: intent, framed, zoom, key_lux, fill_lux, light_angular_degrees: lamp_degrees, pitch_degrees: pitch,
-                ..Scene::default()
+                ..lit
             };
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
+            let brighter = uploaded.print_pq(&grade, &pyramid, &Scene { key_lux: Light::measured(key_lux.raw() * 2.0 + 1.0), ..scene });
             let snapshot = Snapshot::pq(&samples, Size::<rawshim::px::Canvas>::measured(canvas.0, canvas.1));
             std::fs::write(output.join(format!("pitch{pitch}.preview.png")), rawshim::snapshot::side_by_side_png(None, &snapshot))
                 .map_err(|error| error.to_string())?;
-            let (tops, lumas, bands) = sheet_levels(&samples, canvas);
+            let (tops, lumas, bands) = sheet_levels(&samples, &brighter, canvas);
             let at = |sorted: &[f64], share: f64| sorted[((sorted.len() - 1) as f64 * share) as usize];
             let bands: Vec<String> = bands.iter().map(|band| format!("{:>6.2}", at(band, 0.1))).collect();
             println!(
@@ -133,7 +140,7 @@ fn main() -> Result<(), String> {
             presentation: if flat { Presentation::Flat } else if surface { Presentation::Surface } else { Presentation::Scene },
             rendering_intent: intent,
             zoom,
-            ..Scene::default()
+            ..lit
         }.on(paper);
         let views = match &view {
             Some(view) => vec![("view", Scene {
@@ -148,6 +155,11 @@ fn main() -> Result<(), String> {
         };
         for (view, scene) in views {
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
+            let brightest = samples.iter().copied().max().unwrap_or(0);
+            let nits = rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(Light::measured(f64::from(brightest) / 65535.0)).raw();
+            let at = samples.iter().position(|&code| code == brightest).unwrap_or(0) / 3;
+            println!("{name}-{view}: brightest channel {nits:.0} nits at {},{} of a {}-nit peak",
+                at % canvas.0, at / canvas.0, grade.peak_nits.raw());
             let snapshot = Snapshot::pq(&samples, Size::<rawshim::px::Canvas>::measured(canvas.0, canvas.1));
             std::fs::write(output.join(format!("{name}-{view}.png")), snapshot.encode())
                 .map_err(|error| error.to_string())?;
@@ -186,18 +198,18 @@ const BANDS: usize = 5;
 
 /// The drawn sheet's brightest channel and its luma, per pixel, in display nits, sorted, and the
 /// luma again split into horizontal bands of the canvas rows the sheet covers, top first.
-fn sheet_levels(samples: &[u16], canvas: (usize, usize)) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
+///
+/// The sheet is what `brighter`, the same scene under a brighter lamp, moves: the lamp lights the
+/// print and never the room behind it.
+fn sheet_levels(samples: &[u16], brighter: &[u16], canvas: (usize, usize)) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
     let nits = |code: u16| rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(Light::measured(f64::from(code) / 65535.0)).raw();
-    let background = {
-        let corner = &samples[..3];
-        (nits(corner[0]), nits(corner[1]), nits(corner[2]))
-    };
+    let channels = samples.len() / (canvas.0 * canvas.1);
     let mut tops = Vec::new();
     let mut lumas = Vec::new();
     let mut rows = Vec::new();
-    for (at, pixel) in samples.chunks_exact(samples.len() / (canvas.0 * canvas.1)).enumerate() {
+    for (at, (pixel, lit)) in samples.chunks_exact(channels).zip(brighter.chunks_exact(channels)).enumerate() {
+        if pixel == lit { continue; }
         let (r, g, b) = (nits(pixel[0]), nits(pixel[1]), nits(pixel[2]));
-        if (r - background.0).abs() + (g - background.1).abs() + (b - background.2).abs() < 1e-3 { continue; }
         tops.push(r.max(g).max(b));
         let luma = 0.2627 * r + 0.678 * g + 0.0593 * b;
         lumas.push(luma);

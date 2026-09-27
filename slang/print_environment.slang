@@ -1,127 +1,89 @@
 module print_environment;
-import px;
+import prelude;
 
-static const float ROOM_PI = 3.141592653589793;
+static const float ENVIRONMENT_PI = 3.141592653589793;
 
-static const float ROOM_LOW = 0.5;
-static const float ROOM_HORIZON = 0.1;
-static const float ROOM_CEILING = 0.5;
+/// The room a print hangs in, an equirectangular HDR map already turned to face the print
+/// (`print_environment_build.slang`), in Rec.2020 of an arbitrary scale that the lamp calibration
+/// takes out.
+[vk::binding(4, 1)] public Texture2D<float4> print_environment_map;
+[vk::binding(5, 1)] public SamplerState print_environment_sampler;
 
-/// The room's walls, floor and ceiling, as radiance against the sine of the elevation looked along,
-/// in shares of the ceiling's own.
+/// Where `direction` falls on the map: straight past the print, away from the reader, is the middle.
+/// Where the lamp calibration's room starts: nine spherical harmonics, three channels each.
+public static const uint ROOM_BANDS = 7;
+
+public float2 environment_uv(float3 direction)
+{
+    return float2(0.5 + atan2(direction.x, -direction.z) / (2.0 * ENVIRONMENT_PI),
+        acos(clamp(direction.y, -1.0, 1.0)) / ENVIRONMENT_PI);
+}
+
+public float3 environment_direction(float2 uv)
+{
+    let around = (uv.x - 0.5) * 2.0 * ENVIRONMENT_PI;
+    let down = uv.y * ENVIRONMENT_PI;
+    return float3(sin(down) * sin(around), cos(down), -sin(down) * cos(around));
+}
+
+/// A Radiance texel as `print::environment::decode` packs it, in linear BT.709.
+public float3 rgbe_radiance(uint word)
+{
+    let exponent = word >> 24;
+    let mantissa = float3(float(word & 0xffu), float((word >> 8) & 0xffu), float((word >> 16) & 0xffu));
+    return exponent == 0u ? float3(0.0) : mantissa * exp2(float(exponent) - 136.0);
+}
+
+/// What a source texel keeps once the lamp is taken out of it: within `cone` of the lamp, nothing
+/// brighter than `threshold`.
+public float3 without_lamp(float3 colour, float3 direction, float3 lamp, float cone, float threshold)
+{
+    let luma = dot(LUMA709, colour);
+    return dot(direction, lamp) > cone && luma > threshold ? colour * threshold / luma : colour;
+}
+
+/// The room's radiance along a world direction, as a lobe `spread` radians wide reads it.
+public float3 environment_radiance(float3 direction, float spread)
+{
+    uint width;
+    uint height;
+    uint levels;
+    print_environment_map.GetDimensions(0, width, height, levels);
+    let texel = 2.0 * ENVIRONMENT_PI / float(width);
+    let lod = min(log2(max(spread, texel) / texel), float(levels - 1));
+    let finer = floor(lod);
+    let uv = environment_uv(direction);
+    let size = float2(float(width), float(height));
+    let fine = cubic_at(uv, size, uint(finer));
+    return lod == finer ? fine : lerp(fine, cubic_at(uv, size, uint(finer) + 1), lod - finer);
+}
+
+/// A cubic B-spline over one level, in four bilinear taps.
 ///
-/// `spread` widens the ceiling's edge by the reach of the lobe reading it, so a matte sheet sees the
-/// room averaged where a gloss one mirrors the edge itself.
-float room_profile(float up, float spread)
+/// **Bilinear alone draws the texel grid into anything brighter than white**: the roll-off onto the
+/// display flattens the top of each linear ramp, so a sunlit window reads as a staircase of squares.
+float3 cubic_at(float2 uv, float2 size, uint level)
 {
-    return lerp(ROOM_LOW, 1.0, smoothstep(ROOM_HORIZON - spread, ROOM_CEILING + spread, up));
+    let texels = max(floor(size / float(1u << level)), float2(1.0));
+    let at = uv * texels - 0.5;
+    let cell = floor(at);
+    let f = at - cell;
+    let w0 = (1.0 - f) * (1.0 - f) * (1.0 - f) / 6.0;
+    let w1 = (4.0 - 6.0 * f * f + 3.0 * f * f * f) / 6.0;
+    let w3 = f * f * f / 6.0;
+    let w2 = 1.0 - w0 - w1 - w3;
+    let low = w0 + w1;
+    let high = w2 + w3;
+    let near = (cell - 0.5 + w1 / low) / texels;
+    let far = (cell + 1.5 + w3 / high) / texels;
+    return low.y * (low.x * map_at(near, level) + high.x * map_at(float2(far.x, near.y), level))
+        + high.y * (low.x * map_at(float2(near.x, far.y), level) + high.x * map_at(far, level));
 }
 
-static const Extent<Millimetre> SIDE_WALL = { 2500.0 };
-static const Extent<Millimetre> REAR_WALL = { 3000.0 };
-static const Extent<Millimetre> READER_WALL = { 3500.0 };
-static const Extent<Millimetre> CEILING_HEIGHT = { 1200.0 };
-static const Extent<Millimetre> FLOOR_DEPTH = { 1500.0 };
-static const Extent<Millimetre> WINDOW_SILL = { -600.0 };
-static const Extent<Millimetre> WINDOW_HEAD = { 900.0 };
-static const Extent<Millimetre> SIDE_WINDOW_FROM = { -1500.0 };
-static const Extent<Millimetre> SIDE_WINDOW_TO = { 2500.0 };
-static const Extent<Millimetre> REAR_WINDOW_HALF = { 1500.0 };
-static const float WINDOW_RADIANCE = 6.0;
-
-/// The room's radiance along a world direction, in shares of the ceiling's own: [`room_profile`],
-/// and daylight through windows in both side walls and the wall behind the print.
-///
-/// **The windows are the room's bright parts, and a sheet mirrors them as bands.** Without them the
-/// ceiling carries the whole ambient at several times a white page, and a sheet tipped back mirrors
-/// it edge to edge as one flat veil. None in the wall behind the reader: a pane faced square on
-/// would carry it.
-///
-/// Measured from the print's centre, which the sheet is small enough beside the room to stand for.
-public float room_shape(Room room, float3 direction, float spread)
+float3 map_at(float2 uv, uint level)
 {
-    return lerp(room_profile(direction.y, spread), WINDOW_RADIANCE, window_share(room, direction, spread));
+    return print_environment_map.SampleLevel(print_environment_sampler, uv, float(level)).rgb;
 }
-
-/// The walls and windows as millimetres, taken out of their units once for a caller that reads
-/// them in a loop.
-public struct Room
-{
-    float side;
-    float rear;
-    float reader;
-    float ceiling;
-    float floor;
-    float sill;
-    float head;
-    float side_from;
-    float side_to;
-    float rear_half;
-}
-
-public void measure_room(out Room room)
-{
-    room.side = SIDE_WALL.d;
-    room.rear = REAR_WALL.d;
-    room.reader = READER_WALL.d;
-    room.ceiling = CEILING_HEIGHT.d;
-    room.floor = FLOOR_DEPTH.d;
-    room.sill = WINDOW_SILL.d;
-    room.head = WINDOW_HEAD.d;
-    room.side_from = SIDE_WINDOW_FROM.d;
-    room.side_to = SIDE_WINDOW_TO.d;
-    room.rear_half = REAR_WINDOW_HALF.d;
-}
-
-float window_share(Room room, float3 direction, float spread)
-{
-    let away = max(abs(direction), float3(1e-6));
-    let reach = float3(room.side, direction.y > 0.0 ? room.ceiling : room.floor,
-        direction.z > 0.0 ? room.reader : room.rear) / away;
-    let distance = min(reach.x, min(reach.y, reach.z));
-    let at = direction * distance;
-    // A lobe's spread in radians, times how far away the wall it lands on is; a pane's own is a
-    // pixel's worth rather than none, or the window's edge aliases.
-    let blur = max(spread, 0.002) * distance;
-    let height = rectangle(at.y, room.sill, room.head, blur);
-    if (reach.x <= distance) { return height * rectangle(at.z, room.side_from, room.side_to, blur); }
-    if (reach.z <= distance && direction.z < 0.0) {
-        return height * rectangle(at.x, -room.rear_half, room.rear_half, blur);
-    }
-    return 0.0;
-}
-
-/// A pane from `from` to `to`, averaged over `blur` around `at`: a lobe wider than the pane spreads
-/// its light rather than mirroring it at full strength.
-float rectangle(float at, float from, float to, float blur)
-{
-    return saturate((min(to, at + 0.5 * blur) - max(from, at - 0.5 * blur)) / blur);
-}
-
-static const float BOUNCE_HIGH = 0.14;
-static const float BOUNCE_FLOOR = -0.45;
-static const float BOUNCE_HORIZON = 0.2;
-
-/// The room lit by the lamp rather than by the ambient, on the same terms.
-///
-/// **A lamp in a room is a second, dimmer room.** What it throws past the print lands on the floor
-/// and the lower walls and comes back up, so a sheet turned away from a lamp in a dark room is not
-/// black - it is lit by the floor. Modelled apart from the ambient rather than folded into it
-/// because the two arrive from opposite halves of the sphere: the ceiling carries one and the floor
-/// carries the other, and a sheet tilted down reads them in the opposite order.
-public float bounce_profile(float up, float spread)
-{
-    return lerp(1.0, BOUNCE_HIGH, smoothstep(BOUNCE_FLOOR - spread, BOUNCE_HORIZON + spread, up));
-}
-
-/// What a lamp returns as room light, against what it puts on a print facing it.
-///
-/// A luminaire aimed at a picture puts its beam on the picture and its spill on the room, and the
-/// room hands back what it catches in the ratio its own albedo sets - an order of magnitude under
-/// the accent level either way. Under an ambient of zero this is the whole of the light reaching a
-/// sheet turned away from the lamp, and it has to stay well beneath the lamp's own face: a print
-/// turned to the floor is lit by the floor, not better lit than one turned to the lamp.
-public static const float ROOM_BOUNCE = 0.1;
 
 static const float READER_LOW = 0.45;
 static const float READER_HALF_WIDTH = 0.17;
@@ -163,6 +125,6 @@ public float reader_share(float3 direction, float3 world_view, float spread)
     let past = max(max(-along - READER_DROP, along - READER_RISE), 0.0);
     let outside = length(float2(sideways, past));
     let solid = 4.0 * READER_HALF_WIDTH * (READER_RISE + READER_DROP);
-    let lobe = solid / (solid + ROOM_PI * spread * spread);
+    let lobe = solid / (solid + ENVIRONMENT_PI * spread * spread);
     return lerp(1.0, READER_LOW, lobe * (1.0 - smoothstep(0.0, READER_EDGE + spread, outside)));
 }
