@@ -404,7 +404,7 @@ export class RawEditPresenter {
       const photo = await described;
       const onTheBackend = photo != null && preparesOnTheBackend(photo.recipe, photo);
       const { header, local } = typeof longEdge === 'string'
-        ? await fetchPrepared(photoId, 0, mosaic, true, this.reached, longEdge)
+        ? await fetchPrepared(photoId, 0, mosaic, false, this.reached, longEdge)
         : await fetchPrepared(photoId, longEdge, mosaic, onTheBackend, this.reached);
       if (this.closed) {
         // Closed here rather than left to `close`, which has already run and found no decoder
