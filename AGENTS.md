@@ -192,7 +192,7 @@ else or wait for the completion notification**.
 decode a real RAW are not even compiled without `--features fixtures`.
 
 **It is also `native/rawshim` only.** Three crates beside it carry their own tests, and each takes a
-second: the supervisor, `bun run scripts/cargo.ts test --manifest-path native/launcher/Cargo.toml`,
+second: the updater, `bun run scripts/cargo.ts test --manifest-path native/updater/Cargo.toml`,
 the lens database, the same with `native/lensdb/Cargo.toml`, and the HEIF reader, with
 `native/heif/Cargo.toml`. `lensdb`'s suite is what holds its scored search to the answers the C
 library gives (DESIGN §10.8), so a change to that crate is covered by nothing `test:native` runs.

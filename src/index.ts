@@ -626,3 +626,7 @@ log.info(`listening on http://${config.host}:${server.port}`, {
   processingConcurrency: settings.processing_concurrency,
   libraries: librariesRepo.list().length,
 });
+
+// The container's PID 1, where a signal with no handler is ignored: without these, `docker stop`
+// waits out its ten seconds and ends in SIGKILL.
+for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => process.exit(0));

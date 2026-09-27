@@ -81,7 +81,7 @@ export class UpdatesPresenter {
    * Downloads the new version, then waits for it to be the one answering.
    *
    * The server exits as soon as it has replied, so every request after this one fails
-   * until its supervisor has started the new one - which is what the poll is for, and
+   * until the updater has started the new one - which is what the poll is for, and
    * why the reload is at the end rather than at the click: a page reloaded into a server
    * that is not there yet is a blank screen with no way to tell it was working.
    */

@@ -67,10 +67,6 @@ services:
       - bowerbird-config:/config
       # A named volume inherits /data's ownership from the image; a host path
       # does not, and must be chowned to uid 1000 by whoever mounts it.
-      #
-      # An in-place update also unpacks into /data/updates, a few hundred megabytes a
-      # version and at most two kept (§23.3). On this volume rather than in the container's
-      # writable layer deliberately: that is what makes an update survive a recreate.
       - "${DATA_VOLUME:-bowerbird-data}:/data"
 
 volumes:

@@ -45,10 +45,9 @@ for (const by of ['BOWERBIRD_UPDATE_URL', 'BOWERBIRD_UPDATE_REPO'] as const) {
   // of releases to install. Were that ever to change, this is what would notice.
   test(`${by} empty: applying refuses without reaching for anything`, async () => {
     const service = disabled(by);
-    // After the service is built, because `disabled` replaces the environment: a supervisor
-    // has to be in front of this for `apply` to get as far as looking for a release at all.
-    process.env.BOWERBIRD_SUPERVISED = '1';
-    process.env.BOWERBIRD_HOME = '/tmp/bowerbird-update-service-test';
+    // After the service is built, because `disabled` replaces the environment: the install
+    // has to be one that can replace itself for `apply` to get as far as looking for a release.
+    process.env.BOWERBIRD_UPDATES = '/tmp/bowerbird-update-service-test';
     await expect(service.apply()).rejects.toThrow(/nothing newer/);
     expect(calls).toEqual([]);
   });

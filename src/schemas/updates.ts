@@ -20,7 +20,7 @@ export type Platform = z.infer<typeof PlatformSchema>;
 // and a payload with no installer is a build only an existing install can reach.
 export const ReleaseAssetSchema = z.object({
   installer: z.string().optional(),
-  /** The tarball a supervised install unpacks over itself (DESIGN §23.3). */
+  /** The tarball an install's updater swaps into it (DESIGN §23.3). */
   payload: z.string().optional(),
   payload_sha256: z.string().optional(),
   /** Docker's installer, which is a tag rather than a file. */

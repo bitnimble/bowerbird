@@ -15,6 +15,7 @@ mod open_with;
 mod reveal;
 /// The Bowerbird server this app carries, so the library is local and works offline.
 mod server;
+mod update;
 
 // `#[default_runtime(crate::Wry, wry)]` only defaults `AppHandle`'s generic while the `wry`
 // feature is on, so every `AppHandle` names the runtime rather than relying on the default -
