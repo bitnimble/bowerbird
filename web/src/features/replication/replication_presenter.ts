@@ -306,12 +306,15 @@ export class ReplicationPresenter {
   /** §7.5: opening a photo whose original is remote is the user asking for it. False where it could not be asked for. */
   async fetchOriginal(photoId: string): Promise<boolean> {
     if (this.store.fetching.has(photoId)) return true;
+    this.setRequestingPull(photoId, true);
     try {
       const transfer = await blobsApi.fetchOriginal(photoId);
       if (transfer != null) this.putTransfer(transfer);
     } catch (err) {
       this.toasts.showError(ReplicationPresenterStrings.couldNotFetchOriginal(), message(err));
       return false;
+    } finally {
+      this.setRequestingPull(photoId, false);
     }
     await this.refreshTransfers();
     return true;
@@ -439,6 +442,14 @@ export class ReplicationPresenter {
   @action.bound
   private putTransfer(transfer: Transfer): void {
     this.store.transfers = [...this.store.transfers.filter((t) => t.id !== transfer.id), transfer];
+  }
+
+  @action.bound
+  private setRequestingPull(photoId: string, requesting: boolean): void {
+    const next = new Set(this.store.requestingPulls);
+    if (requesting) next.add(photoId);
+    else next.delete(photoId);
+    this.store.requestingPulls = next;
   }
 
   @action.bound

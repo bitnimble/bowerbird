@@ -347,12 +347,13 @@ export const RemoteOriginal = observer(function RemoteOriginal({
   const pull = store.pullFor(photoId);
   const readOnly = libraries.byId.get(libraryId)?.read_only === true;
 
-  if (pull?.state === 'active' || pull?.state === 'queued') {
-    const total = pull.bytes_total ?? 0;
+  if (store.fetching.has(photoId)) {
+    const moving = pull?.state === 'active' ? pull : null;
+    const total = moving?.bytes_total ?? 0;
     return (
       <>
         {PhotoDetailStrings.fetching()}
-        {total > 0 && PhotoDetailStrings.fetchingPercent(Math.round((pull.bytes_done / total) * 100))}
+        {moving != null && total > 0 && PhotoDetailStrings.fetchingPercent(Math.round((moving.bytes_done / total) * 100))}
       </>
     );
   }

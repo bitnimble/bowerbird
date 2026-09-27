@@ -71,10 +71,7 @@ function Page(): JSX.Element {
   );
 }
 
-test('the menu stays open while the original is fetched, and closes when the editor opens', async () => {
-  blobsApi.fetchOriginal = () => Promise.resolve(pull('queued'));
-  const reads: ((transfers: Transfer[]) => void)[] = [];
-  blobsApi.listTransfers = () => new Promise((resolve) => reads.push(resolve));
+async function openMenuAndFetch(): Promise<void> {
   render(
     <MemoryRouter initialEntries={[VIEWER]}>
       <StoresProvider>
@@ -86,12 +83,26 @@ test('the menu stays open while the original is fetched, and closes when the edi
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
   });
-
   await act(async () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Fetch original and edit' }));
   });
+}
 
-  await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Fetching original…' }).getAttribute('aria-disabled')).toBe('true'));
+const pending = (): string | null => screen.getByRole('menuitem', { name: 'Fetching original…' }).getAttribute('aria-disabled');
+
+test('the menu stays pending from the click until the original lands, and closes when the editor opens', async () => {
+  const asks: ((transfer: Transfer) => void)[] = [];
+  blobsApi.fetchOriginal = () => new Promise((resolve) => asks.push(resolve));
+  const reads: ((transfers: Transfer[]) => void)[] = [];
+  blobsApi.listTransfers = () => new Promise((resolve) => reads.push(resolve));
+
+  await openMenuAndFetch();
+  expect(pending()).toBe('true');
+
+  await act(async () => {
+    for (const ask of asks) ask(pull('queued'));
+  });
+  expect(pending()).toBe('true');
   expect(screen.getByRole('status', { name: 'Address' }).textContent).toBe(VIEWER);
 
   await act(async () => {
@@ -100,4 +111,19 @@ test('the menu stays open while the original is fetched, and closes when the edi
 
   await waitFor(() => expect(screen.getByRole('status', { name: 'Address' }).textContent).toBe(EDITOR));
   expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+});
+
+test('the row returns to what it was when the fetch cannot be asked for', async () => {
+  const refusals: ((error: Error) => void)[] = [];
+  blobsApi.fetchOriginal = () => new Promise((_, reject) => refusals.push(reject));
+
+  await openMenuAndFetch();
+  expect(pending()).toBe('true');
+
+  await act(async () => {
+    for (const refuse of refusals) refuse(new Error('no peer is recorded as holding p1'));
+  });
+
+  expect(screen.getByRole('menuitem', { name: 'Fetch original and edit' }).getAttribute('aria-disabled')).not.toBe('true');
+  expect(screen.getByRole('status', { name: 'Address' }).textContent).toBe(VIEWER);
 });
