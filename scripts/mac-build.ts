@@ -110,6 +110,8 @@ if (existsSync(sidecarSource) && existsSync(join(bundledServer, 'server', 'index
   copyFileSync(sidecarSource, join(macos, 'bowerbird-server'));
   chmodSync(join(macos, 'bowerbird-server'), 0o755);
   cpSync(bundledServer, join(resources, 'resources'), { recursive: true });
+  // The page the server serves (`server.rs`), which `tauri.conf.json` maps to `web` for the bundler.
+  cpSync(join(repoRoot, 'web', 'dist'), join(resources, 'web'), { recursive: true });
 } else {
   console.error(
     `[mac-build] no server at ${sidecarSource}: this .app will open and find no library. ` +

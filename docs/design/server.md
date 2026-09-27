@@ -390,7 +390,7 @@ catalogue can be opened.
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
 | `DATA_DIR` | `./data` | Where every generated file lives, one subdirectory per library (§6). Resolved absolute at load, created and tested for writability at startup |
 
-Three more are **not configuration and not for anybody to set**: they are how whatever
+Five more are **not configuration and not for anybody to set**: they are how whatever
 started this server tells it where it is (§23.3, §10.4). Every one of them is written by
 the desktop shell, the Dockerfile or the container's entrypoint, and a deployment that sets
 them by hand is telling the server something untrue about itself.
@@ -400,6 +400,8 @@ them by hand is telling the server something untrue about itself.
 | `BOWERBIRD_UPDATES` | the desktop shell | Where an update is staged, and set only where the app can hand itself to the updater, which is what decides whether an in-place update is offered at all |
 | `BOWERBIRD_PLATFORM` | the Dockerfile | Which release platform this install is, where it cannot be worked out from the kernel - the image runs the same Linux a desktop build does and installs an entirely different file |
 | `BOWERBIRD_NATIVE_LIB` | the shell, the container entrypoint | The pixel library to open, named rather than searched for: a packaged app has no source tree beside it, and the container's is whichever instruction-set variant won the startup probe (§10.4) |
+| `WEB_DIST` | the desktop shell | The web client to serve, which is the page the shell's webview loads from this server. Unset, `./web/dist` where it exists, which is the container's |
+| `BOWERBIRD_API_TOKEN` | the desktop shell | A secret every request must carry, as a bearer token or the cookie the shell's page is signed in with (`?token=` once, then redirected off the address), so nothing else on the machine can drive the library |
 
 Three more are genuinely optional. The first replaces the lens database the binary carries; the other two say where update checks are made (§23.5):
 

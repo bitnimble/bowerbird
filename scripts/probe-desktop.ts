@@ -1,8 +1,7 @@
 // Whether the desktop app really carries its own library.
 //
-// Starts the built shell with no server anywhere in sight - no `BOWERBIRD_SERVER`,
-// nothing listening on the usual port - and waits for it to say it is serving one
-// itself. That is the whole of milestone 4's claim: open the app on a machine with
+// Starts the built shell with no server anywhere in sight - nothing listening on the
+// usual port - and waits for it to say it is serving one itself. That is the whole of milestone 4's claim: open the app on a machine with
 // no Bowerbird on it and you have a library.
 //
 // Under `xvfb-run` because the shell is a real windowed app and the display has to
@@ -40,23 +39,17 @@ mkdirSync(HOME, { recursive: true });
 // to be owned by root with mode 4755 - which a binary built into `target/` is not,
 // and which is not something a build should be arranging. It says nothing about
 // how the app ships; it is how this check runs it.
-const env = { ...process.env };
-// Deleted rather than set to undefined, which Bun passes as the *string*
-// "undefined" - and the app reads any value at all as "a server was named for
-// me", so it starts none of its own and the probe waits for a line that never
-// comes. The point of this check is an app told about no server whatsoever.
-delete env.BOWERBIRD_SERVER;
-
 const app = spawn(['xvfb-run', '-a', shell(), '--no-sandbox'], {
   cwd: ROOT,
   env: {
-    ...env,
+    ...process.env,
     // Its own home, so the probe uses a scratch catalogue rather than the reader's.
     HOME,
     XDG_DATA_HOME: join(HOME, 'data'),
     XDG_CONFIG_HOME: join(HOME, 'config'),
     BOWERBIRD_SIDECAR: sidecar(),
     BOWERBIRD_RESOURCES: RESOURCES,
+    BOWERBIRD_WEB: join(ROOT, 'web', 'dist'),
   },
   stdout: 'pipe',
   stderr: 'pipe',

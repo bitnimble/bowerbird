@@ -3,9 +3,7 @@
   "productName": "Bowerbird",
   "identifier": "dev.kumo.bowerbird",
   "build": {
-    "frontendDist": "../web/dist",
-    "devUrl": "http://localhost:5199",
-    "beforeDevCommand": "bun run --cwd web dev --port 5199",
+    "frontendDist": ["placeholder.html"],
     "beforeBuildCommand": "bun run --cwd web build"
   },
   "app": {
@@ -14,6 +12,7 @@
     "windows": [
       {
         "title": "Bowerbird",
+        "create": false,
         "width": 1440,
         "height": 900,
         "minWidth": 900,
@@ -37,7 +36,7 @@
     "targets": ["deb", "appimage", "app", "dmg", "nsis"],
     "icon": ["icons/icon.png"],
     "externalBin": ["binaries/bowerbird-server"],
-    "resources": { "resources": "resources" },
+    "resources": { "resources": "resources", "../web/dist": "web" },
     "macOS": {
       "signingIdentity": "-",
       "hardenedRuntime": false

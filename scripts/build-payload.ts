@@ -70,11 +70,13 @@ if (triple.includes('apple')) {
   need(join(macos, 'bowerbird-server'), 'The bundle does not hold the server.');
   need(join(macos, 'bowerbird-updater'), 'The bundle does not hold the updater.');
   need(join(app, 'Contents', 'Resources', 'resources', 'server', 'index.js'), 'The bundle does not hold the server bundle.');
+  need(join(app, 'Contents', 'Resources', 'web', 'index.html'), 'The bundle does not hold the page.');
 } else {
   cpSync(need(join(releaseDir, 'app.exe'), 'Run `bun run build:app` first.'), join(staging, 'bowerbird-app.exe'));
   cpSync(need(join(releaseDir, 'bowerbird-updater.exe'), 'Run `bun run build:app` first.'), join(staging, 'bowerbird-updater.exe'));
   cpSync(sidecar, join(staging, 'bowerbird-server.exe'));
   cpSync(resources, join(staging, 'resources'), { recursive: true });
+  cpSync(need(join(ROOT, 'web', 'dist'), 'Run `bun run build:app` first.'), join(staging, 'web'), { recursive: true });
   // Windows resolves a dependent DLL from the loading process's own directory, so whatever the
   // shell imports goes beside the executables. `rawshim.dll` adds nothing to that list: its
   // codecs are static (DESIGN §23.7.1).

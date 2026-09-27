@@ -99,6 +99,20 @@ fn resource_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, Stri
         .map_err(|err| format!("could not locate the app's resources: {err}"))
 }
 
+/// The page the server serves, on the same terms: `BOWERBIRD_WEB` for a run out of `target/`.
+fn web_root(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, String> {
+    if let Ok(named) = std::env::var("BOWERBIRD_WEB") {
+        return Ok(PathBuf::from(named));
+    }
+    app.path()
+        .resource_dir()
+        .map(|dir| dir.join("web"))
+        .map_err(|err| format!("could not locate the app's resources: {err}"))
+}
+
+/// `SIGN_IN_PARAM` in `src/api/require_token.ts`.
+const SIGN_IN_PARAM: &str = "token";
+
 /// Where the catalogue, the renditions and the backups live.
 fn data_dir(app: &tauri::AppHandle<crate::Runtime>) -> Result<PathBuf, String> {
     app.path()
@@ -116,12 +130,13 @@ fn library_name() -> &'static str {
     }
 }
 
-/// Starts the server and waits for it to answer, or explains why it could not.
+/// Starts the server and waits for it to answer, or explains why it could not, and returns the
+/// address that signs the page in.
 ///
 /// Blocking on purpose. Everything the page can ask for needs the server, so there is
 /// nothing useful to show until it is up; a window that paints and then fails every
 /// request looks broken in a way that "starting" does not.
-pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, String> {
+pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url, String> {
     let sidecar = sidecar_path().map_err(|err| format!("could not locate the server: {err}"))?;
     if !sidecar.exists() {
         return Err(format!(
@@ -150,6 +165,9 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, St
     if let Some(updates) = crate::update::home(app) {
         command.env("BOWERBIRD_UPDATES", updates);
     }
+    if cfg!(desktop) {
+        command.env("WEB_DIST", web_root(app)?);
+    }
     let child = command
         .arg(&bundle)
         .env("PORT", port.to_string())
@@ -174,10 +192,13 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<String, St
     }
     watch_for_update(app.clone());
     wait_until_answering(&origin)?;
+    eprintln!("[bowerbird] serving this library locally on {origin}");
+    let mut signed_in = tauri::Url::parse(&origin).map_err(|err| format!("{origin} is not an address: {err}"))?;
+    signed_in.query_pairs_mut().append_pair(SIGN_IN_PARAM, &token);
     if let Ok(mut held) = LOCAL.lock() {
-        *held = Some(Local { origin: origin.clone(), token });
+        *held = Some(Local { origin, token });
     }
-    Ok(origin)
+    Ok(signed_in)
 }
 
 /// Hands the app to the updater once the server has staged an update and exited.
@@ -295,6 +316,13 @@ pub(crate) fn stop() {
 #[cfg(test)]
 mod tests {
     use super::Local;
+
+    #[test]
+    fn the_page_signs_in_with_the_parameter_the_server_reads() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/api/require_token.ts");
+        let server = std::fs::read_to_string(path).unwrap();
+        assert!(server.contains(&format!("SIGN_IN_PARAM = '{}'", super::SIGN_IN_PARAM)));
+    }
 
     #[test]
     fn the_token_goes_only_to_the_local_server() {

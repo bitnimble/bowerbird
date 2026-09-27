@@ -5,6 +5,7 @@ import { albumsApi } from '../albums';
 import { ApiError } from '../request';
 import { settingsApi } from '../settings';
 import { PathSegment, route } from '../../../../src/schemas/route';
+import { BUNDLED, loadedFrom, unload } from './page';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -65,10 +66,12 @@ describe('a transport that never got an answer', () => {
   };
   afterEach(() => {
     delete global.__TAURI__;
+    unload();
   });
 
   test('carries a string rejection through, as the shell produces', async () => {
     const why = `could not reach http://127.0.0.1:9999${route(PathSegment.api(), PathSegment.settings())}: Connection refused`;
+    loadedFrom(BUNDLED);
     global.__TAURI__ = { core: { invoke: async () => Promise.reject(why) } };
 
     const error = (await settingsApi.get().catch((e: unknown) => e)) as ApiError;

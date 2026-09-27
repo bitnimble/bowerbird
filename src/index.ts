@@ -482,7 +482,8 @@ app.route(
   new QualityCheckApi(photoReadService, photoRenditionService, librariesService, settingsRepo, originals).routes,
 );
 
-// The web client, where a build of it sits beside this server (the container).
+// The web client, where a build of it sits beside this server (the container) or the desktop
+// shell names one, which is the page its webview loads.
 //
 // **Load-bearing for replication, not a convenience.** A peer is dialled at the
 // address a browser reaches it on (§9.1), and the deployment publishes one port -
