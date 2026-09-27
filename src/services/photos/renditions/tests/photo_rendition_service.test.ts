@@ -337,6 +337,30 @@ describe('PhotoRenditionService.buildRendition', () => {
     expect(ensureCurrent).not.toHaveBeenCalled();
   });
 
+  // What download and share hand over, so they work wherever the viewer does.
+  it("takes the camera's JPEG from a peer on a library that keeps no originals", async () => {
+    const lib = { ...library, id: 'photos-camera-from-peer' };
+    try {
+      const ensureCurrent = jest.fn(async () => {
+        const target = getRenditionPath(lib, 'p1', 'embedded', false);
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, 'CAMERA-JPEG');
+      });
+      const { service } = build({
+        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        libraries: { getById: jest.fn(() => lib) },
+        fetchThrough: { alwaysFromPeer: () => true, ensureCurrent },
+      });
+
+      const jpeg = await service.embeddedJpeg('p1');
+
+      expect(ensureCurrent).toHaveBeenCalledWith('p1', 'embedded');
+      expect(new TextDecoder().decode(jpeg ?? new Uint8Array())).toBe('CAMERA-JPEG');
+    } finally {
+      rmSync(getDataPath(lib), { recursive: true, force: true });
+    }
+  });
+
   it('takes every copy from a peer on a library that keeps no originals, even with the original here', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'bb-from-peer-'));
     const lib = { ...library, id: 'photos-from-peer', root_path: root };
