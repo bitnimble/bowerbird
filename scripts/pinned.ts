@@ -132,6 +132,31 @@ export function makeOnce(home: string, recipe: string, force: boolean, make: () 
   }
 }
 
+const FETCH_ATTEMPTS = 5;
+
+/** `fetch`, retried through a 429, a 5xx or a dropped connection. */
+export async function fetchPinned(url: string): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    let answer: Response | null = null;
+    let failure = '';
+    try {
+      answer = await fetch(url);
+    } catch (thrown) {
+      failure = String(thrown);
+    }
+    if (answer != null) {
+      if (answer.ok) return answer;
+      failure = `${answer.status} ${answer.statusText}`;
+      await answer.body?.cancel();
+      if (answer.status !== 429 && answer.status < 500) throw new Error(`${url} answered ${failure}`);
+    }
+    if (attempt === FETCH_ATTEMPTS) throw new Error(`${url} answered ${failure}, ${attempt} times`);
+    const wait = 2 ** attempt * 1000;
+    console.log(`${url} answered ${failure}; trying again in ${wait / 1000}s`);
+    await Bun.sleep(wait);
+  }
+}
+
 /** Whether what is at `home` was made from this recipe. */
 export function alreadyPinned(home: string, recipe: string): boolean {
   try {

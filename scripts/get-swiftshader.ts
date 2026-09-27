@@ -20,7 +20,7 @@
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { alreadyPinned, linkPinned, makeOnce, pin, pinnedHome, pinnedLink } from './pinned';
+import { alreadyPinned, fetchPinned, linkPinned, makeOnce, pin, pinnedHome, pinnedLink } from './pinned';
 
 const NAME = 'swiftshader';
 const COMMIT = 'bbe98768a47ce9166f768e791768ae5f066c04df';
@@ -39,10 +39,7 @@ export const ICD = resolve(pinnedLink(NAME), 'vk_swiftshader_icd.json');
 async function download(name: string, sha256: string): Promise<Buffer> {
   // Gitiles serves a blob as base64 under `?format=TEXT`, and nothing else.
   const url = `${PREBUILTS}/+/${COMMIT}/${VULKAN}/${name}?format=TEXT`;
-  const answer = await fetch(url);
-  if (!answer.ok) {
-    throw new Error(`${url} answered ${answer.status} ${answer.statusText}`);
-  }
+  const answer = await fetchPinned(url);
   const bytes = Buffer.from(await answer.text(), 'base64');
   const got = createHash('sha256').update(bytes).digest('hex');
   if (got !== sha256) {

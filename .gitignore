@@ -195,7 +195,7 @@ native/rawshim/.slangc
 native/rawshim/.codecs
 # `bun run get:swiftshader`, wanted only on a machine with no GPU.
 native/rawshim/.swiftshader
-# PMRID's published weights, unpacked by `bun run get:pmrid` for the prototype that reads them.
+# PMRID's published weights, `bun run get:pmrid`.
 native/rawshim/.pmrid
 # The print preview's HDR environments, `bun run get:environments`.
 native/rawshim/.environments

@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { alreadyPinned, linkPinned, makeOnce, pin, pinnedHome } from './pinned';
+import { alreadyPinned, fetchPinned, linkPinned, makeOnce, pin, pinnedHome } from './pinned';
 
 const NAME = 'environments';
 const SOURCE = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr';
@@ -25,10 +25,7 @@ const HOME = pinnedHome(NAME, RECIPE);
 
 async function download(file: string, sha256: string): Promise<Buffer> {
   const url = `${SOURCE}/${file}`;
-  const answer = await fetch(url);
-  if (!answer.ok) {
-    throw new Error(`${url} answered ${answer.status} ${answer.statusText}`);
-  }
+  const answer = await fetchPinned(url);
   const bytes = Buffer.from(await answer.arrayBuffer());
   const got = createHash('sha256').update(bytes).digest('hex');
   if (got !== sha256) {

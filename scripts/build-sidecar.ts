@@ -14,6 +14,7 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { hostTriple } from './host-triple.ts';
 import { elfClosure, machNames } from './native_closure';
 
 const ROOT = join(import.meta.dir, '..');
@@ -40,18 +41,6 @@ const ENTRIES = [
   join(ROOT, 'src', 'services', 'processing', 'workers', 'prepare_worker.ts'),
   join(ROOT, 'src', 'services', 'maintenance', 'backup_worker.ts'),
 ];
-
-/**
- * What Rust calls the machine this is for, which is what Tauri looks for on the end
- * of the name. `--target` for a cross build, where it is not this one.
- */
-function hostTriple(): string {
-  const probe = spawnSync('rustc', ['-vV'], { encoding: 'utf8' });
-  if (probe.status !== 0) throw new Error('rustc is not on the path, so the target triple cannot be read');
-  const line = probe.stdout.split('\n').find((entry) => entry.startsWith('host: '));
-  if (line == null) throw new Error(`rustc did not report a host triple:\n${probe.stdout}`);
-  return line.slice('host: '.length).trim();
-}
 
 function flag(name: string): string | undefined {
   const at = process.argv.indexOf(`--${name}`);

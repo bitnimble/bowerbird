@@ -2,7 +2,25 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { alreadyPinned, pin, recordPin } from './pinned';
+import { alreadyPinned, fetchPinned, pin, recordPin } from './pinned';
+
+test('a download is tried again after a 503 and not after a 404', async () => {
+  const answers = [503, 200, 404];
+  let asked = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => new Response('weights', { status: answers[asked++] }),
+  });
+  try {
+    const url = `http://localhost:${server.port}/`;
+    expect(await (await fetchPinned(url)).text()).toBe('weights');
+    expect(asked).toBe(2);
+    await expect(fetchPinned(url)).rejects.toThrow('404');
+    expect(asked).toBe(3);
+  } finally {
+    server.stop(true);
+  }
+}, 10_000);
 
 test('a tree built from other flags is not the pinned one', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'bb-pin-'));

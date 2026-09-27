@@ -150,7 +150,7 @@ RUN apt-get update \
 COPY package.json bun.lock ./
 COPY packages/samsung-frame-art ./packages/samsung-frame-art
 RUN bun install --frozen-lockfile
-COPY scripts/get-pmrid.ts ./scripts/
+COPY scripts/pinned.ts scripts/get-pmrid.ts ./scripts/
 RUN bun run scripts/get-pmrid.ts
 
 # libavif, libjxl and the six libraries under them, static, through the getter a development
@@ -380,7 +380,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/app/native/rawshim/target \
     --mount=type=cache,target=/app/src-tauri/target \
   bun run build:wasm \
-  && BOWERBIRD_ANDROID_DIST_DIR=/out/installer/android-arm64bun run android:build
+  && BOWERBIRD_ANDROID_DIST_DIR=/out/installer/android-arm64 bun run scripts/android-build.ts
 
 FROM scratch AS android-dist
 COPY --from=android /out/ /
@@ -418,7 +418,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
   bun run build:wasm \
   && bun run scripts/osxcross.ts bun run build:native:release --target aarch64-apple-darwin --no-default-features \
   && bun run build:sidecar --target aarch64-apple-darwin \
-  && bun run mac:build \
+  && bun run scripts/mac-build.ts \
   && bun run scripts/build-payload.ts --target aarch64-apple-darwin --out /out/payload
 
 FROM scratch AS macos-dist
@@ -448,7 +448,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
   && eval "$xwin_env" \
   && bun run build:native:release --target x86_64-pc-windows-msvc --no-default-features \
   && bun run build:sidecar --target x86_64-pc-windows-msvc \
-  && bun run build:app --target x86_64-pc-windows-msvc --bundles nsis --runner cargo-xwin \
+  && bun run scripts/bundle-app.ts --target x86_64-pc-windows-msvc --bundles nsis --runner cargo-xwin \
   && bun run scripts/build-payload.ts --target x86_64-pc-windows-msvc --out /out/payload \
   && mkdir -p /out/installer/windows-x86_64 \
   && cp src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe /out/installer/windows-x86_64/

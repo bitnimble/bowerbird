@@ -4,6 +4,8 @@
 // cross-built for the target: rawler reads the RAWs, the lens database is `lensdb`, the demosaic
 // and the grade are WGSL, and the JPEG codec either side is Rust.
 //
+// `bun run build:app --target aarch64-linux-android` runs this after everything it needs.
+//
 // One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with
 // NDK 27, and a JDK 17. `ANDROID_HOME` and `ANDROID_SDK_ROOT` must agree - Gradle refuses
 // to guess when they disagree, which is its way of saying the build would be
@@ -31,7 +33,9 @@ if (!existsSync(ndk)) {
   process.exit(1);
 }
 
-const toolchain = join(ndk, 'toolchains', 'llvm', 'prebuilt', 'linux-x86_64', 'bin');
+// The NDK's macOS toolchain is universal under this name.
+const prebuilt = process.platform === 'darwin' ? 'darwin-x86_64' : 'linux-x86_64';
+const toolchain = join(ndk, 'toolchains', 'llvm', 'prebuilt', prebuilt, 'bin');
 // API 24, which is what the NDK's own linker wrappers are named for.
 const clang = join(toolchain, `aarch64-linux-android24-clang`);
 

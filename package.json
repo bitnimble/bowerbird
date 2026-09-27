@@ -36,16 +36,14 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json && tsc --noEmit -p e2e-tauri/tsconfig.json && tsc --noEmit -p landing/tsconfig.json && tsc --noEmit -p packages/samsung-frame-art/tsconfig.json && bun run scripts/check-mdx.ts",
     "build:native": "bun run scripts/cargo.ts build --profile quick --manifest-path native/rawshim/Cargo.toml",
     "build:native:release": "bun run scripts/cargo.ts build --release --manifest-path native/rawshim/Cargo.toml",
-    "build:wasm": "rm -f native/rawshim/pkg/package.json && bun x wasm-pack@0.13.1 build native/rawshim --target web --out-dir pkg --no-opt -- --no-default-features && bun run scripts/hash-pkg.ts && bun run scripts/build-avif-planes.ts",
+    "build:wasm": "bun run scripts/build-wasm.ts",
     "build:sidecar": "bun run scripts/build-sidecar.ts",
-    "build:app": "bun run scripts/bundle-app.ts",
+    "build:app": "bun run scripts/build-app.ts",
     "probe:server": "bun run scripts/probe-server.ts",
     "probe:desktop": "bun run scripts/probe-desktop.ts",
     "e2e:tauri:build": "bun run scripts/build-desktop-app.ts",
     "e2e:tauri": "bun run e2e:tauri:build && bun run scripts/e2e-tauri-full.ts",
-    "tauri": "bun x @tauri-apps/cli",
-    "mac:build": "bun run scripts/mac-build.ts",
-    "android:build": "bun run scripts/android-build.ts"
+    "tauri": "bun x @tauri-apps/cli"
   },
   "dependencies": {
     "@parcel/watcher": "^2.6.0",

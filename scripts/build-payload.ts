@@ -5,6 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { hostTriple } from './host-triple.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -19,14 +20,6 @@ const PLATFORMS: Record<string, string> = {
 function flag(name: string): string | undefined {
   const at = process.argv.indexOf(`--${name}`);
   return at === -1 ? undefined : process.argv[at + 1];
-}
-
-function hostTriple(): string {
-  const probe = spawnSync('rustc', ['-vV'], { encoding: 'utf8' });
-  if (probe.status !== 0) throw new Error('rustc is not on the path, so the target triple cannot be read');
-  const line = probe.stdout.split('\n').find((entry) => entry.startsWith('host: '));
-  if (line == null) throw new Error(`rustc did not report a host triple:\n${probe.stdout}`);
-  return line.slice('host: '.length).trim();
 }
 
 const triple = flag('target') ?? hostTriple();
@@ -56,13 +49,13 @@ function need(path: string, how: string): string {
   return path;
 }
 
-need(sidecar, 'Run `bun run build:sidecar` first.');
-need(join(resources, 'server', 'index.js'), 'Run `bun run build:sidecar` first.');
+need(sidecar, 'Run `bun run build:app` first.');
+need(join(resources, 'server', 'index.js'), 'Run `bun run build:app` first.');
 
 /** The one `.app` a macOS build produced. */
 function macBundle(): string {
   const bundles = join(releaseDir, 'bundle', 'macos');
-  need(bundles, 'Run `bun run tauri build` (or `bun run mac:build`) first.');
+  need(bundles, 'Run `bun run build:app` first.');
   const found = readdirSync(bundles).filter((entry) => entry.endsWith('.app'));
   if (found.length !== 1) {
     throw new Error(`${bundles} holds ${found.length} bundles, so which one ships is ambiguous: ${found.join(', ')}`);
@@ -83,7 +76,7 @@ if (triple.includes('apple')) {
   need(join(macos, 'bowerbird-server'), 'The bundle does not hold the server.');
   need(join(app, 'Contents', 'Resources', 'resources', 'server', 'index.js'), 'The bundle does not hold the server bundle.');
 } else {
-  const app = need(join(releaseDir, `app${suffix}`), 'Run `bun run tauri build` first.');
+  const app = need(join(releaseDir, `app${suffix}`), 'Run `bun run build:app` first.');
   cpSync(app, join(staging, `bowerbird-app${suffix}`));
   cpSync(sidecar, join(staging, `bowerbird-server${suffix}`));
   cpSync(resources, join(staging, 'resources'), { recursive: true });

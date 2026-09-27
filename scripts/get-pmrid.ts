@@ -1,9 +1,7 @@
 #!/usr/bin/env bun
-// PMRID's published weights, unpacked into a flat f32 blob and a plan the shader can walk.
-//
-// A prototype, to see what a learned denoiser does to our photographs before anything is built
-// around one. Nothing in the pipeline reads this: `native/rawshim/examples/pmrid.rs` does, and
-// only when it is there.
+// PMRID's published weights, unpacked into a flat f32 blob and a plan the shader can walk, in the
+// user's cache, which `native/rawshim/.pmrid/` then points at (`pinned.ts` says why it is not in
+// the checkout). `src/pmrid.rs` embeds them, so the crate does not build without them.
 //
 // The checkpoint is a PyTorch zip - `archive/data.pkl` naming storages under `archive/data/`,
 // each a raw little-endian f32 array. We have no Python, so the pickle is not interpreted: the
@@ -13,10 +11,18 @@
 // the shape's element count, recovers the whole of it.
 
 import { type Unzipped, unzipSync } from 'fflate';
-import { mkdir, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { alreadyPinned, fetchPinned, linkPinned, makeOnce, pin, pinnedHome } from './pinned';
 
-const CHECKPOINT = 'https://raw.githubusercontent.com/MegEngine/PMRID/main/models/torch_pretrained.ckp';
-const OUT = 'native/rawshim/.pmrid';
+const NAME = 'pmrid';
+const CHECKPOINT =
+  'https://raw.githubusercontent.com/MegEngine/PMRID/8ebb9e8e96559881dee957f34243933c5beb77dd/models/torch_pretrained.ckp';
+const CHECKPOINT_SHA256 = '9361614f3514d27351d81909f2215c0fdc38619c0288d936b7266485ac106c14';
+// This file's own text too: the unpacking below decides the bytes as much as the checkpoint does.
+const RECIPE = pin(CHECKPOINT, [CHECKPOINT_SHA256, readFileSync(import.meta.path, 'utf8').replaceAll('\r\n', '\n')]);
+const HOME = pinnedHome(NAME, RECIPE);
 const PICKLE = 'archive/data.pkl';
 const STORAGES = 'archive/data/';
 
@@ -117,13 +123,22 @@ function entry(entries: Unzipped, name: string): Uint8Array {
 }
 
 async function main(): Promise<void> {
-  const response = await fetch(CHECKPOINT);
-  if (!response.ok) throw new Error(`${CHECKPOINT}: ${response.status}`);
-  const checkpoint = new Uint8Array(await response.arrayBuffer());
+  if (!alreadyPinned(HOME, RECIPE)) {
+    const response = await fetchPinned(CHECKPOINT);
+    const checkpoint = new Uint8Array(await response.arrayBuffer());
+    const got = createHash('sha256').update(checkpoint).digest('hex');
+    if (got !== CHECKPOINT_SHA256) throw new Error(`${CHECKPOINT} hashes ${got}, not the pinned ${CHECKPOINT_SHA256}`);
+    const unpacked = unpack(checkpoint);
+    makeOnce(HOME, RECIPE, false, () => {
+      for (const [name, bytes] of unpacked) writeFileSync(resolve(HOME, name), bytes);
+    });
+  }
+  linkPinned(NAME, HOME);
+  console.log(`pmrid at ${HOME}`);
+}
 
-  await rm(OUT, { recursive: true, force: true });
-  await mkdir(OUT, { recursive: true });
-
+/** `weights.bin` and `weights.json`, from the checkpoint's bytes. */
+function unpack(checkpoint: Uint8Array): Map<string, Uint8Array | string> {
   // A checkpoint is a zip, and Windows ships no `unzip` for the other getters' `tar` to be.
   const entries = unzipSync(checkpoint, { filter: ({ name }) => name === PICKLE || name.startsWith(STORAGES) });
   const named = pairs(entry(entries, PICKLE));
@@ -147,20 +162,16 @@ async function main(): Promise<void> {
     at += values.length;
   }
 
-  await Bun.write(`${OUT}/weights.bin`, new Uint8Array(blob.buffer));
-  await Bun.write(
-    `${OUT}/weights.json`,
-    `${JSON.stringify(
-      {
-        source: CHECKPOINT,
-        floats: blob.length,
-        tensors: ARCHITECTURE.map((t) => ({ name: t.name, shape: t.shape, offset: offsets[t.name] })),
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  console.log(`${OUT}/weights.bin: ${ARCHITECTURE.length} tensors, ${blob.length} floats`);
+  const plan = {
+    source: CHECKPOINT,
+    floats: blob.length,
+    tensors: ARCHITECTURE.map((t) => ({ name: t.name, shape: t.shape, offset: offsets[t.name] })),
+  };
+  console.log(`weights.bin: ${ARCHITECTURE.length} tensors, ${blob.length} floats`);
+  return new Map<string, Uint8Array | string>([
+    ['weights.bin', new Uint8Array(blob.buffer)],
+    ['weights.json', `${JSON.stringify(plan, null, 2)}\n`],
+  ]);
 }
 
 if (import.meta.main) {

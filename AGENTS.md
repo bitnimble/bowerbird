@@ -153,16 +153,18 @@ On Linux and macOS vcpkg wants a compiler, git, pkg-config, python3, zip and unz
 nasm on x86, and the getter names whichever is missing before it starts. It fetches its own cmake
 and ninja, and on Windows everything.
 
-**All four getters replace a tree made from an older recipe.** The fourth is `get:environments`,
-the print preview's HDR maps, which `get:shell` runs. Each records what it was made from
-(`scripts/pinned.ts`) - the vcpkg commit, every file under `native/rawshim/vcpkg/` and the getter's
-own source for the codecs and the compiler, the file hashes for the driver and the maps - and reuses what is there
+**All five getters replace a tree made from an older recipe.** The other two are
+`get:environments`, the print preview's HDR maps, and `get:pmrid`, the denoiser's weights, both of
+which `get:shell` runs. Each records what it was made from (`scripts/pinned.ts`) - the vcpkg
+commit, every file under `native/rawshim/vcpkg/` and the getter's own source for the codecs and
+the compiler, the file hashes for the driver and the maps, the checkpoint's hash and the getter's
+own source for the weights - and reuses what is there
 only when that still matches, so bumping a version or adding a flag rebuilds rather than leaving
 the old tree where the build will find it. That is not hypothetical: a libavif built without
 sharpyuv compiles the stub, which answers `NOT_IMPLEMENTED` to every 4:2:0 encode, which is every
 grid tile in a library. `get:codecs` refuses that tree by name as well.
 
-**None of the four trees is in the checkout.** Each lives under `~/.cache/bowerbird/<name>/`, in a
+**None of the five trees is in the checkout.** Each lives under `~/.cache/bowerbird/<name>/`, in a
 directory named for its recipe, and `native/rawshim/.<name>` is a symlink into it - so the
 worktrees on a machine share one build of the codecs, and two of them on different pins coexist
 instead of taking turns deleting each other's. A worktree still runs the getter, which is then a
