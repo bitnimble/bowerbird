@@ -150,8 +150,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
 
   useEffect(() => {
     void photos.openDetail(photoId, sourceOfPath(pathname));
+    // A deep link or a reload has no pick to keep, and the mockup's HDR choice and the way back
+    // out are both read off the viewer's.
+    if (mode === 'print') photos.holdRendition(photoId, requestedPrint.current.rendition);
     void appSettings.load();
-  }, [photoId, pathname, photos, appSettings]);
+  }, [photoId, pathname, mode, photos, appSettings]);
 
   // The one input the edges cannot get from the store. **The frame, not the
   // stage's own box**: the frame is the page's whole remaining space either way,
@@ -218,8 +221,7 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       return;
     }
     if (isPrintProof(next)) {
-      // Carried rather than read on arrival: opening the mockup is an open of the photograph,
-      // which clears the reader's own choice of rendition.
+      // Carried on the navigation, which a reload keeps and the viewer's pick does not.
       const request: PrintRequest = { proof: next, rendition: store.frameOf(photoId).rendition };
       // Motion permission must be requested before this click's user activation ends.
       flushSync(() => navigate(mockupPath(photoPathname), { replace: true, state: request }));

@@ -48,9 +48,11 @@ export class ViewerPresenter {
   ): void {
     this.store.lastStep = lastStep;
     if (staleDetailId != null) this.store.details.delete(staleDetailId);
+    // Kept when the photograph is the one already open: back from the mockup, the editor or the
+    // grid, the reader is still looking at the frame they picked.
+    if (this.store.open?.id !== photoId) this.store.rendition = null;
     this.store.open = { id: photoId, status: 'loading' };
     this.store.notesSavedAt = null;
-    this.store.rendition = null;
   }
 
   @action.bound
@@ -94,6 +96,8 @@ export class ViewerPresenter {
   @action.bound
   forgetEdits(photoId: string, orientationChanged: boolean): void {
     this.store.editDocs.delete(photoId);
+    // The camera's JPEG carries none of the edits just made.
+    if (this.store.overrideFor(photoId) === 'embedded') this.store.rendition = null;
     if (orientationChanged) {
       this.store.orientationVersions.set(photoId, (this.store.orientationVersions.get(photoId) ?? 0) + 1);
     }
