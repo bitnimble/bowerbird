@@ -114,12 +114,22 @@ RUN mkdir -p /app/node_modules /app/web/node_modules /config /data && chown -R b
 
 # The CPU Vulkan driver, through the same getter a machine with no GPU runs. A stage of its own
 # rather than a step in `native`, so `dev` can carry it without building the crate three times.
+#
+# Every getter stage runs over a cache mount of its own, so an edit to a script that busts the
+# layer still finds the tree it pinned there, by recipe, and fetches nothing. The mount is not
+# in the image, so the link into it is swapped for a copy; and a build cancelled mid-fetch leaves
+# its `makeOnce` lock behind, which the next one would wait an hour on.
 FROM base AS swiftshader
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 COPY scripts/pinned.ts scripts/get-swiftshader.ts ./scripts/
-RUN bun run scripts/get-swiftshader.ts
+RUN --mount=type=cache,id=bowerbird-swiftshader,target=/root/.cache,sharing=locked \
+  rm -f /root/.cache/bowerbird/*/*.lock \
+  && bun run scripts/get-swiftshader.ts \
+  && tree="$(readlink native/rawshim/.swiftshader)" \
+  && rm native/rawshim/.swiftshader \
+  && cp -a "$tree" native/rawshim/.swiftshader
 
 # The print preview's HDR environments, which `hash-pkg.ts` serves beside the wasm module.
 FROM base AS environments
@@ -127,7 +137,12 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 COPY scripts/pinned.ts scripts/get-environments.ts ./scripts/
-RUN bun run scripts/get-environments.ts
+RUN --mount=type=cache,id=bowerbird-environments,target=/root/.cache,sharing=locked \
+  rm -f /root/.cache/bowerbird/*/*.lock \
+  && bun run scripts/get-environments.ts \
+  && tree="$(readlink native/rawshim/.environments)" \
+  && rm native/rawshim/.environments \
+  && cp -a "$tree" native/rawshim/.environments
 
 # The Slang compiler, on the same terms: one stage fetches the pinned build and the three
 # that need it copy the tree, rather than each refetching it. Through vcpkg, like the codecs.
@@ -137,7 +152,12 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 COPY scripts/pinned.ts scripts/vcpkg.ts scripts/get-slangc.ts ./scripts/
 COPY native/rawshim/vcpkg ./native/rawshim/vcpkg
-RUN bun run scripts/get-slangc.ts
+RUN --mount=type=cache,id=bowerbird-slangc,target=/root/.cache,sharing=locked \
+  rm -f /root/.cache/bowerbird/*/*.lock \
+  && bun run scripts/get-slangc.ts \
+  && tree="$(readlink native/rawshim/.slangc)" \
+  && rm native/rawshim/.slangc \
+  && cp -a "$tree" native/rawshim/.slangc
 
 # The denoiser's published weights, which `src/pmrid.rs` embeds - so this is a file the crate does
 # not compile without, on the same terms as the shaders. A stage of its own because the getter
@@ -151,7 +171,12 @@ COPY package.json bun.lock ./
 COPY packages/samsung-frame-art ./packages/samsung-frame-art
 RUN bun install --frozen-lockfile
 COPY scripts/pinned.ts scripts/get-pmrid.ts ./scripts/
-RUN bun run scripts/get-pmrid.ts
+RUN --mount=type=cache,id=bowerbird-pmrid,target=/root/.cache,sharing=locked \
+  rm -f /root/.cache/bowerbird/*/*.lock \
+  && bun run scripts/get-pmrid.ts \
+  && tree="$(readlink native/rawshim/.pmrid)" \
+  && rm native/rawshim/.pmrid \
+  && cp -a "$tree" native/rawshim/.pmrid
 
 # libavif, libjxl and the six libraries under them, static, through the getter a development
 # machine runs: one vcpkg commit fixes every version (`get-codecs.ts`), so the aom a container
@@ -168,7 +193,12 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 COPY scripts/pinned.ts scripts/vcpkg.ts scripts/get-codecs.ts ./scripts/
 COPY native/rawshim/vcpkg ./native/rawshim/vcpkg
-RUN bun run scripts/get-codecs.ts
+RUN --mount=type=cache,id=bowerbird-codecs,target=/root/.cache,sharing=locked \
+  rm -f /root/.cache/bowerbird/*/*.lock \
+  && bun run scripts/get-codecs.ts \
+  && tree="$(readlink native/rawshim/.codecs)" \
+  && rm native/rawshim/.codecs \
+  && cp -a "$tree" native/rawshim/.codecs
 
 # What the tests and the maintainer's scripts need and the app does not
 # (`docker-compose.dev.yml`): ffprobe, to read back what an encode produced with a
