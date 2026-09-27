@@ -3,6 +3,7 @@ import { test } from '../fixtures';
 import { z } from 'zod';
 import { EditStateSchema, TONE_CURVE_KIND } from '../../../src/schemas/photo_edits';
 import { PathSegment, route } from '../../../src/schemas/route';
+import { MOST_LUX } from '../../src/features/raw_edit/print/print_scene';
 import { EDIT_PHOTOS_DIR } from '../fixture_library';
 import {
   addLibrary,
@@ -937,10 +938,10 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   await print.press('ArrowRight');
   await print.press('ArrowRight');
   await expect(page.getByRole('slider', { name: 'Vertical rotation' })).toHaveAttribute('aria-valuenow', '-37');
-  const readbackId = z.number().parse(await worker.evaluate(() => {
+  const readbackId = z.number().parse(await worker.evaluate((keyLux) => {
     const request = Reflect.get(globalThis, 'requestEditorReadback');
-    return request({ paper: 'gloss', yawDegrees: -2, pitchDegrees: -37, keyLux: 10000 });
-  }));
+    return request({ paper: 'gloss', yawDegrees: -2, pitchDegrees: -37, keyLux });
+  }, MOST_LUX));
   await page.getByRole('slider', { name: 'Light intensity' }).press('End');
   const Readbacks = z.array(z.object({ id: z.number(), rgb: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]) }));
   const readbacks = async (): Promise<z.infer<typeof Readbacks>> => Readbacks.parse(
