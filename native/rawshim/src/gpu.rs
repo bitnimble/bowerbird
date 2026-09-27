@@ -270,6 +270,7 @@ pub struct Gpu {
     print_albedo_tabulate: wgpu::ComputePipeline,
     print_albedo_average: wgpu::ComputePipeline,
     print_light_calibrate: wgpu::ComputePipeline,
+    print_room_calibrate: wgpu::ComputePipeline,
     pack_layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
     peak_layout: wgpu::BindGroupLayout,
@@ -839,13 +840,27 @@ impl Signal {
 
 impl Gpu {
     pub(crate) fn print_light_calibration(&self, parameters: [f32; 4], temperature: f32, environment: &Texture) -> Buffer {
+        self.calibrate_print_light(parameters, temperature, environment, None)
+    }
+
+    /// Another lamp in the room `calibrated` was made for, which must be `environment`.
+    pub(crate) fn print_lamp_calibration(&self, calibrated: &Buffer, parameters: [f32; 4], temperature: f32, environment: &Texture) -> Buffer {
+        self.calibrate_print_light(parameters, temperature, environment, Some(calibrated))
+    }
+
+    fn calibrate_print_light(&self, parameters: [f32; 4], temperature: f32, environment: &Texture, room: Option<&Buffer>) -> Buffer {
         let mut recording = self.record();
         recording.holding_texture(environment);
         let buffer = self.own_buffer(&wgpu::BufferDescriptor {
             label: Some("print light calibration"), size: crate::print::CALIBRATION_BYTES,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         recording.holding(&buffer);
+        if let Some(room) = room {
+            recording.holding(room);
+            recording.encoder().copy_buffer_to_buffer(room, 0, &buffer, 0, crate::print::CALIBRATION_BYTES);
+        }
         let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("print lamp"), contents: &crate::print::light_uniform(parameters, temperature),
             usage: wgpu::BufferUsages::UNIFORM,
@@ -864,6 +879,10 @@ impl Gpu {
             pass.set_bind_group(1, &map, &[]);
             pass.set_pipeline(&self.print_light_calibrate);
             pass.dispatch_workgroups(1, 1, 1);
+            if room.is_none() {
+                pass.set_pipeline(&self.print_room_calibrate);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
         }
         recording.submit();
         buffer
@@ -1330,15 +1349,17 @@ impl Gpu {
         let print_flat_pipeline = drawing(true, "fs_print_flat");
         let print_surface = print_surface::Pipelines::new(&device);
         let print_environment = print_environment::Pipelines::new(&device);
-        let print_light_calibrate = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let print_light_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("print light calibration"),
-            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("print light calibration"),
-                bind_group_layouts: &[Some(&print_albedo_layout), Some(&print_environment.map_layout)],
-                ..Default::default()
-            })),
-            module: &print_light_module, entry_point: Some("calibrate"), compilation_options: Default::default(), cache: None,
+            bind_group_layouts: &[Some(&print_albedo_layout), Some(&print_environment.map_layout)],
+            ..Default::default()
         });
+        let calibrating = |entry: &str| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("print light calibration"), layout: Some(&print_light_layout),
+            module: &print_light_module, entry_point: Some(entry), compilation_options: Default::default(), cache: None,
+        });
+        let print_light_calibrate = calibrating("calibrate");
+        let print_room_calibrate = calibrating("room");
         let peak_measure = compute("measure", &peak_module, &peak_layout, "measure");
         // The editor's route to the same number, so that it has one here to be held against:
         // `collect` keeps the brightest of the sampled million and `remeasure` grades only
@@ -1415,6 +1436,7 @@ impl Gpu {
             print_albedo_tabulate,
             print_albedo_average,
             print_light_calibrate,
+            print_room_calibrate,
             pack_layout,
             pack,
             peak_layout,
@@ -4061,12 +4083,14 @@ impl Uploaded<'_> {
     fn print_light_for(&self, scene: &crate::print::Scene, environment: &Texture) -> Buffer {
         let parameters = scene.light_parameters();
         let temperature = scene.light_temperature_kelvin as f32;
-        if let Some((cached_parameters, cached_temperature, cached_environment, buffer)) = self.print_light.borrow().as_ref() {
-            if *cached_parameters == parameters && *cached_temperature == temperature && *cached_environment == scene.environment {
-                return buffer.clone();
-            }
-        }
-        let buffer = self.gpu.print_light_calibration(parameters, temperature, environment);
+        let cached = self.print_light.borrow().as_ref()
+            .filter(|(_, _, cached_environment, _)| *cached_environment == scene.environment)
+            .map(|(cached_parameters, cached_temperature, _, buffer)| (*cached_parameters, *cached_temperature, buffer.clone()));
+        let buffer = match cached {
+            Some((cached_parameters, cached_temperature, buffer)) if cached_parameters == parameters && cached_temperature == temperature => return buffer,
+            Some((_, _, buffer)) => self.gpu.print_lamp_calibration(&buffer, parameters, temperature, environment),
+            None => self.gpu.print_light_calibration(parameters, temperature, environment),
+        };
         *self.print_light.borrow_mut() = Some((parameters, temperature, scene.environment, buffer.clone()));
         buffer
     }

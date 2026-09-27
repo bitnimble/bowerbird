@@ -99,3 +99,18 @@ fn each_environments_lamp_is_the_light_it_takes_out_of_its_map() {
         }
     }
 }
+
+#[test]
+fn another_lamp_in_the_same_room_calibrates_as_if_from_scratch() {
+    let gpu = super::super::device().expect("print requires Vulkan");
+    let words = (crate::print::CALIBRATION_BYTES / 4) as usize;
+    let scene = Scene::default().in_environment(Environment::Hotel);
+    let map = gpu.print_environment(scene.environment).expect("the map");
+    let first = gpu.print_light_calibration(scene.light_parameters(), scene.light_temperature_kelvin as f32, &map);
+    let moved = Scene { yaw_degrees: 30.0, pitch_degrees: -20.0, light_angular_degrees: 6.0, light_temperature_kelvin: 2700.0, ..scene };
+    let (parameters, temperature) = (moved.light_parameters(), moved.light_temperature_kelvin as f32);
+    let fresh = floats(gpu, gpu.record(), &gpu.print_light_calibration(parameters, temperature, &map), words);
+    let copied = floats(gpu, gpu.record(), &gpu.print_lamp_calibration(&first, parameters, temperature, &map), words);
+    assert_ne!(fresh[..6], floats(gpu, gpu.record(), &first, words)[..6], "the lamp moved");
+    assert_eq!(copied, fresh);
+}

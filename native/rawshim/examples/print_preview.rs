@@ -119,11 +119,12 @@ fn main() -> Result<(), String> {
                 ..lit
             };
             let samples = uploaded.print_pq(&grade, &pyramid, &scene);
-            let brighter = uploaded.print_pq(&grade, &pyramid, &Scene { key_lux: Light::measured(key_lux.raw() * 2.0 + 1.0), ..scene });
+            let other_colour = if scene.light_temperature_kelvin < 5000.0 { 8000.0 } else { 3000.0 };
+            let retinted = uploaded.print_pq(&grade, &pyramid, &Scene { light_temperature_kelvin: other_colour, ..scene });
             let snapshot = Snapshot::pq(&samples, Size::<rawshim::px::Canvas>::measured(canvas.0, canvas.1));
             std::fs::write(output.join(format!("pitch{pitch}.preview.png")), rawshim::snapshot::side_by_side_png(None, &snapshot))
                 .map_err(|error| error.to_string())?;
-            let (tops, lumas, bands) = sheet_levels(&samples, &brighter, canvas);
+            let (tops, lumas, bands) = sheet_levels(&samples, &retinted, canvas);
             let at = |sorted: &[f64], share: f64| sorted[((sorted.len() - 1) as f64 * share) as usize];
             let bands: Vec<String> = bands.iter().map(|band| format!("{:>6.2}", at(band, 0.1))).collect();
             println!(
@@ -199,15 +200,15 @@ const BANDS: usize = 5;
 /// The drawn sheet's brightest channel and its luma, per pixel, in display nits, sorted, and the
 /// luma again split into horizontal bands of the canvas rows the sheet covers, top first.
 ///
-/// The sheet is what `brighter`, the same scene under a brighter lamp, moves: the lamp lights the
-/// print and never the room behind it.
-fn sheet_levels(samples: &[u16], brighter: &[u16], canvas: (usize, usize)) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
+/// The sheet is what `retinted`, the same scene under a lamp of another colour, moves: the lamp's
+/// colour reaches the print and never the room behind it, which the exposure is metered without.
+fn sheet_levels(samples: &[u16], retinted: &[u16], canvas: (usize, usize)) -> (Vec<f64>, Vec<f64>, Vec<Vec<f64>>) {
     let nits = |code: u16| rawshim::tone::pq_inv::<rawshim::light::DisplayNits>(Light::measured(f64::from(code) / 65535.0)).raw();
     let channels = samples.len() / (canvas.0 * canvas.1);
     let mut tops = Vec::new();
     let mut lumas = Vec::new();
     let mut rows = Vec::new();
-    for (at, (pixel, lit)) in samples.chunks_exact(channels).zip(brighter.chunks_exact(channels)).enumerate() {
+    for (at, (pixel, lit)) in samples.chunks_exact(channels).zip(retinted.chunks_exact(channels)).enumerate() {
         if pixel == lit { continue; }
         let (r, g, b) = (nits(pixel[0]), nits(pixel[1]), nits(pixel[2]));
         tops.push(r.max(g).max(b));

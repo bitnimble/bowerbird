@@ -18,7 +18,6 @@ static const uint ROOM_UP = 128;
 [numthreads(64, 1, 1)]
 void calibrate(uint lane : SV_GroupIndex)
 {
-    room_harmonics(lane);
     let radius = light.shape.x;
     var sum = float2(0.0);
     for (uint i = lane; i < 16384; i += 64) {
@@ -45,8 +44,15 @@ void calibrate(uint lane : SV_GroupIndex)
         calibration[3] = normalized.g;
         calibration[4] = normalized.b;
         calibration[5] = glass_diffuse_transmittance();
-        room_calibration();
     }
+}
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void room(uint lane : SV_GroupIndex)
+{
+    room_harmonics(lane);
+    if (lane == 0) { room_calibration(); }
 }
 
 /// The room's radiance projected onto the nine spherical harmonics through the second band, each
