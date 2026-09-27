@@ -37,6 +37,9 @@ export const PhotoDetailStrings = {
   stateOnBackup: () => 'on the backup',
   /** Why an edit or an export of this photo takes longer than it used to. */
   stateOnBackupHint: () => 'No local copy. Opening this photo fetches it from the backup.',
+  // Drawn as a network glyph on a tile, where this is the whole of what says so to a screen reader.
+  stateOnSyncedDevice: () => 'on a synced device',
+  stateOnSyncedDeviceHint: () => 'No local copy. Editing this photo fetches it from a synced device.',
   stateBinned: () => 'in Bin',
   // Drawn as the struck-through eye rather than the word, so it reads at the size a tile's badges
   // are - which leaves this as the whole of what says so to a screen reader.

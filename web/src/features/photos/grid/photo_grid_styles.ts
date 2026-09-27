@@ -572,7 +572,7 @@ export const tile = stylex.create({
     paddingBlock: '3px',
     paddingInline: '3px',
   },
-  onBackup: {
+  elsewhere: {
     color: color.glass,
     paddingBlock: '3px',
     paddingInline: '3px',

@@ -1,5 +1,5 @@
 import * as stylex from '@stylexjs/stylex';
-import { ChevronLeft, ChevronUp, EyeOff, Layers, Snowflake } from 'lucide-react';
+import { ChevronLeft, ChevronUp, EyeOff, Layers, Network, Snowflake } from 'lucide-react';
 import { observer } from 'mobx-react-lite';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -346,6 +346,7 @@ const TileBadges = observer(function TileBadges({ photo, fileState }: {
   fileState: boolean;
 }): JSX.Element {
   const replication = useReplicationStore();
+  const catalogueOnly = replication.hasPeers(photo.library_id) && !replication.syncsOriginals(photo.library_id);
   return (
     <div {...stylex.props(tile.badges)}>
       {/* A photograph with no local copy has not gone - the RAW comes back when something needs
@@ -355,8 +356,14 @@ const TileBadges = observer(function TileBadges({ photo, fileState }: {
         <span {...stylex.props(tile.badge, tile.fetching)}>{PhotoDetailStrings.stateFetching()}</span>
       : photo.is_offloaded ?
         <Tooltip label={PhotoDetailStrings.stateOnBackupHint()}>
-          <span {...stylex.props(tile.badge, tile.onBackup)} aria-label={PhotoDetailStrings.stateOnBackup()}>
+          <span {...stylex.props(tile.badge, tile.elsewhere)} aria-label={PhotoDetailStrings.stateOnBackup()}>
             <Snowflake size={BADGE_ICON} />
+          </span>
+        </Tooltip>
+      : photo.is_missing && catalogueOnly ?
+        <Tooltip label={PhotoDetailStrings.stateOnSyncedDeviceHint()}>
+          <span {...stylex.props(tile.badge, tile.elsewhere)} aria-label={PhotoDetailStrings.stateOnSyncedDevice()}>
+            <Network size={BADGE_ICON} />
           </span>
         </Tooltip>
       : photo.is_missing && (
