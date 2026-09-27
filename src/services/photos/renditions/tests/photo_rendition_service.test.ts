@@ -332,11 +332,11 @@ describe('PhotoRenditionService.buildRendition', () => {
     const { service } = build({
       photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: library.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
       libraries: { getById: jest.fn(() => library) },
-      fetchThrough: { alwaysFromPeer: () => false, ensureCurrent, relay },
+      fetchThrough: { takesFromPeer: () => false, ensureCurrent, relay },
     });
 
     await expect(service.buildForPeer('p1', 'full', false, ['laptop0000000000'])).rejects.toThrow(/no peer could send/);
-    expect(relay).toHaveBeenCalledWith('p1', 'full', false, ['laptop0000000000']);
+    expect(relay).toHaveBeenCalledWith('p1', 'full', false, ['laptop0000000000'], false);
     expect(ensureCurrent).not.toHaveBeenCalled();
   });
 
@@ -352,7 +352,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       const { service } = build({
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
         libraries: { getById: jest.fn(() => lib) },
-        fetchThrough: { alwaysFromPeer: () => true, ensureCurrent },
+        fetchThrough: { takesFromPeer: () => true, ensureCurrent },
       });
 
       const jpeg = await service.embeddedJpeg('p1');
@@ -364,11 +364,34 @@ describe('PhotoRenditionService.buildRendition', () => {
     }
   });
 
-  it('takes every copy from a peer on a library that keeps no originals, even with the original here', async () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'bb-from-peer-'));
-    const lib = { ...library, id: 'photos-from-peer', root_path: root };
+  it('renders here, asking no peer, where the photo is not taken from one', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'bb-fetched-here-'));
+    const lib = { ...library, id: 'photos-fetched-here', root_path: root };
     try {
       writeFileSync(path.join(root, 'a.arw'), 'raw');
+      const renderOne = jest.fn(async () => {});
+      const ensureCurrent = jest.fn(async () => {});
+      const { service } = build({
+        photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
+        libraries: { getById: jest.fn(() => lib) },
+        processing: { renderOne },
+        fetchThrough: { takesFromPeer: () => false, ensureCurrent },
+      });
+
+      await service.buildRendition('p1', 'full', true);
+
+      expect(renderOne).toHaveBeenLastCalledWith(path.join(root, 'a.arw'), 'p1', lib, 'full', lib.rendition_hdr, 'render', true);
+      expect(ensureCurrent).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(getDataPath(lib), { recursive: true, force: true });
+    }
+  });
+
+  // A reader's "Rebuild rendition" on a device that cannot render the photo itself.
+  it('has the peer render a copy again when a rebuild is forced', async () => {
+    const lib = { ...library, id: 'photos-forced-from-peer' };
+    try {
       const renderOne = jest.fn(async () => {});
       const ensureCurrent = jest.fn(async () => {
         const target = getRenditionPath(lib, 'p1', 'full', false);
@@ -379,15 +402,14 @@ describe('PhotoRenditionService.buildRendition', () => {
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
         libraries: { getById: jest.fn(() => lib) },
         processing: { renderOne },
-        fetchThrough: { alwaysFromPeer: () => true, ensureCurrent },
+        fetchThrough: { takesFromPeer: () => true, ensureCurrent },
       });
 
-      await service.buildRendition('p1', 'full');
+      await service.buildRendition('p1', 'full', true);
 
-      expect(ensureCurrent).toHaveBeenCalledWith('p1', 'full');
+      expect(ensureCurrent).toHaveBeenCalledWith('p1', 'full', true);
       expect(renderOne).not.toHaveBeenCalled();
     } finally {
-      rmSync(root, { recursive: true, force: true });
       rmSync(getDataPath(lib), { recursive: true, force: true });
     }
   });

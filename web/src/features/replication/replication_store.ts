@@ -10,6 +10,8 @@ export class ReplicationStore {
   @observable.shallow accessor syncOriginalsByLibrary = new Map<string, boolean>();
   @observable.shallow accessor autoTransferByLibrary = new Map<string, boolean>();
   @observable.shallow accessor transfers: Transfer[] = [];
+  /** Photos whose fetch has been asked for and not yet answered with a queue entry. */
+  @observable accessor requestingPulls: ReadonlySet<string> = new Set();
   /**
    * Why joining a library failed, for the dialog that asked.
    *
@@ -58,11 +60,12 @@ export class ReplicationStore {
   // Compared by value: the queue is re-read every second while it moves, and every tile in the grid
   // reads this.
   @computed({ equals: comparer.structural }) get fetching(): ReadonlySet<string> {
-    return new Set(
-      this.transfers
+    return new Set([
+      ...this.requestingPulls,
+      ...this.transfers
         .filter((t) => t.direction === 'pull' && (t.state === 'queued' || t.state === 'active'))
         .map((t) => t.photo_id),
-    );
+    ]);
   }
 
   /** The fetch a photo's open is waiting on: the liveliest pull naming it. */

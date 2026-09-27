@@ -48,7 +48,8 @@ export const PhotoDetailStrings = {
 
   edit: () => 'Edit',
   editMerge: () => 'Edit merge',
-  editNeedsOriginal: () => 'Fetch original to edit',
+  fetchOriginalAndEdit: () => 'Fetch original and edit',
+  fetchingOriginal: () => 'Fetching original…',
   rebuildingRendition: () => 'Rebuilding rendition…',
   rebuildRendition: () => 'Rebuild rendition',
   renditionBehindEdits: () => 'Rendition needs your latest edits',

@@ -19,6 +19,7 @@ import { contentHash } from '../../utils/hash';
 import { appendToStage } from './blob_store';
 import { RenditionCache } from './rendition_cache';
 import type { PeerTransport } from './peer';
+import type { RenditionWritten } from '../processing/workers/processing_types';
 
 // Renditions from a peer (docs/replication.md §7.9): a device holding the
 // catalogue but not the original serves tiles and renditions anyway, by fetching
@@ -60,6 +61,8 @@ export class RenditionFetchService {
     private readonly libraries: LibrariesRepository,
     private readonly locations: BlobLocations,
     private readonly transport: PeerTransport,
+    /** Told of a fetched copy that replaced one already served, so a client's URL for it moves. */
+    private readonly announce: (photoId: string, written: RenditionWritten) => void = () => {},
     private readonly cache: RenditionCache = new RenditionCache(db),
   ) {}
 
@@ -70,26 +73,28 @@ export class RenditionFetchService {
    * explicit §7.5 action, and walking a device into it over a missing tile is
    * exactly the accident the order exists to rule out. No peer able to answer is
    * a NOT_FOUND, unless a stale cached copy can stand in.
+   *
+   * `force` has the holder render its copy again and takes it whatever is cached here.
    */
-  async ensureCurrent(photoId: string, rendition: Rendition): Promise<void> {
+  async ensureCurrent(photoId: string, rendition: Rendition, force = false): Promise<void> {
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null) return;
     const library = this.libraries.getById(photo.library_id);
     if (library == null) return;
-    // On a library that keeps its originals, the local pipeline owns every photo whose original
-    // is here: it builds on request, rebuilds on edit and sweeps what it rebuilt. A fetched copy
-    // would fight it, and a locally built rendition is preferred anyway.
-    const original = originalPathOf(library, photo);
-    // ponytail: a composed row there is treated as the local pipeline's whatever this device
-    // holds. It is right only while every source is here - the check that says so wants the
-    // sources on the row, so it lands with them.
-    if (!this.alwaysFromPeer(library.id) && (original == null || existsSync(original))) return;
+    // The local pipeline owns every photo whose original is here: it builds on request, rebuilds
+    // on edit and sweeps what it rebuilt. A fetched copy would fight it, and a locally built
+    // rendition is preferred anyway.
+    if (this.originalHere(library, photo)) return;
+    // ponytail: a composed row on a library that keeps its originals is treated as the local
+    // pipeline's whatever this device holds. It is right only while every source is here - the
+    // check that says so wants the sources on the row, so it lands with them.
+    if (originalPathOf(library, photo) == null && syncsOriginals(this.db, library.id)) return;
 
-    const key = `${photoId}:${rendition}`;
+    const key = `${photoId}:${rendition}:${force}`;
     const running = this.fetching.get(key);
     if (running != null) return running;
     const hdr = storedAsHdr(rendition, library.rendition_hdr);
-    const run = this.fetchIfStale(photo, library, rendition, hdr).finally(() => this.fetching.delete(key));
+    const run = this.fetchIfStale(photo, library, rendition, hdr, force).finally(() => this.fetching.delete(key));
     this.fetching.set(key, run);
     return run;
   }
@@ -100,9 +105,10 @@ export class RenditionFetchService {
    * `via` is every device the request has already passed through, none of which is asked again,
    * so a chain ends at a device with the original or one with nobody left to ask. Never joined
    * onto another fetch: one of this device's own may be waiting on the device that is asking.
-   * Settles either way; the caller serves what is cached, if it is current.
+   * Settles either way, the caller serving what is cached if it is current, except where `force`
+   * could not be passed on, which throws.
    */
-  async relay(photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[]): Promise<void> {
+  async relay(photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[], force = false): Promise<void> {
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null) return;
     const library = this.libraries.getById(photo.library_id);
@@ -110,47 +116,55 @@ export class RenditionFetchService {
     const target = getRenditionPath(library, photo.id, rendition, hdr);
     const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(rendition, hdr));
     const editedFrom = stamps?.edited_from ?? null;
-    if (existsSync(target) && renditionCurrent(stamps?.built_from ?? null, editedFrom)) {
+    if (!force && existsSync(target) && renditionCurrent(stamps?.built_from ?? null, editedFrom)) {
       this.cache.touch(library.id, photo.id, rendition, hdr);
       return;
     }
     try {
-      await this.fetch(photo, library, rendition, hdr, target, editedFrom, via);
+      await this.fetch(photo, library, rendition, hdr, target, editedFrom, force, via);
     } catch (error) {
       log.warn('could not pass a peer’s request on', { photo: photo.id, rendition, via, err: String(error) });
+      if (force) throw error;
     }
   }
 
   /**
-   * Whether every picture of this library's photos comes from a peer (§7.10): a device set not
-   * to keep its originals renders nothing of its own, even of an original fetched here by hand.
+   * Whether this photo's pictures come from a peer however they are asked for (§7.10): on a
+   * device set not to keep its originals, until one is fetched here by hand.
    */
-  alwaysFromPeer(libraryId: string): boolean {
-    return !syncsOriginals(this.db, libraryId);
+  takesFromPeer(library: Library, photo: BasicPhoto): boolean {
+    return !syncsOriginals(this.db, library.id) && !this.originalHere(library, photo);
   }
 
-  private async fetchIfStale(photo: BasicPhoto, library: Library, rendition: Rendition, hdr: boolean): Promise<void> {
+  private originalHere(library: Library, photo: BasicPhoto): boolean {
+    const original = originalPathOf(library, photo);
+    return original != null && existsSync(original);
+  }
+
+  private async fetchIfStale(photo: BasicPhoto, library: Library, rendition: Rendition, hdr: boolean, force: boolean): Promise<void> {
     const target = getRenditionPath(library, photo.id, rendition, hdr);
     const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(rendition, hdr));
     const builtFrom = stamps?.built_from ?? null;
     const editedFrom = stamps?.edited_from ?? null;
     const cached = existsSync(target);
-    if (cached && renditionCurrent(builtFrom, editedFrom)) {
+    if (!force && cached && renditionCurrent(builtFrom, editedFrom)) {
       // Served from the cache, which is what "recently used" means for one.
       this.cache.touch(library.id, photo.id, rendition, hdr);
       return;
     }
 
     try {
-      await this.fetch(photo, library, rendition, hdr, target, editedFrom);
+      await this.fetch(photo, library, rendition, hdr, target, editedFrom, force);
     } catch (error) {
+      // Kept, the old copy would answer a rebuild the reader asked for as though it had happened.
+      if (force) throw error;
       // On a device that cannot rebuild, the stale picture beats a hole; the
       // next request asks again. A peer's copy from before an edit that has not
       // reached it yet - which is every edit made here while the two cannot sync
       // (§8.5) - is that stale picture when nothing is cached, and is recorded at
       // what it was built from, so it still reads as owed.
       if (!cached) {
-        await this.fetch(photo, library, rendition, hdr, target, null);
+        await this.fetch(photo, library, rendition, hdr, target, null, force);
         return;
       }
       log.warn('kept a stale fetched rendition; no peer holds a current one', {
@@ -168,14 +182,16 @@ export class RenditionFetchService {
     hdr: boolean,
     target: string,
     editedFrom: string | null,
+    force: boolean,
     via: readonly string[] = [],
   ): Promise<void> {
     const passedThrough = [...via, this.locations.selfId()];
+    const query = new URLSearchParams({ ...(hdr ? { hdr: '1' } : {}), ...(force ? { force: '1' } : {}) }).toString();
     for (const peer of this.candidates(library.id, photo.id, passedThrough)) {
       try {
         const res = await this.transport.request(
           peer,
-          `${route(photo.id, PathSegment.rendition(), rendition)}${hdr ? '?hdr=1' : ''}`,
+          `${route(photo.id, PathSegment.rendition(), rendition)}${query === '' ? '' : `?${query}`}`,
           { headers: { [VIA_HEADER]: passedThrough.join(',') } },
           RENDER_ON_PEER_MS,
         );
@@ -240,10 +256,14 @@ export class RenditionFetchService {
       await deleteGeneratedFile(getDataPath(library), staging);
       throw error;
     }
+    const replaced = existsSync(target);
     // Staged beside its target so this is one atomic replace: a reader mid-serve
     // keeps the old bytes, and a stale cached copy needs no separate delete.
     await rename(staging, target);
-    this.record(photo.id, rendition, hdr, builtFrom);
+    const builtAt = this.record(photo.id, rendition, hdr, builtFrom);
+    // A first copy is already on its way to whoever asked for it; announced, every tile scrolled
+    // past would be fetched twice.
+    if (replaced) this.announce(photo.id, { stage: rendition === 'grid' ? 'tile' : 'renditions', version: builtAt });
     // Counted against the cap only once it is a file: this device cannot rebuild
     // any of these, so nothing but a cap decides how many it keeps (§7.9).
     await this.cache.keep(library, photo.id, rendition, hdr, target);
@@ -258,7 +278,7 @@ export class RenditionFetchService {
   // Only the variant fetched is stamped, and the siblings on disk are left where
   // they are: each carries its own answer, so a stale one says so when it is asked
   // for rather than needing to have been deleted while this one landed.
-  private record(photoId: string, rendition: Rendition, hdr: boolean, builtFrom: string | null): void {
+  private record(photoId: string, rendition: Rendition, hdr: boolean, builtFrom: string | null): string {
     const builtAt = new Date().toISOString();
     const variant = renditionVariant(rendition, hdr);
     // No source: a fetched copy is the sender's render of a file this device may not even hold,
@@ -266,6 +286,7 @@ export class RenditionFetchService {
     if (rendition === 'grid') this.photoProcessing.markTileBuilt(photoId, builtAt, builtFrom, null);
     else if (rendition === 'full') this.photoProcessing.markRenditionsBuilt(photoId, builtAt, 'render', builtFrom, variant);
     else this.photoProcessing.markCopyBuilt(photoId, builtAt, builtFrom, variant);
+    return builtAt;
   }
 
   // Holders of the original first: they are the peers the catalogue records as

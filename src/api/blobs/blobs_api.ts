@@ -79,7 +79,7 @@ export class BlobsApi {
     app.get(route(PathSegment.param('photoId'), PathSegment.original()), (c) => this.serveOriginal(c));
     // A rendition for a peer that cannot build one, rendered here if need be (§7.9). `hdr=1` names
     // the dynamic range, because that is a per-peer choice (§3.2) and the caller
-    // wants the range its own library serves.
+    // wants the range its own library serves. `force=1` renders it again whatever is on disk.
     app.get(route(PathSegment.param('photoId'), PathSegment.rendition(), PathSegment.param('rendition')), (c) => this.serveRendition(c));
     app.get(route(PathSegment.param('photoId'), PathSegment.hash()), (c) => this.serveHash(c));
     app.get(route(PathSegment.param('photoId'), PathSegment.verify()), (c) => this.verify(c));
@@ -188,7 +188,7 @@ export class BlobsApi {
     const hdr = storedAsHdr(kind, c.req.query('hdr') === '1');
     if (this.renditions != null) {
       takeAsLongAsItTakes(c);
-      await this.renditions.buildForPeer(photo.id, kind, hdr, via);
+      await this.renditions.buildForPeer(photo.id, kind, hdr, via, c.req.query('force') === '1');
     }
     const abs = getRenditionPath(library, photo.id, kind, hdr);
     const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(kind, hdr));

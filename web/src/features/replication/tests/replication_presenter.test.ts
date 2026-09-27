@@ -2,7 +2,7 @@
 // client: the sibling refreshes a session triggers, and the two ways a
 // divergence ends up on screen (docs/replication.md §5.3, §7.3).
 import { beforeEach, expect, test } from 'bun:test';
-import { runInAction } from 'mobx';
+import { runInAction, when } from 'mobx';
 import { type Transfer } from '../../../../../src/schemas/blobs';
 import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import { type Library } from '../../../../../src/schemas/libraries';
@@ -304,6 +304,43 @@ test('a queued fetch is not queued again while it is still running', async () =>
 
   expect(asks).toBe(0);
   expect(store.pullFor('photo1')?.id).toBe('t1');
+});
+
+const pull = (state: Transfer['state']): Transfer =>
+  ({ id: 't1', library_id: 'lib', photo_id: 'photo1', peer_id: PEER.peer_id, direction: 'pull', state, bytes_done: 0, bytes_total: 100 }) as Transfer;
+
+test('fetching an original to edit waits until it has landed', async () => {
+  const { store, presenter } = harness();
+  blobsApi.fetchOriginal = () => Promise.resolve(pull('queued'));
+  const reads: ((transfers: Transfer[]) => void)[] = [];
+  blobsApi.listTransfers = () => new Promise((resolve) => reads.push(resolve));
+  let settled = false;
+
+  const landed = presenter.fetchOriginalAndWait('photo1').finally(() => (settled = true));
+  await when(() => store.fetching.has('photo1'));
+  expect(settled).toBe(false);
+  for (const read of reads) read([pull('done')]);
+
+  expect(await landed).toBe(true);
+});
+
+test('fetching an original to edit outlasts a read of the queue that fails', async () => {
+  const { store, presenter, toasts } = harness();
+  blobsApi.fetchOriginal = () => Promise.resolve(pull('queued'));
+  let reads = 0;
+  blobsApi.listTransfers = () => (reads++ === 0 ? Promise.reject(new Error('connection reset')) : Promise.resolve([pull('done')]));
+
+  expect(await presenter.fetchOriginalAndWait('photo1')).toBe(true);
+  expect(store.pullFor('photo1')?.state).toBe('done');
+  expect(toasts).toHaveLength(1);
+});
+
+test('fetching an original to edit gives up when the fetch cannot be asked for', async () => {
+  const { presenter, toasts } = harness();
+  blobsApi.fetchOriginal = () => Promise.reject(new Error('no peer is recorded as holding photo1'));
+
+  expect(await presenter.fetchOriginalAndWait('photo1')).toBe(false);
+  expect(toasts).toHaveLength(1);
 });
 
 // §9.1: browsing a peer records nothing, so a reader who changes their mind at

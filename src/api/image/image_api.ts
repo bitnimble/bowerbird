@@ -223,8 +223,8 @@ export class ImageApi {
       // there being no file to lift one out of. Every other rendition is ours either way.
       const { photo, library } = this.photoRenditions.locate(photoId);
       const lifted = rendition === 'embedded' && !isComposite(photo.recipe);
-      if (lifted && this.fetchThrough?.alwaysFromPeer(library.id) !== true) return this.serveEmbedded(photo, library, c);
-      // A photo with no local original, or any photo of a library that keeps none, is not built
+      if (lifted && this.fetchThrough?.takesFromPeer(library, photo) !== true) return this.serveEmbedded(photo, library, c);
+      // A photo with no local original, or a composite on a library that keeps none, is not built
       // here; a peer's copy is fetched and cached first, so the read below is an ordinary local
       // one (docs/replication.md §7.9). The peer may render it first, which can take minutes.
       takeAsLongAsItTakes(c);

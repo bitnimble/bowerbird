@@ -207,6 +207,7 @@ const renditionFetch = new RenditionFetchService(
   librariesRepo,
   blobLocations,
   peers,
+  (photoId, written) => eventsApi.announce('rendition', { id: photoId, stage: written.stage, version: written.version }),
 );
 const photoRenditionService = new PhotoRenditionService(
   photoPathsRepo,

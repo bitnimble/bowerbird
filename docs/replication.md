@@ -879,6 +879,11 @@ rebuild it beats a hole, and the next request asks again. With nothing cached, a
 from before that edit is taken for the same reason, recorded at what it was built from so it still
 reads as owed.
 
+A reader's rebuild on a device that cannot build asks with `force=1`, which the holder renders
+again past its own copy, and which a device passing the request on passes on past its cached one.
+A fetched copy that replaces one already on disk is announced to clients as a build is, so their
+URLs for it move; a first fetch is not, being on its way to whoever asked.
+
 **What a render was built from is a stamp, not a time.** A build happens on whichever peer holds
 the original and an edit on whichever peer made it - a catalogue-only peer never builds anything
 at all - so "is this stale" asked of two wall clocks is asked of two machines' clocks. A peer a
@@ -913,8 +918,8 @@ Per replica, chosen when it is created and changeable afterwards. Off, the devic
 catalogue and lives on §7.9's renditions: everything is browsable, sortable, cullable and
 rateable, and none of it costs a 50MB transfer. This is what makes a phone a peer, and it is the
 same setting on a laptop that wants the library without the terabyte. Every picture such a device
-shows comes from a peer, the camera JPEG and a panorama's included, even of an original fetched
-here by hand.
+shows comes from a peer, the camera JPEG and a panorama's included, until an original is fetched
+here by hand: from then on that photo is built here, as on a device that keeps its originals.
 
 **Local, and deliberately not a replicated unit.** It is a statement about one device's disk, so
 a laptop that wants the catalogue only must not have that answer overwritten by the desktop's.
