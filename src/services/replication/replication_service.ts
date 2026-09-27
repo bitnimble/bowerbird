@@ -36,7 +36,6 @@ import {
   recordPeerName,
   recordPeerVersion,
   registerPeer,
-  renamePeer,
   setAutoTransfersOriginals,
   setDeviceName,
   setSyncsOriginals,
@@ -284,11 +283,6 @@ export class ReplicationService {
 
   setAutoTransfersOriginals(libraryId: string, value: boolean): void {
     setAutoTransfersOriginals(this.db, libraryId, value);
-    this.changed(libraryId);
-  }
-
-  renamePeer(libraryId: string, peerId: string, name: string): void {
-    renamePeer(this.db, libraryId, peerId, name);
     this.changed(libraryId);
   }
 

@@ -23,14 +23,13 @@ function serviceThatRecords(): { service: ReplicationService; announced: string[
   return { service, announced };
 }
 
-it('announces a local rename, a forget, and a change of what this device keeps', () => {
+it('announces a forget and a change of what this device keeps', () => {
   const { service, announced } = serviceThatRecords();
 
   service.setSyncsOriginals(LIB, false);
-  service.renamePeer(LIB, PEER, 'Laptop');
   service.forgetPeer(LIB, PEER);
 
-  expect(announced).toEqual([LIB, LIB, LIB]);
+  expect(announced).toEqual([LIB, LIB]);
 });
 
 it('announces a pairing made from the other end', () => {

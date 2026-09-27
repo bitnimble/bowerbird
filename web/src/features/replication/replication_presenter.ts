@@ -152,17 +152,6 @@ export class ReplicationPresenter {
     this.store.deviceName = name;
   }
 
-  async rename(libraryId: string, peerId: string, name: string): Promise<void> {
-    if (name.trim() === '') return;
-    try {
-      await replicationApi.renamePeer(libraryId, peerId, name.trim());
-    } catch (err) {
-      this.toasts.showError(ReplicationPresenterStrings.couldNotRenameDevice(), message(err));
-      return;
-    }
-    await this.loadPeers(libraryId);
-  }
-
   /**
    * §8.4: forgetting a peer retracts its claims on the originals, and it is the
    * last chance to - a peer that returns after this is refused, so nothing can

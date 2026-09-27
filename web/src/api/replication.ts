@@ -9,7 +9,6 @@ import {
   DeviceNameSchema,
   type PeersResponse,
   PeersResponseSchema,
-  RenamePeerRequestSchema,
   type ReplicaSummary,
   ReplicaSummarySchema,
   ReplicateResultSchema,
@@ -86,13 +85,6 @@ export const replicationApi = {
       ReplicateResultSchema,
       'POST',
       route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), libraryId, PathSegment.replicate()),
-    ),
-  renamePeer: (libraryId: string, peerId: string, name: string): Promise<void> =>
-    request(
-      NothingSchema,
-      'PATCH',
-      route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), libraryId, PathSegment.peers(), peerId),
-      RenamePeerRequestSchema.parse({ name }),
     ),
   deviceName: (): Promise<DeviceName> =>
     request(DeviceNameSchema, 'GET', route(PathSegment.api(), PathSegment.replication(), PathSegment.device())),

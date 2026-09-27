@@ -25,7 +25,6 @@ import {
   autoTransfersOriginals,
   pairedPeers,
   peerAddress,
-  renamePeer,
   setAutoTransfersOriginals,
   setDeviceName,
   setSyncsOriginals,
@@ -540,16 +539,6 @@ describe("this device's name", () => {
     expect(pairedPeers(clone.db, LIB).map((peer) => peer.name)).toEqual(['Studio iMac']);
     expect(pairedPeers(origin.db, LIB).map((peer) => peer.name)).toEqual(['Travel laptop']);
   });
-
-  it('leaves a device named on this side as it was named here', async () => {
-    const { origin, clone } = await pairedClone();
-    renamePeer(clone.db, LIB, peerIdOf(origin.db), 'Home server');
-    setDeviceName(origin.db, 'Studio iMac');
-
-    await pullFromRemote(clone.replica, origin.url);
-
-    expect(pairedPeers(clone.db, LIB).map((peer) => peer.name)).toEqual(['Home server']);
-  });
 });
 
 // §9.1: browse asks what a peer has and registers nothing; adding is the whole
@@ -843,7 +832,7 @@ describe('browse, then add (§9.1)', () => {
 });
 
 describe('pairing (§6.5)', () => {
-  it('lists, renames and forgets peers; a forgotten peer that returns is refused', async () => {
+  it('lists and forgets peers; a forgotten peer that returns is refused', async () => {
     const { origin, clone } = await pairedClone(1);
     await pullFromRemote(clone.replica, origin.url);
     const clonePeer = peerIdOf(clone.db);
@@ -860,22 +849,6 @@ describe('pairing (§6.5)', () => {
     expect(listed.peers[0]!.peer_id).toBe(clonePeer);
     expect(listed.peers[0]!.last_replicated_at).not.toBeNull();
     expect(listed.sync_originals).toBe(true);
-
-    const renamed = await fetch(
-      `${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), LIB, PathSegment.peers(), clonePeer)}`,
-      {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'Macbook' }),
-      },
-    );
-    expect(renamed.status).toBe(204);
-    const renamedList = (await (
-      await fetch(
-        `${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), LIB, PathSegment.peers())}`,
-      )
-    ).json()) as { peers: { name: string }[] };
-    expect(renamedList.peers[0]!.name).toBe('Macbook');
 
     const forgotten = await fetch(
       `${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), LIB, PathSegment.peers(), clonePeer)}`,

@@ -81,10 +81,10 @@ server's rolling DB backups (§8.2, DESIGN.md §4.9) are the recovery story for 
 ### 2.1 Peer identity
 
 Each install mints a `peer_id` once (16-char id, §2.3) with a user-visible device name
-("Macbook", "Home server"). App-level, not per-library: one machine is one peer however many
-libraries it replicates. Both sides of every handshake state their name, so a rename reaches
-paired devices at the next sync, except on a device where that peer was renamed by hand, whose
-name for it stands. Re-pairing after a reinstall mints a **fresh** peer_id; the old one is
+("Macbook", "Home server"), the host name until the device is given another. App-level, not
+per-library: one machine is one peer however many libraries it replicates. A device names only
+itself: both sides of every handshake state their name, and that is what its peers show, so a
+rename reaches them at the next sync. Re-pairing after a reinstall mints a **fresh** peer_id; the old one is
 forgotten (§6.5), never resumed.
 
 ### 2.2 Hybrid logical clock
@@ -1125,7 +1125,8 @@ and this sentence is the one that belongs in the user docs in bold.
   progress, size, cancel (§7.5).
 - **Availability filter** ("original on this device") in the existing filter menu. No
   availability *sort*: sorts are collection-owned and replicated; availability is per-peer.
-- **Peer list** (§6.5): rename, forget, holdings, last seen.
+- **Peer list** (§6.5): forget, holdings, last seen, each under the name the peer gave itself
+  (§2.1).
 - **Adding one** (§9.1): "Connect to another Bowerbird" takes an address, lists what that device
   offers, and takes a local folder.
 - A library with no peers renders none of this: no strip, no badges, no conflict page, zero new

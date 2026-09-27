@@ -17,7 +17,6 @@ import {
   PushPageRequestSchema,
   PushPageResponseSchema,
   RemoteLibrariesSchema,
-  RenamePeerRequestSchema,
   ReplicaSummarySchema,
   ReplicateResultSchema,
   SoleHoldingsResponseSchema,
@@ -132,12 +131,6 @@ export class ReplicationApi {
       // The queue would otherwise go on delivering exactly what this turned off.
       const stopped = sync_originals ? 0 : await this.cancelIncoming(libraryId);
       return c.json(respond(SyncOriginalsResponseSchema, { cancelled: stopped }));
-    });
-
-    app.patch(route(PathSegment.libraries(), PathSegment.param('libraryId'), PathSegment.peers(), PathSegment.param('peerId')), async (c) => {
-      const { name } = RenamePeerRequestSchema.parse(await c.req.json());
-      this.replication.renamePeer(c.req.param('libraryId'), c.req.param('peerId'), name);
-      return c.body(null, 204);
     });
 
     app.get(route(PathSegment.device()), (c) =>

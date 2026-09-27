@@ -7,7 +7,6 @@ export const ReplicationPresenterStrings = {
   couldNotChangeWhatIsKept: () => "We couldn't change what this device keeps. Try again.",
   stoppedIncoming: (cancelled: number) =>
     `Stopped ${plural(cancelled, 'original', 'originals')} that were still on their way here.`,
-  couldNotRenameDevice: () => "We couldn't rename that device. Try again.",
   couldNotReadDeviceName: () => "We couldn't load this device's name. Try again.",
   couldNotRenameThisDevice: () => "We couldn't rename this device. Try again.",
   couldNotWorkOutSoleHoldings: (name: string) => `We couldn't check which originals ${name} holds. Try again.`,

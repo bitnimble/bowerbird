@@ -109,8 +109,6 @@ export const replicationPeers = sqliteTable(
       .references(() => libraries.id, { onDelete: 'cascade' }),
     peerId: text('peer_id').notNull(),
     name: text('name').notNull(),
-    // A name given on this device outlasts the one the peer calls itself at every handshake.
-    namedHere: integer('named_here').notNull().default(0),
     pairedAt: text('paired_at').notNull(),
     lastReplicatedAt: text('last_replicated_at'),
     // Whether the other side runs Bowerbird (§14.1). An active peer merges a catalogue and answers

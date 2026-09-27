@@ -311,9 +311,7 @@ export type PushDoneRequest = z.infer<typeof PushDoneRequestSchema>;
 export const PushPageResponseSchema = z.object({ deferred: z.array(StampSchema) });
 export type PushPageResponse = z.infer<typeof PushPageResponseSchema>;
 
-export const RenamePeerRequestSchema = z.object({ name: DeviceNameTextSchema });
-
-export const DeviceNameSchema = RenamePeerRequestSchema;
+export const DeviceNameSchema = z.object({ name: DeviceNameTextSchema });
 export type DeviceName = z.infer<typeof DeviceNameSchema>;
 
 export const SyncOriginalsRequestSchema = z
