@@ -227,7 +227,8 @@ export type RemoteLibraries = z.infer<typeof RemoteLibrariesSchema>;
 export const BrowsedRemoteSchema = RemoteLibrariesSchema.extend({ clock_skew_ms: z.number() });
 export type BrowsedRemote = z.infer<typeof BrowsedRemoteSchema>;
 
-const DeviceNameTextSchema = z.string().trim().min(1).max(120);
+export const DEVICE_NAME_MAX_LENGTH = 120;
+const DeviceNameTextSchema = z.string().trim().min(1).max(DEVICE_NAME_MAX_LENGTH);
 
 export const PairRequestSchema = z.object({
   library_id: IdSchema,

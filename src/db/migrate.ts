@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { newId } from '../schemas/id';
+import { DEVICE_NAME_MAX_LENGTH } from '../schemas/replication';
 import { DEFAULT_SETTINGS } from '../schemas/settings';
 import type { Database } from './driver';
 import { triggers } from './triggers';
@@ -120,7 +121,8 @@ export function runMigrations(db: Database): void {
 function seedIdentity(db: Database): void {
   db.query('INSERT OR IGNORE INTO replication_identity (singleton, peer_id, name) VALUES (1, ?, ?)').run(
     newId(),
-    hostname() || 'This device',
+    // Every handshake carries this name and refuses a longer one, and a macOS host name can be 255.
+    hostname().slice(0, DEVICE_NAME_MAX_LENGTH) || 'This device',
   );
 }
 
