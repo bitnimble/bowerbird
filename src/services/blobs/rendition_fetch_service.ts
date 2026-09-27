@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { rename } from 'node:fs/promises';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
+import { newId } from '../../schemas/id';
 import type { Library } from '../../schemas/libraries';
 import { PathSegment, route } from '../../schemas/route';
 import { stampWithinSkew } from '../replication/stamps';
@@ -27,6 +28,9 @@ const log = new Logger('blobs');
 
 // The holder renders before it answers, and a `max` on a software Vulkan driver takes minutes.
 const RENDER_ON_PEER_MS = 10 * 60_000;
+
+/** The devices a request for a rendition has passed through, comma-separated peer ids. */
+export const VIA_HEADER = 'x-bowerbird-via';
 
 /**
  * The pipeline's own staleness rule (`queueEditedSince`), as one predicate both
@@ -84,9 +88,37 @@ export class RenditionFetchService {
     const key = `${photoId}:${rendition}`;
     const running = this.fetching.get(key);
     if (running != null) return running;
-    const run = this.fetchIfStale(photo, library, rendition).finally(() => this.fetching.delete(key));
+    const hdr = storedAsHdr(rendition, library.rendition_hdr);
+    const run = this.fetchIfStale(photo, library, rendition, hdr).finally(() => this.fetching.delete(key));
     this.fetching.set(key, run);
     return run;
+  }
+
+  /**
+   * Passes on a peer's request for a copy this device cannot build, caching what comes back (§7.9).
+   *
+   * `via` is every device the request has already passed through, none of which is asked again,
+   * so a chain ends at a device with the original or one with nobody left to ask. Never joined
+   * onto another fetch: one of this device's own may be waiting on the device that is asking.
+   * Settles either way; the caller serves what is cached, if it is current.
+   */
+  async relay(photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[]): Promise<void> {
+    const photo = this.photoPaths.getBasicById(photoId);
+    if (photo == null) return;
+    const library = this.libraries.getById(photo.library_id);
+    if (library == null) return;
+    const target = getRenditionPath(library, photo.id, rendition, hdr);
+    const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(rendition, hdr));
+    const editedFrom = stamps?.edited_from ?? null;
+    if (existsSync(target) && renditionCurrent(stamps?.built_from ?? null, editedFrom)) {
+      this.cache.touch(library.id, photo.id, rendition, hdr);
+      return;
+    }
+    try {
+      await this.fetch(photo, library, rendition, hdr, target, editedFrom, via);
+    } catch (error) {
+      log.warn('could not pass a peer’s request on', { photo: photo.id, rendition, via, err: String(error) });
+    }
   }
 
   /**
@@ -97,10 +129,7 @@ export class RenditionFetchService {
     return !syncsOriginals(this.db, libraryId);
   }
 
-  private async fetchIfStale(photo: BasicPhoto, library: Library, rendition: Rendition): Promise<void> {
-    // The dynamic range this device's library shows (§3.2, per-peer), which the holder renders
-    // at if it has not already.
-    const hdr = storedAsHdr(rendition, library.rendition_hdr);
+  private async fetchIfStale(photo: BasicPhoto, library: Library, rendition: Rendition, hdr: boolean): Promise<void> {
     const target = getRenditionPath(library, photo.id, rendition, hdr);
     const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(rendition, hdr));
     const builtFrom = stamps?.built_from ?? null;
@@ -139,13 +168,15 @@ export class RenditionFetchService {
     hdr: boolean,
     target: string,
     editedFrom: string | null,
+    via: readonly string[] = [],
   ): Promise<void> {
-    for (const peer of this.candidates(library.id, photo.id)) {
+    const passedThrough = [...via, this.locations.selfId()];
+    for (const peer of this.candidates(library.id, photo.id, passedThrough)) {
       try {
         const res = await this.transport.request(
           peer,
           `${route(photo.id, PathSegment.rendition(), rendition)}${hdr ? '?hdr=1' : ''}`,
-          undefined,
+          { headers: { [VIA_HEADER]: passedThrough.join(',') } },
           RENDER_ON_PEER_MS,
         );
         if (!res.ok || res.body == null) continue;
@@ -194,15 +225,20 @@ export class RenditionFetchService {
     builtFrom: string | null,
     expected: string,
   ): Promise<void> {
-    const staging = `${target}.fetching`;
+    // One per fetch: a request passed on for a peer joins no other fetch, so two can land on one
+    // target at once, and a shared staging file would interleave their bytes.
+    const staging = `${target}.${newId()}.fetching`;
     // Never resumed: a rendition is small and the sender has to be asked again
     // anyway, so an interrupted attempt is started over rather than appended to.
-    await deleteGeneratedFile(getDataPath(library), staging);
-    await appendToStage(staging, 0, res.body as ReadableStream<Uint8Array>);
-    const computed = await contentHash(staging);
-    if (computed !== expected) {
+    try {
+      await appendToStage(staging, 0, res.body as ReadableStream<Uint8Array>);
+      const computed = await contentHash(staging);
+      if (computed !== expected) {
+        throw new AppError('VALIDATION_ERROR', `discarded fetched ${rendition} of ${photo.id}: bytes hash ${computed}, expected ${expected}`);
+      }
+    } catch (error) {
       await deleteGeneratedFile(getDataPath(library), staging);
-      throw new AppError('VALIDATION_ERROR', `discarded fetched ${rendition} of ${photo.id}: bytes hash ${computed}, expected ${expected}`);
+      throw error;
     }
     // Staged beside its target so this is one atomic replace: a reader mid-serve
     // keeps the old bytes, and a stale cached copy needs no separate delete.
@@ -234,13 +270,12 @@ export class RenditionFetchService {
 
   // Holders of the original first: they are the peers the catalogue records as
   // able to build, so a build is likeliest to exist there. Any other paired peer
-  // may still answer from a copy it fetched through itself.
-  private candidates(libraryId: string, photoId: string): string[] {
-    const self = this.locations.selfId();
+  // may still answer, from a copy it has or by passing the request on.
+  private candidates(libraryId: string, photoId: string, passedThrough: readonly string[]): string[] {
     const holders = new Set(this.locations.holders(libraryId, photoId));
     return pairedPeers(this.db, libraryId)
       .map((peer) => peer.peer_id)
-      .filter((peer) => peer !== self)
+      .filter((peer) => !passedThrough.includes(peer) && this.transport.canReach(peer))
       .sort((a, b) => Number(holders.has(b)) - Number(holders.has(a)));
   }
 }

@@ -211,7 +211,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       await both;
       expect(logged.mock.calls).toContainEqual([
         'rendition already building',
-        { photo: 'p1', rendition: 'full', forced: false, hdr: null, forPeer: false },
+        { photo: 'p1', rendition: 'full', forced: false, hdr: null, via: null },
       ]);
       expect(logged.mock.calls).toContainEqual(['rendition cache', { photo: 'p1', rendition: 'full', hdr: false, cache: 'miss' }]);
 
@@ -316,7 +316,7 @@ describe('PhotoRenditionService.buildRendition', () => {
         processing: { renderOne },
       });
 
-      await service.buildForPeer('p1', 'max', true);
+      await service.buildForPeer('p1', 'max', true, ['laptop0000000000']);
 
       expect(renderOne).toHaveBeenLastCalledWith(path.join(root, 'a.arw'), 'p1', lib, 'max', true, 'render', false);
     } finally {
@@ -324,16 +324,19 @@ describe('PhotoRenditionService.buildRendition', () => {
     }
   });
 
-  // Two devices that each lack the original would otherwise wait on one another.
-  it('never asks another device for a copy a peer asked this one for', async () => {
+  // Asked as this device's reader would ask, the request would forget where it came from, and two
+  // devices that each lack the original could ask each other for ever.
+  it('passes a peer’s request on with the devices it came through, when it has no original', async () => {
     const ensureCurrent = jest.fn(async () => {});
+    const relay = jest.fn(async () => {});
     const { service } = build({
       photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: library.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
       libraries: { getById: jest.fn(() => library) },
-      fetchThrough: { alwaysFromPeer: () => true, ensureCurrent },
+      fetchThrough: { alwaysFromPeer: () => false, ensureCurrent, relay },
     });
 
-    await expect(service.buildForPeer('p1', 'full', false)).rejects.toThrow(/nothing on this device/);
+    await expect(service.buildForPeer('p1', 'full', false, ['laptop0000000000'])).rejects.toThrow(/no peer could send/);
+    expect(relay).toHaveBeenCalledWith('p1', 'full', false, ['laptop0000000000']);
     expect(ensureCurrent).not.toHaveBeenCalled();
   });
 

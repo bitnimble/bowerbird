@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../db/driver';
 import type { Hono } from 'hono';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { BlobsApi } from '../../../api/blobs/blobs_api';
@@ -13,7 +13,8 @@ import { renditionVariant, type Rendition } from '../../processing/renditions/re
 import { LibrariesRepository } from '../../libraries/libraries_repository';
 import { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_repository';
-import { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
+import { PhotoProcessingRepository, type RenditionStamps } from '../../photos/renditions/photo_processing_repository';
+import type { PeerJpeg } from '../../photos/renditions/photo_rendition_service';
 import { PhotoScanRepository } from '../../photos/scan/photo_scan_repository';
 import { StackMembership } from '../../stacks/stack_membership';
 import { RenditionsRepository } from '../../processing/renditions/renditions_repository';
@@ -99,25 +100,41 @@ function makePeer(name: string): Peer {
     new BackupLocations(db),
     transport,
   );
+  const fetch = new RenditionFetchService(db, photoPaths, photoProcessing, libraries, locations, transport);
   const camera = new Map<string, string>();
-  // What the pipeline does for a peer, minus the pixels: renders from an original on this disk,
-  // at the range asked, stamped with the edits it rendered.
+  const originalHere = (photoId: string): boolean => {
+    const photo = photoPaths.getBasicById(photoId);
+    const lib = photo == null ? null : libraries.getById(photo.library_id);
+    const original = photo == null || lib == null ? null : originalPathOf(lib, photo);
+    return original != null && existsSync(original);
+  };
+  // `PhotoRenditionService`'s contract with a peer, minus the pixels: rendered from an original on
+  // this disk at the range asked and stamped with the edits it rendered - never a tile, which is
+  // the queue's - and otherwise passed on.
   const renderer = {
-    buildForPeer: (photoId: string, rendition: Rendition, hdr: boolean): Promise<void> => {
+    buildForPeer: async (photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[]): Promise<void> => {
+      if (!originalHere(photoId)) return fetch.relay(photoId, rendition, hdr, via);
+      if (rendition === 'grid') return;
       const photo = photoPaths.getBasicById(photoId);
       const lib = photo == null ? null : libraries.getById(photo.library_id);
-      const original = photo == null || lib == null ? null : originalPathOf(lib, photo);
-      if (lib == null || original == null || !existsSync(original)) return Promise.resolve();
+      if (lib == null) return;
       const target = getRenditionPath(lib, photoId, rendition, hdr);
       mkdirSync(path.dirname(target), { recursive: true });
       writeFileSync(target, `${renditionVariant(rendition, hdr)} of ${photoId}`);
       const editedFrom = photoProcessing.renditionStamps(photoId, rendition)?.edited_from ?? null;
       photoProcessing.markCopyBuilt(photoId, BUILT_AT, editedFrom, renditionVariant(rendition, hdr));
-      return Promise.resolve();
     },
-    embeddedJpegHere: (photoId: string): Promise<Uint8Array | null> => {
-      const jpeg = camera.get(photoId);
-      return Promise.resolve(jpeg == null ? null : new TextEncoder().encode(jpeg));
+    embeddedJpegForPeer: async (photoId: string, via: readonly string[]): Promise<PeerJpeg | null> => {
+      const lifted = camera.get(photoId);
+      const stamps = (): RenditionStamps | null => photoProcessing.renditionStamps(photoId, 'embedded');
+      if (lifted != null) return { bytes: new TextEncoder().encode(lifted), builtFrom: stamps()?.edited_from ?? null };
+      await fetch.relay(photoId, 'embedded', false, via);
+      const photo = photoPaths.getBasicById(photoId);
+      const lib = photo == null ? null : libraries.getById(photo.library_id);
+      const now = stamps();
+      if (lib == null || !renditionCurrent(now?.built_from ?? null, now?.edited_from ?? null)) return null;
+      const cached = getRenditionPath(lib, photoId, 'embedded', false);
+      return existsSync(cached) ? { bytes: readFileSync(cached), builtFrom: now?.built_from ?? null } : null;
     },
   };
   const api = new BlobsApi(
@@ -146,7 +163,7 @@ function makePeer(name: string): Peer {
     locations,
     camera,
     routes: api.routes,
-    fetch: new RenditionFetchService(db, photoPaths, photoProcessing, libraries, locations, transport),
+    fetch,
   };
 }
 
@@ -357,6 +374,67 @@ describe('fetching a rendition through a peer', () => {
     await b.fetch.ensureCurrent('photo1', 'embedded');
 
     expect(readFileSync(getRenditionPath(library(b), 'photo1', 'embedded', false), 'utf8')).toBe('CAMERA-JPEG');
+  });
+
+  describe('through a device that holds no original either', () => {
+    // A holds the original, B syncs with A, and C syncs with B alone and has never heard of A.
+    function chain(): { a: Peer; b: Peer; c: Peer } {
+      const { a, b } = holderAndReplica();
+      const c = makePeer('c');
+      addPhoto(c, 'photo1', 'Day1/one.arw');
+      pair(b, c, 'photo1');
+      return { a, b, c };
+    }
+
+    it('passes the request on to the holder, and keeps the copy on the way back', async () => {
+      const { b, c } = chain();
+      c.db.query('UPDATE libraries SET rendition_hdr = 1 WHERE id = ?').run(c.lib);
+
+      await c.fetch.ensureCurrent('photo1', 'max');
+
+      expect(readFileSync(getRenditionPath(library(c), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1');
+      expect(readFileSync(getRenditionPath(library(b), 'photo1', 'max', true), 'utf8')).toBe('max-hdr of photo1');
+    });
+
+    it("passes on the camera's JPEG", async () => {
+      const { a, c } = chain();
+      a.camera.set('photo1', 'CAMERA-JPEG');
+
+      await c.fetch.ensureCurrent('photo1', 'embedded');
+
+      expect(readFileSync(getRenditionPath(library(c), 'photo1', 'embedded', false), 'utf8')).toBe('CAMERA-JPEG');
+    });
+
+    it('passes on a tile the holder built', async () => {
+      const { a, c } = chain();
+      buildTile(a, 'photo1', 'TILE-BYTES', BUILT_FROM);
+
+      await c.fetch.ensureCurrent('photo1', 'grid');
+
+      expect(readFileSync(tilePath(c, 'photo1'), 'utf8')).toBe('TILE-BYTES');
+    });
+
+    it('lands two requests passed on at once for the same copy, whole', async () => {
+      const { a, b } = holderAndReplica();
+      buildTile(a, 'photo1', 'TILE-BYTES', BUILT_FROM);
+
+      await Promise.all([b.fetch.relay('photo1', 'grid', false, []), b.fetch.relay('photo1', 'grid', false, [])]);
+
+      expect(readFileSync(tilePath(b, 'photo1'), 'utf8')).toBe('TILE-BYTES');
+      expect(readdirSync(path.dirname(tilePath(b, 'photo1')))).toEqual(['photo1.avif']);
+    });
+
+    // Each can reach the other and neither has the original: every request that goes round comes
+    // back to a device already on its path, which refuses to ask again rather than waiting on itself.
+    it('gives up rather than going round two devices that each ask the other', async () => {
+      const b = makePeer('b');
+      const c = makePeer('c');
+      addPhoto(b, 'photo1', 'Day1/one.arw');
+      addPhoto(c, 'photo1', 'Day1/one.arw');
+      pair(b, c, 'photo1');
+
+      await expect(c.fetch.ensureCurrent('photo1', 'full')).rejects.toThrow(/no peer holds a current/);
+    });
   });
 
   it('takes every picture from a peer on a library that keeps no originals, even with the original here', async () => {

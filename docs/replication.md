@@ -863,8 +863,12 @@ the staleness rule, the URL versioning, the startup sweep - then reads a fetched
 one. The grid tile is the exception: the holder builds it at import and rebuilds it from its
 queue, and serves only what that has made.
 
-A holder renders from what it holds and never asks a third device on a peer's behalf: two devices
-that each lack the original, asking each other, would each wait on the other's answer.
+A device asked for a copy it cannot build and has not got passes the request on, and keeps what
+comes back, so a replica of a replica shows pictures whose original is two devices away. Each
+request names every device it has passed through (`X-Bowerbird-Via`), and none of them is asked
+again, so a chain ends at a device with the original or at one with nobody left to ask. For the
+same reason a passed-on request is never joined onto another fetch in flight: one started by this
+device's own reader may be waiting on the very device that is asking.
 
 Freshness is one predicate applied on both sides. The holder refuses a copy its own edits have
 moved past, because the caller cannot rebuild and would cache a stale picture as current; the

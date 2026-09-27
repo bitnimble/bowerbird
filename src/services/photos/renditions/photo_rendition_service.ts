@@ -23,7 +23,14 @@ interface RenderHow {
   force: boolean;
   /** The range a peer asked for, or null for this library's own. */
   hdr: boolean | null;
-  forPeer: boolean;
+  /** The devices a peer's request has passed through, or null for a reader on this device. */
+  via: readonly string[] | null;
+}
+
+/** The camera's JPEG as a peer is handed it, with the edits it is current with. */
+export interface PeerJpeg {
+  bytes: Uint8Array;
+  builtFrom: string | null;
 }
 
 export class PhotoRenditionService {
@@ -99,16 +106,19 @@ export class PhotoRenditionService {
       return updated;
     }
   buildRendition(photoId: string, rendition: Rendition, force = false): Promise<void> {
-      return this.build(photoId, rendition, { force, hdr: null, forPeer: false });
+      return this.build(photoId, rendition, { force, hdr: null, via: null });
     }
   /**
-     * The copy a peer asked for, at the range it asked for, built if it is missing or stale (§7.9).
-     *
-     * From what this device holds and nothing else: asking a third device from here would let two
-     * devices that each lack the original wait on one another.
+     * The copy a peer asked for, at the range it asked for, built if it is missing or stale (§7.9),
+     * or asked of a device `via` does not name where this one has no original to build it from.
      */
-    buildForPeer(photoId: string, rendition: Rendition, hdr: boolean): Promise<void> {
-      return this.build(photoId, rendition, { force: false, hdr, forPeer: true });
+    async buildForPeer(photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[]): Promise<void> {
+      if (rendition !== 'grid') return this.build(photoId, rendition, { force: false, hdr, via });
+      // The tile is the queue's to build wherever the original is.
+      const { photo, library } = this.locate(photoId);
+      if (this.fetchThrough == null) return;
+      if (!this.fetchThrough.alwaysFromPeer(library.id) && this.originals.here(library, photo) != null) return;
+      await this.fetchThrough.relay(photoId, 'grid', false, via);
     }
   /**
      * The camera's own JPEG, turned as the photo's edits turn it, for a reader on this device: from
@@ -116,26 +126,45 @@ export class PhotoRenditionService {
      * there is none to be had.
      */
     async embeddedJpeg(photoId: string): Promise<Uint8Array | null> {
-      const { library } = this.locate(photoId);
-      if (this.fetchThrough?.alwaysFromPeer(library.id) !== true) return this.embeddedJpegHere(photoId);
+      const { photo, library } = this.locate(photoId);
+      if (this.fetchThrough?.alwaysFromPeer(library.id) !== true) return this.liftEmbedded(library, photo);
       await this.fetchThrough.ensureCurrent(photoId, 'embedded');
+      return this.cachedEmbedded(library, photoId);
+    }
+  /**
+     * The same, for a peer: lifted from an original here, or failing that the copy this device has
+     * fetched, asked of a device `via` does not name if it is not current. Null where neither is.
+     */
+    async embeddedJpegForPeer(photoId: string, via: readonly string[]): Promise<PeerJpeg | null> {
+      const { photo, library } = this.locate(photoId);
+      const lifted = await this.liftEmbedded(library, photo);
+      if (lifted != null) {
+        return { bytes: lifted, builtFrom: this.photoProcessing.renditionStamps(photoId, 'embedded')?.edited_from ?? null };
+      }
+      if (this.fetchThrough == null) return null;
+      await this.fetchThrough.relay(photoId, 'embedded', false, via);
+      const stamps = this.photoProcessing.renditionStamps(photoId, 'embedded');
+      const builtFrom = stamps?.built_from ?? null;
+      if (!renditionCurrent(builtFrom, stamps?.edited_from ?? null)) return null;
+      const bytes = await this.cachedEmbedded(library, photoId);
+      return bytes == null ? null : { bytes, builtFrom };
+    }
+  private async liftEmbedded(library: Library, photo: BasicPhoto): Promise<Uint8Array | null> {
+      const original = await this.originals.open(library, photo);
+      if (original == null) return null;
+      const jpeg = readEmbeddedJpeg(original, this.photoListing.editOrientation(photo.id));
+      return jpeg == null ? null : new Uint8Array(jpeg);
+    }
+  private async cachedEmbedded(library: Library, photoId: string): Promise<Uint8Array | null> {
       const cached = Bun.file(getRenditionPath(library, photoId, 'embedded', false));
       return (await cached.exists()) ? new Uint8Array(await cached.arrayBuffer()) : null;
     }
-  /** The same, lifted from an original on this device and never asked of a peer, for a peer asking. */
-    async embeddedJpegHere(photoId: string): Promise<Uint8Array | null> {
-      const { photo, library } = this.locate(photoId);
-      const original = await this.originals.open(library, photo);
-      if (original == null) return null;
-      const jpeg = readEmbeddedJpeg(original, this.photoListing.editOrientation(photoId));
-      return jpeg == null ? null : new Uint8Array(jpeg);
-    }
   private build(photoId: string, rendition: Rendition, how: RenderHow): Promise<void> {
-      const fields = { photo: photoId, rendition, forced: how.force, hdr: how.hdr, forPeer: how.forPeer };
+      const fields = { photo: photoId, rendition, forced: how.force, hdr: how.hdr, via: how.via };
       log.info('rendition requested', fields);
-      // Never shared across `forPeer`: a reader's build may be waiting on a peer, and if that peer's
-      // build could be joined onto its own reader's, two devices would wait on each other.
-      const key = `${photoId}:${rendition}:${how.force}:${how.hdr}:${how.forPeer}`;
+      // Joined only onto a build for the same chain of devices: one for this device's reader, or
+      // for another chain, may be waiting on a device in this one, which would then wait on itself.
+      const key = `${photoId}:${rendition}:${how.force}:${how.hdr}:${how.via?.join(',') ?? ''}`;
       const running = this.building.get(key);
       if (running != null) {
         log.info('rendition already building', fields);
@@ -202,11 +231,8 @@ export class PhotoRenditionService {
       // camera JPEGs, so there is no headroom for an HDR encode to carry.
       const hdr = (how.hdr ?? library.rendition_hdr) && rendition !== 'embedded';
       const output = getRenditionPath(library, photo.id, rendition, hdr);
-      if (!how.forPeer && this.fetchThrough?.alwaysFromPeer(library.id) === true) {
-        log.info('rendition fetching from peer', { photo: photo.id, rendition });
-        await this.fetchThrough.ensureCurrent(photo.id, rendition);
-        if (existsSync(output)) return;
-        throw new AppError('NOT_FOUND', `no peer could send ${rendition} of ${photo.id}`);
+      if (this.fetchThrough?.alwaysFromPeer(library.id) === true) {
+        return this.fromPeer(this.fetchThrough, photo.id, rendition, hdr, how.via, output);
       }
       // Existing is not enough; it has to be of the settings the photograph holds now.
       // Nothing queues a `max`, so a rendition asked for by name is the one path where a
@@ -263,11 +289,7 @@ export class PhotoRenditionService {
         // exactly the path this build would have written. Reached before any delete, so a
         // device that cannot rebuild still holds what it had: deleting first and asking a
         // peer second is how the one stale-but-real copy became a hole when no peer answered.
-        if (this.fetchThrough != null && !how.forPeer) {
-          log.info('rendition fetching from peer', { photo: photo.id, rendition });
-          await this.fetchThrough.ensureCurrent(photo.id, rendition);
-          if (existsSync(output)) return;
-        }
+        if (this.fetchThrough != null) return this.fromPeer(this.fetchThrough, photo.id, rendition, hdr, how.via, output);
         throw new AppError('NOT_FOUND', `nothing on this device can build ${photo.id}`);
       }
       // The file *is* the cache, so rebuilding means removing it: the builder returns early
@@ -277,6 +299,20 @@ export class PhotoRenditionService {
       // The analysis lives outside the rendition cache, so without this a forced build is
       // re-encoded from the measurements the pipeline change under test was meant to move.
       await this.processing.renderOne(raw, photo.id, library, rendition, hdr, 'render', force);
+    }
+  // For a reader here, fetched as the library shows it; for a peer, passed on at the range it asked.
+  private async fromPeer(
+      fetchThrough: RenditionFetchService,
+      photoId: string,
+      rendition: Rendition,
+      hdr: boolean,
+      via: readonly string[] | null,
+      output: string,
+    ): Promise<void> {
+      log.info('rendition fetching from peer', { photo: photoId, rendition, via });
+      if (via == null) await fetchThrough.ensureCurrent(photoId, rendition);
+      else await fetchThrough.relay(photoId, rendition, hdr, via);
+      if (!existsSync(output)) throw new AppError('NOT_FOUND', `no peer could send ${rendition} of ${photoId}`);
     }
   /**
      * Queues the rebuild an editor that never said it had closed would have asked for.

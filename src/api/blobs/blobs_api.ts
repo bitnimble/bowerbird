@@ -22,7 +22,8 @@ import type { PhotoTarget } from '../../schemas/photos';
 import { PathSegment, route } from '../../schemas/route';
 import { containsPath, getRenditionPath, originalPathOf } from '../../utils/paths';
 import type { BlobLocations } from '../../services/blobs/blob_locations';
-import { renditionCurrent } from '../../services/blobs/rendition_fetch_service';
+import { VIA_HEADER, renditionCurrent } from '../../services/blobs/rendition_fetch_service';
+import { PeerIdSchema } from '../../schemas/replication';
 import {
   RENDITION_CONTENT_TYPE,
   isRendition,
@@ -69,7 +70,7 @@ export class BlobsApi {
       return target.photo_ids;
     },
     /** What renders a copy a peer asks for (§7.9). Null serves only what is already on disk. */
-    private readonly renditions: Pick<PhotoRenditionService, 'buildForPeer' | 'embeddedJpegHere'> | null = null,
+    private readonly renditions: Pick<PhotoRenditionService, 'buildForPeer' | 'embeddedJpegForPeer'> | null = null,
   ) {
     const app = new Hono();
 
@@ -182,12 +183,12 @@ export class BlobsApi {
     const { photo, library } = this.locate(c);
     const kind = c.req.param('rendition') ?? '';
     if (!isRendition(kind)) throw new AppError('NOT_FOUND', `unknown rendition: ${kind}`);
-    if (kind === 'embedded' && !isComposite(photo.recipe)) return this.serveEmbedded(c, photo);
+    const via = viaOf(c);
+    if (kind === 'embedded' && !isComposite(photo.recipe)) return this.serveEmbedded(c, photo, via);
     const hdr = storedAsHdr(kind, c.req.query('hdr') === '1');
-    // The tile is built at import and rebuilt by the queue, and is refused below until it has been.
-    if (kind !== 'grid' && this.renditions != null) {
+    if (this.renditions != null) {
       takeAsLongAsItTakes(c);
-      await this.renditions.buildForPeer(photo.id, kind, hdr);
+      await this.renditions.buildForPeer(photo.id, kind, hdr, via);
     }
     const abs = getRenditionPath(library, photo.id, kind, hdr);
     const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(kind, hdr));
@@ -216,14 +217,13 @@ export class BlobsApi {
     return new Response(offset > 0 ? file.slice(offset) : file, { status: offset > 0 ? 206 : 200, headers });
   }
 
-  // Lifted from the original on every ask, as this device's own viewer gets it, so it is current
-  // with every edit made here.
-  private async serveEmbedded(c: Context, photo: BasicPhoto): Promise<Response> {
-    const jpeg = (await this.renditions?.embeddedJpegHere(photo.id)) ?? null;
-    if (jpeg == null) throw new AppError('NOT_FOUND', `no camera JPEG here for ${photo.id}`);
+  private async serveEmbedded(c: Context, photo: BasicPhoto, via: readonly string[]): Promise<Response> {
+    if (this.renditions != null) takeAsLongAsItTakes(c);
+    const found = (await this.renditions?.embeddedJpegForPeer(photo.id, via)) ?? null;
+    if (found == null) throw new AppError('NOT_FOUND', `no current camera JPEG here for ${photo.id}`);
+    const { bytes: jpeg, builtFrom } = found;
     const offset = rangeOffset(c.req.header('range'));
     if (offset > jpeg.length) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${jpeg.length}-byte file`);
-    const builtFrom = this.photoProcessing.renditionStamps(photo.id, 'embedded')?.edited_from ?? null;
     const headers: Record<string, string> = {
       'Content-Type': 'image/jpeg',
       'Content-Length': String(jpeg.length - offset),
@@ -366,6 +366,12 @@ export class BlobsApi {
     }
     return abs;
   }
+}
+
+// The devices a peer's request has passed through, its sender last. A value that is not a peer id
+// names no device a request could be passed on to, so it is dropped.
+function viaOf(c: Context): string[] {
+  return (c.req.header(VIA_HEADER) ?? '').split(',').filter((id) => PeerIdSchema.safeParse(id).success);
 }
 
 // `bytes=N-` only: a peer resumes from its staged size and never asks for less.
