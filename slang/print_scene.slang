@@ -602,6 +602,8 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
     let width = max(spacing, 0.75 / radians);
     let tangent = lamp_tangent();
     let bitangent = cross(print.light.xyz, tangent);
+    let magnified = sheet ? 1.0 : wave_magnification(lamp, eye, depth,
+        paper_inverse(print.surface.y * tangent), paper_inverse(print.surface.y * bitangent));
     var flare = 0.0;
     for (int j = 0; j < FLARE_SAMPLES; j += 1) {
         for (int i = 0; i < FLARE_SAMPLES; i += 1) {
@@ -632,7 +634,21 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
     // Each sample stands for its patch of the lamp's face, over the spike's own area, so a lamp
     // larger than a spike is long gives a spike as bright as the lamp times the share and no more.
     let patch = spacing * spacing / (2.0 * FLARE_REACH * sqrt(PRINT_PI) * width);
-    return sharpness * patch * flare;
+    return sharpness * magnified * patch * flare;
+}
+
+/// How much larger the pane's wave draws the lamp's image than a flat pane would, by area: a
+/// curved patch of the pane is a weak mirror lens, and the flux the camera's star spreads is the
+/// lamp's radiance over its image.
+float wave_magnification(float3 lamp, float3 eye, float depth, float3 along, float3 across)
+{
+    let flat = mirrored_image(lamp, eye, depth, false);
+    let wavy = mirrored_image(lamp, eye, depth, true);
+    let flat_area = cross(mirrored_image(lamp + along, eye, depth, false) - flat,
+        mirrored_image(lamp + across, eye, depth, false) - flat);
+    let wavy_area = cross(mirrored_image(lamp + along, eye, depth, true) - wavy,
+        mirrored_image(lamp + across, eye, depth, true) - wavy);
+    return length(wavy_area) / max(length(flat_area), 1e-20);
 }
 
 /// The direction from `eye` to `face`'s image in the plane at `depth`, tipped by the pane's wave
