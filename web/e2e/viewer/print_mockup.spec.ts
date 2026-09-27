@@ -2,7 +2,7 @@
 // editor's print renderer and leaves the photograph untouched. What the renderer draws, and how
 // it turns under a pointer, is `editor/raw_editing.spec.ts`; this is the way in, what it is drawn
 // from, and the way back out.
-import { expect } from '@playwright/test';
+import { type Page, expect } from '@playwright/test';
 import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PRINT_PHOTOS_DIR } from '../fixture_library';
@@ -12,6 +12,7 @@ import {
   editTools,
   gotoPhoto,
   savedRev,
+  setViewerRendition,
   softProof,
   useLibrary,
 } from '../helpers';
@@ -27,17 +28,29 @@ test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, PRINT_PHOTOS_DIR);
 });
 
-// The max rendition holds every edit at the sensor's own size: the RAW never crosses, and this
-// browser decodes the rendition itself.
-test('the viewer shows a print mockup from the max rendition, and comes back to the photograph unedited', async ({ page }) => {
+/** What the mockup fetched to draw from, once the viewer's own frame is already on screen. */
+function drawnFrom(page: Page, photoId: string): { renditions: () => string[]; others: () => string[] } {
+  const requested: URL[] = [];
+  page.on('request', (request) => requested.push(new URL(request.url())));
+  const renditions = route(photoId, PathSegment.renditions());
+  return {
+    renditions: () => requested.filter((url) => url.pathname.includes(`${renditions}/`))
+      .map((url) => url.pathname.slice(url.pathname.lastIndexOf('/') + 1)),
+    others: () => requested.filter((url) => url.pathname.endsWith(route(PathSegment.prepare()))
+      || url.pathname.endsWith(route(PathSegment.download(), 'original'))).map((url) => url.pathname),
+  };
+}
+
+// The mockup prints what the viewer is showing, which here is the camera's JPEG: the RAW never
+// crosses, and this browser decodes the file itself.
+test('the viewer prints the camera JPEG it shows, and comes back to the photograph unedited', async ({ page }) => {
   const photoId = await gotoPhoto(page, PRINT_PHOTOS_DIR);
   const photoPath = new URL(page.url()).pathname;
   const revision = await savedRev(page, photoId);
-  const requested: URL[] = [];
-  page.on('request', (request) => requested.push(new URL(request.url())));
 
   // The camera's JPEG is what this library shows, so its own gamut is the proof in force.
   await expect(page.getByRole('button', { name: 'Soft proof: SDR' })).toBeVisible();
+  const drawn = drawnFrom(page, photoId);
   await softProof(page, 'Printed media (3D)');
   await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
   await expect(page.getByRole('group', { name: 'Lighting', exact: true })).toBeVisible();
@@ -46,17 +59,32 @@ test('the viewer shows a print mockup from the max rendition, and comes back to 
   // nothing of the editor's saved onto it.
   await expect(editTools(page)).toHaveCount(0);
 
-  const max = route(PathSegment.renditions(), 'max');
-  expect(requested.some((url) => url.pathname.endsWith(max))).toBe(true);
-  expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.prepare())))).toEqual([]);
-  expect(requested.filter((url) => url.pathname.endsWith(route(PathSegment.download(), 'original')))).toEqual([]);
-  // Still more than the sheet can show at any angle.
-  expect(Math.max(...(await editDiagnosticSize(page, 'data-size')))).toBeGreaterThan(2500);
+  expect(new Set(drawn.renditions())).toEqual(new Set(['embedded']));
+  expect(drawn.others()).toEqual([]);
 
   await softProof(page, 'SDR (sRGB)');
   await expect(page.getByRole('img', { name: 'Edit preview' })).toHaveCount(0);
   expect(new URL(page.url()).pathname).toBe(photoPath);
   expect(await savedRev(page, photoId)).toBe(revision);
+});
+
+// The max rendition holds every edit at the sensor's own size.
+test('the viewer prints the max rendition it shows', async ({ page }) => {
+  await setViewerRendition(page.request, 'max');
+  const shown = page.waitForResponse(
+    (response) => response.request().method() === 'GET' && response.ok() && new URL(response.url()).pathname.endsWith('/max'),
+    DRAWN,
+  );
+  const photoId = await gotoPhoto(page, PRINT_PHOTOS_DIR);
+  await shown;
+  const drawn = drawnFrom(page, photoId);
+  await softProof(page, 'Printed media (3D)');
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'print', DRAWN);
+
+  expect(new Set(drawn.renditions())).toEqual(new Set(['max']));
+  expect(drawn.others()).toEqual([]);
+  // Still more than the sheet can show at any angle.
+  expect(Math.max(...(await editDiagnosticSize(page, 'data-size')))).toBeGreaterThan(2500);
 });
 
 test('the flat print and the sheet are one open, and the flat one has no light to set', async ({ page }) => {
@@ -108,7 +136,7 @@ test('a rendition opened in the browser draws from the tiles it is served', asyn
       const whole: [number, number, number, number] = [0, 0, width, height];
       const { missing } = await decoder.showTiles(level, whole);
       if (missing == null) return 'nothing was missing';
-      await decoder.takeTiles(await preparedPicture(photoId, { level: 0, at: whole, parts: missing }, 'rendition'), missing);
+      await decoder.takeTiles(await preparedPicture(photoId, { level: 0, at: whole, parts: missing }, 'max'), missing);
       return JSON.stringify(await decoder.showTiles(level, whole));
     } catch (error) {
       return error instanceof Error ? error.message : String(error);

@@ -1,4 +1,5 @@
 import { PathSegment, route } from '../../../../../src/schemas/route';
+import { VIEWER_RENDITIONS, type ViewerRendition } from '../../../../../src/schemas/settings';
 
 export type DetailMode = 'view' | 'edit' | 'print';
 
@@ -21,10 +22,13 @@ export function editPath(pathname: string): string {
   return `${detailPath(pathname)}${EDIT}`;
 }
 
-/** The print a navigation into the mockup asked for, which it carries as its state. */
-export function isPrintRequest(state: unknown): state is { proof: 'print' | 'print3d' } {
-  return typeof state === 'object' && state != null && 'proof' in state
-    && (state.proof === 'print' || state.proof === 'print3d');
+/** What a navigation into the mockup carries as its state: the print, and the rendition to print. */
+export type PrintRequest = { proof: 'print' | 'print3d'; rendition: ViewerRendition };
+
+export function isPrintRequest(state: unknown): state is PrintRequest {
+  return typeof state === 'object' && state != null && 'proof' in state && 'rendition' in state
+    && (state.proof === 'print' || state.proof === 'print3d')
+    && VIEWER_RENDITIONS.some((rendition) => rendition === state.rendition);
 }
 
 export function detailMode(pathname: string): DetailMode {

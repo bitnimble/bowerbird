@@ -4,6 +4,7 @@ import { photosApi, type PreparedFrom } from '../../../api/photos';
 import { renditionsApi } from '../../../api/renditions';
 import { envelopeOf } from '../../../api/request';
 import { settingsApi } from '../../../api/settings';
+import type { ViewerRendition } from '../../../../../src/schemas/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
 import type { PrepareDevelop } from '../../../../../src/schemas/prepare_develop';
 import { readPreparedHeader, type PreparedHeader } from '../../../../../src/schemas/prepared';
@@ -32,14 +33,14 @@ export async function fetchPrepared(
   mosaic: LocalPrepare,
   onTheBackend: boolean,
   onStep: (step: OpenStep) => void,
-  fromRendition = false,
+  fromRendition: ViewerRendition | null = null,
 ): Promise<{
   header: PreparedHeader;
   /** What the loupe's tiles are built from. */
   local: LocalSource;
 }> {
-  const local = onTheBackend || fromRendition
-    ? await preparedThere(photoId, fromRendition ? 'rendition' : undefined, onStep)
+  const local = onTheBackend || fromRendition != null
+    ? await preparedThere(photoId, fromRendition ?? undefined, onStep)
     : await preparedHere(photoId, longEdge, mosaic, onStep);
   const header = readPreparedHeader(local.prepared);
   // What this open had to measure, where nothing had kept it: a tile cannot fit its own match, and
@@ -100,8 +101,8 @@ async function preparedThere(
   const { LocalDecoder } = await import('./local_decoder');
   const decoder = new LocalDecoder();
   try {
-    const rendition = from === 'rendition';
-    const [settings, avif] = await Promise.all([settingsApi.get(), rendition ? maxRendition(photoId, onStep) : null]);
+    const rendition = typeof from === 'string';
+    const [settings, file] = await Promise.all([settingsApi.get(), rendition ? renditionFile(photoId, from, onStep) : null]);
     // The grade the module is told about, which for this arm the prepare already used: the picture
     // arrived coded against these, and a tick anchors to the same numbers.
     const open: LocalOpen = {
@@ -115,7 +116,7 @@ async function preparedThere(
       statedWhite: rendition,
     };
     const prepared =
-      (avif == null ? null : await decoder.holdRendition(avif, open, onStep)) ??
+      (file == null ? null : await decoder.holdRendition(file, open, onStep)) ??
       (await decoder.holdPicture(await preparedPicture(photoId, undefined, from, onStep), open));
     return { decoder, open, onTheBackend: true, prepared };
   } catch (error) {
@@ -126,12 +127,16 @@ async function preparedThere(
   }
 }
 
-/** The max rendition's file, built where it is missing or behind the edits. */
-async function maxRendition(photoId: string, onStep: (step: OpenStep) => void): Promise<Uint8Array<ArrayBuffer>> {
+/** A rendition's file, built where it is missing or behind the edits. */
+async function renditionFile(
+  photoId: string,
+  rendition: ViewerRendition,
+  onStep: (step: OpenStep) => void,
+): Promise<Uint8Array<ArrayBuffer>> {
   onStep('rendering');
-  await renditionsApi.build(photoId, 'max');
+  await renditionsApi.build(photoId, rendition);
   onStep('preparing');
-  const reply = await fetch(renditionsApi.url(photoId, 'max'), {
+  const reply = await fetch(renditionsApi.url(photoId, rendition), {
     headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
   });
   if (!reply.ok) throw new Error(await refusal(reply));

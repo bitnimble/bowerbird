@@ -55,7 +55,7 @@ import {
   RenditionPanel,
 } from './detail_panels';
 import { DetailKeys } from './detail_keys';
-import { detailMode, detailPath, editPath, isPrintRequest, mockupPath, type DetailMode } from './detail_mode';
+import { detailMode, detailPath, editPath, isPrintRequest, mockupPath, type DetailMode, type PrintRequest } from './detail_mode';
 import { isPrintProof, type SoftProof } from '../../raw_edit/proof/soft_proof';
 import { IntentChoice } from '../../raw_edit/proof/intent_choice';
 import { PrintPanelStrings } from '../../raw_edit/print/print_panel.strings';
@@ -112,10 +112,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
   const [stage, setStage] = useState<HTMLDivElement | null>(null);
   const { pathname, state } = useLocation();
   const navigate = useNavigate();
-  // Which print the mockup was asked for, carried on the navigation; a deep link is the sheet.
-  // Through a ref, so asking for the other one from inside the mockup is not a second open.
-  const requestedPrint = useRef<SoftProof>('print3d');
-  requestedPrint.current = isPrintRequest(state) ? state.proof : 'print3d';
+  // Which print the mockup was asked for, and of which rendition, carried on the navigation; a
+  // deep link is the sheet of the max rendition. Through a ref, so asking for the other print from
+  // inside the mockup is not a second open.
+  const requestedPrint = useRef<PrintRequest>({ proof: 'print3d', rendition: 'max' });
+  requestedPrint.current = isPrintRequest(state) ? state : { proof: 'print3d', rendition: 'max' };
   // In the address rather than in state, because the address is the one thing stepping
   // already changes: `useStep` navigates to a bare photo path, so walking away drops `/edit`
   // and there is nothing left to go stale.
@@ -184,11 +185,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
     const presenter = new RawEditPresenter(edit, stage, crop, keystone, repair, loupe, print, device);
     // Before the proof, so a sheet opens as this device's rather than as the desktop's and then turns into it.
     presenter.print.setTouch(touch);
-    if (mode === 'print') presenter.setSoftProof(requestedPrint.current);
+    if (mode === 'print') presenter.setSoftProof(requestedPrint.current.proof);
     else presenter.restoreSoftProof();
     setSession({ photoId, mode, touch, edit, stage, crop, keystone, repair, loupe, print, presenter });
     let startingRotation: number | null = null;
-    void presenter.open(photoId, mode === 'print' ? 'rendition' : EDIT_LONG_EDGE).then(() => {
+    void presenter.open(photoId, mode === 'print' ? requestedPrint.current.rendition : EDIT_LONG_EDGE).then(() => {
       startingRotation = edit.doc?.rotate ?? 0;
     });
     return () => {
@@ -217,8 +218,11 @@ export const PhotoDetailPage = observer(function PhotoDetailPage(): JSX.Element 
       return;
     }
     if (isPrintProof(next)) {
+      // Carried rather than read on arrival: opening the mockup is an open of the photograph,
+      // which clears the reader's own choice of rendition.
+      const request: PrintRequest = { proof: next, rendition: store.frameOf(photoId).rendition };
       // Motion permission must be requested before this click's user activation ends.
-      flushSync(() => navigate(mockupPath(photoPathname), { replace: true, state: { proof: next } }));
+      flushSync(() => navigate(mockupPath(photoPathname), { replace: true, state: request }));
       return;
     }
     photos.chooseProof(next === 'hdr' ? 'hdr' : 'srgb');

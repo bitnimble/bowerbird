@@ -137,7 +137,7 @@ class Open {
       case 'holdPicture':
         return { value: await this.pictureAt(ask.framed, ask.request) };
       case 'holdRendition':
-        return { value: await this.renditionAt(ask.avif, ask.request, report) };
+        return { value: await this.renditionAt(ask.file, ask.request, report) };
       case 'takePicture':
         // The same open, a different picture of it: the stage stays where it was transferred.
         return { value: this.drawing().takePicture(ask.framed) };
@@ -335,14 +335,21 @@ class Open {
 
   /**
    * The same open, from a rendition this browser decodes, so what crosses the network is the file
-   * rather than the samples the server would decode it to. Null where the decode is not planar PQ.
+   * rather than the samples the server would decode it to. A JPEG is decoded by the module; an AVIF
+   * by the browser, and null where that decode is not planar PQ.
    */
-  private async renditionAt(avif: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<string | null> {
+  private async renditionAt(file: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<string | null> {
     report('decoding');
-    const planes = await decodedPlanes(avif);
-    if (planes == null) return null;
+    const isJpeg = file[0] === 0xff && file[1] === 0xd8;
+    const planes = isJpeg ? null : await decodedPlanes(file);
+    if (!isJpeg && planes == null) return null;
     this.release();
-    const held = this.keep(await holdPlanes(avif, planes.samples, JSON.stringify(planes.layout), request), request);
+    const held = this.keep(
+      planes == null
+        ? await holdRaw(file, request, report)
+        : await holdPlanes(file, planes.samples, JSON.stringify(planes.layout), request),
+      request,
+    );
     return held.prepare(undefined, undefined, 'galosh', 0, false, 0, 0, '[]', report);
   }
 }

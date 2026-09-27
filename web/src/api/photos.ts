@@ -86,8 +86,8 @@ type AskedPicture =
       parts: [number, number, number, number][];
     };
 
-/** What a prepare is cut from: the original, at settings being previewed if any, or the full rendition. */
-export type PreparedFrom = PrepareDevelop | 'rendition' | undefined;
+/** What a prepare is cut from: the original, at settings being previewed if any, or a rendition. */
+export type PreparedFrom = PrepareDevelop | ViewerRendition | undefined;
 
 function downloadUrl(photoId: string, form: 'original'): string {
   return assetUrl(route(PathSegment.image(), photoId, PathSegment.download(), form));
@@ -325,13 +325,12 @@ export const photosApi = {
    * naming its coordinates would have to be told the canvas before it could ask.
    *
    * `from` is the settings the reader is previewing that the prepare runs before the samples
-   * cross, where they differ from the last save - or `rendition`, for the full rendition, which
-   * every edit is already in.
+   * cross, where they differ from the last save - or a rendition, which every edit is already in.
    */
   preparedPictureUrl: (photoId: string, asked?: AskedPicture, from?: PreparedFrom): string => {
     const url = assetUrl(route(PathSegment.image(), photoId, PathSegment.prepare()));
     const query = shownQuery(asked);
-    if (from === 'rendition') query.push('from=rendition');
+    if (typeof from === 'string') query.push(`from=${from}`);
     else if (from != null) query.push(`develop=${encodeURIComponent(JSON.stringify(from))}`);
     return query.length === 0 ? url : `${url}?${query.join('&')}`;
   },

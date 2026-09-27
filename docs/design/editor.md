@@ -158,9 +158,12 @@ sRGB with the same operator a print, an SDR rendition and an SDR export use (`ga
 The viewer has no module, so an HDR rendition proofed as sRGB is fitted in `stage.slang` on the
 client, through that operator, against the rendition's own headroom; a print proof from the viewer opens the photograph's `/mockup`, which
 builds the editor's session for it and saves nothing, and choosing an HDR or sRGB proof there or
-pressing Escape returns to the photograph. The mockup draws the max rendition rather than the RAW:
-every edit is already in it, so the page asks for it to be built or fetched where it is missing or
-behind the edits, downloads the file, and decodes it with WebCodecs' `ImageDecoder` in the worker.
+pressing Escape returns to the photograph. The mockup draws the rendition the viewer was showing
+rather than the RAW - the camera's JPEG, `full` or `max`, carried on the navigation because opening
+the mockup clears the reader's own choice, and `max` for an address opened directly. Every edit is
+already in a rendition, so the page asks for it to be built or fetched where it is missing or behind
+the edits and downloads the file. The camera's JPEG is decoded by the module, as a JPEG original is,
+turned by its EXIF. An AVIF is decoded with WebCodecs' `ImageDecoder` in the worker.
 The module has no AV1 decoder (`decode_rendered::av1`), so what it takes is the planes `copyTo`
 writes, and `planes.slang` converts them to the sixteen-bit codes libavif would have given - by the
 same video-range arithmetic the viewer's stage draws with (`video_range.slang`), and pinned against
@@ -171,8 +174,8 @@ neutral grade of that frame is the file's own light, so the print starts from th
 shows, and what crosses the network is the AVIF rather than the samples it decodes to - 3MB against
 59MB for a 10MP rendition. A browser with no `ImageDecoder` - Safari - gets the same planes from
 `native/avif_planes` (below). One that can decode neither way, or that hands back anything other
-than planar PQ, gets the server's prepare of the same file instead (`from=rendition`, which runs the
-job with `Job::stated_white`).
+than planar PQ, gets the server's prepare of the same file instead (`from=<rendition>`, which runs
+the job with `Job::stated_white`).
 
 **Safari has no `ImageDecoder`, and every other way it decodes a picture flattens HDR** - an
 `<img>` drawn to a canvas, `createImageBitmap`, a `VideoFrame` built from an image, all SDR by the
@@ -373,8 +376,9 @@ no ray-tracing API, and the editor and a rendition are one implementation of the
 And the scene path's canvas is one pixel per
 device pixel rather than supersampled, the photograph arriving there through the pyramid's
 anisotropic taps and every edge carrying its own subpixel coverage, so the 2.25x bought nothing.
-The mockup opens the max rendition, the sensor's own size with every edit in it, because its zoom
-reaches eight times the sheet and a 3840px rendition runs out of pixels well before that. The
+An address opened straight into the mockup opens the max rendition, the sensor's own size with every
+edit in it, because its zoom reaches eight times the sheet and a 3840px rendition runs out of pixels
+well before that; from the viewer it prints whichever rendition was on screen. The
 sheet's fragment shaders are also the longest thing here
 to compile, and a pipeline is built synchronously on the browser's GPU thread, where it blocks
 every page the browser is drawing - so `pipeline_warmth.ts` hands wgpu a stand-in for each one and

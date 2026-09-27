@@ -1,5 +1,6 @@
 import { action } from 'mobx';
 import { type EditDoc, type EditState, type ToneCurve } from '../../../../../src/schemas/photo_edits';
+import type { ViewerRendition } from '../../../../../src/schemas/settings';
 import { adapterName } from '../../../adapter_name';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { photosApi, type PreparedFrom } from '../../../api/photos';
@@ -126,8 +127,8 @@ export class RawEditPresenter {
   private remembersProof = false;
 
   private photoId: string | null = null;
-  /** Whether the open is of the max rendition, which every window after it has to be too. */
-  private fromRendition = false;
+  /** The rendition the open is of, which every window after it has to be too. */
+  private fromRendition: ViewerRendition | null = null;
 
   readonly edit: EditPresenter;
   readonly prepare: PreparePresenter;
@@ -352,7 +353,7 @@ export class RawEditPresenter {
 
   /**
    * Opens the picture behind `photoId` and grades it at `longEdge` pixels on its long edge, or
-   * opens its max rendition to show rather than edit: every edit is already in that, so it is
+   * opens one of its renditions to show rather than edit: every edit is already in that, so it is
    * drawn at neutral and the saved edits are never read.
    *
    * **The recipe is read here rather than passed in**, and awaited: which device prepares the
@@ -363,15 +364,15 @@ export class RawEditPresenter {
    * Never rejects: both callers fire this and forget it, so anything escaping would leave
    * the page at "loading" with no reason given.
    */
-  async open(photoId: string, longEdge: number | 'rendition'): Promise<void> {
+  async open(photoId: string, longEdge: number | ViewerRendition): Promise<void> {
     this.begin();
     this.edit.begin(photoId);
     this.photoId = photoId;
-    this.fromRendition = longEdge === 'rendition';
+    this.fromRendition = typeof longEdge === 'string' ? longEdge : null;
     // Awaited before the decode rather than alongside it: the open denoises the mosaic at this
     // document's Detail, so the document is an input to the decode rather than something applied
     // to a frame that is already prepared. One small row ahead of seconds of LibRaw.
-    const edits = this.fromRendition ? Promise.resolve(null) : photoEditsApi.checkpoint(photoId).catch(() => null);
+    const edits = this.fromRendition != null ? Promise.resolve(null) : photoEditsApi.checkpoint(photoId).catch(() => null);
     // The recipe, for the one decision that cannot be made without it. Alongside the document
     // rather than after it: both are small rows and both are wanted before the decode.
     const described = photosApi.get(photoId).catch(() => null);
@@ -404,8 +405,8 @@ export class RawEditPresenter {
       // photograph.
       const photo = await described;
       const onTheBackend = photo != null && preparesOnTheBackend(photo.recipe, photo);
-      const { header, local } = longEdge === 'rendition'
-        ? await fetchPrepared(photoId, 0, mosaic, true, this.reached, true)
+      const { header, local } = typeof longEdge === 'string'
+        ? await fetchPrepared(photoId, 0, mosaic, true, this.reached, longEdge)
         : await fetchPrepared(photoId, longEdge, mosaic, onTheBackend, this.reached);
       if (this.closed) {
         // Closed here rather than left to `close`, which has already run and found no decoder
@@ -439,7 +440,7 @@ export class RawEditPresenter {
       // opens graded by the exposure and nothing else. That now includes the denoise, which
       // is a chain of passes rather than a uniform word. A read that failed leaves `doc`
       // null and `preview` returns on it, which is the editor usable at neutral.
-      if (this.fromRendition) this.draw();
+      if (this.fromRendition != null) this.draw();
       else this.preview({});
     } catch (error) {
       if (!this.closed) this.fail(describe(error));
@@ -838,7 +839,7 @@ export class RawEditPresenter {
   }
 
   private preparedFrom(): PreparedFrom {
-    return this.fromRendition ? 'rendition' : this.prepare.developing;
+    return this.fromRendition ?? this.prepare.developing;
   }
 
   /**

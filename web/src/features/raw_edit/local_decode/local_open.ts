@@ -157,7 +157,7 @@ export const OpenAskSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('render'), raw: BytesSchema, job: JsonSchema }),
   z.object({ kind: z.literal('prepare'), request: JsonSchema, mosaic: PrepareCrossingSchema }),
   z.object({ kind: z.literal('holdPicture'), framed: BytesSchema, request: JsonSchema }),
-  z.object({ kind: z.literal('holdRendition'), avif: BytesSchema, request: JsonSchema }),
+  z.object({ kind: z.literal('holdRendition'), file: BytesSchema, request: JsonSchema }),
   z.object({ kind: z.literal('takePicture'), framed: BytesSchema }),
   z.object({ kind: z.literal('takeTiles'), framed: BytesSchema, asked: JsonSchema }),
   z.object({ kind: z.literal('showTiles'), level: JsonSchema, rect: JsonSchema }),

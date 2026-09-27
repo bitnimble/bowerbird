@@ -2,6 +2,7 @@ import { AppError } from '../../../errors';
 import type { Library } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
+import type { ViewerRendition } from '../../../schemas/settings';
 import { fileRecipe, isComposite } from '../../../schemas/recipes';
 import { getDataPath, getRenditionPath, originalPathOf } from '../../../utils/paths';
 import { readRawHeader } from '../rawshim/raw_decoder';
@@ -116,17 +117,21 @@ export class PrepareRenderer {
   }
 
   /**
-   * The photograph's max rendition as a picture to prepare, for a client that only shows it.
+   * One of the photograph's renditions as a picture to prepare, for a client that only shows it.
    *
    * Every edit is already in the file, so it is prepared unedited and at the white it was encoded
    * with, and the client draws it with neutral edits. The caller makes sure the file is current.
    */
-  async prepareRendition(photoId: string, shown?: Shown, missing?: Missing): Promise<Uint8Array> {
+  async prepareRendition(photoId: string, rendition: ViewerRendition, shown?: Shown, missing?: Missing): Promise<Uint8Array> {
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
     const library = this.libraryOf(photo.library_id);
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
-    const path = getRenditionPath(library, photoId, 'max', library.rendition_hdr);
+    // The camera's JPEG inside a single file is no file of ours to prepare; a client decodes it itself.
+    if (rendition === 'embedded' && !isComposite(photo.recipe)) {
+      throw new AppError('VALIDATION_ERROR', `${photoId}'s embedded JPEG is decoded by the client`);
+    }
+    const path = getRenditionPath(library, photoId, rendition, library.rendition_hdr && rendition !== 'embedded');
     // Sized off the file rather than the row: the rendition is cropped.
     const at = pictureLevel(fileRecipe(path), readRawHeader(path), shown, missing);
     if (at == null) throw new AppError('VALIDATION_ERROR', `${photoId}'s rendition has no dimensions`);

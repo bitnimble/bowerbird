@@ -29,7 +29,7 @@ function framed(header: object, samples: number): Uint8Array {
 function serving(
   pictures: {
     preparePicture: (photoId: string, shown?: unknown, missing?: unknown, develop?: unknown) => Promise<Uint8Array>;
-    prepareRendition?: (photoId: string, shown?: unknown, missing?: unknown) => Promise<Uint8Array>;
+    prepareRendition?: (photoId: string, rendition: string, shown?: unknown, missing?: unknown) => Promise<Uint8Array>;
   } | null,
   built: string[] = [],
 ): Hono {
@@ -118,7 +118,7 @@ describe('GET /image/:photoId/prepare', () => {
     expect(develops).toEqual([develop, undefined, undefined]);
   });
 
-  it('prepares the max rendition, brought up to date first, where the client asks for it', async () => {
+  it('prepares the rendition the client names, brought up to date first', async () => {
     const built: string[] = [];
     const asked: string[] = [];
     const app = serving(
@@ -126,17 +126,19 @@ describe('GET /image/:photoId/prepare', () => {
         preparePicture: async () => {
           throw new Error('the original was prepared');
         },
-        prepareRendition: async (photoId) => {
-          asked.push(photoId);
+        prepareRendition: async (photoId, rendition) => {
+          asked.push(`${photoId}:${rendition}`);
           return framed({ width: 2, height: 2 }, 12);
         },
       },
       built,
     );
-    const got = await app.request(`${route(PathSegment.image(), 'p1', PathSegment.prepare())}?from=rendition`);
-    expect(got.status).toBe(200);
-    expect(built).toEqual(['p1:max']);
-    expect(asked).toEqual(['p1']);
+    const url = route(PathSegment.image(), 'p1', PathSegment.prepare());
+    for (const rendition of ['max', 'full', 'embedded']) {
+      expect((await app.request(`${url}?from=${rendition}`)).status).toBe(200);
+    }
+    expect(built).toEqual(['p1:max', 'p1:full', 'p1:embedded']);
+    expect(asked).toEqual(['p1:max', 'p1:full', 'p1:embedded']);
   });
 
   it('refuses a photograph nothing knows about', async () => {

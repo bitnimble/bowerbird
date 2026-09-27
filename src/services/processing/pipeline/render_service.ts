@@ -7,6 +7,7 @@ import type { Library } from '../../../schemas/libraries';
 import type { AlignShape } from '../../../schemas/jobs';
 import type { CompositeKind } from '../../../schemas/photos';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
+import type { ViewerRendition } from '../../../schemas/settings';
 import { renditionPathFor, stagedDescriptorPath } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
@@ -255,8 +256,8 @@ export abstract class RenderService {
     return this.prepareRenderer.preparePicture(photoId, shown, missing, develop);
   }
 
-  async prepareRendition(photoId: string, shown?: Shown, missing?: Missing): Promise<Uint8Array> {
-    return this.prepareRenderer.prepareRendition(photoId, shown, missing);
+  async prepareRendition(photoId: string, rendition: ViewerRendition, shown?: Shown, missing?: Missing): Promise<Uint8Array> {
+    return this.prepareRenderer.prepareRendition(photoId, rendition, shown, missing);
   }
 
   async renderOne(
