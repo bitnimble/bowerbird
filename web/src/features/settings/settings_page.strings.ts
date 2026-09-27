@@ -4,8 +4,8 @@ export const SettingsStrings = {
   stop: () => 'Stop',
   scanNow: () => 'Scan library',
   remove: () => 'Remove',
-  removeLibraryWarning: (libraryName: string, photoCount: number) =>
-    `Remove "${libraryName}" from Bowerbird?\n\n` +
+  removeLibraryQuestion: (libraryName: string) => `Remove "${libraryName}" from Bowerbird?`,
+  removeLibraryWarning: (photoCount: number) =>
     `Your ${photoCount} ${photoCount === 1 ? 'photo stays' : 'photos stay'} on disk. Ratings, notes, Picks, albums, and shoots can't be recovered.`,
   libraryMeta: (rootPath: string, photoCount: number, scanned: string) =>
     `${rootPath} · ${photoCount} ${photoCount === 1 ? 'photo' : 'photos'} · ${scanned}`,

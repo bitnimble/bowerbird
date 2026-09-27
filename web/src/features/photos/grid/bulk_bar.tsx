@@ -241,7 +241,7 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
   const libraries = useLibrariesStore();
   const replicationStore = useReplicationStore();
   const labelsStore = useLabelsStore();
-  const { photos, replication, export: exportPhotos, frameTv, labels } = usePresenters();
+  const { photos, replication, export: exportPhotos, frameTv, labels, confirm } = usePresenters();
   const [creating, setCreating] = useState<'shoot' | 'album' | null>(null);
 
   // The selection itself, not the ids: it may name more photographs than this client
@@ -507,12 +507,17 @@ export const BulkBar = observer(function BulkBar({ collection }: Props): JSX.Ele
                           label: BulkBarStrings.removeLocalCopyKeptOn(p.name),
                           icon: <HardDrive size={ICON} />,
                         }))}
-                        onSelect={(peerId) => {
+                        onSelect={async (peerId) => {
                           const target = photos.selectionTarget();
                           if (target == null || libraryId == null) return;
                           const name = replicationStore.peerName(libraryId, peerId);
-                          if (!window.confirm(BulkBarStrings.removeLocalCopyWarning(name, count, store.allSelected))) return;
-                          void replication.removeLocalCopies(target, libraryId, peerId);
+                          const confirmed = await confirm.ask({
+                            title: BulkBarStrings.removeLocalCopyQuestion(count, store.allSelected),
+                            body: BulkBarStrings.removeLocalCopyWarning(name),
+                            action: BulkBarStrings.removeLocalCopy(),
+                            tone: 'danger',
+                          });
+                          if (confirmed) void replication.removeLocalCopies(target, libraryId, peerId);
                         }}
                         disabled={readOnly}
                         tooltip={readOnlyRefusal}

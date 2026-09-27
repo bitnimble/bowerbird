@@ -8,6 +8,7 @@ import { ICON } from '../../ui/icon';
 import { Spacer } from '../../ui/row';
 import { StatusDot, Strip, StripLabel } from '../../ui/strip';
 import { color } from '../../ui/tokens.stylex';
+import type { ConfirmPresenter } from '../confirm/confirm_presenter';
 import { BulkBarStrings } from '../photos/grid/bulk_bar.strings';
 import type { ReplicationPresenter } from './replication_presenter';
 import { ReplicationStripStrings } from './replication_strip.strings';
@@ -32,10 +33,12 @@ export const ReplicationStrip = observer(function ReplicationStrip({
   library,
   store,
   presenter,
+  confirm,
 }: {
   library: Library;
   store: ReplicationStore;
   presenter: ReplicationPresenter;
+  confirm: Pick<ConfirmPresenter, 'ask'>;
 }): JSX.Element | null {
   const peers = store.peersOf(library.id);
   const keepsOriginals = store.syncsOriginals(library.id);
@@ -108,7 +111,12 @@ export const ReplicationStrip = observer(function ReplicationStrip({
               tooltip={ReplicationStripStrings.stopSyncingTitle(peer.name)}
               onClick={() =>
                 void presenter.forget(library.id, peer.peer_id, (sole) =>
-                  window.confirm(ReplicationStripStrings.stopSyncingWarning(library.name, peer.name, sole)),
+                  confirm.ask({
+                    title: ReplicationStripStrings.stopSyncingQuestion(library.name, peer.name),
+                    body: ReplicationStripStrings.stopSyncingWarning(peer.name, sole),
+                    action: ReplicationStripStrings.stopSyncing(),
+                    tone: 'danger',
+                  }),
                 )
               }
             >

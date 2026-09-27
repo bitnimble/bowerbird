@@ -1,5 +1,6 @@
-// Labels, where only a browser can answer: a pill added in the viewer surviving a reload, and a
-// label dragged to a new place in the edit dialog. What each control is wired to is
+// Labels, where only a browser can answer: a pill added in the viewer surviving a reload, a
+// label dragged to a new place in the edit dialog, and a question asked over that dialog taking
+// Escape from it. What each control is wired to is
 // `labels_presenter.test.ts`, and the dialog's delete and save `edit_labels_dialog.test.tsx`.
 import { expect, type Page } from '@playwright/test';
 import { test } from '../fixtures';
@@ -75,4 +76,36 @@ test('the edit dialog reorders labels by dragging them', async ({ page }) => {
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog).toHaveCount(0);
   expect(await labelNames(page)).toEqual(['Sea', 'Keeper', 'Sky']);
+});
+
+test('a question asked over the edit dialog closes alone, and its answer acts', async ({ page }) => {
+  await gotoPhoto(page, LABEL_PHOTOS_DIR);
+  await showMetadata(page);
+  await labelsRow(page).getByRole('button', { name: 'Add label' }).click();
+  await page.getByRole('textbox', { name: 'Find or create a label' }).fill('Sky');
+  await page.keyboard.press('Enter');
+  await expect(labelsRow(page).getByRole('listitem').filter({ hasText: 'Sky' })).toBeVisible();
+
+  await gotoLibrary(page, LABEL_PHOTOS_DIR);
+  await page.getByRole('button', { name: /^Filters/ }).click();
+  await page.getByRole('button', { name: 'Labels' }).click();
+  await page.getByRole('button', { name: 'Edit labels…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit labels' });
+  const question = page.getByRole('dialog', { name: 'Delete Sky?' });
+
+  await dialog.getByRole('button', { name: 'Delete Sky' }).click();
+  await expect(question).toContainText("It's on 1 photo.");
+  await page.keyboard.press('Escape');
+  await expect(question).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByRole('button', { name: 'Delete Sky' }).click();
+  await question.getByRole('button', { name: 'Cancel' }).click();
+  await expect(question).toHaveCount(0);
+  await expect(dialog.getByRole('textbox', { name: 'Label name' })).toHaveCount(3);
+
+  await dialog.getByRole('button', { name: 'Delete Sky' }).click();
+  await question.getByRole('button', { name: 'Delete' }).click();
+  await expect(question).toHaveCount(0);
+  await expect(dialog.getByRole('textbox', { name: 'Label name' })).toHaveCount(2);
 });

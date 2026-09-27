@@ -9,6 +9,7 @@ const pulse = stylex.keyframes({ '50%': { opacity: 0.35 } });
 const styles = stylex.create({
   strip: {
     display: 'flex',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: '8px',
     marginTop: '6px',
@@ -17,7 +18,8 @@ const styles = stylex.create({
     fontFamily: font.mono,
     fontSize: '11px',
     color: color.boneDim,
-    whiteSpace: 'nowrap',
+    minWidth: 0,
+    overflowWrap: 'anywhere',
   },
   dot: {
     width: '7px',

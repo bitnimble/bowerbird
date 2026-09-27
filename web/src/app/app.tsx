@@ -51,6 +51,7 @@ import { ReportBugDialog } from '../features/feedback/report_bug_dialog';
 import { EditLabelsDialog } from '../features/labels/edit_labels_dialog';
 import { ReportBugStrings } from '../features/feedback/report_bug_dialog.strings';
 import { Toasts } from '../features/toasts/toasts';
+import { ConfirmDialog } from '../features/confirm/confirm_dialog';
 import { UpdateBadge } from '../features/updates/update_badge';
 import { UpdateDialog } from '../features/updates/update_dialog';
 import { Button } from '../ui/button';
@@ -868,6 +869,7 @@ export const App = observer(function App(): JSX.Element {
     return (
       <>
         <Toasts />
+        <ConfirmDialog />
         <OnboardingPage />
       </>
     );
@@ -901,6 +903,7 @@ export const App = observer(function App(): JSX.Element {
       {sidebarOpen && !mobile && !touch && <SidebarResizer />}
       <div {...stylex.props(styles.main)}>
         <Toasts />
+        <ConfirmDialog />
         {/* Mounted at the root rather than beside the menu that opens it: the bulk bar's
             export is the same dialog over a selection, on a different screen. */}
         <ExportDialog />

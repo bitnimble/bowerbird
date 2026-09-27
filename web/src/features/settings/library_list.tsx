@@ -51,6 +51,7 @@ const styles = stylex.create({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 380px), 1fr))',
     gap: '12px',
+    alignItems: 'start',
   },
   tile: {
     display: 'flex',
@@ -68,7 +69,6 @@ const styles = stylex.create({
     overflowWrap: 'anywhere',
   },
   actions: {
-    marginTop: 'auto',
     justifyContent: 'flex-end',
   },
   jobs: {
@@ -119,7 +119,7 @@ export const LibraryList = observer(function LibraryList(): JSX.Element {
 
 const LibraryTile = observer(function LibraryTile({ library }: { library: Library }): JSX.Element {
   const scan = useScanStore();
-  const { libraries, scan: scanPresenter } = usePresenters();
+  const { libraries, scan: scanPresenter, confirm } = usePresenters();
   const navigate = useNavigate();
   const params = useParams();
   const settingsOpen = params.libraryId === library.id;
@@ -169,12 +169,14 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
 
         <Button
           variant="danger"
-          onClick={() => {
-            // Removing a library cascades away every rating, note, verdict,
-            // album membership and shoot assignment. The RAW files survive,
-            // the catalogue does not, and there is no undo.
-            const warning = SettingsStrings.removeLibraryWarning(libraryLabel(library), library.photo_count);
-            if (window.confirm(warning)) void libraries.remove(library.id);
+          onClick={async () => {
+            const confirmed = await confirm.ask({
+              title: SettingsStrings.removeLibraryQuestion(libraryLabel(library)),
+              body: SettingsStrings.removeLibraryWarning(library.photo_count),
+              action: SettingsStrings.remove(),
+              tone: 'danger',
+            });
+            if (confirmed) void libraries.remove(library.id);
           }}
         >
           <Trash2 size={ICON} />
