@@ -16,11 +16,11 @@ export const SyncedDevicesPanel = observer(function SyncedDevicesPanel({
   library: Library;
 }): JSX.Element {
   const store = useReplicationStore();
-  const { replication } = usePresenters();
+  const { replication, confirm } = usePresenters();
 
   return (
     <Panel title={SyncedDevicesStrings.heading()} flush={store.hasPeers(library.id)}>
-      <ReplicationStrip library={library} store={store} presenter={replication} />
+      <ReplicationStrip library={library} store={store} presenter={replication} confirm={confirm} />
 
       {store.peersOf(library.id).length === 0 && (
         <Text variant="muted" as="p">

@@ -8,8 +8,9 @@ import { restoreApiAfterTests } from '../../../test_api';
 import { registerDom } from '../../../test_dom';
 
 registerDom();
-const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, screen, within } = await import('@testing-library/react');
 const { StoresProvider, usePresenters } = await import('../../../app/stores_context');
+const { ConfirmDialog } = await import('../../confirm/confirm_dialog');
 const { EditLabelsDialog } = await import('../edit_labels_dialog');
 
 restoreApiAfterTests();
@@ -38,6 +39,7 @@ async function openDialog(): Promise<SaveLabelsRequest[]> {
     <StoresProvider>
       <Open />
       <EditLabelsDialog />
+      <ConfirmDialog />
     </StoresProvider>,
   );
   await act(async () => {});
@@ -50,23 +52,21 @@ function names(): string[] {
 
 test('asks before deleting a label that is on photos, quoting how many', async () => {
   await openDialog();
-  const asked: string[] = [];
-  let answer = false;
-  window.confirm = (text?: string) => {
-    asked.push(text ?? '');
-    return answer;
-  };
 
-  fireEvent.click(screen.getByRole('button', { name: 'Delete Keeper' }));
-  expect(asked).toEqual(["Delete Keeper? It's on 3 photos."]);
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Delete Keeper' })));
+  const question = screen.getByRole('dialog', { name: 'Delete Keeper?' });
+  expect(question.textContent).toContain("It's on 3 photos.");
+  await act(async () => fireEvent.click(within(question).getByRole('button', { name: 'Cancel' })));
+  expect(screen.queryByRole('dialog', { name: 'Delete Keeper?' })).toBeNull();
   expect(names()).toEqual(['Keeper', 'Print']);
 
-  answer = true;
-  fireEvent.click(screen.getByRole('button', { name: 'Delete Keeper' }));
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Delete Keeper' })));
+  const again = screen.getByRole('dialog', { name: 'Delete Keeper?' });
+  await act(async () => fireEvent.click(within(again).getByRole('button', { name: 'Delete' })));
   expect(names()).toEqual(['Print']);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Delete Print' }));
-  expect(asked).toHaveLength(2);
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Delete Print' })));
+  expect(screen.queryByRole('dialog', { name: 'Delete Print?' })).toBeNull();
   expect(names()).toEqual([]);
 });
 

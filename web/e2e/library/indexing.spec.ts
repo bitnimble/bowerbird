@@ -35,7 +35,7 @@ test('a library added and scanned in Settings shows a rendition for every RAW fi
   // Creating a library walks the folder before the row can be re-read.
   await expect(libraryRow(page, INDEX_PHOTOS_DIR)).toBeVisible({ timeout: 30_000 });
 
-  await libraryRow(page, INDEX_PHOTOS_DIR).getByRole('button', { name: 'Scan library' }).click();
+  await libraryRow(page, INDEX_PHOTOS_DIR).getByRole('button', { name: 'Scan library' }).click({ timeout: 45_000 });
   await openLibrary(page, INDEX_PHOTOS_DIR);
   // The import the add started, which opens every file.
   await expect(tiles(page)).toHaveCount(PHOTO_NAMES.length, { timeout: 45_000 });

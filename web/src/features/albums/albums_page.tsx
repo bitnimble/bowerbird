@@ -20,7 +20,7 @@ import { AlbumsPageStrings } from './albums_page.strings';
 
 export const AlbumsPage = observer(function AlbumsPage(): JSX.Element {
   const store = useAlbumsStore();
-  const { albums } = usePresenters();
+  const { albums, confirm } = usePresenters();
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -38,18 +38,22 @@ export const AlbumsPage = observer(function AlbumsPage(): JSX.Element {
   );
 
   const onAction = useCallback(
-    (row: CollectionRow, action: string): void => {
+    async (row: CollectionRow, action: string): Promise<void> => {
       if (action === 'rename') {
         albums.startRename(row.key, row.name);
         return;
       }
       const album = store.byId.get(row.key);
       if (album == null) return;
-      // Native confirm: this delete cannot be undone, and the platform dialog is
-      // modal, accessible and keyboard-safe for free.
-      if (window.confirm(AlbumsPageStrings.deleteWarning(album.name, album.photo_count))) void albums.remove(row.key);
+      const confirmed = await confirm.ask({
+        title: AlbumsPageStrings.deleteQuestion(album.name),
+        body: AlbumsPageStrings.deleteWarning(album.photo_count),
+        action: CollectionListStrings.delete(),
+        tone: 'danger',
+      });
+      if (confirmed) void albums.remove(row.key);
     },
-    [albums, store],
+    [albums, confirm, store],
   );
 
   return (

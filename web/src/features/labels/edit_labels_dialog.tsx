@@ -88,7 +88,7 @@ const styles = stylex.create({
 export const EditLabelsDialog = observer(function EditLabelsDialog(): JSX.Element {
   const editor = useLabelEditorStore();
   const libraries = useLibrariesStore();
-  const { labels } = usePresenters();
+  const { labels, confirm } = usePresenters();
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -115,9 +115,15 @@ export const EditLabelsDialog = observer(function EditLabelsDialog(): JSX.Elemen
               label={EditLabelsStrings.library()}
               options={libraries.libraries.map((library) => ({ value: library.id, label: library.name }))}
               value={editor.libraryId}
-              onChange={(libraryId) => {
-                if (editor.dirty && !window.confirm(EditLabelsStrings.discardWarning())) return;
-                labels.chooseEditorLibrary(libraryId);
+              onChange={async (libraryId) => {
+                const confirmed =
+                  !editor.dirty ||
+                  (await confirm.ask({
+                    title: EditLabelsStrings.switchLibraryQuestion(),
+                    body: EditLabelsStrings.discardWarning(),
+                    action: EditLabelsStrings.switchLibrary(),
+                  }));
+                if (confirmed) labels.chooseEditorLibrary(libraryId);
               }}
             />
           </Field>
@@ -155,7 +161,7 @@ export const EditLabelsDialog = observer(function EditLabelsDialog(): JSX.Elemen
 });
 
 const DraftRow = observer(function DraftRow({ draft, duplicate }: { draft: DraftLabel; duplicate: boolean }): JSX.Element {
-  const { labels } = usePresenters();
+  const { labels, confirm } = usePresenters();
   const problemId = useId();
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: draft.key,
@@ -198,9 +204,16 @@ const DraftRow = observer(function DraftRow({ draft, duplicate }: { draft: Draft
         variant="ghost"
         iconOnly
         aria-label={EditLabelsStrings.delete(name)}
-        onClick={() => {
-          if (draft.photoCount > 0 && !window.confirm(EditLabelsStrings.deleteWarning(name, draft.photoCount))) return;
-          labels.removeDraft(draft.key);
+        onClick={async () => {
+          const confirmed =
+            draft.photoCount === 0 ||
+            (await confirm.ask({
+              title: EditLabelsStrings.deleteQuestion(name),
+              body: EditLabelsStrings.deleteWarning(draft.photoCount),
+              action: EditLabelsStrings.confirmDelete(),
+              tone: 'danger',
+            }));
+          if (confirmed) labels.removeDraft(draft.key);
         }}
       >
         <Trash2 size={ICON} />

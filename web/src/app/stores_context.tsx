@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import { AlbumsPresenter } from '../features/albums/albums_presenter';
 import { AlbumsStore } from '../features/albums/albums_store';
+import { ConfirmPresenter } from '../features/confirm/confirm_presenter';
+import { ConfirmStore } from '../features/confirm/confirm_store';
 import { EventsPresenter } from '../features/events/events_presenter';
 import { FeedbackPresenter } from '../features/feedback/feedback_presenter';
 import { FeedbackStore } from '../features/feedback/feedback_store';
@@ -54,6 +56,7 @@ const ScanStoreContext = createContext<ScanStore | null>(null);
 const ReplicationStoreContext = createContext<ReplicationStore | null>(null);
 const BackupStoreContext = createContext<BackupStore | null>(null);
 const ToastsStoreContext = createContext<ToastsStore | null>(null);
+const ConfirmStoreContext = createContext<ConfirmStore | null>(null);
 const AppSettingsStoreContext = createContext<AppSettingsStore | null>(null);
 const DeviceSettingsStoreContext = createContext<DeviceSettingsStore | null>(null);
 const StackTriageStoreContext = createContext<StackTriageStore | null>(null);
@@ -75,6 +78,7 @@ interface Presenters {
   replication: ReplicationPresenter;
   backup: BackupPresenter;
   toasts: ToastsPresenter;
+  confirm: ConfirmPresenter;
   appSettings: AppSettingsPresenter;
   deviceSettings: DeviceSettingsPresenter;
   events: EventsPresenter;
@@ -111,6 +115,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     replication: new ReplicationStore(),
     backup: new BackupStore(),
     toasts: new ToastsStore(),
+    confirm: new ConfirmStore(),
     appSettings: appSettingsStore,
     deviceSettings: new DeviceSettingsStore(),
     // The setting and the library, for the same question the server answers per photo for
@@ -183,6 +188,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     // The grid says which photographs have no local copy, so a pass that removes one reloads it.
     backup: new BackupPresenter(stores.backup, photos, toasts),
     toasts,
+    confirm: new ConfirmPresenter(stores.confirm),
     appSettings,
     deviceSettings,
     events,
@@ -211,6 +217,7 @@ interface Stores {
   replication: ReplicationStore;
   backup: BackupStore;
   toasts: ToastsStore;
+  confirm: ConfirmStore;
   appSettings: AppSettingsStore;
   deviceSettings: DeviceSettingsStore;
   stackTriage: StackTriageStore;
@@ -250,7 +257,9 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                             <FrameTvStoreContext.Provider value={stores.frameTv}>
                                               <LabelsStoreContext.Provider value={stores.labels}>
                                                 <LabelEditorStoreContext.Provider value={stores.labelEditor}>
-                                                  {children}
+                                                  <ConfirmStoreContext.Provider value={stores.confirm}>
+                                                    {children}
+                                                  </ConfirmStoreContext.Provider>
                                                 </LabelEditorStoreContext.Provider>
                                               </LabelsStoreContext.Provider>
                                             </FrameTvStoreContext.Provider>
@@ -294,6 +303,7 @@ export const useReplicationStore = (): ReplicationStore =>
   required(useContext(ReplicationStoreContext), 'ReplicationStore');
 export const useBackupStore = (): BackupStore => required(useContext(BackupStoreContext), 'BackupStore');
 export const useToastsStore = (): ToastsStore => required(useContext(ToastsStoreContext), 'ToastsStore');
+export const useConfirmStore = (): ConfirmStore => required(useContext(ConfirmStoreContext), 'ConfirmStore');
 export const useAppSettingsStore = (): AppSettingsStore => required(useContext(AppSettingsStoreContext), 'AppSettingsStore');
 export const useDeviceSettingsStore = (): DeviceSettingsStore =>
   required(useContext(DeviceSettingsStoreContext), 'DeviceSettingsStore');

@@ -146,7 +146,7 @@ export class ReplicationPresenter {
    * ever say on its behalf that it held them. Which is also why the originals
    * only *it* is recorded as holding are counted before the question is asked.
    */
-  async forget(libraryId: string, peerId: string, confirm: (sole: number) => boolean): Promise<void> {
+  async forget(libraryId: string, peerId: string, confirm: (sole: number) => Promise<boolean>): Promise<void> {
     const name = this.store.peerName(libraryId, peerId);
     let sole = 0;
     try {
@@ -155,7 +155,7 @@ export class ReplicationPresenter {
       this.toasts.showError(ReplicationPresenterStrings.couldNotWorkOutSoleHoldings(name), message(err));
       return;
     }
-    if (!confirm(sole)) return;
+    if (!(await confirm(sole))) return;
     try {
       await replicationApi.forgetPeer(libraryId, peerId);
     } catch (err) {
