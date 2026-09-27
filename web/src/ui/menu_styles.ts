@@ -21,7 +21,7 @@ export const menuStyles = stylex.create({
     borderRadius: '6px',
     padding: '4px',
     boxShadow: '0 10px 28px rgba(0, 0, 0, 0.5)',
-    maxHeight: '60vh',
+    maxHeight: 'var(--available-height)',
     overflow: 'auto',
   },
   popupPad: {
@@ -89,7 +89,7 @@ export const menuStyles = stylex.create({
     backgroundColor: color.satin,
     color: '#08111f',
     fontFamily: font.mono,
-    fontSize: '10px',
+    fontSize: '11px',
     fontWeight: 600,
     lineHeight: '16px',
     textAlign: 'center',

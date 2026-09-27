@@ -295,3 +295,7 @@ export function deviceName(db: Database): string {
   };
   return identity.name;
 }
+
+export function setDeviceName(db: Database, name: string): void {
+  db.query('UPDATE replication_identity SET name = ? WHERE singleton = 1').run(name);
+}

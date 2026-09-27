@@ -1,6 +1,6 @@
 import { adjustOf } from '../../../schemas/edit_adjust';
 import { dustSettings } from '../../../schemas/dust_settings';
-import { EditDocSchema, type EditDoc } from '../../../schemas/photo_edits';
+import { EditDocSchema, type Denoiser, type EditDoc } from '../../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
 import type { Developed } from '../workers/processing_types';
 
@@ -12,7 +12,7 @@ import type { Developed } from '../workers/processing_types';
  * still denoised and still sharpened, at whatever the sliders open at.
  */
 export const AS_METERED = {
-  ...asJob(EditDocSchema.parse({})),
+  ...asJob(EditDocSchema.parse({}), 'galosh'),
   // Off, against the document's own default: finding the particles costs a whole-frame read, and a
   // photo nobody has edited has not asked for one.
   dust: dustSettings(undefined),
@@ -32,29 +32,30 @@ export const AS_METERED = {
  * rendition of the picture as the camera metered it is a worse rendition than the reader
  * asked for and a far better outcome than a photo that never builds one.
  */
-export function developed(edits: string | null, previewing?: PrepareDevelop): FromDocument {
-  if (edits == null && previewing == null) return AS_METERED;
+export function developed(edits: string | null, libraryDenoiser: Denoiser, previewing?: PrepareDevelop): FromDocument {
+  const metered = { ...AS_METERED, denoiser: libraryDenoiser };
+  if (edits == null && previewing == null) return metered;
   try {
     const stored: unknown = edits == null ? {} : JSON.parse(edits);
     const parsed = EditDocSchema.safeParse(
       previewing == null ? stored : { ...(stored as object), ...previewing },
     );
-    if (!parsed.success) return AS_METERED;
-    return asJob(parsed.data);
+    if (!parsed.success) return metered;
+    return asJob(parsed.data, libraryDenoiser);
   } catch {
-    return AS_METERED;
+    return metered;
   }
 }
 
 /** Everything a job's develop settings hold except the defringe, which is the library's. */
 type FromDocument = Omit<Developed, 'defringe'>;
 
-function asJob(doc: EditDoc): FromDocument {
+function asJob(doc: EditDoc, libraryDenoiser: Denoiser): FromDocument {
   return {
     exposure: doc.exposure,
     denoiseLuminance: doc.luminanceNoise,
     denoiseColour: doc.colourNoise,
-    denoiser: doc.denoiser,
+    denoiser: doc.denoiser ?? libraryDenoiser,
     // A position on a 0..100 track on this side and a fraction of the deconvolution on the
     // other; the shader's own gain is what the top of that track is worth.
     sharpen: doc.sharpening / 100,

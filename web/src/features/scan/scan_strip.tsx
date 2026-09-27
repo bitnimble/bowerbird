@@ -39,7 +39,8 @@ const MAX_CELLS = 48;
 // exchanging with its devices and its backup.
 export const ScanStrip = observer(function ScanStrip({ library }: { library: Library }): JSX.Element | null {
   const scan = useScanStore();
-  const status = scan.libraryId === library.id ? scan.status : null;
+  const reported = scan.libraryId === library.id ? scan.status : null;
+  const status = reported?.status === 'idle' ? null : reported;
   const moving = useMoving(library.id);
   if (status == null && moving.length === 0) return null;
 
@@ -49,18 +50,11 @@ export const ScanStrip = observer(function ScanStrip({ library }: { library: Lib
   const cells = progress == null ? 0 : Math.min(progress.total, MAX_CELLS);
   const doneCells = progress == null ? 0 : Math.round((progress.done / progress.total) * cells);
   // The tallies are what the scan concluded, so they only mean anything once it has.
-  const settled = status != null && status.status !== 'processing';
-  const busy = status != null && status.status !== 'idle';
+  const settled = status?.status === 'rendition';
 
   return (
     <Strip>
-      <StatusDot
-        state={
-          status?.status === 'processing' ? 'processing'
-          : busy || moving.length > 0 ? 'working'
-          : 'idle'
-        }
-      />
+      <StatusDot state={status?.status === 'processing' ? 'processing' : 'working'} />
       {progress != null && cells > 0 && (
         <div
           {...stylex.props(styles.cells)}
@@ -80,26 +74,22 @@ export const ScanStrip = observer(function ScanStrip({ library }: { library: Lib
         </div>
       )}
       <StripLabel>
-        {/* Idle says nothing a transfer in its place does not say better. */}
-        {status != null && (busy || moving.length === 0) ?
-          ScanStripStrings.status(status.status)
-        : ScanStripStrings.moving(moving, false)}
-        {status != null && (
-          <>
+        {status == null ?
+          ScanStripStrings.moving(moving, false)
+        : <>
+            {scan.isStopping(library.id) ?
+              ScanStripStrings.stopping()
+            : ScanStripStrings.phase(status.status, status.photos_to_scan > 0)}
             {progress != null && ScanStripStrings.count(progress.done, progress.total, progress.counting)}
             {progress != null && scan.rate != null && ScanStripStrings.rate(scan.rate.toFixed(1), progress.counting)}
             {scan.secondsLeft != null && ScanStripStrings.eta(durationLabel(scan.secondsLeft))}
-            {/* What an idle library still owes, which is not nothing after a stopped
-                or killed import. Said rather than drawn: a bar would read as a run
-                in progress. A scan is what picks the work back up. */}
-            {status.status === 'idle' && status.photos_processing > 0 && ScanStripStrings.outstanding(status.photos_processing)}
             {settled && status.photos_scanned > 0 && ScanStripStrings.scanned(status.photos_scanned)}
             {settled && status.photos_added > 0 && ScanStripStrings.added(status.photos_added)}
             {settled && status.photos_moved > 0 && ScanStripStrings.moved(status.photos_moved)}
             {settled && status.photos_removed > 0 && ScanStripStrings.missing(status.photos_removed)}
+            {moving.length > 0 && ScanStripStrings.moving(moving, true)}
           </>
-        )}
-        {busy && moving.length > 0 && ScanStripStrings.moving(moving, true)}
+        }
       </StripLabel>
     </Strip>
   );

@@ -5,7 +5,7 @@ import { color, font } from '../../ui/tokens.stylex';
 
 const styles = stylex.create({
   notes: {
-    fontSize: '13px',
+    fontSize: '14.3px',
     color: color.boneDim,
   },
   heading: {
@@ -29,7 +29,7 @@ const styles = stylex.create({
   },
   code: {
     fontFamily: font.mono,
-    fontSize: '12px',
+    fontSize: '13.2px',
   },
 });
 

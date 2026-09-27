@@ -1,6 +1,6 @@
 import { observer } from 'mobx-react-lite';
 import { ArrowUpCircle } from 'lucide-react';
-import { SidebarButton, SidebarText } from '../../app/sidebar_link';
+import { SidebarButton, SidebarText } from '../sidebar/sidebar_link';
 import { usePresenters, useUpdatesStore } from '../../app/stores_context';
 import { UpdatesStrings } from './updates.strings';
 

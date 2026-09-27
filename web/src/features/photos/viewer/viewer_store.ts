@@ -1,6 +1,7 @@
 import { computed, observable } from 'mobx';
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
 import { type PhotoDetail, type PhotoSummary, type Triage } from '../../../../../src/schemas/photos';
+import { type RenditionFetchPhase } from '../../../../../src/schemas/events';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { PathSegment, route } from '../../../../../src/schemas/route';
 import { type Rendition } from '../../../../../src/services/processing/renditions/renditions';
@@ -78,6 +79,13 @@ export class ViewerStore {
     if (photoId == null) return false;
     for (const key of this.building) if (key.startsWith(`${photoId}:`)) return true;
     return false;
+  }
+
+  /** What the server is waiting on a peer for, as `photoId:rendition`. */
+  @observable accessor peerFetches: ReadonlyMap<string, RenditionFetchPhase> = new Map();
+
+  fetchPhaseOf(photoId: string, rendition: ViewerRendition): RenditionFetchPhase | null {
+    return this.peerFetches.get(`${photoId}:${rendition}`) ?? null;
   }
 
   // The photo the viewer is on and how far its read has got. One value, so it

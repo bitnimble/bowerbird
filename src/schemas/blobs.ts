@@ -72,7 +72,9 @@ export type EvictResult = z.infer<typeof EvictResultSchema>;
 
 export const BlobHashResponseSchema = z.object({ content_hash: z.string() });
 export type BlobHashResponse = z.infer<typeof BlobHashResponseSchema>;
-export const BlobAppendResponseSchema = z.object({ staged: z.number().int().min(0) });
+export const BlobRenditionStatusSchema = z.object({ current: z.boolean() });
+export type BlobRenditionStatus = z.infer<typeof BlobRenditionStatusSchema>;
+export const BlobAppendResponseSchema =z.object({ staged: z.number().int().min(0) });
 export type BlobAppendResponse = z.infer<typeof BlobAppendResponseSchema>;
 // `held` short-circuits a push whose earlier run completed but whose location
 // row has not replicated back yet: the diff would re-send, and the receiver's

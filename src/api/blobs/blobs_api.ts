@@ -8,6 +8,7 @@ import {
   BlobCommitRequestSchema,
   BlobHashResponseSchema,
   BlobQueueResponseSchema,
+  BlobRenditionStatusSchema,
   BlobStageResponseSchema,
   BlobVerifyResponseSchema,
   EvictBlobsRequestSchema,
@@ -81,6 +82,10 @@ export class BlobsApi {
     // the dynamic range, because that is a per-peer choice (§3.2) and the caller
     // wants the range its own library serves. `force=1` renders it again whatever is on disk.
     app.get(route(PathSegment.param('photoId'), PathSegment.rendition(), PathSegment.param('rendition')), (c) => this.serveRendition(c));
+    app.get(
+      route(PathSegment.param('photoId'), PathSegment.rendition(), PathSegment.param('rendition'), PathSegment.status()),
+      (c) => this.renditionStatus(c),
+    );
     app.get(route(PathSegment.param('photoId'), PathSegment.hash()), (c) => this.serveHash(c));
     app.get(route(PathSegment.param('photoId'), PathSegment.verify()), (c) => this.verify(c));
     app.get(route(PathSegment.param('photoId'), PathSegment.stage()), (c) => this.stageStatus(c));
@@ -215,6 +220,18 @@ export class BlobsApi {
       ...(offset > 0 ? { 'Content-Range': `bytes ${offset}-${size - 1}/${size}` } : {}),
     };
     return new Response(offset > 0 ? file.slice(offset) : file, { status: offset > 0 ? 206 : 200, headers });
+  }
+
+  private renditionStatus(c: Context): Response {
+    const { photo, library } = this.locate(c);
+    const kind = c.req.param('rendition') ?? '';
+    if (!isRendition(kind)) throw new AppError('NOT_FOUND', `unknown rendition: ${kind}`);
+    const hdr = storedAsHdr(kind, c.req.query('hdr') === '1');
+    const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(kind, hdr));
+    const current =
+      existsSync(getRenditionPath(library, photo.id, kind, hdr)) &&
+      renditionCurrent(stamps?.built_from ?? null, stamps?.edited_from ?? null);
+    return c.json(respond(BlobRenditionStatusSchema, { current }));
   }
 
   private async serveEmbedded(c: Context, photo: BasicPhoto, via: readonly string[]): Promise<Response> {

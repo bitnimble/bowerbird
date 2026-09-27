@@ -130,6 +130,28 @@ export class ReplicationPresenter {
     await this.loadPeers(libraryId);
   }
 
+  async loadDeviceName(): Promise<void> {
+    try {
+      this.setDeviceNameHeld((await replicationApi.deviceName()).name);
+    } catch (err) {
+      this.toasts.showError(ReplicationPresenterStrings.couldNotReadDeviceName(), message(err));
+    }
+  }
+
+  async setDeviceName(name: string): Promise<void> {
+    if (name.trim() === '' || name.trim() === this.store.deviceName) return;
+    try {
+      this.setDeviceNameHeld((await replicationApi.setDeviceName(name.trim())).name);
+    } catch (err) {
+      this.toasts.showError(ReplicationPresenterStrings.couldNotRenameThisDevice(), message(err));
+    }
+  }
+
+  @action.bound
+  private setDeviceNameHeld(name: string): void {
+    this.store.deviceName = name;
+  }
+
   async rename(libraryId: string, peerId: string, name: string): Promise<void> {
     if (name.trim() === '') return;
     try {

@@ -6,10 +6,12 @@ function originals(count: number): string {
 }
 
 export const ScanStripStrings = {
-  status: (status: LibraryScanStatus['status']) =>
-    status === 'processing' ? 'processing'
-    : status === 'rendition' ? 'rendition'
-    : 'idle',
+  /** `counted` is whether the walk has found the files it is going to read yet. */
+  phase: (status: LibraryScanStatus['status'], counted: boolean) =>
+    status === 'rendition' ? 'building thumbnails and renditions'
+    : counted ? 'reading files for changes'
+    : 'looking for files',
+  stopping: () => 'stopping after the current batch',
   noun: (counting: ScanCounting) => (counting === 'files' ? 'files' : 'renditions'),
   cellsLabel: (done: number, total: number, counting: ScanCounting) =>
     `${done} of ${total} ${ScanStripStrings.noun(counting)}`,
@@ -17,7 +19,6 @@ export const ScanStripStrings = {
     ` · ${done}/${total} ${ScanStripStrings.noun(counting)}`,
   rate: (perSecond: string, counting: ScanCounting) => ` · ${perSecond} ${ScanStripStrings.noun(counting)}/s`,
   eta: (duration: string) => ` · about ${duration} left`,
-  outstanding: (count: number) => ` · ${count} renditions outstanding`,
   scanned: (count: number) => ` · ${count} scanned`,
   added: (count: number) => ` · +${count}`,
   moved: (count: number) => ` · ${count} moved`,

@@ -44,6 +44,7 @@ beforeAll(() => {
     rendition_hdr: false,
     render_skip_full: [],
     render_skip_max: [],
+    denoiser: 'galosh',
     include_subfolders: true,
     include_non_raw: false,
     auto_stack: true,

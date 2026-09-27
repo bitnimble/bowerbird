@@ -37,6 +37,7 @@ import {
   registerPeer,
   renamePeer,
   setAutoTransfersOriginals,
+  setDeviceName,
   setSyncsOriginals,
   syncsOriginals,
   thisBuild,
@@ -286,6 +287,14 @@ export class ReplicationService {
   renamePeer(libraryId: string, peerId: string, name: string): void {
     renamePeer(this.db, libraryId, peerId, name);
     this.changed(libraryId);
+  }
+
+  deviceName(): string {
+    return deviceName(this.db);
+  }
+
+  setDeviceName(name: string): void {
+    setDeviceName(this.db, name);
   }
 
   forgetPeer(libraryId: string, peerId: string): void {

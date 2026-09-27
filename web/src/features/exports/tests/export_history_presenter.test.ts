@@ -121,6 +121,32 @@ test('a run the server refused to forget stays in the list', async () => {
   expect(store.error).toBe("We couldn't remove that export from history. Try again.");
 });
 
+test('clearing the history empties the list', async () => {
+  let cleared = 0;
+  exportsApi.forgetAll = () => {
+    cleared += 1;
+    return Promise.resolve();
+  };
+  const { store, presenter } = open([run('r1', ['a', 'b']), run('r2', ['c'])]);
+  await presenter.load();
+
+  await presenter.forgetAll();
+
+  expect(cleared).toBe(1);
+  expect(store.runs).toEqual([]);
+});
+
+test('a clear the server refused leaves the list where it is', async () => {
+  exportsApi.forgetAll = () => Promise.reject(new Error('not now'));
+  const { store, presenter } = open([run('r1', ['a'])]);
+  await presenter.load();
+
+  await presenter.forgetAll();
+
+  expect(store.runs.map((each) => each.id)).toEqual(['r1']);
+  expect(store.error).toBe("We couldn't clear your export history. Try again.");
+});
+
 // The button is offered only where there is a file manager to open, which is the shell.
 test('showing a file in its folder is asked of the shell, and only offered there', async () => {
   const { presenter } = open([]);

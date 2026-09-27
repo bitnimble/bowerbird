@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { AppError } from '../../errors';
 import {
-  EditCheckpointSchema,
+  EditOpeningSchema,
   EditConflictsQuerySchema,
   EditConflictsSchema,
   EditStateSchema,
@@ -54,7 +54,7 @@ export class PhotoEditsApi {
 
     // What the editor reads on opening, so that a cancel can put all of it back with `restore`.
     app.get(route(PathSegment.photos(), PathSegment.param('id'), PathSegment.edits(), PathSegment.checkpoint()), (c) =>
-      c.json(respond(EditCheckpointSchema, this.service.checkpoint(this.id(c.req.param('id'))))),
+      c.json(respond(EditOpeningSchema, this.service.checkpoint(this.id(c.req.param('id'))))),
     );
 
     app.post(route(PathSegment.photos(), PathSegment.param('id'), PathSegment.edits(), PathSegment.restore()), async (c) => {

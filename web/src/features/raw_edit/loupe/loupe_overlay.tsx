@@ -41,7 +41,7 @@ const styles = stylex.create({
     backgroundColor: 'rgb(0 0 0 / 70%)',
     color: '#fff',
     fontFamily: font.mono,
-    fontSize: '11px',
+    fontSize: '12.1px',
     lineHeight: 1.4,
     whiteSpace: 'nowrap',
   },

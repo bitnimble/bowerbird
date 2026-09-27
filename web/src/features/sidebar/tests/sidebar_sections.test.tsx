@@ -4,21 +4,21 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { useEffect } from 'react';
-import { type Album } from '../../../../src/schemas/albums';
-import { type Library } from '../../../../src/schemas/libraries';
-import { type PairedPeer } from '../../../../src/schemas/replication';
-import { type Shoot } from '../../../../src/schemas/shoots';
-import { albumsApi } from '../../api/albums';
-import { shootsApi } from '../../api/shoots';
-import { restoreApiAfterTests } from '../../test_api';
-import { registerDom } from '../../test_dom';
-import { MemoryStorage } from '../../test_storage';
+import { type Album } from '../../../../../src/schemas/albums';
+import { type Library } from '../../../../../src/schemas/libraries';
+import { type PairedPeer } from '../../../../../src/schemas/replication';
+import { type Shoot } from '../../../../../src/schemas/shoots';
+import { albumsApi } from '../../../api/albums';
+import { shootsApi } from '../../../api/shoots';
+import { restoreApiAfterTests } from '../../../test_api';
+import { registerDom } from '../../../test_dom';
+import { MemoryStorage } from '../../../test_storage';
 
 registerDom();
 const { act, cleanup, fireEvent, render, screen, within } = await import('@testing-library/react');
 const { MemoryRouter } = await import('react-router-dom');
-const { Sidebar } = await import('../app');
-const { StoresProvider, useLibrariesStore, useReplicationStore } = await import('../stores_context');
+const { Sidebar } = await import('../sidebar');
+const { StoresProvider, useLibrariesStore, useReplicationStore } = await import('../../../app/stores_context');
 
 restoreApiAfterTests();
 afterEach(cleanup);
@@ -64,25 +64,26 @@ const PEER: PairedPeer = {
 
 // The stores belong to the provider, so the one library these rows are of is
 // written from inside it rather than handed in.
-function Seed({ library, peers }: { library: Library; peers: PairedPeer[] }): null {
+function Seed({ library, peers, keepsOriginals }: { library: Library; peers: PairedPeer[]; keepsOriginals: boolean }): null {
   const libraries = useLibrariesStore();
   const replication = useReplicationStore();
   useEffect(() => {
     runInAction(() => {
       libraries.libraries = [library];
       replication.peersByLibrary = new Map([[library.id, peers]]);
+      replication.syncOriginalsByLibrary = new Map([[library.id, keepsOriginals]]);
     });
-  }, [libraries, replication, library, peers]);
+  }, [libraries, replication, library, peers, keepsOriginals]);
   return null;
 }
 
 // Every section reads when it opens, so both the first render and each click
 // settle before anything is asserted on.
-async function open(library = LIBRARY, peers: PairedPeer[] = []): Promise<void> {
+async function open(library = LIBRARY, peers: PairedPeer[] = [], keepsOriginals = true): Promise<void> {
   render(
     <MemoryRouter>
       <StoresProvider>
-        <Seed library={library} peers={peers} />
+        <Seed library={library} peers={peers} keepsOriginals={keepsOriginals} />
         <Sidebar onCollapse={() => {}} />
       </StoresProvider>
     </MemoryRouter>,
@@ -126,6 +127,17 @@ test('a read-only library wears a badge, and is read as read-only', async () => 
 test('a writable library wears no badge', async () => {
   await open();
   expect(within(screen.getByRole('link', { name: 'Reef, 12 photos' })).queryByTitle('Read-only')).toBeNull();
+});
+
+test('a synced library without its originals wears a badge, and is read that way', async () => {
+  await open(LIBRARY, [PEER], false);
+  const library = screen.getByRole('link', { name: 'Reef, originals on synced devices, 12 photos' });
+  expect(within(library).getByTitle('Originals are on synced devices')).toBeTruthy();
+});
+
+test('a synced library keeping its originals wears no badge', async () => {
+  await open(LIBRARY, [PEER]);
+  expect(screen.getByRole('link', { name: 'Reef, 12 photos' })).toBeTruthy();
 });
 
 test('a library whose sync failed links to its sync settings', async () => {

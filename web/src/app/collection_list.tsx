@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Folder, Images, MoreVertical } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { renditionsApi } from '../api/renditions';
@@ -104,8 +104,6 @@ interface Props {
   onAction: (row: CollectionRow, action: string) => void;
   /** Sends the scroll back to the top when the list becomes a different list. */
   resetKey?: string;
-  /** Drawn above the scroll rather than inside it, so it is always on screen. */
-  header?: ReactNode;
 }
 
 export const CollectionList = observer(function CollectionList({
@@ -114,7 +112,6 @@ export const CollectionList = observer(function CollectionList({
   actionsFor,
   onAction,
   resetKey = '',
-  header,
 }: Props): JSX.Element {
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -169,7 +166,6 @@ export const CollectionList = observer(function CollectionList({
   return (
     <div {...stylex.props(listStyles.list, styles.fill)}>
       <CollectionListKeys store={store} presenter={presenter} scroller={scroller} />
-      {header}
 
       {/* Mirroring makes a library's list as long as its folder tree, so only the
           rows near the viewport are mounted (§18.3.4). The spacer carries the

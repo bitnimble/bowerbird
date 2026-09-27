@@ -465,3 +465,24 @@ test('an eviction nothing survived does not claim a partial success', async () =
 
   expect(toasts[0]).toBe('Macbook could not confirm a copy of 1 photo.');
 });
+
+test("this device's name is read, and renamed only to something new that is not blank", async () => {
+  const { store, presenter } = harness();
+  const sent: string[] = [];
+  replicationApi.deviceName = () => Promise.resolve({ name: 'studio' });
+  replicationApi.setDeviceName = (name) => {
+    sent.push(name);
+    return Promise.resolve({ name });
+  };
+
+  await presenter.loadDeviceName();
+  expect(store.deviceName).toBe('studio');
+
+  await presenter.setDeviceName('   ');
+  await presenter.setDeviceName('studio ');
+  expect(sent).toEqual([]);
+
+  await presenter.setDeviceName(' Studio iMac ');
+  expect(sent).toEqual(['Studio iMac']);
+  expect(store.deviceName).toBe('Studio iMac');
+});

@@ -8,7 +8,7 @@ const styles = stylex.create({
     gridTemplateColumns: '108px 1fr',
     gap: '5px 10px',
     fontFamily: font.mono,
-    fontSize: '11px',
+    fontSize: '12.1px',
     margin: 0,
   },
   term: {

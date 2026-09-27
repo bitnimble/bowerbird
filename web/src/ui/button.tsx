@@ -71,7 +71,7 @@ export const buttonStyles = stylex.create({
   },
   hint: {
     fontFamily: font.mono,
-    fontSize: '10px',
+    fontSize: '11px',
     opacity: 0.55,
     marginLeft: '1px',
   },
@@ -87,7 +87,7 @@ export const buttonStyles = stylex.create({
     backgroundColor: color.satin,
     color: INK_ON_SATIN,
     fontFamily: font.mono,
-    fontSize: '10px',
+    fontSize: '11px',
     fontWeight: 600,
     lineHeight: '16px',
     textAlign: 'center',

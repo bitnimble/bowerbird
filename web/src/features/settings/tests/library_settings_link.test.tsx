@@ -23,6 +23,7 @@ const LIBRARY = {
   photo_count: 12,
   render_skip_full: [],
   render_skip_max: [],
+  denoiser: 'galosh',
 } as unknown as Library;
 
 function Seed(): null {

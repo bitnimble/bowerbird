@@ -29,7 +29,7 @@ const styles = stylex.create({
     borderRadius: '11px',
     backgroundColor: 'transparent',
     color: { default: color.boneDim, ':hover': color.bone },
-    fontSize: '12px',
+    fontSize: '13.2px',
     lineHeight: 1,
     cursor: 'pointer',
   },

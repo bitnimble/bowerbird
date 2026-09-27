@@ -46,7 +46,7 @@ export class LocalDecoder {
    * (`job::render_bytes`). The RAW is transferred.
    */
   render(raw: Uint8Array<ArrayBuffer>, job: RenditionCommand): Promise<Uint8Array<ArrayBuffer>> {
-    return this.ask(BytesSchema, { kind: 'render', raw, job: JSON.stringify(job) }, [raw.buffer]);
+    return this.ask(BytesSchema, { kind: 'render', raw, job: JSON.stringify(job), denoiser: job.denoiser }, [raw.buffer]);
   }
 
   /**

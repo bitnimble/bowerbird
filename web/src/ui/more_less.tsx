@@ -16,7 +16,7 @@ const styles = stylex.create({
     margin: 0,
     cursor: 'pointer',
     fontFamily: font.mono,
-    fontSize: { default: '11px', [COARSE]: '13px' },
+    fontSize: { default: '12.1px', [COARSE]: '14.3px' },
     color: { default: color.boneDim, ':hover': color.bone },
     display: 'inline-flex',
     alignItems: 'center',

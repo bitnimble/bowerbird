@@ -49,7 +49,7 @@ export const SettingsSchema = z.object({
 
   // Filesystem watching: auto-sync a library when its files change on disk.
   watch_enabled: z.boolean().default(true),
-  watch_debounce_ms: z.number().int().min(0).default(15000),
+  watch_debounce_ms: z.number().int().min(0).default(30000),
   // How often a library that cannot be watched is walked for folders whose mtime
   // moved (§9.8). Applies to a library on a network filesystem and to nothing
   // else: a change made by another machine never reaches this kernel, so there is

@@ -11,6 +11,7 @@ import {
   type RenderTimings,
   type RenderedRendition,
 } from '../../../src/schemas/render_stages';
+import { type Denoiser } from '../../../src/schemas/photo_edits';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { request } from './request';
 
@@ -30,10 +31,10 @@ export const settingsApi = {
     request(RenderTimingsSchema, 'GET', route(PathSegment.api(), PathSegment.settings(), PathSegment.renderTimings())),
   // Measures it now: several renders of one photograph, so it answers in seconds on a `full` and
   // in tens of them on a `max`.
-  benchmarkRender: (rendition: RenderedRendition): Promise<RenderTiming> =>
+  benchmarkRender: (rendition: RenderedRendition, denoiser: Denoiser): Promise<RenderTiming> =>
     request(
       RenderTimingSchema,
       'POST',
-      `${route(PathSegment.api(), PathSegment.settings(), PathSegment.renderTimings(), PathSegment.benchmark())}?rendition=${rendition}`,
+      `${route(PathSegment.api(), PathSegment.settings(), PathSegment.renderTimings(), PathSegment.benchmark())}?${new URLSearchParams({ rendition, denoiser })}`,
     ),
 };

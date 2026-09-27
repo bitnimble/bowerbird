@@ -346,7 +346,7 @@ const TileBadges = observer(function TileBadges({ photo, fileState }: {
   fileState: boolean;
 }): JSX.Element {
   const replication = useReplicationStore();
-  const catalogueOnly = replication.hasPeers(photo.library_id) && !replication.syncsOriginals(photo.library_id);
+  const catalogueOnly = replication.originalsElsewhere(photo.library_id);
   return (
     <div {...stylex.props(tile.badges)}>
       {/* A photograph with no local copy has not gone - the RAW comes back when something needs

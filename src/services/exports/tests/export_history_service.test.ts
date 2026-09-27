@@ -192,6 +192,19 @@ test('forgetting a run drops every file in it and leaves the others', async () =
   expect(history.list().map((run) => run.id)).toEqual(['run2']);
 });
 
+test('forgetting everything empties the history and still records a run in flight', async () => {
+  record('p1', 'run1');
+  record('p2', 'run2');
+  addPhoto('p3');
+  began('p3', 'run3');
+
+  history.forgetAll();
+  expect(history.list()).toEqual([]);
+
+  history.landed({ run_id: 'run3', photo_id: 'p3', output_path: '/exports/p3.jpg' });
+  expect(history.list().map((run) => run.id)).toEqual(['run3']);
+});
+
 // A run is its rows and nothing else, so forgetting the last of them takes the run with it
 // rather than leaving a heading over nothing.
 test('forgetting the only file of a run leaves no run', async () => {

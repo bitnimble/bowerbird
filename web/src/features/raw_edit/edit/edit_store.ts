@@ -1,5 +1,5 @@
 import { computed, observable } from 'mobx';
-import { type EditDoc } from '../../../../../src/schemas/photo_edits';
+import { type Denoiser, type EditDoc } from '../../../../../src/schemas/photo_edits';
 import type { AsShot } from '../../../../../src/schemas/prepared';
 
 /** Whether a save is in flight, and whether the last one was refused. */
@@ -37,6 +37,13 @@ export class EditStore {
    * nothing, and the pair stays closed.
    */
   @observable accessor asShot: AsShot | null = null;
+
+  /** What a document naming no denoiser is denoised with: its library's. */
+  @observable accessor libraryDenoiser: Denoiser = 'galosh';
+
+  @computed get denoiser(): Denoiser {
+    return this.doc?.denoiser ?? this.libraryDenoiser;
+  }
 
   /**
    * The exposure the tick draws at, in EV; null uses the camera match's own.

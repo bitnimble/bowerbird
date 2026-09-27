@@ -20,6 +20,8 @@ import { appendToStage } from './blob_store';
 import { RenditionCache } from './rendition_cache';
 import type { PeerTransport } from './peer';
 import type { RenditionWritten } from '../processing/workers/processing_types';
+import { BlobRenditionStatusSchema } from '../../schemas/blobs';
+import type { RenditionFetchPhase } from '../../schemas/events';
 
 // Renditions from a peer (docs/replication.md §7.9): a device holding the
 // catalogue but not the original serves tiles and renditions anyway, by fetching
@@ -63,6 +65,8 @@ export class RenditionFetchService {
     private readonly transport: PeerTransport,
     /** Told of a fetched copy that replaced one already served, so a client's URL for it moves. */
     private readonly announce: (photoId: string, written: RenditionWritten) => void = () => {},
+    /** Told what a fetch is waiting on while it waits, and null once it has settled. */
+    private readonly announcePhase: (photoId: string, rendition: Rendition, phase: RenditionFetchPhase | null) => void = () => {},
     private readonly cache: RenditionCache = new RenditionCache(db),
   ) {}
 
@@ -94,7 +98,17 @@ export class RenditionFetchService {
     const running = this.fetching.get(key);
     if (running != null) return running;
     const hdr = storedAsHdr(rendition, library.rendition_hdr);
-    const run = this.fetchIfStale(photo, library, rendition, hdr, force).finally(() => this.fetching.delete(key));
+    let reported = false;
+    // A grid scroll fetches tiles by the hundred, and nothing draws a tile's wait.
+    const report =
+      rendition === 'grid' ? undefined : (phase: RenditionFetchPhase): void => {
+        reported = true;
+        this.announcePhase(photoId, rendition, phase);
+      };
+    const run = this.fetchIfStale(photo, library, rendition, hdr, force, report).finally(() => {
+      this.fetching.delete(key);
+      if (reported) this.announcePhase(photoId, rendition, null);
+    });
     this.fetching.set(key, run);
     return run;
   }
@@ -141,7 +155,14 @@ export class RenditionFetchService {
     return original != null && existsSync(original);
   }
 
-  private async fetchIfStale(photo: BasicPhoto, library: Library, rendition: Rendition, hdr: boolean, force: boolean): Promise<void> {
+  private async fetchIfStale(
+    photo: BasicPhoto,
+    library: Library,
+    rendition: Rendition,
+    hdr: boolean,
+    force: boolean,
+    report?: (phase: RenditionFetchPhase) => void,
+  ): Promise<void> {
     const target = getRenditionPath(library, photo.id, rendition, hdr);
     const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(rendition, hdr));
     const builtFrom = stamps?.built_from ?? null;
@@ -154,7 +175,7 @@ export class RenditionFetchService {
     }
 
     try {
-      await this.fetch(photo, library, rendition, hdr, target, editedFrom, force);
+      await this.fetch(photo, library, rendition, hdr, target, editedFrom, force, [], report);
     } catch (error) {
       // Kept, the old copy would answer a rebuild the reader asked for as though it had happened.
       if (force) throw error;
@@ -164,7 +185,7 @@ export class RenditionFetchService {
       // (§8.5) - is that stale picture when nothing is cached, and is recorded at
       // what it was built from, so it still reads as owed.
       if (!cached) {
-        await this.fetch(photo, library, rendition, hdr, target, null, force);
+        await this.fetch(photo, library, rendition, hdr, target, null, force, [], report);
         return;
       }
       log.warn('kept a stale fetched rendition; no peer holds a current one', {
@@ -184,11 +205,13 @@ export class RenditionFetchService {
     editedFrom: string | null,
     force: boolean,
     via: readonly string[] = [],
+    report?: (phase: RenditionFetchPhase) => void,
   ): Promise<void> {
     const passedThrough = [...via, this.locations.selfId()];
     const query = new URLSearchParams({ ...(hdr ? { hdr: '1' } : {}), ...(force ? { force: '1' } : {}) }).toString();
     for (const peer of this.candidates(library.id, photo.id, passedThrough)) {
       try {
+        if (report != null) report(force ? 'rendering' : await this.phaseAt(peer, photo.id, rendition, hdr));
         const res = await this.transport.request(
           peer,
           `${route(photo.id, PathSegment.rendition(), rendition)}${query === '' ? '' : `?${query}`}`,
@@ -229,6 +252,21 @@ export class RenditionFetchService {
       'NOT_FOUND',
       `no peer holds a current ${rendition} of ${photo.id} and there is no local original to build from`,
     );
+  }
+
+  private async phaseAt(peer: string, photoId: string, rendition: Rendition, hdr: boolean): Promise<RenditionFetchPhase> {
+    // The camera's JPEG is lifted out of the RAW as it is asked for, which is no render.
+    if (rendition === 'embedded') return 'fetching';
+    try {
+      const res = await this.transport.request(
+        peer,
+        `${route(photoId, PathSegment.rendition(), rendition, PathSegment.status())}${hdr ? '?hdr=1' : ''}`,
+      );
+      if (!res.ok) return 'fetching';
+      return BlobRenditionStatusSchema.parse(await res.json()).current ? 'fetching' : 'rendering';
+    } catch {
+      return 'fetching';
+    }
   }
 
   private async accept(

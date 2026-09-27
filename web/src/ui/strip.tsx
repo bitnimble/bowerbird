@@ -16,7 +16,7 @@ const styles = stylex.create({
   },
   label: {
     fontFamily: font.mono,
-    fontSize: '11px',
+    fontSize: '12.1px',
     color: color.boneDim,
     minWidth: 0,
     overflowWrap: 'anywhere',

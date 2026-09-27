@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { RenderTimingSchema, RenderTimingsSchema, RenderedRenditionSchema, type RenderTiming, type RenderedRendition } from '../../schemas/render_stages';
+import { DenoiserSchema, type Denoiser } from '../../schemas/photo_edits';
 import { PathSegment, route } from '../../schemas/route';
 import { DEFAULT_SETTINGS, SettingsSchema, UpdateSettingsRequestSchema } from '../../schemas/settings';
 import type { RenderTimingsFile } from '../../services/processing/renditions/render_timings_file';
@@ -15,7 +16,7 @@ export class SettingsApi {
     private readonly settings: SettingsRepository,
     // What a render costs here, which belongs to the machine rather than to any library (§10.1).
     private readonly timings: RenderTimingsFile,
-    private readonly benchmarkRender: (rendition: RenderedRendition) => Promise<RenderTiming>,
+    private readonly benchmarkRender: (rendition: RenderedRendition, denoiser: Denoiser) => Promise<RenderTiming>,
   ) {
     const app = new Hono();
 
@@ -33,7 +34,8 @@ export class SettingsApi {
     app.post(route(PathSegment.renderTimings(), PathSegment.benchmark()), async (c) => {
       takeAsLongAsItTakes(c);
       const rendition = RenderedRenditionSchema.parse(c.req.query('rendition'));
-      return c.json(respond(RenderTimingSchema, await this.benchmarkRender(rendition)));
+      const denoiser = DenoiserSchema.parse(c.req.query('denoiser'));
+      return c.json(respond(RenderTimingSchema, await this.benchmarkRender(rendition, denoiser)));
     });
 
     app.patch(route(), async (c) => {

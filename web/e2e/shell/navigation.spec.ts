@@ -12,18 +12,18 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test('a settings tab is a link, and survives a reload and the back button', async ({ page }) => {
-  await page.goto(route(PathSegment.settings(), 'rendering'));
-  await expect(page.getByLabel('Colour fringe removal')).toBeVisible();
+  await page.goto(route(PathSegment.settings(), 'advanced'));
+  await expect(page.getByLabel('Colour fringing removal')).toBeVisible();
 
-  await page.getByRole('radio', { name: 'Scanning' }).click();
-  await expect(page).toHaveURL(new RegExp(`${route(PathSegment.settings(), 'scanning')}$`));
+  await page.getByRole('radio', { name: 'General' }).click();
+  await expect(page).toHaveURL(new RegExp(`${route(PathSegment.settings(), 'general')}$`));
   await expect(page.getByLabel('Daily full scan at')).toBeVisible();
 
   await page.reload();
   await expect(page.getByLabel('Daily full scan at')).toBeVisible();
 
   await page.goBack();
-  await expect(page.getByLabel('Colour fringe removal')).toBeVisible();
+  await expect(page.getByLabel('Colour fringing removal')).toBeVisible();
 
   // The bare path is still a link people have, and it opens what it always did.
   await page.goto(route(PathSegment.settings()));

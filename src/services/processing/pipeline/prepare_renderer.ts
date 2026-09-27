@@ -91,7 +91,7 @@ export class PrepareRenderer {
       // composite the photographs rather than the cameras' own pictures.
       targets: [],
       grade: this.targets.grade(),
-      ...developed(this.editsFor(photoId)?.doc ?? null, develop),
+      ...developed(this.editsFor(photoId)?.doc ?? null, library.denoiser, develop),
       ...this.targets.render(),
     };
     const job: WorkerJob = composite == null

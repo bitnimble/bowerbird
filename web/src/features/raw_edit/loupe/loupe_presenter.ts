@@ -268,7 +268,7 @@ export class LoupePresenter {
       strengths: { sharpen: doc.sharpening / 100, defringe: local.open.defringe },
       denoiseLuminance: doc.luminanceNoise,
       denoiseColour: doc.colourNoise,
-      denoiser: doc.denoiser,
+      denoiser: this.edit.denoiser,
       dust: dustSettings(doc),
       adjust: adjustOf(doc),
       levels: this.stage.levels,
@@ -296,7 +296,7 @@ export class LoupePresenter {
     const shape =
       doc == null
         ? ''
-        : `${doc.luminanceNoise},${doc.colourNoise},${doc.denoiser},${doc.sharpening},${doc.clarity},` +
+        : `${doc.luminanceNoise},${doc.colourNoise},${this.edit.denoiser},${doc.sharpening},${doc.clarity},` +
           `${doc.texture},${doc.dehaze},${doc.dustRemoval},${doc.dustSensitivity},` +
           `${doc.dustIntensity},${JSON.stringify(doc.repairs)}`;
     return `${this.host.photoId()}:${this.edit.rev}:${shape}`;

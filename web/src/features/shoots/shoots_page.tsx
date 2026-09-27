@@ -7,14 +7,12 @@ import { CollectionList } from '../../app/collection_list';
 import { CollectionListStrings } from '../../app/collection_list.strings';
 import type { CollectionRow } from '../../app/collection_list_store';
 import { useLibrariesStore, usePresenters, useShootsStore } from '../../app/stores_context';
-import { ActionMenu } from '../../ui/action_menu';
 import { Button } from '../../ui/button';
 import { MenuCheckItem } from '../../ui/check_menu';
 import { EmptyState } from '../../ui/empty_state';
 import { ErrorBanner } from '../../ui/error_banner';
 import { Heading } from '../../ui/heading';
 import { ICON } from '../../ui/icon';
-import { ListBody, ListName, ListRow } from '../../ui/list';
 import { menuSection } from '../../ui/menu_section';
 import type { Option } from '../../ui/option';
 import { OverflowMenu } from '../../ui/overflow_menu';
@@ -22,18 +20,18 @@ import { Page, PageHead } from '../../ui/page';
 import { Spacer } from '../../ui/row';
 import { SegmentedControl } from '../../ui/segmented_control';
 import { Text } from '../../ui/text';
-import { libraryLabel } from '../libraries/library_label';
 import { BulkBarStrings } from '../photos/grid/bulk_bar.strings';
 import { ToastsStrings } from '../toasts/toasts.strings';
 import { AddShootDialog } from './add_shoot_dialog';
+import { AddShootStrings } from './add_shoot_dialog.strings';
 import { DeleteShootDialog } from './delete_shoot_dialog';
 import { ShootsPageStrings } from './shoots_page.strings';
 import type { ShootView } from './shoots_store';
 
 const VIEWS: Option<ShootView>[] = [
+  { value: 'tree_full', label: ShootsPageStrings.viewAllFolders() },
   { value: 'flat', label: ShootsPageStrings.viewFlat() },
   { value: 'tree', label: ShootsPageStrings.viewTree() },
-  { value: 'tree_full', label: ShootsPageStrings.viewAllFolders() },
 ];
 
 const createInSubfolder = (refusal: string | undefined): Option<string> => ({
@@ -89,8 +87,8 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
   useEffect(() => {
     shoots.restoreView();
     void shoots.load(libraryId);
-    // The root row names the library, which the sidebar has usually loaded already
-    // but a deep link has not.
+    // Whether the library is read-only, which the sidebar has usually loaded
+    // already but a deep link has not.
     void librariesPresenter.load();
   }, [libraryId, shoots, librariesPresenter]);
 
@@ -158,6 +156,15 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
           value={store.view}
           onChange={shoots.setView}
         />
+        <Button
+          variant="primary"
+          disabled={readOnlyRefusal != null}
+          tooltip={readOnlyRefusal}
+          onClick={() => setCreatingIn('')}
+        >
+          <Plus size={ICON} />
+          {AddShootStrings.createShoot()}
+        </Button>
         <ShootsOverflow />
       </PageHead>
 
@@ -190,21 +197,6 @@ export const ShootsPage = observer(function ShootsPage(): JSX.Element {
         actionsFor={actionsFor}
         onAction={onAction}
         resetKey={`${libraryId}:${store.view}`}
-        header={
-          /* Permanent, undeletable, and the answer to "one photo at the root and
-             one in a subfolder" reading as an empty page. */
-          <ListRow root>
-            <ListBody>
-              <ListName>{library == null ? ShootsPageStrings.libraryRoot() : libraryLabel(library)}</ListName>
-            </ListBody>
-            <ActionMenu
-              trigger={<Plus size={ICON} />}
-              label={ShootsPageStrings.addToLibraryRoot()}
-              options={[createInSubfolder(readOnlyRefusal)]}
-              onSelect={() => setCreatingIn('')}
-            />
-          </ListRow>
-        }
       />
 
       {store.loading && store.rows.length === 0 && <EmptyState title={ShootsPageStrings.readingFolders()} />}

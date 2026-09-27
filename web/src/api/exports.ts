@@ -41,6 +41,7 @@ export const exportsApi = {
     request(NothingSchema, 'DELETE', route(PathSegment.api(), PathSegment.exports(), id)),
   forgetRun: (runId: string): Promise<void> =>
     request(NothingSchema, 'DELETE', route(PathSegment.api(), PathSegment.exports(), PathSegment.runs(), runId)),
+  forgetAll: (): Promise<void> => request(NothingSchema, 'DELETE', route(PathSegment.api(), PathSegment.exports())),
 
   // The picture beside a history row, written when the export was and never rewritten - so
   // unversioned, and served with a year's cache behind it.

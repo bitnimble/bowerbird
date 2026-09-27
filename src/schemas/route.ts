@@ -31,6 +31,7 @@ export const PathSegment = {
   days: segment('days'),
   defaults: segment('defaults'),
   delete: segment('delete'),
+  device: segment('device'),
   done: segment('done'),
   download: segment('download'),
   drafts: segment('drafts'),

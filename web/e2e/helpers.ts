@@ -214,11 +214,9 @@ async function patchSettings(request: APIRequestContext, settings: UpdateSetting
   expect(response.ok()).toBe(true);
 }
 
-// From the library's Shoots page. Where the shoot goes is the row its + menu was
-// opened from, so a root-level one comes from the library root's own menu.
+// At the library root, from the Shoots page's header.
 export async function addShoot(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: 'Add to the library root' }).click();
-  await page.getByRole('menuitem', { name: 'Create shoot in subfolder' }).click();
+  await page.getByRole('button', { name: 'Create shoot' }).click();
   await page.getByLabel('Shoot name').fill(name);
   await page.getByRole('dialog').getByRole('button', { name: 'Create shoot' }).click();
 }

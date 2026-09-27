@@ -30,7 +30,7 @@ export const styles = stylex.create({
     width: '100%',
     height: '100%',
     fontFamily: font.mono,
-    fontSize: '10px',
+    fontSize: '11px',
     letterSpacing: '0.08em',
     color: '#4a505c',
     textTransform: 'uppercase',
@@ -50,7 +50,7 @@ export const styles = stylex.create({
   },
   statusText: {
     color: color.bone,
-    fontSize: '11px',
+    fontSize: '12.1px',
   },
   bar: {
     position: 'absolute',

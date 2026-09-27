@@ -56,6 +56,7 @@ describe('ProcessingService.processUnprocessed', () => {
       library_rendition_source: 'render',
       rendition_hdr: 0,
       render_skip_full: '',
+      denoiser: 'galosh',
       // Unedited, which is what every test in this file is about: the photo grades as the
       // camera metered it. `edits` is exercised in `exposure` below.
       edits: null,

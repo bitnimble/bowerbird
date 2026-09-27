@@ -41,6 +41,7 @@ export const libraries = sqliteTable(
     // these onto a pending row picks the one it needs by name.
     renderSkipFull: text('render_skip_full').notNull().default(''),
     renderSkipMax: text('render_skip_max').notNull().default(''),
+    denoiser: text('denoiser').notNull().default('galosh'),
     autoStack: integer('auto_stack').notNull().default(1),
     autoStackSimilarity: real('auto_stack_similarity').notNull().default(0.78),
     autoStackWindowSeconds: integer('auto_stack_window_seconds').notNull().default(60),

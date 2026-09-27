@@ -2,13 +2,13 @@
 // only counts while the pointer is captured. The arithmetic behind both is the
 // presenter's and pinned there; what this holds is that the right call is made.
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { registerDom } from '../../test_dom';
-import { MemoryStorage } from '../../test_storage';
+import { registerDom } from '../../../test_dom';
+import { MemoryStorage } from '../../../test_storage';
 
 registerDom();
 const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
-const { SidebarResizer } = await import('../app');
-const { StoresProvider, useSidebarStore } = await import('../stores_context');
+const { SidebarResizer } = await import('../sidebar_resizer');
+const { StoresProvider, useSidebarStore } = await import('../../../app/stores_context');
 
 afterEach(cleanup);
 // A width the last test dragged to is a width the next one would start from.

@@ -31,7 +31,7 @@ const styles = stylex.create({
     borderTopColor: color.slate,
   },
   title: {
-    fontSize: '15px',
+    fontSize: '16.5px',
     fontWeight: 600,
     color: color.bone,
   },
@@ -75,7 +75,7 @@ export const UpdateDialog = observer(function UpdateDialog(): JSX.Element | null
       <div {...stylex.props(styles.scroll)}>
         {store.newer.map((release) => (
           <section key={release.tag} {...stylex.props(styles.release)}>
-            {/* Not `Text variant="label"`: that is the uppercased, letter-spaced face the
+            {/* Not `Text variant="label"`: that is the small mono caption the
                 section headings wear, and a release is called what its author called it. */}
             <div {...stylex.props(styles.title)}>{release.name}</div>
             {release.published_at != null && (

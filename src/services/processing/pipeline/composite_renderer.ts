@@ -59,7 +59,7 @@ export class CompositeRenderer {
       reportProgress: true,
       targets: [],
       grade: this.targets.grade(),
-      ...developed(null),
+      ...developed(null, library.denoiser),
       ...this.targets.render(),
     });
     if (recipe == null) throw new AppError('VALIDATION_ERROR', 'these photographs did not align');
@@ -93,7 +93,7 @@ export class CompositeRenderer {
       reportProgress: true,
       targets: [],
       grade: this.targets.grade(),
-      ...developed(null),
+      ...developed(null, library.denoiser),
       ...this.targets.render(),
     });
     // A native refusal already arrives as a rejection carrying its own reason; this is the belt
@@ -129,7 +129,7 @@ export class CompositeRenderer {
       dataPath: getDataPath(library),
       targets: [],
       grade: this.targets.grade(),
-      ...developed(null),
+      ...developed(null, library.denoiser),
       ...this.targets.render(),
     });
     if (solved == null) throw new AppError('VALIDATION_ERROR', 'the seams could not be solved');
@@ -177,7 +177,7 @@ export class CompositeRenderer {
         { ...this.targets.composedTarget(dataPath, '', recipe, 'assembly', 'full', library.rendition_hdr, 'render'), outputPath },
       ],
       grade: this.targets.grade(),
-      ...developed(null),
+      ...developed(null, library.denoiser),
       ...this.targets.render(),
     });
   }
@@ -215,7 +215,7 @@ export class CompositeRenderer {
         { ...this.targets.composedTarget(dataPath, '', recipe, 'assembly', 'full', library.rendition_hdr, 'render'), outputPath },
       ],
       grade: this.targets.grade(),
-      ...developed(null),
+      ...developed(null, library.denoiser),
       ...this.targets.render(),
     });
   }
@@ -302,7 +302,7 @@ export class CompositeRenderer {
           grade: this.targets.grade(),
           // The composite's own document, which the merge wrote the align's framing into: a panorama
           // is a photograph, so what frames it is the field that frames every other one.
-          ...developed(this.editsFor(photoId)?.doc ?? null),
+          ...developed(this.editsFor(photoId)?.doc ?? null, library.denoiser),
           ...this.targets.render(),
         } satisfies CompositeJob,
         renditionSkips(library, rendition),

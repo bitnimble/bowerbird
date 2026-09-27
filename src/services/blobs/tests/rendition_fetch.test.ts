@@ -9,7 +9,7 @@ import { applyErrorHandler } from '../../../api/error_handler';
 import { runMigrations } from '../../../db/migrate';
 import { PathSegment, route } from '../../../schemas/route';
 import { dataPathForLibraryId, getRenditionPath, originalPathOf } from '../../../utils/paths';
-import { renditionVariant, type Rendition } from '../../processing/renditions/renditions';
+import { renditionVariant, storedAsHdr, type Rendition } from '../../processing/renditions/renditions';
 import { LibrariesRepository } from '../../libraries/libraries_repository';
 import { type BasicPhoto, PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_repository';
@@ -52,6 +52,8 @@ interface Peer {
   routes: Hono;
   /** Every fetched copy this peer told its clients had changed, as `stage of photo`. */
   announced: string[];
+  /** What each fetch told its clients it was waiting on, as `rendition of photo: phase`. */
+  phases: string[];
 }
 
 const net = new Map<string, Hono>();
@@ -104,8 +106,16 @@ function makePeer(name: string): Peer {
     transport,
   );
   const announced: string[] = [];
-  const fetch = new RenditionFetchService(db, photoPaths, photoProcessing, libraries, locations, transport, (photoId, written) =>
-    announced.push(`${written.stage} of ${photoId}`),
+  const phases: string[] = [];
+  const fetch = new RenditionFetchService(
+    db,
+    photoPaths,
+    photoProcessing,
+    libraries,
+    locations,
+    transport,
+    (photoId, written) => announced.push(`${written.stage} of ${photoId}`),
+    (photoId, rendition, phase) => phases.push(`${rendition} of ${photoId}: ${phase ?? 'settled'}`),
   );
   const camera = new Map<string, string>();
   const originalHere = (photoId: string): boolean => {
@@ -172,6 +182,7 @@ function makePeer(name: string): Peer {
     routes: api.routes,
     fetch,
     announced,
+    phases,
   };
 }
 
@@ -299,6 +310,43 @@ describe('fetching a rendition through a peer', () => {
     net.delete(a.id);
     await b.fetch.ensureCurrent('photo1', 'grid');
     expect(readFileSync(tilePath(b, 'photo1'), 'utf8')).toBe('TILE-BYTES');
+  });
+
+  it('says it is fetching a copy the holder has, and rendering one it has to build', async () => {
+    const { a, b } = holderAndReplica();
+    await b.fetch.ensureCurrent('photo1', 'full');
+    await b.fetch.ensureCurrent('photo1', 'full', true);
+    a.camera.set('photo1', 'JPEG-one');
+    await b.fetch.ensureCurrent('photo1', 'embedded');
+
+    expect(b.phases).toEqual([
+      'full of photo1: rendering',
+      'full of photo1: settled',
+      'full of photo1: rendering',
+      'full of photo1: settled',
+      'embedded of photo1: fetching',
+      'embedded of photo1: settled',
+    ]);
+  });
+
+  it('says it is fetching when the holder already built the rendition', async () => {
+    const { a, b } = holderAndReplica();
+    const hdr = storedAsHdr('full', library(b).rendition_hdr);
+    const built = getRenditionPath(library(a), 'photo1', 'full', hdr);
+    mkdirSync(path.dirname(built), { recursive: true });
+    writeFileSync(built, 'FULL-BYTES');
+    a.photoProcessing.markCopyBuilt('photo1', BUILT_AT, BUILT_FROM, renditionVariant('full', hdr));
+
+    await b.fetch.ensureCurrent('photo1', 'full');
+
+    expect(b.phases).toEqual(['full of photo1: fetching', 'full of photo1: settled']);
+  });
+
+  it('keeps a grid scroll quiet', async () => {
+    const { a, b } = holderAndReplica();
+    buildTile(a, 'photo1', 'TILE-BYTES', BUILT_FROM);
+    await b.fetch.ensureCurrent('photo1', 'grid');
+    expect(b.phases).toEqual([]);
   });
 
   // The one thing a caller needs that the bytes cannot tell it: which develop

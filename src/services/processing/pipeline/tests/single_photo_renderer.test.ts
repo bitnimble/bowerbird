@@ -110,11 +110,12 @@ describe('single-photo rendering', () => {
         {} as PhotoProcessingRepository, {} as PhotoPathsRepository, {} as PhotoListingRepository,
         settingsWith({ match_embedded_jpeg: false, raw_defringe: 0 }),
       );
-      const timing = await service.benchmarkRender('full', new RenderTimingsFile(path.join(root, 'timings.json')));
+      const timing = await service.benchmarkRender('full', 'pmrid', new RenderTimingsFile(path.join(root, 'timings.json')));
       const scale = REFERENCE_PIXELS / (6336 * 9504);
       expect(timing.stages.lens).toBe(Math.round(100 * scale));
       expect(timing.stages.colour).toBe(Math.round(800 * scale));
       expect(posted[0]).toMatchObject({ cameraMatch: 'lensAndColour', denoiseLuminance: 20, denoiseColour: 30, defringe: 1 });
+      expect(posted.every((job) => job.denoiser === 'pmrid')).toBe(true);
       expect(posted.some((job) => job.denoiseLuminance === 0 && job.denoiseColour === 0)).toBe(true);
       expect(posted.some((job) => job.defringe === 0)).toBe(true);
     } finally {

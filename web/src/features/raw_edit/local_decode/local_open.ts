@@ -154,7 +154,7 @@ const PrepareCrossingSchema = z.object({
 /** What one open on the GPU worker is asked for (`gpu_worker.ts`). */
 export const OpenAskSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('hold'), raw: BytesSchema }),
-  z.object({ kind: z.literal('render'), raw: BytesSchema, job: JsonSchema }),
+  z.object({ kind: z.literal('render'), raw: BytesSchema, job: JsonSchema, denoiser: DenoiserSchema }),
   z.object({ kind: z.literal('prepare'), request: JsonSchema, mosaic: PrepareCrossingSchema }),
   z.object({ kind: z.literal('holdPicture'), framed: BytesSchema, request: JsonSchema }),
   z.object({ kind: z.literal('holdRendition'), file: BytesSchema, request: JsonSchema }),

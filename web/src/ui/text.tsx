@@ -15,7 +15,7 @@ export const textStyles = stylex.create({
   },
   mono: {
     fontFamily: font.mono,
-    fontSize: { default: '11px', [COARSE]: '13px' },
+    fontSize: { default: '12.1px', [COARSE]: '14.3px' },
     color: color.boneDim,
   },
   monoParagraph: {
@@ -25,9 +25,8 @@ export const textStyles = stylex.create({
   },
   label: {
     fontFamily: font.mono,
-    fontSize: { default: '10px', [COARSE]: '12px' },
-    letterSpacing: '0.14em',
-    textTransform: 'uppercase',
+    fontSize: { default: '11px', [COARSE]: '13.2px' },
+    fontWeight: 600,
     color: color.boneDim,
   },
   error: {
@@ -38,7 +37,7 @@ export const textStyles = stylex.create({
   },
 });
 
-// Four text roles, no free-floating font sizes. `label` is the small uppercase
+// Four text roles, no free-floating font sizes. `label` is the small bold
 // caption that titles a panel or a sidebar section.
 export function Text({
   variant = 'body',

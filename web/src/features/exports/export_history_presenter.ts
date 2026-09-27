@@ -62,6 +62,16 @@ export class ExportHistoryPresenter {
     this.forgotRun(runId);
   }
 
+  async forgetAll(): Promise<void> {
+    try {
+      await exportsApi.forgetAll();
+    } catch {
+      this.failed(ExportsPageStrings.couldNotClearHistory());
+      return;
+    }
+    this.loaded([]);
+  }
+
   @action.bound
   private failed(error: string): void {
     this.store.loading = false;

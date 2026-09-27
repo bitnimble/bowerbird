@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { OrderingSchema, RenditionSourceSchema, IdSchema } from './common';
+import { DenoiserSchema } from './photo_edits';
 import { OptionalStagesSchema } from './render_stages';
 
 // One folder name, not a path: it names the library's single bin, at its root,
@@ -61,6 +62,8 @@ export const LibrarySchema = z.object({
   // `max` is what gets pixel-peeped. Not retroactive, like every setting in this panel.
   render_skip_full: OptionalStagesSchema.default([]),
   render_skip_max: OptionalStagesSchema.default([]),
+  // What a photo whose edit names no denoiser is denoised with, in every rendition of it.
+  denoiser: DenoiserSchema.default('galosh'),
   include_subfolders: z.boolean().default(true),
   // Whether JPEG, PNG, HEIC and AVIF are photographs here. Off by default: beside
   // a folder of RAWs they are usually the camera's own copies of frames the
@@ -99,6 +102,7 @@ export const LibrarySettingsSchema = LibrarySchema.pick({
   rendition_hdr: true,
   render_skip_full: true,
   render_skip_max: true,
+  denoiser: true,
   auto_stack: true,
   auto_stack_similarity: true,
   auto_stack_window_seconds: true,
@@ -150,6 +154,7 @@ export const UpdateLibraryRequestSchema = z.object({
   rendition_hdr: z.boolean().optional(),
   render_skip_full: OptionalStagesSchema.optional(),
   render_skip_max: OptionalStagesSchema.optional(),
+  denoiser: DenoiserSchema.optional(),
   include_subfolders: z.boolean().optional(),
   include_non_raw: z.boolean().optional(),
   auto_stack: z.boolean().optional(),

@@ -40,9 +40,8 @@ const cursored = (page: Page) => collectionList(page).locator('[role="listitem"]
 test('keeps the library in the shell when a shoot is opened by deep link', async ({ page }) => {
   await gotoLibrary(page, PHOTOS_DIR, 'shoots');
 
-  // The library root is a permanent row, and the photographs no shoot has claimed
-  // lead the list, so a library with photos and no shoots is never an empty page.
-  await expect(page.getByRole('button', { name: 'Add to the library root' })).toBeVisible();
+  // The photographs no shoot has claimed lead the list, so a library with photos
+  // and no shoots is never an empty page.
   const orphans = rows(page).filter({ hasText: 'Not in any shoot' });
   await expect(orphans).toContainText(`Not in any shoot (${PHOTO_NAMES.length} photos)`);
 
@@ -73,14 +72,15 @@ test('keeps the library in the shell when a shoot is opened by deep link', async
 // it survives that, and exactly one row is ever in the tab order.
 test('the folder list is walkable by keyboard, and Tab lands on the cursor', async ({ page }) => {
   await gotoLibrary(page, PHOTOS_DIR, 'shoots');
+  // All folders keeps a deleted shoot's folder as a row, and the cleanup below waits for the row to go.
+  await page.getByRole('button', { name: 'Tree', exact: true }).click();
   await addShoot(page, 'Kelp');
   await expect(rows(page).getByText('Kelp', { exact: true })).toBeVisible();
 
   // Nothing is cursored until the reader asks for one.
   await expect(cursored(page)).toHaveCount(0);
 
-  // Onto the list first: closing the dialog hands focus back to the + menu, and
-  // a menu owns the arrow keys while it has focus - as it should.
+  // Onto the list first: closing the dialog hands focus back to Create shoot.
   await collectionList(page).focus();
 
   // The photographs in no shoot lead the list; the shoots below them are ordered
@@ -131,6 +131,8 @@ test('the folder list is walkable by keyboard, and Tab lands on the cursor', asy
 // hold the reader's place when the row they were in stops existing.
 test('a cursor survives the row under it being unmounted by a scroll', async ({ page }) => {
   await gotoLibrary(page, PHOTOS_DIR, 'shoots');
+  // All folders keeps a deleted shoot's folder as a row, and the cleanup below waits for the row to go.
+  await page.getByRole('button', { name: 'Tree', exact: true }).click();
 
   const made = Array.from({ length: 30 }, (_, i) => `Deep${String(i).padStart(2, '0')}`);
   for (const name of made) await addShoot(page, name);

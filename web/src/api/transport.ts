@@ -252,6 +252,7 @@ export interface EventHandlers {
    */
   open(reconnect: boolean): void;
   rendition(data: string): void;
+  rendition_fetch(data: string): void;
   replication(data: string): void;
   composite(data: string): void;
   export(data: string): void;
@@ -261,6 +262,7 @@ export interface EventHandlers {
 // handler. `open` is not among them: it is the connection, not something on it.
 const KINDS = [
   'rendition',
+  'rendition_fetch',
   'replication',
   'composite',
   'export',

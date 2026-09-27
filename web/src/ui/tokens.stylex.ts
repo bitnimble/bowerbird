@@ -32,8 +32,8 @@ export const size = stylex.defineVars({
   // 44px is the smallest target a finger reliably lands on.
   controlH: { default: '30px', [COARSE]: '44px' },
   // Not 14px on touch: iOS Safari zooms into a focused field under 16px and never zooms back out.
-  controlText: { default: '13px', [COARSE]: '16px' },
-  bodyText: { default: '14px', [COARSE]: '16px' },
+  controlText: { default: '14.3px', [COARSE]: '17.6px' },
+  bodyText: { default: '15.4px', [COARSE]: '17.6px' },
   radius: '4px',
   // Mirrors `GRID_GAP` in `grid_layout.ts`.
   gridGap: '2px',

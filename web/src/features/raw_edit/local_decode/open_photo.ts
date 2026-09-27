@@ -1,4 +1,4 @@
-import { type EditDoc } from '../../../../../src/schemas/photo_edits';
+import { type Denoiser, type EditDoc } from '../../../../../src/schemas/photo_edits';
 import { REQUEST_ACTIVITY_HEADER } from '../../../../../src/schemas/request_activity';
 import { photosApi } from '../../../api/photos';
 import { renditionsApi } from '../../../api/renditions';
@@ -256,7 +256,7 @@ async function preparedHere(
  * Exported for the test that holds the defaults below against `EditDocSchema`'s, which is the only
  * place the two copies meet.
  */
-export function prepareOf(doc: EditDoc | undefined): LocalPrepare {
+export function prepareOf(doc: EditDoc | undefined, libraryDenoiser: Denoiser): LocalPrepare {
   // `EditDocSchema`'s own defaults where there is no document, not zero: the store is filled with a
   // neutral document either way, so answering 0 here would open the photograph at a Detail nothing
   // asked for and re-prepare it the moment the first control settles.
@@ -271,7 +271,7 @@ export function prepareOf(doc: EditDoc | undefined): LocalPrepare {
   return {
     luminance: doc?.luminanceNoise ?? null,
     colour: doc?.colourNoise ?? null,
-    denoiser: doc?.denoiser ?? 'galosh',
+    denoiser: doc?.denoiser ?? libraryDenoiser,
     // A fraction of the deconvolution where the document holds a slider position, which is the
     // unit the module reads it in and the same conversion `developed` makes for a rendition.
     sharpen: (doc?.sharpening ?? 50) / 100,

@@ -546,7 +546,7 @@ export class ProcessingService extends RenderService {
         dataPath,
         grade: this.targets.grade(),
         cameraMatch: this.settings.get().match_embedded_jpeg ? 'lensAndColour' : 'none',
-        ...developed(pending.edits),
+        ...developed(pending.edits, pending.denoiser),
         ...this.targets.render(),
       },
       readStages(pending.render_skip_full),

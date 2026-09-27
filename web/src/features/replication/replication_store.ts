@@ -25,6 +25,8 @@ export class ReplicationStore {
   @observable.shallow accessor conflicts: EditConflict[] = [];
   /** Which library a session is running against, so its row can say so. */
   @observable accessor replicating: string | null = null;
+  /** What this device calls itself to the others; null until read. */
+  @observable accessor deviceName: string | null = null;
 
   peersOf(libraryId: string): PairedPeer[] {
     return this.peersByLibrary.get(libraryId) ?? [];
@@ -47,6 +49,10 @@ export class ReplicationStore {
    */
   syncsOriginals(libraryId: string): boolean {
     return this.syncOriginalsByLibrary.get(libraryId) ?? true;
+  }
+
+  originalsElsewhere(libraryId: string): boolean {
+    return this.hasPeers(libraryId) && !this.syncsOriginals(libraryId);
   }
 
   autoTransfersOriginals(libraryId: string): boolean {

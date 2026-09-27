@@ -59,7 +59,7 @@ beforeEach(() => {
   editor = openEditor();
   ({ edit, stage, keystone, repair, presenter, decoder } = editor);
   // The settings the frame on the device was prepared at, which an open records.
-  presenter.prepare.seed(prepareOf(edit.doc!));
+  presenter.prepare.seed(prepareOf(edit.doc!, 'galosh'));
   presenter.setTool('repair');
   decoder.offer = [FIRST, SECOND];
 });

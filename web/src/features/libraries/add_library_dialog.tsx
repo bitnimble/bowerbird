@@ -18,7 +18,6 @@ import { FolderBrowser } from '../browse/folder_browser';
 import { FolderBrowserPresenter } from '../browse/folder_browser_presenter';
 import { FolderBrowserStore } from '../browse/folder_browser_store';
 import { ORDERINGS } from '../photos/grid/grid_controls';
-import { RENDITION_SOURCES } from '../photos/renditions';
 import { SettingsStrings } from '../settings/settings_page.strings';
 import { AddLibraryStrings } from './add_library_dialog.strings';
 import { inferredLibraryName } from './inferred_library_name';
@@ -178,18 +177,15 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
                 renditions for a folder of decade-old rejects, or that has already
                 stacked them, has answered the question the expensive way. */}
             <Field>
-              <Text variant="label" as="span">
-                {SettingsStrings.buildRenditionsFrom()}
-              </Text>
-              <Select
-                label={SettingsStrings.buildRenditionsFrom()}
-                options={RENDITION_SOURCES}
-                value={renditionSource}
-                onChange={setRenditionSource}
-              />
-              <Text variant="mono" as="p">
-                {SettingsStrings.renditionSourceHint()}
-              </Text>
+              <CheckLabel>
+                <input
+                  {...stylex.props(focusRing.ring)}
+                  type="checkbox"
+                  checked={renditionSource === 'render'}
+                  onChange={(e) => setRenditionSource(e.currentTarget.checked ? 'render' : 'embedded')}
+                />
+                {SettingsStrings.preRenderImported()}
+              </CheckLabel>
             </Field>
           </DialogStack>
         </DialogColumns>

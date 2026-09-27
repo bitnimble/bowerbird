@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DenoiserSchema, type Denoiser } from './photo_edits';
 
 export const RENDER_STAGES = [
   'read',
@@ -59,8 +60,11 @@ export const RenderTimingSchema = z.object({
 });
 export type RenderTiming = z.infer<typeof RenderTimingSchema>;
 
-/** What a benchmark has measured on this machine, by rendition. Absent is nothing measured yet. */
-export const RenderTimingsSchema = z.partialRecord(RenderedRenditionSchema, RenderTimingSchema);
+/** What a benchmark has measured on this machine, by rendition and denoiser. Absent is nothing measured yet. */
+export const RenderTimingsSchema = z.partialRecord(
+  RenderedRenditionSchema,
+  z.partialRecord(DenoiserSchema, RenderTimingSchema),
+);
 export type RenderTimings = z.infer<typeof RenderTimingsSchema>;
 
 /** The frame every figure here is expressed against: 6000x4000, a common full-frame mirrorless. */
@@ -90,16 +94,25 @@ export function scaledToReference(timing: RenderTiming, pixels: number): RenderT
  *
  * Wrong on any machine but that one, which is what the Measure button exists to fix, so a number
  * here is worth no more than the one it replaces. `dust` and `sharpen` read as nothing on that
- * frame and carry a small figure rather than a zero that would read as a free row.
+ * frame and carry a small figure rather than a zero that would read as a free row. The denoise is
+ * GALOSH's; PMRID's is scaled from it by the two filters' laps over a 24MP frame on that adapter.
  */
 export const ESTIMATED_MS: Record<RenderedRendition, Record<RenderStage, number>> = {
   full: { read: 14, dust: 10, denoise: 20, demosaic: 20, lens: 55, colour: 375, defringe: 64, sharpen: 5, encode: 188 },
   max: { read: 14, dust: 10, denoise: 20, demosaic: 20, lens: 55, colour: 375, defringe: 64, sharpen: 12, encode: 698 },
 };
+export const ESTIMATED_PMRID_DENOISE_MS = 30;
 
 /** What this rendition's stages cost here, preferring what was measured to what was estimated. */
-export function stageMs(rendition: RenderedRendition, measured: RenderTiming | undefined): Record<RenderStage, number> {
-  const estimated = ESTIMATED_MS[rendition];
+export function stageMs(
+  rendition: RenderedRendition,
+  denoiser: Denoiser,
+  measured: RenderTiming | undefined,
+): Record<RenderStage, number> {
+  const estimated =
+    denoiser === 'pmrid' ?
+      { ...ESTIMATED_MS[rendition], denoise: ESTIMATED_PMRID_DENOISE_MS }
+    : ESTIMATED_MS[rendition];
   if (measured == null) return estimated;
   const result = { ...estimated };
   for (const stage of RENDER_STAGES) result[stage] = measured.stages[stage] ?? estimated[stage];

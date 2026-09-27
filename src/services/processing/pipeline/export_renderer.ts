@@ -4,7 +4,7 @@ import { getDataPath } from '../../../utils/paths';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import { encoderQuality } from '../analysis/quality';
 import type { CompositeJobSource } from '../workers/processing_types';
-import { developed } from './developed';
+import { AS_METERED, developed } from './developed';
 import type { CompositeRenderer } from './composite_renderer';
 import type { RenderTargets } from './render_targets';
 import type { SinglePhotoRenderer } from './single_photo_renderer';
@@ -66,7 +66,7 @@ export class ExportRenderer {
         remeasure: false,
         cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
         halfSize: options.halfSize,
-        ...developed(edits?.doc ?? null),
+        ...developed(edits?.doc ?? null, library.denoiser),
         ...this.targets.render(),
       },
       edits?.stamp ?? null,
@@ -118,7 +118,7 @@ export class ExportRenderer {
       remeasure: true,
       cameraMatch: 'none',
       preserveSourceOrientation: true,
-      ...developed(null),
+      ...AS_METERED,
       // The picture being read has been sharpened and denoised once already, and a base whose
       // detail differs from the alternate beside it is a gain map with haloes along every edge.
       denoiseLuminance: 0,
@@ -161,7 +161,7 @@ export class ExportRenderer {
       grade: this.targets.grade(),
       // The canvas's own document, which holds the framing the align found: an export of a
       // panorama is the picture, wedges of nothing trimmed, rather than the canvas behind it.
-      ...developed(edits?.doc ?? null),
+      ...developed(edits?.doc ?? null, library.denoiser),
       ...this.targets.render(),
     });
   }

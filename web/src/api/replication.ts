@@ -5,6 +5,8 @@ import {
   type BrowsedRemote,
   BrowsedRemoteSchema,
   BrowseRemoteRequestSchema,
+  type DeviceName,
+  DeviceNameSchema,
   type PeersResponse,
   PeersResponseSchema,
   RenamePeerRequestSchema,
@@ -91,6 +93,15 @@ export const replicationApi = {
       'PATCH',
       route(PathSegment.api(), PathSegment.replication(), PathSegment.libraries(), libraryId, PathSegment.peers(), peerId),
       RenamePeerRequestSchema.parse({ name }),
+    ),
+  deviceName: (): Promise<DeviceName> =>
+    request(DeviceNameSchema, 'GET', route(PathSegment.api(), PathSegment.replication(), PathSegment.device())),
+  setDeviceName: (name: string): Promise<DeviceName> =>
+    request(
+      DeviceNameSchema,
+      'PUT',
+      route(PathSegment.api(), PathSegment.replication(), PathSegment.device()),
+      DeviceNameSchema.parse({ name }),
     ),
   // §8.4: the originals only this peer is recorded as holding, which forgetting
   // it would put out of reach.

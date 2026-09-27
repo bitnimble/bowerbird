@@ -2,15 +2,14 @@ export const SettingsStrings = {
   resetSetting: (label: string) => `Reset ${label}`,
 
   stop: () => 'Stop',
+  stopping: () => 'Stopping…',
   scanNow: () => 'Scan library',
   remove: () => 'Remove',
   removeLibraryQuestion: (libraryName: string) => `Remove "${libraryName}" from Bowerbird?`,
   removeLibraryWarning: (photoCount: number) =>
     `Your ${photoCount} ${photoCount === 1 ? 'photo stays' : 'photos stay'} on disk. Ratings, notes, Picks, albums, and shoots can't be recovered.`,
-  libraryMeta: (rootPath: string, photoCount: number, scanned: string) =>
-    `${rootPath} · ${photoCount} ${photoCount === 1 ? 'photo' : 'photos'} · ${scanned}`,
-  neverScanned: () => 'never scanned',
-  scannedAt: (relative: string) => `scanned ${relative}`,
+  libraryMeta: (rootPath: string, photoCount: number) =>
+    `${rootPath} · ${photoCount} ${photoCount === 1 ? 'photo' : 'photos'}`,
   /** Opens one library's settings; `settings` names the whole page. */
   openLibrarySettings: () => 'Settings',
   librarySettingsTitle: (libraryName: string) => `Settings for ${libraryName}`,
@@ -22,11 +21,11 @@ export const SettingsStrings = {
   includeNonRaw: () => 'Import JPEG, PNG, HEIC, and AVIF too',
   /** The flag and its one line, here and in the add-library dialog. */
   readOnly: () => 'Read-only mode',
-  readOnlyHint: () => "Bowerbird doesn't change your photo files on disk.",
+  readOnlyHint: () => "When enabled, Bowerbird doesn't change your photo files on disk",
 
   binFolderName: () => 'Bin folder name',
   binNameHintNoBin: () => 'Bowerbird creates this folder when you turn off read-only mode.',
-  binNameHint: () => 'Renaming moves this folder on disk.',
+  binNameHint: () => 'Photos that are Binned will be moved to this subfolder',
   binNameLocked: () => "Turn off read-only mode to rename the Bin folder.",
 
   foldersSetAside: () => 'Folders set aside',
@@ -34,10 +33,8 @@ export const SettingsStrings = {
   ruleNotAShoot: () => 'Included, but not a shoot',
 
   renditions: () => 'Renditions',
-  buildRenditionsFrom: () => 'Build renditions from',
-  renditionSourceHint: () => 'RAW renditions support full resolution and HDR.',
-  buildHdrRenditions: () => 'Build HDR renditions',
-  buildHdrRenditionsHint: () => 'Shows HDR in the photo viewer with SDR grid thumbnails',
+  preRenderImported: () => 'Automatically pre-render imported photos',
+  buildHdrRenditions: () => 'Render photos in HDR',
 
   renderStages: () => 'Render stages',
   renderStagesFor: () => 'Rendition to set stages for',
@@ -48,7 +45,7 @@ export const SettingsStrings = {
   stageDemosaic: () => 'Reconstruct colour',
   stageLens: () => 'Match lens',
   stageColour: () => 'Match camera colour',
-  cameraMatchingOff: () => 'Camera matching is off in Rendering settings',
+  cameraMatchingOff: () => 'Camera matching is off in Advanced settings',
   colourNeedsLens: () => 'Turn on Match lens first',
   stageEncode: () => 'Encode',
   stageCost: (ms: number) => ms === 0 ? 'No measurable saving' : `~${ms} ms`,
@@ -62,7 +59,7 @@ export const SettingsStrings = {
 
   stacks: () => 'Stacks',
   autoStack: () => 'Group similar photos automatically',
-  autoStackHint: () => 'Regroups similar photos after the next scan',
+  autoStackHint: () => 'Takes effect after the next library scan',
   autoStackSimilarity: () => 'Similarity threshold',
   autoStackWindow: () => 'Similarity window',
   autoStackWindowHint: () => 'Maximum time between frames to consider them similar',
@@ -88,10 +85,10 @@ export const SettingsStrings = {
   renditionModeBestAvailable: () => 'Best available',
   groupPhotoViewer: () => 'Photo viewer',
   groupFrameTv: () => 'Samsung Frame TV',
-  defaultRendition: () => 'Default viewer rendition',
+  defaultRendition: () => 'Default rendition to show',
   hideSidebarInViewer: () => 'Hide sidebar automatically in photo viewer',
   frameTvEnabled: () => 'Enable Samsung Frame TV integration',
-  frameTvEnabledHint: () => 'Enables sending photos to a Samsung Frame TV on your local network.',
+  frameTvEnabledHint: () => 'When enabled, shows menu options to send photos to a Samsung Frame TV on your local network.',
 
   couldNotSaveSetting: () => "We couldn't save that setting. Try again.",
   couldNotUseServerAddress: () => "We couldn't use that server address. Check it and try again.",
@@ -102,6 +99,9 @@ export const SettingsStrings = {
   logLevelWarn: () => 'warn',
   logLevelError: () => 'error',
 
+  groupThisDevice: () => 'This device',
+  deviceName: () => 'Device name',
+  deviceNameHint: () => 'Shown on your synced devices',
   groupThisApp: () => 'This app',
   serverAddress: () => 'Bowerbird server',
   serverAddressPlaceholder: () => 'http://bowerbird.local:3000',
@@ -111,15 +111,14 @@ export const SettingsStrings = {
   couldNotSetUiScale: () => "We couldn't change the interface scale. Try again.",
 
   groupProcessing: () => 'Processing',
-  matchEmbeddedJpeg: () => 'Match lens and camera colour',
+  matchEmbeddedJpeg: () => 'Match lens correction and camera colour profile',
   matchEmbeddedJpegHint: () => 'Matches renditions to embedded JPEGs',
   renderOnThisDevice: () => 'Render on this device',
   renderOnThisDeviceHint: () => "Builds photo viewer renditions on this device",
 
-  groupScanning: () => 'Scanning',
-  groupWatching: () => 'Watching for changes',
+  groupWatching: () => 'File watching',
   groupSchedule: () => 'Schedule',
-  watchEnabled: () => 'Watch libraries for changes',
+  watchEnabled: () => 'Watch library folders for changes',
   dailyFullScanAt: () => 'Daily full scan at',
   dailyFullScanAtPlaceholder: () => '03:00',
   dailyFullScanAtHint: () => 'Leave empty to turn it off.',
@@ -128,19 +127,19 @@ export const SettingsStrings = {
 
   groupWorkers: () => 'Workers',
   scanConcurrency: () => 'Scanning threads',
-  scanConcurrencyHint: () => 'More threads may help with network drives.',
   processingConcurrency: () => 'Rendition threads',
   processingConcurrencyHint: () => 'Each thread holds 1 RAW file in memory.',
 
   groupHdr: () => 'HDR',
-  rawDefringe: () => 'Colour fringe removal',
+  rawDefringe: () => 'Colour fringing removal',
   rawDefringeHint: () => 'Removes purple and green rims from hard edges',
   hdrReferenceWhite: () => 'HDR reference white',
   hdrReferenceWhiteHint: () => 'How bright plain white is rendered',
   hdrWhiteQuantile: () => 'HDR white threshold',
   hdrWhiteQuantileHint: () => 'Lower renders brighter',
   displayPeakNits: () => 'Display peak brightness',
-  displayPeakNitsHint: () => 'Saved on this device only',
+  displayPeakNitsHint: () =>
+    "Applies to this device only. Set this to your device display's peak brightness. If you don't know it, you can search online.",
 
   groupResolution: () => 'Resolution',
   gridRenditionSize: () => 'Grid thumbnail longest edge',
@@ -151,19 +150,18 @@ export const SettingsStrings = {
   groupQuality: () => 'Quality',
   gridRenditionQuality: () => 'Grid thumbnail quality',
   fullRenditionQuality: () => 'Viewer rendition quality',
-  fullRenditionQualityHint: () => 'Below about 60, shadows visibly lose detail',
   maxRenditionQuality: () => 'Full-resolution quality',
+  qualityRange: () => '0 to 100',
 
   groupEncoding: () => 'Encoding',
   sdrFullChroma: () => 'Always encode SDR in 4:4:4',
   hdrFullChroma: () => 'Always encode HDR in 4:4:4',
-  hdrFullChromaHint: () => 'When off, Bowerbird uses 4:4:4 if colour loss would be visible.',
+  hdrFullChromaHint: () => 'When disabled, Bowerbird uses 4:4:4 if colour loss would be visible.',
   avifSpeed: () => 'Encoder speed',
   avifSpeedHint: () => '10 is fastest',
 
   groupMaintenance: () => 'Maintenance',
   watchDebounce: () => 'Scan delay after a change',
-  watchDebounceHint: () => 'Waits for files to finish copying before scanning',
   watchPollInterval: () => 'Network library scan interval',
   watchPollIntervalHint: () => 'Bowerbird checks network drives for changes at this interval.',
   pruneEveryDays: () => 'Delete unused renditions every',
@@ -191,7 +189,7 @@ export const SettingsStrings = {
   libraries: () => 'Libraries',
   noLibrariesYet: () => 'No libraries yet',
   noLibrariesHint: () => 'Add a folder of RAW files to start your library.',
-  groupViewing: () => 'Viewing',
-  groupRendering: () => 'Rendering',
+  groupGeneral: () => 'General',
+  groupAdvanced: () => 'Advanced',
   groupSystem: () => 'System',
 };

@@ -388,7 +388,7 @@ export class RawEditPresenter {
 
       const saved = await edits;
       if (this.closed) return;
-      const mosaic = prepareOf(saved?.doc);
+      const mosaic = prepareOf(saved?.doc, saved?.library_denoiser ?? 'galosh');
       // What the frame arrives holding, so the first settle at these positions asks for nothing.
       // Before `applyState` below, which would otherwise ask for a re-prepare to the settings the
       // decode is about to open at.
@@ -397,8 +397,9 @@ export class RawEditPresenter {
       // so the panel can show the reader their own settings while the picture is still coming -
       // shut rather than absent, which every control already is until the status is live. A read
       // that failed leaves `doc` null, which is the editor usable at neutral.
-      if (saved != null) this.applyState(saved);
+      // Before `applyState`, whose re-prepare resolves the document's denoiser against the library's.
       this.edit.opened(saved);
+      if (saved != null) this.applyState(saved);
       // A read that failed leaves this at the local arm, which is right for every ordinary
       // photograph.
       const photo = await described;
@@ -474,12 +475,12 @@ export class RawEditPresenter {
     // adjust above and costs nothing; these are the whole decode below the mosaic and a rebuild of
     // the blur the presence sliders read, which at 24MP is far more than a pointer emits positions
     // for.
-    this.prepare.want(prepareOf(next));
+    this.prepare.want(prepareOf(next, this.editStore.libraryDenoiser));
     this.draw();
   }
 
   prepareEdit(doc: EditDoc): void {
-    this.prepare.want(prepareOf(doc));
+    this.prepare.want(prepareOf(doc, this.editStore.libraryDenoiser));
   }
 
   draw(): void {

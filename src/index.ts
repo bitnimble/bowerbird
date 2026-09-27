@@ -208,6 +208,7 @@ const renditionFetch = new RenditionFetchService(
   blobLocations,
   peers,
   (photoId, written) => eventsApi.announce('rendition', { id: photoId, stage: written.stage, version: written.version }),
+  (photoId, rendition, phase) => eventsApi.announce('rendition_fetch', { id: photoId, rendition, phase }),
 );
 const photoRenditionService = new PhotoRenditionService(
   photoPathsRepo,
@@ -242,6 +243,7 @@ const photoEditsService = new PhotoEditsService(
   (ids) => processingService.rebuildEdited(ids),
   replicationChanged,
   (photoId, stamp) => photoProcessingRepo.vouchCameHome(photoId, stamp),
+  (libraryId) => librariesRepo.getById(libraryId)?.denoiser ?? 'galosh',
 );
 const shootsService = new ShootsService(shootsRepo, photoPathsRepo, photoStateRepo, librariesRepo, folderRulesRepo);
 const scanConcurrency = (): number => settingsRepo.get().scan_concurrency;
@@ -445,7 +447,7 @@ app.use(route(PathSegment.any()), async (c, next) => {
 app.route(route(PathSegment.api(), PathSegment.events()), eventsApi.routes);
 app.route(
   route(PathSegment.api(), PathSegment.settings()),
-  new SettingsApi(settingsRepo, renderTimings, (rendition) => processingService.benchmarkRender(rendition, renderTimings))
+  new SettingsApi(settingsRepo, renderTimings, (rendition, denoiser) => processingService.benchmarkRender(rendition, denoiser, renderTimings))
     .routes,
 );
 app.route(route(PathSegment.api(), PathSegment.updates()), new UpdatesApi(new UpdateService()).routes);

@@ -1,9 +1,10 @@
 import {
   type EditCheckpoint,
-  EditCheckpointSchema,
   type EditConflict,
   EditConflictsSchema,
   type EditDoc,
+  type EditOpening,
+  EditOpeningSchema,
   type EditState,
   EditStateSchema,
   FinishEditsRequestSchema,
@@ -45,9 +46,9 @@ export const photoEditsApi = {
       route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.redo()),
       StepEditsRequestSchema.parse({ rev }),
     ),
-  checkpoint: (photoId: string): Promise<EditCheckpoint> =>
+  checkpoint: (photoId: string): Promise<EditOpening> =>
     request(
-      EditCheckpointSchema,
+      EditOpeningSchema,
       'GET',
       route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits(), PathSegment.checkpoint()),
     ),

@@ -27,8 +27,7 @@ test('a library added and scanned in Settings shows a rendition for every RAW fi
   await path.fill(INDEX_PHOTOS_DIR);
   // The camera's JPEG rather than the default render, which is minutes of work per frame, and
   // no stacking, which would collapse the fixture's identical frames into one tile.
-  await dialog.getByRole('combobox', { name: 'Build renditions from' }).click();
-  await page.getByRole('option', { name: 'Embedded JPEG' }).click();
+  await dialog.getByRole('checkbox', { name: 'Automatically pre-render imported photos' }).uncheck();
   await dialog.getByRole('checkbox', { name: 'Group similar photos automatically' }).uncheck();
   // The dialog's own button carries the same name as the one that opened it.
   await dialog.getByRole('button', { name: 'Add library' }).click();

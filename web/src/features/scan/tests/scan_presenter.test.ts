@@ -73,6 +73,41 @@ test('the library list is left alone through the rendition phase', async () => {
   expect(await loadsWhile('rendition')).toBe(0);
 });
 
+test('a stop reads as stopping until the run reports idle, and a refused stop does not', async () => {
+  const { store, presenter } = watching();
+  try {
+    reporting('rendition');
+    await presenter.watch('lib');
+    librariesApi.cancelScan = (): Promise<void> => Promise.resolve();
+    await presenter.cancel('lib');
+    expect(store.isStopping('lib')).toBe(true);
+
+    await presenter.watch('lib');
+    expect(store.isStopping('lib')).toBe(true);
+
+    reporting('idle');
+    await presenter.watch('lib');
+    expect(store.isStopping('lib')).toBe(false);
+
+    librariesApi.cancelScan = (): Promise<void> => Promise.reject(new Error('gone'));
+    await presenter.cancel('lib');
+    expect(store.isStopping('lib')).toBe(false);
+  } finally { presenter.stop(); }
+});
+
+test('a stop asked of one library does not follow it after another library is watched', async () => {
+  const { store, presenter } = watching();
+  try {
+    reporting('rendition');
+    await presenter.watch('one');
+    librariesApi.cancelScan = (): Promise<void> => Promise.resolve();
+    await presenter.cancel('one');
+    await presenter.watch('two');
+    await presenter.watch('one');
+    expect(store.isStopping('one')).toBe(false);
+  } finally { presenter.stop(); }
+});
+
 function watching(): { store: ScanStore; presenter: ScanPresenter } {
   const store = new ScanStore();
   const presenter = new ScanPresenter(

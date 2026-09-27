@@ -1,6 +1,7 @@
 import { action, comparer, computed, reaction, runInAction } from 'mobx';
 import { type Ordering, type ProcessingStage } from '../../../../src/schemas/common';
 import { type CompositeKind, type PhotoMarks, type PhotoSelection, type PhotoSummary, type PhotoTarget, type Triage } from '../../../../src/schemas/photos';
+import { type RenditionFetchPhase } from '../../../../src/schemas/events';
 import { type ViewerRendition } from '../../../../src/schemas/settings';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
 import { type Rendition } from '../../../../src/services/processing/renditions/renditions';
@@ -893,6 +894,11 @@ export class PhotosPresenter {
   @action.bound
   renditionsRebuilt(photoId: string, stage: ProcessingStage, version: string): void {
     this.renditionsPresenter.rebuilt(photoId, stage, version);
+  }
+
+  @action.bound
+  renditionFetch(photoId: string, rendition: Rendition, phase: RenditionFetchPhase | null): void {
+    this.viewerPresenter.renditionFetch(photoId, rendition, phase);
   }
 
   @action.bound

@@ -1,6 +1,7 @@
 import { action, runInAction } from 'mobx';
 import { type Ordering, type RenditionSource } from '../../../../src/schemas/common';
 import { type CreateLibraryRequest, type FolderRule, type Library, type UpdateLibraryRequest } from '../../../../src/schemas/libraries';
+import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
 import { setStage, type OptionalStage, type RenderedRendition } from '../../../../src/schemas/render_stages';
 import { folderRulesApi } from '../../api/folder_rules';
@@ -76,6 +77,10 @@ export class LibrariesPresenter {
 
   async setRenditionHdr(libraryId: string, rendition_hdr: boolean): Promise<void> {
     await this.update(libraryId, { rendition_hdr });
+  }
+
+  async setDenoiser(libraryId: string, denoiser: Denoiser): Promise<void> {
+    await this.update(libraryId, { denoiser });
   }
 
   /**

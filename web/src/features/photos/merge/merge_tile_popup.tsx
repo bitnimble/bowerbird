@@ -72,7 +72,7 @@ const styles = stylex.create({
   },
   name: {
     display: 'block',
-    fontSize: '11px',
+    fontSize: '12.1px',
     lineHeight: '16px',
     color: color.boneDim,
     textAlign: 'center',

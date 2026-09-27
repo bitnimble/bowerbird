@@ -19,7 +19,7 @@ const styles = stylex.create({
     boxShadow: '0 6px 18px rgba(0, 0, 0, 0.45)',
     color: color.bone,
     fontFamily: font.body,
-    fontSize: '12px',
+    fontSize: '13.2px',
     lineHeight: 1.35,
     overflowWrap: 'anywhere',
     transition: 'opacity 120ms ease',

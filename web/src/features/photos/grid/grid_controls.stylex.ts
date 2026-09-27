@@ -106,7 +106,7 @@ export const styles = stylex.create({
   },
   weekday: {
     fontFamily: font.mono,
-    fontSize: '10px',
+    fontSize: '11px',
     textTransform: 'uppercase',
     color: color.boneDim,
   },

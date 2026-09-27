@@ -150,8 +150,11 @@ export const DetailFrame = observer(function DetailFrame({
   // so for as long as it takes instead, which is the one wait the viewer has.
   const named = useNamedRendition(store.rendition);
 
+  // Ahead of the build: on a device without the original, a build is this same wait on a peer.
+  const fetchPhase = store.fetchPhaseOf(photoId, showing);
   const status =
-    store.buildingRendition ? { label: PhotoStageStrings.rendering(), busy: true }
+    fetchPhase === 'fetching' ? { label: PhotoStageStrings.fetching(), busy: true }
+    : fetchPhase === 'rendering' || store.buildingRendition ? { label: PhotoStageStrings.rendering(), busy: true }
     : named ? { label: renditionLabel(showing), busy: false }
     : null;
 

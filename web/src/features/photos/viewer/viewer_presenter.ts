@@ -1,6 +1,7 @@
 import { action } from 'mobx';
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
 import { type PhotoDetail, type PhotoSummary, type Triage } from '../../../../../src/schemas/photos';
+import { type RenditionFetchPhase } from '../../../../../src/schemas/events';
 import { type ViewerRendition } from '../../../../../src/schemas/settings';
 import { type Rendition } from '../../../../../src/services/processing/renditions/renditions';
 import type { Span } from '../../../ui/virtual_rows';
@@ -197,8 +198,18 @@ export class ViewerPresenter {
   }
 
   @action.bound
+  renditionFetch(photoId: string, rendition: Rendition, phase: RenditionFetchPhase | null): void {
+    const next = new Map(this.store.peerFetches);
+    if (phase == null) next.delete(`${photoId}:${rendition}`);
+    else next.set(`${photoId}:${rendition}`, phase);
+    this.store.peerFetches = next;
+  }
+
+  @action.bound
   serverReachable(): void {
     this.store.serverEpoch++;
+    // A server that went away mid-fetch never says the fetch settled.
+    this.store.peerFetches = new Map();
   }
 
   // Reported by the stage when a frame has decoded, so the panel beside it can

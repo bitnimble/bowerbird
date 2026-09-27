@@ -584,7 +584,7 @@ The falloff repeated the lesson at one remove, which is why the `Lens` exists ra
 
 `raw_defringe` is a library setting because it is a ceiling on a per-frame measurement. The sharpen is not: how much deconvolution a photograph wants depends on the photograph, so it is `EditDoc`'s `sharpening`, beside the Detail panel's denoise pair.
 
-There are no library-level denoise settings. A strength belongs to the photograph rather than to the library - a frame at 12800 and one at base ISO want different answers - so it lives in `EditDoc`, as the Detail panel's two sliders. What follows about *where* the stages fall is independent of that and holds for all of them.
+The library chooses only which denoiser a document naming none runs (§10.9.1). A strength belongs to the photograph rather than to the library - a frame at 12800 and one at base ISO want different answers - so it lives in `EditDoc`, as the Detail panel's two sliders. What follows about *where* the stages fall is independent of that and holds for all of them.
 
 **The stages straddle the geometric warp, and which side each falls on is measured rather than chosen.** The defringe runs on the coded base *before* the warp and before the fit; the sharpen runs after the warp and the fit-to-size, on the frame at the size it will be encoded at.
 
@@ -837,7 +837,7 @@ Nothing measures the prepared frame's noise: by the time a frame is prepared, th
 
 #### The reader chooses which filter those positions drive
 
-The Detail panel names a denoiser, and the document carries it (`galosh::Denoiser`, defaulting to GALOSH, so a library edited before the choice existed renders as it did). Both filters run in the same window - the conditioned mosaic, before the demosaic - and both are driven by the same fit, so the choice reaches only as far as the filtering itself (`decode_rawler::denoise_over`).
+The Detail panel names a denoiser, and the document carries it (`galosh::Denoiser`); a document naming none takes its library's, which the library's render stages set and which is GALOSH until they do (`developed`). Both filters run in the same window - the conditioned mosaic, before the demosaic - and both are driven by the same fit, so the choice reaches only as far as the filtering itself (`decode_rawler::denoise_over`).
 
 **PMRID is a published network rather than a model of this sensor** (`pmrid.rs`, `slang/pmrid.slang`, weights by `bun run get:pmrid`). A rendition's binary carries the weights, because a machine missing a file beside it would render a different photograph rather than fail; the editor fetches them instead, from a hashed name of their own beside the module (`scripts/hash-pkg.ts`), so the four megabytes are cached apart from a module whose name changes with every line of Rust and are never fetched at all by a reader who stays on GALOSH. Ninety-two layers over four planes: the 2x2 CFA site split into red, both greens and blue at half the frame's size, and a residual predicted over them. Over the 64MP fixture on an RTX 3080 it is 132ms on the matrix units and 251 on the WGSL pass, against GALOSH's 94 - close enough that it is offered for every rendition rather than only where a reader is looking.
 

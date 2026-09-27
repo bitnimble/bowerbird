@@ -7,6 +7,7 @@ import {
   type RenderTimings,
   type RenderedRendition,
 } from '../../../schemas/render_stages';
+import type { Denoiser } from '../../../schemas/photo_edits';
 
 /**
  * What a render was measured to cost on this machine, stage by stage (§10.1).
@@ -31,10 +32,11 @@ export class RenderTimingsFile {
     }
   }
 
-  put(rendition: RenderedRendition, timing: RenderTiming): void {
+  put(rendition: RenderedRendition, denoiser: Denoiser, timing: RenderTiming): void {
     mkdirSync(path.dirname(this.file), { recursive: true });
     // Merged with what is on disk now rather than with anything read earlier: a benchmark takes
-    // minutes, and the other rendition's may have landed while this one ran.
-    writeFileSync(this.file, JSON.stringify({ ...this.read(), [rendition]: timing }, null, 2));
+    // minutes, and another one's may have landed while this one ran.
+    const now = this.read();
+    writeFileSync(this.file, JSON.stringify({ ...now, [rendition]: { ...now[rendition], [denoiser]: timing } }, null, 2));
   }
 }

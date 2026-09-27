@@ -6,6 +6,7 @@ import type { Job } from '../../../schemas/jobs';
 import type { Library } from '../../../schemas/libraries';
 import type { AlignShape } from '../../../schemas/jobs';
 import type { CompositeKind } from '../../../schemas/photos';
+import type { Denoiser } from '../../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
 import { renditionPathFor, stagedDescriptorPath } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
@@ -75,8 +76,8 @@ export abstract class RenderService {
   }
 
   /** What a render's stages cost on this machine, measured now and filed in `into`. */
-  async benchmarkRender(rendition: RenderedRendition, into: RenderTimingsFile): Promise<RenderTiming> {
-    return this.benchmark.run(rendition, into);
+  async benchmarkRender(rendition: RenderedRendition, denoiser: Denoiser, into: RenderTimingsFile): Promise<RenderTiming> {
+    return this.benchmark.run(rendition, denoiser, into);
   }
 
   cameraMatchFor(library: Library, rendition: Rendition): CameraMatch {

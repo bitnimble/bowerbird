@@ -1,5 +1,5 @@
 // What a read-only library's Shoots page offers: making a folder and renaming a shoot are still
-// on the menus, greyed, and say why.
+// on offer, greyed, and the menus say why.
 import { afterEach, expect, test } from 'bun:test';
 import { PathSegment, route } from '../../../../../src/schemas/route';
 import { type Library, type LibrarySettings } from '../../../../../src/schemas/libraries';
@@ -55,7 +55,7 @@ async function openPage(readOnly: boolean): Promise<void> {
   await act(async () => {});
 }
 
-async function openMenu(name: string): Promise<void> {
+async function press(name: string): Promise<void> {
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name }));
   });
@@ -68,20 +68,25 @@ function refusal(name: string): string | null {
 
 test('a read-only library greys making a folder at the root', async () => {
   await openPage(true);
-  await openMenu('Add to the library root');
-  expect(refusal('Create shoot in subfolder')).toBe('Turn off read-only mode to use this action.');
+  expect(screen.getByRole('button', { name: 'Create shoot' }).hasAttribute('disabled')).toBe(true);
+});
+
+test('a writable library creates a shoot at the root from the header', async () => {
+  await openPage(false);
+  await press('Create shoot');
+  expect(screen.getByRole('dialog', { name: 'New shoot' }).textContent).toContain('Creates the folder name.');
 });
 
 test("a read-only library greys a shoot's rename and its new subfolder", async () => {
   await openPage(true);
-  await openMenu('Actions for Dawn');
+  await press('Actions for Dawn');
   expect(refusal('Rename')).toBe('Turn off read-only mode to use this action.');
   expect(refusal('Create shoot in subfolder')).toBe('Turn off read-only mode to use this action.');
 });
 
 test('a writable library offers both', async () => {
   await openPage(false);
-  await openMenu('Actions for Dawn');
+  await press('Actions for Dawn');
   expect(refusal('Rename')).toBeNull();
   expect(refusal('Create shoot in subfolder')).toBeNull();
 });

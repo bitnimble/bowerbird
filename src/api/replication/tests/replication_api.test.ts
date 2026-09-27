@@ -504,6 +504,26 @@ describe('refused handshakes (§6.2, §2.2)', () => {
   });
 });
 
+describe("this device's name", () => {
+  it('is what a device pairing with it is told, once renamed', async () => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+    const at = `${origin.url}${route(PathSegment.api(), PathSegment.replication(), PathSegment.device())}`;
+
+    const renamed = await fetch(at, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '  Studio iMac ' }),
+    });
+    expect(await renamed.json()).toEqual({ name: 'Studio iMac' });
+    expect(await (await fetch(at)).json()).toEqual({ name: 'Studio iMac' });
+    expect((await browseRemote(origin.url)).name).toBe('Studio iMac');
+
+    const blank = await fetch(at, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{"name":" "}' });
+    expect(blank.status).toBe(400);
+  });
+});
+
 // §9.1: browse asks what a peer has and registers nothing; adding is the whole
 // pairing, and the local half is checked before the remote is asked for anything.
 describe('browse, then add (§9.1)', () => {

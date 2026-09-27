@@ -64,7 +64,7 @@ export class QualityCheckApi {
       if (rawFilePath == null) throw new AppError('VALIDATION_ERROR', `${photo.id} has no file to decode`);
 
       const settings = this.settings.get();
-      const file = path.join(CACHE, `${photo.id}-${quality}-${settings.avif_speed}.avif`);
+      const file = path.join(CACHE, `${photo.id}-${quality}-${settings.avif_speed}-${library.denoiser}.avif`);
       let encodeMs = 0;
 
       if (!(await Bun.file(file).exists())) {
@@ -85,7 +85,7 @@ export class QualityCheckApi {
           // would be a strength no rendition of this photograph is ever taken at.
           denoiseLuminance: null,
           denoiseColour: null,
-          denoiser: AS_METERED.denoiser,
+          denoiser: library.denoiser,
           // Off, for the same reason: this page compares quantizers, and a correction that
           // removed a few discs from whichever photograph was chosen is a second variable.
           dust: dustSettings(undefined),

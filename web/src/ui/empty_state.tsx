@@ -11,7 +11,7 @@ const styles = stylex.create({
   },
   title: {
     fontFamily: font.display,
-    fontSize: '15px',
+    fontSize: '16.5px',
     color: color.bone,
     marginBottom: '5px',
   },

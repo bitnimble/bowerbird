@@ -41,7 +41,7 @@ const styles = stylex.create({
     minWidth: 0,
   },
   hint: {
-    fontSize: '12px',
+    fontSize: '13.2px',
     color: color.boneDim,
   },
   control: {
@@ -57,7 +57,7 @@ const styles = stylex.create({
     fontVariantNumeric: 'tabular-nums',
     textAlign: 'right',
     color: color.boneDim,
-    fontSize: '13px',
+    fontSize: '14.3px',
   },
   foot: {
     display: 'flex',
@@ -73,7 +73,7 @@ const styles = stylex.create({
   error: {
     margin: 0,
     color: color.rose,
-    fontSize: '13px',
+    fontSize: '14.3px',
   },
   actions: {
     display: 'flex',

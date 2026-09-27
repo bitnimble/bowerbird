@@ -29,4 +29,10 @@ export const ExportsPageStrings = {
   exportActions: () => 'Export actions',
   goToPhoto: (sourcePath: string) => `Go to ${sourcePath}`,
   removeFromHistory: () => 'Remove from history',
+  historyOptions: () => 'History options',
+  clearAllHistory: () => 'Clear all history',
+  clearAllHistoryQuestion: () => 'Clear all export history?',
+  clearAllHistoryWarning: () => 'Your exported files stay where they are.',
+  clear: () => 'Clear',
+  couldNotClearHistory: () => "We couldn't clear your export history. Try again.",
 };

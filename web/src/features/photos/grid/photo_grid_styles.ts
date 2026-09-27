@@ -511,7 +511,7 @@ export const tile = stylex.create({
     width: '100%',
     height: '100%',
     fontFamily: font.mono,
-    fontSize: '10px',
+    fontSize: '11px',
     letterSpacing: '0.08em',
     color: '#4a505c',
     textTransform: 'uppercase',
@@ -546,7 +546,7 @@ export const tile = stylex.create({
   },
   badge: {
     fontFamily: font.mono,
-    fontSize: '9px',
+    fontSize: '9.9px',
     letterSpacing: '0.06em',
     textTransform: 'uppercase',
     paddingBlock: '2px',
@@ -590,7 +590,7 @@ export const tile = stylex.create({
     backgroundColor: 'rgba(10, 12, 16, 0.35)',
     color: color.bone,
     fontFamily: font.mono,
-    fontSize: '20px',
+    fontSize: '22px',
   },
   stackOpen: {
     backgroundColor: 'rgba(10, 12, 16, 0.62)',
@@ -644,7 +644,7 @@ export const tile = stylex.create({
     pointerEvents: 'none',
     color: color.boneDim,
     fontFamily: font.mono,
-    fontSize: '10px',
+    fontSize: '11px',
     textAlign: 'center',
   },
 });
@@ -687,7 +687,7 @@ export const foot = stylex.create({
   },
   name: {
     fontFamily: font.mono,
-    fontSize: '10px',
+    fontSize: '11px',
     color: color.bone,
     paddingBlock: '3px',
     paddingInline: '5px',
@@ -706,7 +706,7 @@ export const foot = stylex.create({
     flexGrow: 1,
     flexShrink: 1,
     flexBasis: '0%',
-    fontSize: '12px',
+    fontSize: '13.2px',
     color: '#b9bcc4',
     paddingBlock: 0,
     paddingInline: 0,

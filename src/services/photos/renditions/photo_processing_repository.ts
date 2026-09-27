@@ -4,6 +4,7 @@ import type { RenditionSource } from '../../processing/workers/processing_types'
 import { renditionVariant, type RenditionVariant } from '../../processing/renditions/renditions';
 import { FULL_VARIANT_OF_LIBRARY, RenditionsRepository, type Made } from '../../processing/renditions/renditions_repository';
 import type { StoredRecipe } from '../../../schemas/recipes';
+import type { Denoiser } from '../../../schemas/photo_edits';
 import { inChunks } from '../photo_batches';
 import { BUILT_FROM_STAMP, INPUTS_EDITED, type EditStamp } from '../photo_edit_sql';
 import { withRecipe } from '../paths/photo_paths_repository';
@@ -29,6 +30,7 @@ export interface PendingPhoto {
   rendition_hdr: number;
   /** The library's `full` skip list as the column holds it; only that one, the queue building no `max`. */
   render_skip_full: string;
+  denoiser: Denoiser;
   // The photographer's develop settings as stored JSON, or NULL where they have
   // none. Carried on the row rather than read per photo for the reason the join
   // gives; the service parses it, because what a document means is the schema's
@@ -91,7 +93,7 @@ export class PhotoProcessingRepository {
                 MAX(r.variant = 'grid') AS needs_tile,
                 MAX(r.variant = ${FULL_VARIANT_OF_LIBRARY}) AS needs_renditions,
                 l.root_path, l.id AS library_id, l.rendition_source AS library_rendition_source, l.rendition_hdr,
-                l.render_skip_full,
+                l.render_skip_full, l.denoiser,
                 e.doc AS edits, e.stamp AS edits_stamp,
                 -- The frames' documents, for a row composed out of other rows. A subquery rather
                 -- than a join: it is one row per composite and none at all for a photograph, where

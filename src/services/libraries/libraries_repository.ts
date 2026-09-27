@@ -1,6 +1,7 @@
 import type { Database } from '../../db/driver';
 import type { Ordering, RenditionSource } from '../../schemas/common';
 import type { Library } from '../../schemas/libraries';
+import { DenoiserSchema, type Denoiser } from '../../schemas/photo_edits';
 import { readStages, writeStages } from '../processing/renditions/render_stages';
 import type { OptionalStage, RenderedRendition } from '../../schemas/render_stages';
 import { stamp } from '../replication/stamps';
@@ -23,6 +24,7 @@ interface LibraryRow {
   rendition_hdr: number;
   render_skip_full: string;
   render_skip_max: string;
+  denoiser: string;
   include_subfolders: number;
   include_non_raw: number;
   auto_stack: number;
@@ -35,7 +37,7 @@ interface LibraryRow {
 // photo_count excludes binned photos: it answers "how big is this library", and
 // the Bin has its own count in the UI.
 const SELECT = `SELECT l.id, l.root_path, l.bin_name, l.read_only, l.name, l.ordering, l.rendition_source, l.rendition_hdr,
-  l.render_skip_full, l.render_skip_max,
+  l.render_skip_full, l.render_skip_max, l.denoiser,
   l.include_subfolders, l.include_non_raw, l.auto_stack, l.auto_stack_similarity, l.auto_stack_window_seconds,
   l.last_synced_at,
   (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count
@@ -122,6 +124,10 @@ export class LibrariesRepository {
     return this.db.query(`UPDATE libraries SET ${column} = ? WHERE id = ?`).run(writeStages(stages), id).changes > 0;
   }
 
+  setDenoiser(id: string, denoiser: Denoiser): boolean {
+    return this.db.query('UPDATE libraries SET denoiser = ? WHERE id = ?').run(denoiser, id).changes > 0;
+  }
+
   setIncludeSubfolders(id: string, include: boolean): boolean {
     return (
       this.db.query('UPDATE libraries SET include_subfolders = ?, stamp = ? WHERE id = ?').run(include ? 1 : 0, stamp(this.db), id)
@@ -205,6 +211,7 @@ function mapRow(row: LibraryRow): Library {
     rendition_hdr: row.rendition_hdr === 1,
     render_skip_full: readStages(row.render_skip_full),
     render_skip_max: readStages(row.render_skip_max),
+    denoiser: DenoiserSchema.parse(row.denoiser),
     include_subfolders: row.include_subfolders === 1,
     include_non_raw: row.include_non_raw === 1,
     auto_stack: row.auto_stack === 1,

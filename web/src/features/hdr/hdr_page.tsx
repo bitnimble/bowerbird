@@ -104,11 +104,11 @@ const styles = stylex.create({
     marginBottom: { default: '2px', [NARROW]: '12px' },
   },
   label: {
-    fontSize: '13px',
+    fontSize: '14.3px',
   },
   labelUnder: {
     paddingLeft: '14px',
-    fontSize: '12px',
+    fontSize: '13.2px',
     color: color.boneDim,
   },
   track: {
@@ -248,7 +248,7 @@ const styles = stylex.create({
     borderRadius: size.radius,
     overflow: 'hidden',
     fontFamily: font.mono,
-    fontSize: '11px',
+    fontSize: '12.1px',
   },
   pillHalf: {
     paddingBlock: '3px',

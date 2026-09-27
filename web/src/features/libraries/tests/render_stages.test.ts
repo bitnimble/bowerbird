@@ -15,6 +15,7 @@ const LIBRARY = {
   id: 'lib',
   render_skip_full: ['lens', 'colour'],
   render_skip_max: [],
+  denoiser: 'galosh',
 } as unknown as Library;
 
 async function sent(

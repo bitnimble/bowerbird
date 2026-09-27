@@ -443,7 +443,7 @@ the bounds; the reasoning behind each number lives beside it there.
 | `avif_speed` | `8` | libavif encoder speed for every AVIF, 0 slowest and 10 fastest |
 | `hdr_still_full_chroma` | `false` | 4:4:4 rather than 4:2:0 for the HDR still. Holds chroma detail, roughly double the encoder's memory (§10.7). The video has no say |
 | `watch_enabled` | `true` | Auto-sync a library when its files change on disk (§9.8) |
-| `watch_debounce_ms` | `15000` | Debounce window for coalescing filesystem events (§9.8) |
+| `watch_debounce_ms` | `30000` | Debounce window for coalescing filesystem events (§9.8) |
 | `watch_poll_interval_ms` | `20000` | How often a library on a network filesystem is walked for folders whose mtime moved, since it delivers no events (§9.8) |
 | `full_sync_at` | `03:00` | Local `HH:MM` for the daily full reconcile; `""` disables (§9.8) |
 | `prune_every_days` | `7` | Interval for the orphaned-file sweep; `0` disables (§10.6) |

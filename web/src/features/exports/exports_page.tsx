@@ -2,7 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { Fragment, useEffect, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronRight, FolderOpen, SlidersHorizontal, X } from 'lucide-react';
+import { ChevronRight, FolderOpen, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import type { EditDoc } from '../../../../src/schemas/photo_edits';
 import type { QueuedPhoto } from '../../../../src/schemas/exports';
 import { PathSegment, route } from '../../../../src/schemas/route';
@@ -27,6 +27,7 @@ import { OverflowMenu } from '../../ui/overflow_menu';
 import { Page, PageHead } from '../../ui/page';
 import { PopoverButton } from '../../ui/popover_button';
 import { ProgressBar } from '../../ui/progress_bar';
+import { Spacer } from '../../ui/row';
 import { Text } from '../../ui/text';
 import { color, size } from '../../ui/tokens.stylex';
 import { editRows } from '../photos/viewer/edit_rows';
@@ -152,6 +153,8 @@ export const ExportsPage = observer(function ExportsPage(): JSX.Element {
     <Page>
       <PageHead withSidebarButton>
         <Heading>{ExportsPageStrings.exports()}</Heading>
+        <Spacer />
+        <ExportsOverflow />
       </PageHead>
 
       {/* Headed only against each other: with nothing queued the history is the page, and a
@@ -206,6 +209,40 @@ export const ExportsPage = observer(function ExportsPage(): JSX.Element {
         </List>
       )}
     </Page>
+  );
+});
+
+const ExportsOverflow = observer(function ExportsOverflow(): JSX.Element {
+  const store = useExportHistoryStore();
+  const { exportHistory, confirm } = usePresenters();
+
+  return (
+    <OverflowMenu
+      hotkey
+      label={ExportsPageStrings.historyOptions()}
+      sections={[
+        menuSection({
+          options: [
+            {
+              value: 'clear',
+              label: ExportsPageStrings.clearAllHistory(),
+              icon: <Trash2 size={ICON} />,
+              destructive: true,
+              disabled: store.runs.length === 0,
+            },
+          ],
+          onSelect: async () => {
+            const confirmed = await confirm.ask({
+              title: ExportsPageStrings.clearAllHistoryQuestion(),
+              body: ExportsPageStrings.clearAllHistoryWarning(),
+              action: ExportsPageStrings.clear(),
+              tone: 'danger',
+            });
+            if (confirmed) void exportHistory.forgetAll();
+          },
+        }),
+      ]}
+    />
   );
 });
 

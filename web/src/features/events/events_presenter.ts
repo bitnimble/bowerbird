@@ -1,5 +1,5 @@
 import { CompositeProgressSchema } from '../../../../src/schemas/composition';
-import { RenditionEventSchema, ReplicationEventSchema } from '../../../../src/schemas/events';
+import { RenditionEventSchema, RenditionFetchEventSchema, ReplicationEventSchema } from '../../../../src/schemas/events';
 import { ExportProgressSchema } from '../../../../src/schemas/exports';
 import { type EventStream, subscribeEvents } from '../../api/transport';
 import type { ExportPresenter } from '../export/export_presenter';
@@ -51,6 +51,10 @@ export class EventsPresenter {
         // rebuild announced mid-session leaves both sides of every round drawn from the
         // file that was just replaced, which is the one thing a cull is judging.
         this.stackTriage.renditionsRebuilt(id, stage, version);
+      },
+      rendition_fetch: (payload) => {
+        const { id, rendition, phase } = RenditionFetchEventSchema.parse(JSON.parse(payload));
+        this.photos.renditionFetch(id, rendition, phase);
       },
       replication: (payload) => {
         const { library_id } = ReplicationEventSchema.parse(JSON.parse(payload));

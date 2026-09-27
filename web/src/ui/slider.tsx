@@ -93,7 +93,7 @@ const styles = stylex.create({
     backgroundColor: color.bower,
     borderRadius: size.radius,
     fontFamily: font.body,
-    fontSize: '13px',
+    fontSize: '14.3px',
   },
   readoutValue: {
     fontFamily: font.mono,

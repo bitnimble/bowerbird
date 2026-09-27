@@ -1,6 +1,6 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Timer } from 'lucide-react';
 import { type Library } from '../../../../src/schemas/libraries';
 import {
@@ -13,6 +13,7 @@ import {
 } from '../../../../src/schemas/render_stages';
 import { useAppSettingsStore, usePresenters } from '../../app/stores_context';
 import { renditionLabel } from '../photos/renditions';
+import { DENOISERS } from '../raw_edit/raw_edit_panel';
 import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
@@ -22,6 +23,7 @@ import type { Option } from '../../ui/option';
 import { Panel } from '../../ui/panel';
 import { Row, Spacer } from '../../ui/row';
 import { SegmentedControl } from '../../ui/segmented_control';
+import { Select } from '../../ui/select';
 import { Text } from '../../ui/text';
 import { SettingRow } from './settings_controls';
 import { SettingsStrings } from './settings_page.strings';
@@ -75,10 +77,10 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
   const settings = useAppSettingsStore();
   const { appSettings, libraries } = usePresenters();
   useEffect(() => void appSettings.loadRenderTimings(), [appSettings]);
-  const measured = settings.renderTimings[rendition];
-  const ms = stageMs(rendition, measured);
+  const measured = settings.timingOf(rendition, library.denoiser);
+  const ms = stageMs(rendition, library.denoiser, measured);
   const skipped = rendition === 'full' ? library.render_skip_full : library.render_skip_max;
-  const busy = settings.isBenchmarking(rendition);
+  const busy = settings.isBenchmarking(rendition, library.denoiser);
   const cameraMatching = settings.settings?.match_embedded_jpeg !== false;
   const runs = (stage: RenderStage): boolean =>
     (!['lens', 'colour'].includes(stage) || cameraMatching) && (!isOptional(stage) || !skipped.includes(stage));
@@ -112,6 +114,16 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
               (next) => void libraries.setRenderStage(library.id, rendition, stage, next)
             : undefined
           }
+          control={
+            stage === 'denoise' ?
+              <Select
+                label={RawEditPanelStrings.denoiser()}
+                options={DENOISERS}
+                value={library.denoiser}
+                onChange={(next) => void libraries.setDenoiser(library.id, next)}
+              />
+            : undefined
+          }
         />
       ))}
 
@@ -131,7 +143,7 @@ export const RenderStagesPanel = observer(function RenderStagesPanel({ library }
           disabled={busy}
           aria-busy={busy}
           tooltip={busy ? SettingsStrings.measureStagesBusy() : undefined}
-          onClick={() => void appSettings.benchmarkRender(rendition)}
+          onClick={() => void appSettings.benchmarkRender(rendition, library.denoiser)}
         >
           <Timer size={ICON} />
           {busy ? SettingsStrings.measuringStages() : SettingsStrings.measureStages()}
@@ -149,16 +161,19 @@ function StageRow({
   runs,
   disabledReason,
   onChange,
+  control,
 }: {
   stage: RenderStage;
   ms: number;
   runs: boolean;
   disabledReason?: string;
   onChange?: (runs: boolean) => void;
+  control?: ReactNode;
 }): JSX.Element {
   const label = STAGE_LABELS[stage]();
   return (
     <SettingRow label={label} disabledReason={disabledReason}>
+      {control}
       <Text variant="muted">{SettingsStrings.stageCost(ms)}</Text>
       {onChange == null ?
         <span {...stylex.props(styles.noBox)} />

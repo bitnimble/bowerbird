@@ -175,10 +175,11 @@ describe('a slider reaching the picture', () => {
   test("opens an unedited photograph at the document schema's own Detail defaults", () => {
     const neutral = neutralEdits();
 
-    expect(prepareOf(undefined)).toEqual({
+    expect(neutral.denoiser).toBeNull();
+    expect(prepareOf(undefined, 'pmrid')).toEqual({
       luminance: neutral.luminanceNoise,
       colour: neutral.colourNoise,
-      denoiser: neutral.denoiser,
+      denoiser: 'pmrid',
       sharpen: neutral.sharpening / 100,
       dust: {
         enabled: neutral.dustRemoval,
@@ -267,6 +268,35 @@ describe('a slider reaching the picture', () => {
     presenter.settle({ dustRemoval: true, dustSensitivity: 80, dustIntensity: 60 });
     await settled();
     expect(asked().length).toBe(ran + 4);
+  });
+
+  test("an edit naming no denoiser runs its library's, until the reader picks one", async () => {
+    const asked = (): LocalPrepare[] =>
+      decoder.bands.filter((band) => band.top === 0).map((band) => band.mosaic);
+    const settled = async (): Promise<void> => {
+      for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+    };
+    presenter.edit.opened({
+      doc: neutralEdits(),
+      rev: 1,
+      canUndo: false,
+      canRedo: false,
+      cursor: 0,
+      history: [],
+      stamp: null,
+      library_denoiser: 'pmrid',
+    });
+    expect(edit.denoiser).toBe('pmrid');
+
+    presenter.settle({ luminanceNoise: 40 });
+    await settled();
+    expect(asked().at(-1)?.denoiser).toBe('pmrid');
+    expect(edit.doc?.denoiser).toBeNull();
+
+    presenter.setDenoiser('galosh');
+    await settled();
+    expect(asked().at(-1)?.denoiser).toBe('galosh');
+    expect(edit.doc?.denoiser).toBe('galosh');
   });
 
   /**
@@ -847,7 +877,7 @@ describe('the level a zoom is served at', () => {
   });
 
   test('a Detail setting is prepared again where the picture was, and every later ask carries it', async () => {
-    presenter.prepare.seed(prepareOf(edit.doc!));
+    presenter.prepare.seed(prepareOf(edit.doc!, 'galosh'));
     presenter.settle({ sharpening: 80 });
     await settled();
 
@@ -1093,6 +1123,7 @@ describe('leaving the editor', () => {
       cursor: 1,
       history,
       stamp: 'opened-stamp',
+      library_denoiser: 'galosh',
     });
     Object.assign(presenter.edit, { photoId: 'a-photo-id' });
   });

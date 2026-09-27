@@ -33,7 +33,7 @@ const COLOUR_PROFILES: Option<ColourProfile>[] = [
   { value: 'matched', label: RawEditPanelStrings.colourProfileMatched() },
 ];
 
-const DENOISERS: Option<Denoiser>[] = [
+export const DENOISERS: Option<Denoiser>[] = [
   { value: 'galosh', label: RawEditPanelStrings.denoiserGalosh() },
   { value: 'pmrid', label: RawEditPanelStrings.denoiserPmrid() },
 ];
@@ -337,7 +337,7 @@ const DenoiserChoice = observer(function DenoiserChoice({
     <SelectControl
       label={RawEditPanelStrings.denoiser()}
       options={DENOISERS}
-      value={edit.doc?.denoiser ?? 'galosh'}
+      value={edit.denoiser}
       onChange={presenter.setDenoiser}
     />
   );

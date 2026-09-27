@@ -82,9 +82,9 @@ test('the sanitized shipped frame prices every optional stage without a library'
   const { file: into, root } = timings();
   const before = scratchDirs();
   // A measurement of another rendition, to prove this one files beside it rather than over it.
-  into.put('max', { total: 999, stages: { denoise: 1 }, measured_at: '2026-01-01T00:00:00.000Z' });
+  into.put('max', 'galosh', { total: 999, stages: { denoise: 1 }, measured_at: '2026-01-01T00:00:00.000Z' });
   try {
-    const timing = await service().benchmarkRender('full', into);
+    const timing = await service().benchmarkRender('full', 'galosh', into);
 
     expect(timing.total).toBeGreaterThan(0);
     // Every stage answers, whether or not it cost anything on this frame: a missing key reads as
@@ -98,8 +98,8 @@ test('the sanitized shipped frame prices every optional stage without a library'
 
     // Filed under the rendition, beside the one that was already there.
     const filed = into.read();
-    expect(filed.full?.total).toBe(timing.total);
-    expect(filed.max?.total).toBe(999);
+    expect(filed.full?.galosh?.total).toBe(timing.total);
+    expect(filed.max?.galosh?.total).toBe(999);
 
     expect(scratchDirs()).toEqual(before);
   } finally {

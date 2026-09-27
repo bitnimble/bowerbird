@@ -4,6 +4,7 @@ import { Logger } from '../../../logger';
 import { newId } from '../../../schemas/id';
 import type { Job } from '../../../schemas/jobs';
 import type { Library } from '../../../schemas/libraries';
+import type { Denoiser } from '../../../schemas/photo_edits';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { getDataPath } from '../../../utils/paths';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
@@ -100,12 +101,14 @@ export class SinglePhotoRenderer {
     rendition,
     dataPath,
     skip,
+    denoiser,
   }: {
     rawFilePath: string;
     photoId: string;
     rendition: Rendition;
     dataPath: string;
     skip: readonly OptionalStage[];
+    denoiser: Denoiser;
   }): RenditionJob {
     const { job } = this.jobFor(rawFilePath, photoId, rendition, {
       hdr: true,
@@ -113,6 +116,7 @@ export class SinglePhotoRenderer {
       remeasure: true,
       skip,
       dataPath,
+      denoiser,
     });
     return withStagesOff({ ...job, cameraMatch: 'lensAndColour', denoiseLuminance: 20, denoiseColour: 30, defringe: 1 }, skip);
   }
@@ -133,6 +137,7 @@ export class SinglePhotoRenderer {
       remeasure,
       skip,
       dataPath: getDataPath(library),
+      denoiser: library.denoiser,
     });
   }
 
@@ -146,12 +151,14 @@ export class SinglePhotoRenderer {
       remeasure,
       skip,
       dataPath,
+      denoiser,
     }: {
       hdr: boolean;
       source: RenditionSource;
       remeasure: boolean;
       skip: readonly OptionalStage[];
       dataPath: string;
+      denoiser: Denoiser;
     },
   ): { job: RenditionJob; builtFrom: string | null } {
     const edits = this.editsFor(photoId);
@@ -172,7 +179,7 @@ export class SinglePhotoRenderer {
           // And the same edits, for the same reason. This is the path a `max` export takes,
           // so without it the one rendition a reader asks for by name is the one that ignores
           // what they did to the picture.
-          ...developed(edits?.doc ?? null),
+          ...developed(edits?.doc ?? null, denoiser),
           ...this.targets.render(),
         } satisfies RenditionJob,
         skip,
@@ -221,7 +228,7 @@ export class SinglePhotoRenderer {
       measure: true,
       grade: this.targets.grade(),
       cameraMatch: 'lensAndColour',
-      ...developed(null),
+      ...developed(null, library.denoiser),
       ...this.targets.render(),
     };
     // Nothing to record either way: a job with no target writes no copy, and the analysis it

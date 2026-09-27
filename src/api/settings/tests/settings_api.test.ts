@@ -26,18 +26,18 @@ const AT = route(PathSegment.api(), PathSegment.settings(), PathSegment.renderTi
 
 describe('SettingsApi render timings', () => {
   it('answers with what has been measured here', async () => {
-    const { app } = buildApp(() => ({ full: MEASURED }));
+    const { app } = buildApp(() => ({ full: { galosh: MEASURED } }));
     const res = await app.request(AT);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ full: MEASURED });
+    expect(await res.json()).toEqual({ full: { galosh: MEASURED } });
   });
 
-  it('times a render of the rendition the query names', async () => {
+  it('times a render of the rendition the query names, with the denoiser it names', async () => {
     const { app, benchmarkRender } = buildApp();
-    const res = await app.request(`${AT}/${PathSegment.benchmark()}?rendition=max`, { method: 'POST' });
+    const res = await app.request(`${AT}/${PathSegment.benchmark()}?rendition=max&denoiser=pmrid`, { method: 'POST' });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(MEASURED);
-    expect(benchmarkRender).toHaveBeenCalledWith('max');
+    expect(benchmarkRender).toHaveBeenCalledWith('max', 'pmrid');
   });
 
   it('refuses a rendition it does not build, rather than timing whatever was asked for', async () => {
@@ -46,7 +46,8 @@ describe('SettingsApi render timings', () => {
     const { app, benchmarkRender } = buildApp();
     const at = `${AT}/${PathSegment.benchmark()}`;
 
-    expect((await app.request(`${at}?rendition=grid`, { method: 'POST' })).status).toBe(400);
+    expect((await app.request(`${at}?rendition=grid&denoiser=galosh`, { method: 'POST' })).status).toBe(400);
+    expect((await app.request(`${at}?rendition=full`, { method: 'POST' })).status).toBe(400);
     expect((await app.request(at, { method: 'POST' })).status).toBe(400);
     expect(benchmarkRender).not.toHaveBeenCalled();
   });

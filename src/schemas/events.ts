@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ProcessingStageSchema } from './common';
+import { ProcessingStageSchema, RenditionSchema } from './common';
 import { CompositeProgressSchema } from './composition';
 import { ExportProgressSchema } from './exports';
 
@@ -11,12 +11,24 @@ export const RenditionEventSchema = z.object({
 });
 export type RenditionEvent = z.infer<typeof RenditionEventSchema>;
 
+export const RenditionFetchPhaseSchema = z.enum(['fetching', 'rendering']);
+export type RenditionFetchPhase = z.infer<typeof RenditionFetchPhaseSchema>;
+
+/** A rendition this device is waiting on a peer for, and what the peer is doing; null once it has settled. */
+export const RenditionFetchEventSchema = z.object({
+  id: z.string(),
+  rendition: RenditionSchema,
+  phase: RenditionFetchPhaseSchema.nullable(),
+});
+export type RenditionFetchEvent = z.infer<typeof RenditionFetchEventSchema>;
+
 /** A library's peers changed underneath the session. */
 export const ReplicationEventSchema = z.object({ library_id: z.string() });
 export type ReplicationEvent = z.infer<typeof ReplicationEventSchema>;
 
 export const LibraryEventSchemas = {
   rendition: RenditionEventSchema,
+  rendition_fetch: RenditionFetchEventSchema,
   replication: ReplicationEventSchema,
   composite: CompositeProgressSchema,
   export: ExportProgressSchema,

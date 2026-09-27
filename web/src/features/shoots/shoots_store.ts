@@ -57,7 +57,7 @@ export const NO_SHOOT_PATH = '/no-shoot';
 export class ShootsStore extends CollectionListStore<FolderRow> {
   /** Every shoot of the library, the hidden included whether or not they are shown. */
   @observable.shallow accessor shoots: Shoot[] = [];
-  @observable accessor view: ShootView = 'tree';
+  @observable accessor view: ShootView = 'tree_full';
   /** Whether the shoots the reader has put away are drawn, greyed, where they belong (§12.4). */
   @observable accessor showHidden = false;
   /** Which library the rows are of, so a row knows where it opens. */

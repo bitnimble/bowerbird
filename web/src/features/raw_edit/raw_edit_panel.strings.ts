@@ -90,6 +90,7 @@ export const RawEditPanelStrings = {
   colourProfileMatched: () => 'Matched',
 
   denoiser: () => 'Denoiser',
-  denoiserGalosh: () => 'GALOSH',
-  denoiserPmrid: () => 'PMRID',
+  /** The two filters by what each is for, here and in a library's render stages. */
+  denoiserGalosh: () => 'Fast (GALOSH)',
+  denoiserPmrid: () => 'Quality (PMRID)',
 };

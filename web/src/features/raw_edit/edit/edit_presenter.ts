@@ -1,5 +1,10 @@
 import { action } from 'mobx';
-import { type EditCheckpoint, type EditDoc, type EditState } from '../../../../../src/schemas/photo_edits';
+import {
+  type EditCheckpoint,
+  type EditDoc,
+  type EditOpening,
+  type EditState,
+} from '../../../../../src/schemas/photo_edits';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { ApiError } from '../../../api/request';
 import { newId } from '../../../../../src/schemas/id';
@@ -66,8 +71,10 @@ export class EditPresenter {
     this.written = false;
   }
 
-  opened(checkpoint: EditCheckpoint | null): void {
+  @action.bound
+  opened(checkpoint: EditOpening | null): void {
     this.openedAt = checkpoint;
+    this.store.libraryDenoiser = checkpoint?.library_denoiser ?? 'galosh';
   }
 
   @action.bound

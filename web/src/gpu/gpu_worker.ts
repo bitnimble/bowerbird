@@ -127,6 +127,7 @@ class Open {
         this.release();
         return { value: null };
       case 'render': {
+        await networkWeights(ask.denoiser);
         // wasm-bindgen copies a returned Vec out into a fresh ArrayBuffer; its d.ts just does not say so.
         const framed = (await renderRendition(ask.raw, ask.job)) as Uint8Array<ArrayBuffer>;
         const zipped = new Blob([framed]).stream().pipeThrough(new CompressionStream('gzip'));

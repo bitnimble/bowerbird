@@ -19,6 +19,7 @@ import {
   useDeviceSettingsStore,
   useLibrariesStore,
   usePresenters,
+  useReplicationStore,
   useUpdatesStore,
 } from '../../app/stores_context';
 import { DiagnosticsDialog } from '../feedback/diagnostics_dialog';
@@ -80,14 +81,16 @@ const RENDITION_MODES: Option<ViewerRenditionMode>[] = [
   { value: 'best_available', label: SettingsStrings.renditionModeBestAvailable() },
 ];
 
-// Global rather than per library: it is about how you look at photos, not about
-// what a catalogue holds, and the renditions are interchangeable views of the
-// same frame (§10.2). Server-side rather than in this browser, because the same
-// catalogue gets opened from a phone and a desktop and "where I left off" is
-// worth nothing if it only holds on one of them.
-const ViewingSettings = observer(function ViewingSettings(): JSX.Element {
+const GeneralTab = observer(function GeneralTab(): JSX.Element | null {
   const settings = useAppSettingsStore();
   const { appSettings } = usePresenters();
+  if (settings.settings == null) return null;
+
+  // Global rather than per library: it is about how you look at photos, not about
+  // what a catalogue holds, and the renditions are interchangeable views of the
+  // same frame (§10.2). Server-side rather than in this browser, because the same
+  // catalogue gets opened from a phone and a desktop and "where I left off" is
+  // worth nothing if it only holds on one of them.
   const mode = settings.viewerRenditionMode;
 
   return (
@@ -110,17 +113,53 @@ const ViewingSettings = observer(function ViewingSettings(): JSX.Element {
               />
             </SettingRow>
             <ToggleSetting field="hide_sidebar_in_viewer" label={SettingsStrings.hideSidebarInViewer()} />
+            <DisplayPeak />
           </Panel>
-        </>
-      }
-      right={
-        <>
+
           <GroupTitle>{SettingsStrings.groupFrameTv()}</GroupTitle>
           <Panel flush>
             <ToggleSetting
               field="frame_tv_enabled"
               label={SettingsStrings.frameTvEnabled()}
               hint={SettingsStrings.frameTvEnabledHint()}
+            />
+          </Panel>
+        </>
+      }
+      right={
+        <>
+          <GroupTitle>{SettingsStrings.groupWatching()}</GroupTitle>
+          <Panel flush>
+            <ToggleSetting field="watch_enabled" label={SettingsStrings.watchEnabled()} />
+            <NumberSetting
+              field="watch_debounce_ms"
+              label={SettingsStrings.watchDebounce()}
+              suffix="s"
+              scale={1000}
+              min={0}
+            />
+            <NumberSetting
+              field="watch_poll_interval_ms"
+              label={SettingsStrings.watchPollInterval()}
+              suffix="s"
+              hint={SettingsStrings.watchPollIntervalHint()}
+              scale={1000}
+              min={1}
+            />
+            <NumberSetting
+              field="scan_concurrency"
+              label={SettingsStrings.scanConcurrency()}
+              min={1}
+            />
+          </Panel>
+
+          <GroupTitle>{SettingsStrings.groupSchedule()}</GroupTitle>
+          <Panel flush>
+            <TextSetting
+              field="full_sync_at"
+              label={SettingsStrings.dailyFullScanAt()}
+              placeholder={SettingsStrings.dailyFullScanAtPlaceholder()}
+              hint={SettingsStrings.dailyFullScanAtHint()}
             />
           </Panel>
         </>
@@ -183,7 +222,7 @@ const DisplayPeak = observer(function DisplayPeak(): JSX.Element {
   );
 });
 
-const RenderingTab = observer(function RenderingTab(): JSX.Element | null {
+const AdvancedTab = observer(function AdvancedTab(): JSX.Element | null {
   const store = useAppSettingsStore();
   const libraries = useLibrariesStore();
   if (store.settings == null) return null;
@@ -234,17 +273,10 @@ const RenderingTab = observer(function RenderingTab(): JSX.Element | null {
               step={0.01}
               disabledReason={hdrOff}
             />
-            <DisplayPeak />
           </Panel>
 
           <GroupTitle>{SettingsStrings.groupWorkers()}</GroupTitle>
           <Panel flush>
-            <NumberSetting
-              field="scan_concurrency"
-              label={SettingsStrings.scanConcurrency()}
-              hint={SettingsStrings.scanConcurrencyHint()}
-              min={1}
-            />
             <NumberSetting
               field="processing_concurrency"
               label={SettingsStrings.processingConcurrency()}
@@ -271,15 +303,27 @@ const RenderingTab = observer(function RenderingTab(): JSX.Element | null {
 
           <GroupTitle>{SettingsStrings.groupQuality()}</GroupTitle>
           <Panel flush>
-            <NumberSetting field="grid_rendition_quality" label={SettingsStrings.gridRenditionQuality()} min={0} max={100} />
             <NumberSetting
-              field="full_rendition_quality"
-              label={SettingsStrings.fullRenditionQuality()}
-              hint={SettingsStrings.fullRenditionQualityHint()}
+              field="grid_rendition_quality"
+              label={SettingsStrings.gridRenditionQuality()}
+              hint={SettingsStrings.qualityRange()}
               min={0}
               max={100}
             />
-            <NumberSetting field="max_rendition_quality" label={SettingsStrings.maxRenditionQuality()} min={0} max={100} />
+            <NumberSetting
+              field="full_rendition_quality"
+              label={SettingsStrings.fullRenditionQuality()}
+              hint={SettingsStrings.qualityRange()}
+              min={0}
+              max={100}
+            />
+            <NumberSetting
+              field="max_rendition_quality"
+              label={SettingsStrings.maxRenditionQuality()}
+              hint={SettingsStrings.qualityRange()}
+              min={0}
+              max={100}
+            />
           </Panel>
 
           <GroupTitle>{SettingsStrings.groupEncoding()}</GroupTitle>
@@ -297,53 +341,6 @@ const RenderingTab = observer(function RenderingTab(): JSX.Element | null {
               hint={SettingsStrings.avifSpeedHint()}
               min={0}
               max={10}
-            />
-          </Panel>
-        </>
-      }
-    />
-  );
-});
-
-const ScanningTab = observer(function ScanningTab(): JSX.Element | null {
-  const store = useAppSettingsStore();
-  if (store.settings == null) return null;
-
-  return (
-    <SettingsColumns
-      left={
-        <>
-          <GroupTitle>{SettingsStrings.groupWatching()}</GroupTitle>
-          <Panel flush>
-            <ToggleSetting field="watch_enabled" label={SettingsStrings.watchEnabled()} />
-            <NumberSetting
-              field="watch_debounce_ms"
-              label={SettingsStrings.watchDebounce()}
-              suffix="s"
-              hint={SettingsStrings.watchDebounceHint()}
-              scale={1000}
-              min={0}
-            />
-            <NumberSetting
-              field="watch_poll_interval_ms"
-              label={SettingsStrings.watchPollInterval()}
-              suffix="s"
-              hint={SettingsStrings.watchPollIntervalHint()}
-              scale={1000}
-              min={1}
-            />
-          </Panel>
-        </>
-      }
-      right={
-        <>
-          <GroupTitle>{SettingsStrings.groupSchedule()}</GroupTitle>
-          <Panel flush>
-            <TextSetting
-              field="full_sync_at"
-              label={SettingsStrings.dailyFullScanAt()}
-              placeholder={SettingsStrings.dailyFullScanAtPlaceholder()}
-              hint={SettingsStrings.dailyFullScanAtHint()}
             />
           </Panel>
         </>
@@ -545,6 +542,33 @@ function DiagnosticsRow(): JSX.Element {
   );
 }
 
+// Committed on blur or Enter: every keystroke would otherwise rename this device on the server.
+const DeviceName = observer(function DeviceName(): JSX.Element | null {
+  const store = useReplicationStore();
+  const { replication } = usePresenters();
+  const [draft, setDraft] = useState(store.deviceName ?? '');
+  useEffect(() => void replication.loadDeviceName(), [replication]);
+  useEffect(() => setDraft(store.deviceName ?? ''), [store.deviceName]);
+  if (store.deviceName == null) return null;
+
+  const commit = async (): Promise<void> => {
+    await replication.setDeviceName(draft);
+    setDraft(store.deviceName ?? '');
+  };
+  return (
+    <SettingRow label={SettingsStrings.deviceName()} hint={SettingsStrings.deviceNameHint()}>
+      <TextField
+        style={settingStyles.field}
+        label={SettingsStrings.deviceName()}
+        value={draft}
+        onChange={setDraft}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => e.key === 'Enter' && void commit()}
+      />
+    </SettingRow>
+  );
+});
+
 const SystemTab = observer(function SystemTab(): JSX.Element {
   const store = useAppSettingsStore();
   const write = useSettingWriter();
@@ -555,9 +579,13 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
     <SettingsColumns
       left={
         <>
+          <GroupTitle>{SettingsStrings.groupThisDevice()}</GroupTitle>
+          <Panel flush>
+            <DeviceName />
+          </Panel>
           <ThisApp />
           <UpdateSettings />
-          {settings != null && (
+          {settings != null && shellInvoke() == null && (
             <>
               <GroupTitle>{SettingsStrings.groupServer()}</GroupTitle>
               <Panel>
@@ -632,13 +660,12 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
   );
 });
 
-type Tab = 'libraries' | 'viewing' | 'rendering' | 'scanning' | 'system';
+type Tab = 'libraries' | 'general' | 'advanced' | 'system';
 
 const TAB_OPTIONS: Option<Tab>[] = [
   { value: 'libraries', label: SettingsStrings.libraries() },
-  { value: 'viewing', label: SettingsStrings.groupViewing() },
-  { value: 'rendering', label: SettingsStrings.groupRendering() },
-  { value: 'scanning', label: SettingsStrings.groupScanning() },
+  { value: 'general', label: SettingsStrings.groupGeneral() },
+  { value: 'advanced', label: SettingsStrings.groupAdvanced() },
   { value: 'system', label: SettingsStrings.groupSystem() },
 ];
 
@@ -714,9 +741,8 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
         </>
       )}
 
-      {tab === 'viewing' && <ViewingSettings />}
-      {tab === 'rendering' && <RenderingTab />}
-      {tab === 'scanning' && <ScanningTab />}
+      {tab === 'general' && <GeneralTab />}
+      {tab === 'advanced' && <AdvancedTab />}
       {tab === 'system' && <SystemTab />}
     </Page>
   );

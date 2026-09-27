@@ -249,6 +249,12 @@ export class ExportHistoryService {
   forgetRun(runId: string): void {
     this.db.query('DELETE FROM exports WHERE run_id = ?').run(runId);
   }
+
+  forgetAll(): void {
+    // Landed rows only: a run still writing has rows waiting on `landed`, and those files
+    // would otherwise go unrecorded.
+    this.db.query('DELETE FROM exports WHERE output_path IS NOT NULL').run();
+  }
 }
 
 function photoOf(row: ExportRow): ExportedPhoto {

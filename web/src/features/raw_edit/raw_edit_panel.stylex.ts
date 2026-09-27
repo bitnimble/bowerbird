@@ -77,7 +77,7 @@ export const styles = stylex.create({
     backgroundColor: { default: 'transparent', ':hover': color.slate, ':focus': color.field },
     color: { default: color.boneDim, ':focus': color.bone },
     // Under 16px, iOS Safari zooms into a focused field and never zooms back out.
-    fontSize: { default: null, [COARSE]: '16px' },
+    fontSize: { default: null, [COARSE]: '17.6px' },
     textAlign: 'right',
     cursor: 'text',
   },

@@ -47,8 +47,14 @@ describe('PhotoEditsApi', () => {
     expect(service.get).toHaveBeenCalledWith('p1');
   });
 
-  it('answers a checkpoint with the undo history and the stamp behind the document', async () => {
-    const checkpoint = { ...state, cursor: 1, history: [{ from: { exposure: 0 }, to: { exposure: 1 } }], stamp: 'stamp' };
+  it("answers a checkpoint with the undo history, the stamp behind the document and the library's denoiser", async () => {
+    const checkpoint = {
+      ...state,
+      cursor: 1,
+      history: [{ from: { exposure: 0 }, to: { exposure: 1 } }],
+      stamp: 'stamp',
+      library_denoiser: 'pmrid' as const,
+    };
     const { app, service } = buildApp({ checkpoint: jest.fn(() => checkpoint) });
 
     const response = await app.request(

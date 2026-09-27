@@ -12,10 +12,10 @@ export const headingStyles = stylex.create({
     marginBottom: '8px',
   },
   h1: {
-    fontSize: '20px',
+    fontSize: '22px',
   },
   h2: {
-    fontSize: '17px',
+    fontSize: '18.7px',
   },
   inline: {
     marginBottom: 0,

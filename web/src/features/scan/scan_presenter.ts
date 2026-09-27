@@ -82,13 +82,17 @@ export class ScanPresenter {
     await pending;
   }
 
-  // Stops whatever the library is doing. The run settles back to idle on its own,
-  // which the poll already in flight picks up like any other transition.
+  // Stops whatever the library is doing. The run settles back to idle on its own, once the batch
+  // in hand is done, which the poll already in flight picks up like any other transition.
   async cancel(libraryId: string): Promise<void> {
+    runInAction(() => (this.store.stoppingLibraryId = libraryId));
     try {
       await librariesApi.cancelScan(libraryId);
     } catch (err) {
-      runInAction(() => (this.store.error = message(err)));
+      runInAction(() => {
+        this.store.error = message(err);
+        this.store.stoppingLibraryId = null;
+      });
     }
   }
 
@@ -113,7 +117,12 @@ export class ScanPresenter {
       const status = await librariesApi.scanStatus(libraryId);
       const running = status.status !== 'idle';
       const unanswered = this.starting === libraryId;
-      if (running || !unanswered) runInAction(() => (this.store.status = status));
+      if (running || !unanswered) {
+        runInAction(() => {
+          this.store.status = status;
+          if (!running && this.store.stoppingLibraryId === libraryId) this.store.stoppingLibraryId = null;
+        });
+      }
       this.sample();
       wasBusy = running || unanswered;
       placingRows = status.status === 'processing';
@@ -129,7 +138,7 @@ export class ScanPresenter {
     // page the grid already has.
     const finished = this.busy && !wasBusy;
     if (placingRows || finished) await this.photos.reload('background');
-    // The library's photo count and "scanned 3 min ago" come off the library list,
+    // The library's photo count comes off the library list,
     // which nothing else re-reads while the settings page stays open. Read
     // through the scan as well as at the end: the rows are inserted as the walk
     // finds them, so the sidebar counts a first import up as it goes rather than
@@ -181,6 +190,7 @@ export class ScanPresenter {
     if (this.store.libraryId !== libraryId) {
       this.samples.length = 0;
       this.store.rate = null;
+      this.store.stoppingLibraryId = null;
     }
     this.store.libraryId = libraryId;
     this.store.error = null;

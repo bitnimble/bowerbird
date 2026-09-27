@@ -1,4 +1,5 @@
 import { action, runInAction } from 'mobx';
+import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import { type RenderedRendition } from '../../../../src/schemas/render_stages';
 import { type Settings, type UpdateSettingsRequest, type ViewerRendition, type ViewerRenditionMode } from '../../../../src/schemas/settings';
 import { settingsApi } from '../../api/settings';
@@ -61,26 +62,29 @@ export class AppSettingsPresenter {
   }
 
   /** Times a render here, so the panel stops quoting one machine's estimates. Minutes on a `max`. */
-  async benchmarkRender(rendition: RenderedRendition): Promise<void> {
-    if (this.store.isBenchmarking(rendition)) return;
-    this.markBenchmarking(rendition, true);
+  async benchmarkRender(rendition: RenderedRendition, denoiser: Denoiser): Promise<void> {
+    if (this.store.isBenchmarking(rendition, denoiser)) return;
+    this.markBenchmarking(rendition, denoiser, true);
     try {
-      const timing = await settingsApi.benchmarkRender(rendition);
-      runInAction(() => (this.store.renderTimings = { ...this.store.renderTimings, [rendition]: timing }));
+      const timing = await settingsApi.benchmarkRender(rendition, denoiser);
+      runInAction(() => {
+        const timings = this.store.renderTimings;
+        this.store.renderTimings = { ...timings, [rendition]: { ...timings[rendition], [denoiser]: timing } };
+      });
     } catch (err) {
       this.toasts.showError(
         AppSettingsPresenterStrings.couldNotBenchmark(),
         err instanceof ApiError ? err.message : (err as Error).message,
       );
     } finally {
-      this.markBenchmarking(rendition, false);
+      this.markBenchmarking(rendition, denoiser, false);
     }
   }
 
   @action.bound
-  private markBenchmarking(rendition: RenderedRendition, running: boolean): void {
-    if (running) this.store.benchmarking.add(rendition);
-    else this.store.benchmarking.delete(rendition);
+  private markBenchmarking(rendition: RenderedRendition, denoiser: Denoiser, running: boolean): void {
+    if (running) this.store.benchmarking.add(`${rendition}:${denoiser}`);
+    else this.store.benchmarking.delete(`${rendition}:${denoiser}`);
   }
 
   async update(patch: UpdateSettingsRequest): Promise<void> {

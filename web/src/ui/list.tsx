@@ -22,10 +22,6 @@ export const listStyles = stylex.create({
     borderBottomColor: color.slate,
     backgroundColor: color.slateSoft,
   },
-  // Always present and never deletable, so it reads as the surface the rest sit on.
-  root: {
-    backgroundColor: color.bower,
-  },
   body: {
     flexGrow: 1,
     flexShrink: 1,
@@ -86,20 +82,11 @@ export function List({
   );
 }
 
-export function ListRow({
-  root = false,
-  style,
-  children,
-}: {
-  /** The row everything else in the list sits under, such as a library's own root. */
-  root?: boolean;
-  style?: stylex.StyleXStyles;
-  children: ReactNode;
-}): JSX.Element {
+export function ListRow({ style, children }: { style?: stylex.StyleXStyles; children: ReactNode }): JSX.Element {
   const announced = useContext(Announced);
   return (
     <div
-      {...stylex.props(listStyles.row, root && listStyles.root, style)}
+      {...stylex.props(listStyles.row, style)}
       role={announced ? 'listitem' : undefined}
     >
       {children}

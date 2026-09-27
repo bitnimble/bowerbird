@@ -84,6 +84,11 @@ export class ExportApi {
 
     app.get(route(PathSegment.exports()), (c) => c.json(respond(ExportRunsSchema, this.history.list())));
 
+    app.delete(route(PathSegment.exports()), (c) => {
+      this.history.forgetAll();
+      return c.body(null, 204);
+    });
+
     // What a run still waiting to be written is about, so the queue lists the same row the
     // history will. A POST because a selection's worth of ids does not go in a query string.
     app.post(route(PathSegment.exports(), PathSegment.queued()), async (c) => {

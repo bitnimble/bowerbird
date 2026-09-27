@@ -49,12 +49,12 @@ const styles = stylex.create({
   rating: {
     display: 'flex',
     gap: { default: '4px', [COARSE]: '10px' },
-    fontSize: { default: '16px', [COARSE]: '26px' },
+    fontSize: { default: '17.6px', [COARSE]: '28.6px' },
   },
   // Under a photograph: small enough not to compete with it, and not grown on a phone.
   ratingSmall: {
     gap: '2px',
-    fontSize: '11px',
+    fontSize: '12.1px',
   },
   star: {
     padding: { default: 0, [COARSE]: '4px' },

@@ -10,6 +10,7 @@ import {
   type RenderTiming,
   type RenderedRendition,
 } from '../../../schemas/render_stages';
+import type { Denoiser } from '../../../schemas/photo_edits';
 import type { RenderTimingsFile } from '../renditions/render_timings_file';
 import { fetchReferenceFrame, REFERENCE_FRAME } from '../renditions/reference_frame';
 import { readRawHeader } from '../rawshim/raw_decoder';
@@ -44,7 +45,7 @@ export class RenderBenchmark {
    * `into` is a parameter rather than a field because the renderers are built without one: what
    * owns the file is the caller, and a benchmark is the only thing here that writes it.
    */
-  async run(rendition: RenderedRendition, into: RenderTimingsFile): Promise<RenderTiming> {
+  async run(rendition: RenderedRendition, denoiser: Denoiser, into: RenderTimingsFile): Promise<RenderTiming> {
     // Shared, so a second rendition's Measure does not write the same file while the first reads it.
     this.fetching ??= fetchReferenceFrame(this.frame).finally(() => (this.fetching = null));
     await this.fetching;
@@ -65,6 +66,7 @@ export class RenderBenchmark {
             rendition,
             dataPath: scratch,
             skip,
+            denoiser,
           }),
         );
         return performance.now() - began;
@@ -95,7 +97,7 @@ export class RenderBenchmark {
         { total, stages, measured_at: new Date().toISOString() },
         header.width * header.height,
       );
-      into.put(rendition, timing);
+      into.put(rendition, denoiser, timing);
       return timing;
     } finally {
       on.close();

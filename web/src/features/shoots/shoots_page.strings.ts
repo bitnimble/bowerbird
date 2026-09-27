@@ -7,8 +7,6 @@ export const ShootsPageStrings = {
   shoots: () => 'Shoots',
   howToShowFolders: () => 'How to show folders',
 
-  libraryRoot: () => 'Library root',
-  addToLibraryRoot: () => 'Add to the library root',
   createShootInSubfolder: () => 'Create shoot in subfolder',
 
   readingFolders: () => 'Reading folders…',

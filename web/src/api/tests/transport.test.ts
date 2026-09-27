@@ -134,6 +134,7 @@ describe('subscribeEvents', () => {
     return {
       open: () => {},
       rendition: () => {},
+      rendition_fetch: () => {},
       replication: () => {},
       composite: () => {},
       export: () => {},

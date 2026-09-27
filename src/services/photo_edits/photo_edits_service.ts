@@ -1,7 +1,15 @@
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { newId } from '../../schemas/id';
-import { diffEdits, type EditCheckpoint, type EditConflict, type EditDoc, type EditState } from '../../schemas/photo_edits';
+import {
+  diffEdits,
+  type Denoiser,
+  type EditCheckpoint,
+  type EditConflict,
+  type EditDoc,
+  type EditOpening,
+  type EditState,
+} from '../../schemas/photo_edits';
 import type { PhotoListingRepository } from '../photos/listing/photo_listing_repository';
 import { listConflicts, resolveConflict } from './conflicts';
 import type { PhotoEditsRepository } from './photo_edits_repository';
@@ -48,6 +56,7 @@ export class PhotoEditsService {
     private readonly changed: (libraryId: string) => void = () => {},
     /** Vouch for the copies built from this photo's document as it stood at `stamp` (`finish`). */
     private readonly vouch: (photoId: string, stamp: string | null) => void = () => {},
+    private readonly denoiserOf: (libraryId: string) => Denoiser = () => 'galosh',
   ) {}
 
   get(photoId: string): EditState {
@@ -55,9 +64,9 @@ export class PhotoEditsService {
     return this.edits.get(photoId);
   }
 
-  checkpoint(photoId: string): EditCheckpoint {
-    this.require(photoId);
-    return this.edits.checkpoint(photoId);
+  checkpoint(photoId: string): EditOpening {
+    const photo = this.require(photoId);
+    return { ...this.edits.checkpoint(photoId), library_denoiser: this.denoiserOf(photo.library_id) };
   }
 
   restore(photoId: string, rev: number, checkpoint: Pick<EditCheckpoint, 'doc' | 'cursor' | 'history'>, session: string): EditState {
@@ -113,9 +122,9 @@ export class PhotoEditsService {
     this.rebuild([photoId]);
   }
 
-  private require(photoId: string): void {
-    if (this.photoListing.getById(photoId) == null) {
-      throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
-    }
+  private require(photoId: string): { library_id: string } {
+    const photo = this.photoListing.getById(photoId);
+    if (photo == null) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
+    return photo;
   }
 }

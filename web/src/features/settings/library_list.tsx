@@ -24,7 +24,6 @@ import {
 import { libraryLabel } from '../libraries/library_label';
 import { BulkBarStrings } from '../photos/grid/bulk_bar.strings';
 import { PhotoDetailStrings } from '../photos/viewer/photo_detail_page.strings';
-import { RENDITION_SOURCES } from '../photos/renditions';
 import { BackupPanel } from '../backup/backup_panel';
 import { BackupStrings } from '../backup/backup_panel.strings';
 import { SyncedDevicesPanel } from '../replication/synced_devices_panel';
@@ -33,12 +32,11 @@ import { ScanStrip } from '../scan/scan_strip';
 import { Button } from '../../ui/button';
 import { DialogBody, DialogColumns } from '../../ui/dialog_layout';
 import { focusRing } from '../../ui/focus_ring';
-import { relativeTime } from '../../ui/format';
 import { ICON } from '../../ui/icon';
 import { Modal } from '../../ui/modal';
 import { Panel } from '../../ui/panel';
 import { Row } from '../../ui/row';
-import { Select } from '../../ui/select';
+import { Spinner } from '../../ui/spinner';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { color, font } from '../../ui/tokens.stylex';
@@ -78,7 +76,7 @@ const styles = stylex.create({
   summary: {
     cursor: 'pointer',
     fontFamily: font.display,
-    fontSize: '13px',
+    fontSize: '14.3px',
     paddingBlock: '2px',
     color: { default: color.boneDim, ':hover': color.bone },
   },
@@ -136,13 +134,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
     <Panel role="listitem" style={styles.tile}>
       <LibraryName library={library} />
       <Text variant="mono" as="div" style={styles.meta}>
-        {SettingsStrings.libraryMeta(
-          library.root_path,
-          library.photo_count,
-          library.last_synced_at == null ?
-            SettingsStrings.neverScanned()
-          : SettingsStrings.scannedAt(relativeTime(library.last_synced_at)),
-        )}
+        {SettingsStrings.libraryMeta(library.root_path, library.photo_count)}
       </Text>
       <ScanStrip library={library} />
       <LibraryJobs library={library} />
@@ -156,9 +148,13 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
         {/* The same slot, because stopping is what you want from a run in
             flight and starting another is not on offer anyway. */}
         {scan.isBusy && scan.libraryId === library.id ? (
-          <Button onClick={() => void scanPresenter.cancel(library.id)}>
-            <CircleStop size={ICON} />
-            {SettingsStrings.stop()}
+          <Button
+            disabled={scan.isStopping(library.id)}
+            aria-busy={scan.isStopping(library.id)}
+            onClick={() => void scanPresenter.cancel(library.id)}
+          >
+            {scan.isStopping(library.id) ? <Spinner small /> : <CircleStop size={ICON} />}
+            {scan.isStopping(library.id) ? SettingsStrings.stopping() : SettingsStrings.stop()}
           </Button>
         ) : (
           <Button onClick={() => void scanPresenter.scanLibrary(library.id)}>
@@ -402,22 +398,22 @@ const RenditionSettings = observer(function RenditionSettings({ library }: { lib
   return (
     <Panel title={SettingsStrings.renditions()} flush>
       <SettingRow
-        label={SettingsStrings.buildRenditionsFrom()}
+        label={SettingsStrings.preRenderImported()}
         onReset={resetTo(library.rendition_source, defaults?.rendition_source, (v) =>
           void libraries.setRenditionSource(library.id, v),
         )}
       >
-        <Select
-          label={SettingsStrings.buildRenditionsFrom()}
-          options={RENDITION_SOURCES}
-          value={library.rendition_source}
-          onChange={(source) => void libraries.setRenditionSource(library.id, source)}
+        <input
+          {...stylex.props(focusRing.ring)}
+          type="checkbox"
+          aria-label={SettingsStrings.preRenderImported()}
+          checked={library.rendition_source === 'render'}
+          onChange={(e) => void libraries.setRenditionSource(library.id, e.currentTarget.checked ? 'render' : 'embedded')}
         />
       </SettingRow>
 
       <SettingRow
         label={SettingsStrings.buildHdrRenditions()}
-        hint={SettingsStrings.buildHdrRenditionsHint()}
         onReset={resetTo(library.rendition_hdr, defaults?.rendition_hdr, (v) =>
           void libraries.setRenditionHdr(library.id, v),
         )}

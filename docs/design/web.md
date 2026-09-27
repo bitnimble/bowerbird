@@ -274,17 +274,17 @@ Opening a different collection, changing the filter or changing the sort still c
 
 The page shows **the library's folders**, with the shoots among them, rather than only the shoots. An empty Shoots list beside a library full of subfolders was the catalogue lying by omission: the photos had imported, the folders were right there on disk, and nothing on screen said so or offered to do anything about it. A folder that is not a shoot is drawn greyed, and every folder row carries a `+` menu, so the page answers "what have I got" and "make that a shoot" in the same place.
 
-A permanent **Library root** row sits at the top, undeletable, naming the library. It is where the `+` menu goes for a top-level shoot.
+A top-level shoot comes from **Create shoot** in the page header, between the view picker and the ⋯, as an album comes from **Create album** on the Albums page.
 
-**The photographs no shoot has claimed lead the list**, as a row of their own reading `Not in any shoot (N photos)` - italic and dimmed like an untracked folder, since it is not a shoot and not a folder either. It carries no `+` menu and no subtitle, its name being the whole of what it has to say, and it is there only while there are such photographs: a row reading zero opens onto nothing. It opens onto exactly those photographs at `/libraries/:id/no-shoot`, which is the library plus a `no_shoot` filter rather than a collection of its own, exactly as the Bin and the missing view are: a photograph belongs to at most one shoot, so "in none of them" is a predicate over the library, and being a filter is what carries it through every question a grid asks - a page, a count, a selection's positions (§18.3.3). Between it and the root row, the page is the direct answer to the case that started all this - one photo at the root and one in a subfolder reads as two rows with a count each, rather than as an empty page.
+**The photographs no shoot has claimed lead the list**, as a row of their own reading `Not in any shoot (N photos)` - italic and dimmed like an untracked folder, since it is not a shoot and not a folder either. It carries no `+` menu and no subtitle, its name being the whole of what it has to say, and it is there only while there are such photographs: a row reading zero opens onto nothing. It opens onto exactly those photographs at `/libraries/:id/no-shoot`, which is the library plus a `no_shoot` filter rather than a collection of its own, exactly as the Bin and the missing view are: a photograph belongs to at most one shoot, so "in none of them" is a predicate over the library, and being a filter is what carries it through every question a grid asks - a page, a count, a selection's positions (§18.3.3). With it, the page is the direct answer to the case that started all this - one photo at the root and one in a subfolder reads as two rows with a count each, rather than as an empty page.
 
-Three views, because a folder tree and a list of shoots are both legitimate readings of the same thing:
+Three views, because a folder tree and a list of shoots are both legitimate readings of the same thing. Tree (full), labelled **All folders**, is the default and comes first in the picker:
 
 | View | Rows | Subtitle |
 |---|---|---|
+| **Tree (full)** | Every folder, shoots and untracked alike | the folder's own name, and only when the shoot's label differs from it |
 | **Flat** | Shoots only, unnested | the full `folder_path` |
 | **Tree (simple)** | Shoots only, nested under the nearest ancestor **shoot** | the path from that ancestor, so folders skipped on the way are named there |
-| **Tree (full)** | Every folder, shoots and untracked alike | the folder's own name, and only when the shoot's label differs from it |
 
 Tree (simple) is what a photographer wants from a deep tree: a shoot buried at `2024/Q3/September/Smith` under nothing else tracked appears as one row, with `2024/Q3/September/` in its subtitle rather than as four rows of scaffolding. Tree (full) is the file manager's answer, with the untracked rows - pass-through folders, and those set aside as plain - in it.
 
@@ -310,7 +310,7 @@ It is keyed by **folder path, not by row index**, which is where it differs from
 
 **Anything that removes rows settles the cursor** onto the row that took its place, held at the index rather than reset to the top: a collapse, a delete, a sync tick. The cursor is only ever set to something that is actually a row, so it always has a ring, always puts a row in the tab order, and never sends the next arrow key somewhere the reader did not come from.
 
-**The rows scroll virtually**, on the same `visibleRows` the gallery uses (§18.3.2). Mirroring is what makes that necessary: a library with a shoot per folder has as many rows here as it has folders, and every rename re-reads and re-renders the list. The rows are uniform, so this is the easy half of what the gallery does - one row height, no blocks to fetch, no masonry to measure, and short enough that it needs none of the rail the gallery scrolls over. The **Library root** row sits outside the scroller, so the thing the page is anchored on never scrolls away. `aria-posinset` and `aria-setsize` count against the whole tree rather than the few rows mounted, as they do in the grid.
+**The rows scroll virtually**, on the same `visibleRows` the gallery uses (§18.3.2). Mirroring is what makes that necessary: a library with a shoot per folder has as many rows here as it has folders, and every rename re-reads and re-renders the list. The rows are uniform, so this is the easy half of what the gallery does - one row height, no blocks to fetch, no masonry to measure, and short enough that it needs none of the rail the gallery scrolls over. `aria-posinset` and `aria-setsize` count against the whole tree rather than the few rows mounted, as they do in the grid.
 
 The `+` menu on a row is where shoots come from:
 

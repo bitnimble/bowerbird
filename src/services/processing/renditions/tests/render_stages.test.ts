@@ -6,7 +6,7 @@ import { Database } from '../../../../db/driver';
 import { runMigrations } from '../../../../db/migrate';
 import { AS_METERED } from '../../pipeline/developed';
 import { LibrariesRepository } from '../../../libraries/libraries_repository';
-import { ESTIMATED_MS, REFERENCE_PIXELS, scaledToReference, stageMs } from '../../../../schemas/render_stages';
+import { ESTIMATED_MS, ESTIMATED_PMRID_DENOISE_MS, REFERENCE_PIXELS, scaledToReference, stageMs } from '../../../../schemas/render_stages';
 import { readStages, renditionSkips, withStagesOff, writeStages } from '../render_stages';
 import { RenderTimingsFile } from '../render_timings_file';
 
@@ -70,13 +70,19 @@ describe('what a stage is said to cost', () => {
   };
 
   it('is the estimate until this machine has measured one', () => {
-    expect(stageMs('full', undefined)).toEqual(ESTIMATED_MS.full);
+    expect(stageMs('full', 'galosh', undefined)).toEqual(ESTIMATED_MS.full);
     // The two renditions are not the same render, so they must not quote the same numbers.
-    expect(stageMs('max', undefined).encode).not.toBe(ESTIMATED_MS.full.encode);
+    expect(stageMs('max', 'galosh', undefined).encode).not.toBe(ESTIMATED_MS.full.encode);
+  });
+
+  it("estimates the denoise the library's filter costs, and nothing else differently", () => {
+    const pmrid = stageMs('full', 'pmrid', undefined);
+    expect(pmrid.denoise).toBe(ESTIMATED_PMRID_DENOISE_MS);
+    expect({ ...pmrid, denoise: ESTIMATED_MS.full.denoise }).toEqual(ESTIMATED_MS.full);
   });
 
   it('prefers a measurement to an estimate, stage by stage rather than all or nothing', () => {
-    const shown = stageMs('full', measured);
+    const shown = stageMs('full', 'galosh', measured);
     expect(shown.colour).toBe(400);
     expect(shown.denoise).toBe(30);
     // Never measured, because only the optional stages are: the estimate stands for the rest
@@ -86,7 +92,7 @@ describe('what a stage is said to cost', () => {
   });
 
   it('keeps a measured zero, which is a stage that saves nothing here', () => {
-    expect(stageMs('full', { ...measured, stages: { sharpen: 0 } }).sharpen).toBe(0);
+    expect(stageMs('full', 'galosh', { ...measured, stages: { sharpen: 0 } }).sharpen).toBe(0);
   });
 });
 
@@ -125,6 +131,12 @@ describe('the column the library holds them in', () => {
     expect(libraries.getById(LIB)?.render_skip_max).toEqual([]);
   });
 
+  it('denoises with GALOSH until told otherwise', () => {
+    expect(libraries.getById(LIB)?.denoiser).toBe('galosh');
+    libraries.setDenoiser(LIB, 'pmrid');
+    expect(libraries.getById(LIB)?.denoiser).toBe('pmrid');
+  });
+
   it('keeps the two renditions apart', () => {
     libraries.setRenderSkip(LIB, 'max', ['denoise', 'lens']);
     expect(libraries.getById(LIB)?.render_skip_max).toEqual(['denoise', 'lens', 'colour']);
@@ -148,30 +160,34 @@ describe('the file the measurements are kept in', () => {
   });
 
   // Merged with what is on disk rather than with anything read at the start: a benchmark takes
-  // minutes, and the other rendition's may well land while it runs.
-  it('files a measurement beside the other rendition rather than over it', () => {
-    file.put('full', { total: 800, stages: { colour: 400 }, measured_at: '2026-01-01T00:00:00.000Z' });
-    file.put('max', { total: 3000, stages: { denoise: 90 }, measured_at: '2026-01-02T00:00:00.000Z' });
-    file.put('full', { total: 750, stages: { colour: 380 }, measured_at: '2026-01-03T00:00:00.000Z' });
+  // minutes, and another one's may well land while it runs.
+  it('files a measurement beside the other rendition and the other denoiser rather than over them', () => {
+    file.put('full', 'galosh', { total: 800, stages: { colour: 400 }, measured_at: '2026-01-01T00:00:00.000Z' });
+    file.put('max', 'galosh', { total: 3000, stages: { denoise: 90 }, measured_at: '2026-01-02T00:00:00.000Z' });
+    file.put('full', 'pmrid', { total: 820, stages: { denoise: 40 }, measured_at: '2026-01-03T00:00:00.000Z' });
+    file.put('full', 'galosh', { total: 750, stages: { colour: 380 }, measured_at: '2026-01-04T00:00:00.000Z' });
 
     expect(file.read()).toEqual({
-      full: { total: 750, stages: { colour: 380 }, measured_at: '2026-01-03T00:00:00.000Z' },
-      max: { total: 3000, stages: { denoise: 90 }, measured_at: '2026-01-02T00:00:00.000Z' },
+      full: {
+        galosh: { total: 750, stages: { colour: 380 }, measured_at: '2026-01-04T00:00:00.000Z' },
+        pmrid: { total: 820, stages: { denoise: 40 }, measured_at: '2026-01-03T00:00:00.000Z' },
+      },
+      max: { galosh: { total: 3000, stages: { denoise: 90 }, measured_at: '2026-01-02T00:00:00.000Z' } },
     });
   });
 
   // What it holds is an estimate shown in place of a measurement, so a file this build cannot
   // parse must not be the reason a settings page will not open.
   it('reads a file it cannot parse as nothing measured', () => {
-    file.put('full', { total: 800, stages: {}, measured_at: '2026-01-01T00:00:00.000Z' });
+    file.put('full', 'galosh', { total: 800, stages: {}, measured_at: '2026-01-01T00:00:00.000Z' });
     writeFileSync(join(scratch, 'nested', 'render_timings.json'), 'not json');
     expect(file.read()).toEqual({});
   });
 
   it('discards measurements naming a stage this build does not recognise', () => {
-    file.put('full', { total: 800, stages: {}, measured_at: '2026-01-01T00:00:00.000Z' });
+    file.put('full', 'galosh', { total: 800, stages: {}, measured_at: '2026-01-01T00:00:00.000Z' });
     writeFileSync(join(scratch, 'nested', 'render_timings.json'), JSON.stringify({
-      full: { total: 800, stages: { match: 400, grade: 24 }, measured_at: '2026-01-01T00:00:00.000Z' },
+      full: { galosh: { total: 800, stages: { match: 400, grade: 24 }, measured_at: '2026-01-01T00:00:00.000Z' } },
     }));
     expect(file.read()).toEqual({});
   });

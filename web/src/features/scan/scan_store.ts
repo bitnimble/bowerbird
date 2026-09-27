@@ -11,9 +11,15 @@ export class ScanStore {
   // What the current phase is getting through, in `progress.counting` per second. Null
   // until there is enough to measure it over.
   @observable accessor rate: number | null = null;
+  /** The library a Stop was asked of, until its run reports idle. */
+  @observable accessor stoppingLibraryId: string | null = null;
 
   @computed get isBusy(): boolean {
     return this.status != null && this.status.status !== 'idle';
+  }
+
+  isStopping(libraryId: string): boolean {
+    return this.stoppingLibraryId === libraryId;
   }
 
   @computed get secondsLeft(): number | null {

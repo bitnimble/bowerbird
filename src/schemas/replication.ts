@@ -309,6 +309,9 @@ export type PushPageResponse = z.infer<typeof PushPageResponseSchema>;
 
 export const RenamePeerRequestSchema = z.object({ name: z.string().trim().min(1).max(120) });
 
+export const DeviceNameSchema = RenamePeerRequestSchema;
+export type DeviceName = z.infer<typeof DeviceNameSchema>;
+
 export const SyncOriginalsRequestSchema = z
   .object({
     sync_originals: z.boolean().optional(),

@@ -6,6 +6,7 @@ import {
   BrowseRemoteRequestSchema,
   BrowsedRemoteSchema,
   ChangesRequestSchema,
+  DeviceNameSchema,
   HandshakeRequestSchema,
   HandshakeResponseSchema,
   PageSchema,
@@ -137,6 +138,16 @@ export class ReplicationApi {
       const { name } = RenamePeerRequestSchema.parse(await c.req.json());
       this.replication.renamePeer(c.req.param('libraryId'), c.req.param('peerId'), name);
       return c.body(null, 204);
+    });
+
+    app.get(route(PathSegment.device()), (c) =>
+      c.json(respond(DeviceNameSchema, { name: this.replication.deviceName() })),
+    );
+
+    app.put(route(PathSegment.device()), async (c) => {
+      const { name } = DeviceNameSchema.parse(await c.req.json());
+      this.replication.setDeviceName(name);
+      return c.json(respond(DeviceNameSchema, { name: this.replication.deviceName() }));
     });
 
     // What forgetting this peer would put out of reach (§8.4), asked before the

@@ -143,7 +143,8 @@ export const EditDocSchema = z
     // which declines a clean frame outright.
     luminanceNoise: z.number().int().min(0).max(100).nullable().default(null),
     colourNoise: z.number().int().min(0).max(100).nullable().default(null),
-    denoiser: DenoiserSchema.default('galosh'),
+    // Null is the library's.
+    denoiser: DenoiserSchema.nullable().default(null),
 
     // The capture sharpening beside them, and a position rather than a strength for the same
     // reason: 50 is the deconvolution as computed and 100 twice its difference from the frame
@@ -332,6 +333,10 @@ export const EditCheckpointSchema = EditStateSchema.extend({
   stamp: z.string().nullable(),
 });
 export type EditCheckpoint = z.infer<typeof EditCheckpointSchema>;
+
+/** A checkpoint as the editor opens on it: with what a document naming no denoiser is denoised with. */
+export const EditOpeningSchema = EditCheckpointSchema.extend({ library_denoiser: DenoiserSchema });
+export type EditOpening = z.infer<typeof EditOpeningSchema>;
 
 /**
  * An editor session's id (docs/replication.md §5.3).

@@ -109,6 +109,24 @@ beforeEach(() => {
   service = new PhotoEditsService(db, new PhotoEditsRepository(db), listing, queueRebuild);
 });
 
+describe('PhotoEditsService.checkpoint', () => {
+  it("carries what the photo's library denoises a document naming no filter with", () => {
+    const inLibrary = { getById: (id: string) => (id === PHOTO ? { id, library_id: 'lib' } : null) } as unknown as PhotoListingRepository;
+    const opening = new PhotoEditsService(
+      db,
+      new PhotoEditsRepository(db),
+      inLibrary,
+      () => {},
+      () => {},
+      () => {},
+      (libraryId) => (libraryId === 'lib' ? 'pmrid' : 'galosh'),
+    ).checkpoint(PHOTO);
+
+    expect(opening.library_denoiser).toBe('pmrid');
+    expect(opening.doc.denoiser).toBeNull();
+  });
+});
+
 describe('PhotoEditsService.finish, on what the editor opened on', () => {
   let photos: PhotoProcessingRepository;
   let edits: PhotoEditsRepository;

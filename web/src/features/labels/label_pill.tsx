@@ -11,7 +11,7 @@ const styles = stylex.create({
     height: '22px',
     paddingInline: '8px 3px',
     borderRadius: '11px',
-    fontSize: '12px',
+    fontSize: '13.2px',
     lineHeight: 1,
     whiteSpace: 'nowrap',
   },

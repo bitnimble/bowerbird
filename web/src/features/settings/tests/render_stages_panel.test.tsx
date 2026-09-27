@@ -5,8 +5,8 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { useEffect } from 'react';
 import { type Library } from '../../../../../src/schemas/libraries';
-import { type RenderTimings } from '../../../../../src/schemas/render_stages';
-import { ESTIMATED_MS } from '../../../../../src/schemas/render_stages';
+import { type RenderTiming, type RenderTimings } from '../../../../../src/schemas/render_stages';
+import { ESTIMATED_MS, ESTIMATED_PMRID_DENOISE_MS } from '../../../../../src/schemas/render_stages';
 import { DEFAULT_SETTINGS } from '../../../../../src/schemas/settings';
 import { settingsApi } from '../../../api/settings';
 import { restoreApiAfterTests } from '../../../test_api';
@@ -26,29 +26,36 @@ const LIBRARY = {
   root_path: '/nowhere/reef',
   render_skip_full: ['lens', 'colour'],
   render_skip_max: [],
+  denoiser: 'galosh',
 } as unknown as Library;
 
 beforeEach(() => {
   settingsApi.renderTimings = () => Promise.resolve({});
 });
 
-function Harness({ matchEmbeddedJpeg }: { matchEmbeddedJpeg: boolean }): JSX.Element {
+function Harness({ matchEmbeddedJpeg, library }: { matchEmbeddedJpeg: boolean; library: Library }): JSX.Element {
   const settings = useAppSettingsStore();
   useEffect(() => runInAction(() => {
     settings.settings = { ...DEFAULT_SETTINGS, match_embedded_jpeg: matchEmbeddedJpeg };
   }), [matchEmbeddedJpeg, settings]);
-  return <RenderStagesPanel library={LIBRARY} />;
+  return <RenderStagesPanel library={library} />;
 }
 
-async function open(timings: RenderTimings = {}, matchEmbeddedJpeg = true): Promise<void> {
+async function open(timings: RenderTimings = {}, matchEmbeddedJpeg = true, library = LIBRARY): Promise<void> {
   settingsApi.renderTimings = () => Promise.resolve(timings);
   render(
     <StoresProvider>
-      <Harness matchEmbeddedJpeg={matchEmbeddedJpeg} />
+      <Harness matchEmbeddedJpeg={matchEmbeddedJpeg} library={library} />
     </StoresProvider>,
   );
   await act(async () => {});
 }
+
+const measuredNow = (stages: RenderTiming['stages']): RenderTiming => ({
+  total: 900,
+  stages,
+  measured_at: new Date().toISOString(),
+});
 
 const ticked = (name: string): boolean => (screen.getByRole('checkbox', { name }) as HTMLInputElement).checked;
 
@@ -68,7 +75,7 @@ test('an unticked box is a stage this rendition leaves out', async () => {
 });
 
 test('encode includes the grade and a measured zero states the measurement limit', async () => {
-  await open({ full: { total: 900, stages: { denoise: 0, defringe: 0 }, measured_at: new Date().toISOString() } });
+  await open({ full: { galosh: measuredNow({ denoise: 0, defringe: 0 }) } });
   expect(screen.queryByText('Colour grade')).toBeNull();
   expect(screen.getByText('~188 ms')).toBeTruthy();
   expect(screen.getAllByText('No measurable saving')).toHaveLength(2);
@@ -91,14 +98,14 @@ test('global camera matching off shows both dependent stages inactive', async ()
     expect(checkbox.checked).toBe(false);
     expect(checkbox.disabled).toBe(true);
     expect(screen.getByText(name).parentElement?.getAttribute('aria-description')).toBe(
-      'Camera matching is off in Rendering settings',
+      'Camera matching is off in Advanced settings',
     );
   }
 });
 
 test('the total is what the stages this rendition runs cost together', async () => {
   const stages = { read: 10, dust: 20, denoise: 30, demosaic: 40, lens: 1000, colour: 2000, defringe: 50, sharpen: 60, encode: 70 };
-  await open({ full: { total: 0, stages, measured_at: new Date().toISOString() } });
+  await open({ full: { galosh: measuredNow(stages) } });
   // `full` leaves out the lens and the colour match.
   expect(screen.getByText('Total').parentElement?.textContent).toBe('Total~280 ms');
 });
@@ -110,7 +117,7 @@ test('a stage quotes the estimate until this device has measured one', async () 
 });
 
 test('a measurement displaces the estimate, and says so', async () => {
-  await open({ full: { total: 900, stages: { colour: 512 }, measured_at: new Date().toISOString() } });
+  await open({ full: { galosh: measuredNow({ colour: 512 }) } });
   expect(screen.getByText(/^Measured /)).toBeTruthy();
   expect(screen.getByText('~512 ms')).toBeTruthy();
   // The rendition with nothing measured still quotes estimates, rather than the other tab's.
@@ -119,6 +126,25 @@ test('a measurement displaces the estimate, and says so', async () => {
   });
   expect(screen.getByText('Estimated')).toBeTruthy();
   expect(screen.getByText(`~${ESTIMATED_MS.max.colour} ms`)).toBeTruthy();
+});
+
+test("a library on the other denoiser quotes that denoiser's cost, and measures with it", async () => {
+  const runs: string[] = [];
+  settingsApi.benchmarkRender = (rendition, denoiser) => {
+    runs.push(`${rendition} ${denoiser}`);
+    return Promise.resolve(measuredNow({ denoise: 77 }));
+  };
+  // A GALOSH measurement says nothing about what PMRID costs here.
+  await open({ full: { galosh: measuredNow({ denoise: 5 }) } }, true, { ...LIBRARY, denoiser: 'pmrid' });
+  expect(screen.getByText('Estimated')).toBeTruthy();
+  expect(screen.getByText(`~${ESTIMATED_PMRID_DENOISE_MS} ms`)).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Denoiser' }).textContent).toContain('Quality (PMRID)');
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Measure' }));
+  });
+  expect(runs).toEqual(['full pmrid']);
+  expect(screen.getByText('~77 ms')).toBeTruthy();
 });
 
 test('the button says it is working and refuses a second run while one is in flight', async () => {
