@@ -79,9 +79,9 @@ export class ReplicationStore {
     return this.transfers.some((t) => t.state === 'queued' || t.state === 'active');
   }
 
-  /** Peers whose last session did not happen, wherever the reader is (§8.6). */
-  @computed get failingPeers(): number {
-    return [...this.peersByLibrary.values()].flat().filter((peer) => peer.last_error != null).length;
+  /** Whether a peer's last session with this library failed (§8.6). */
+  hasSyncErrors(libraryId: string): boolean {
+    return this.peersOf(libraryId).some((peer) => peer.last_error != null);
   }
 
   /** Candidates group by photograph: one divergence is every card naming it. */

@@ -41,6 +41,9 @@ export const sidebarStyles = stylex.create({
   update: {
     color: { default: color.satin, ':hover': color.bone },
   },
+  warning: {
+    color: color.rose,
+  },
   // The one thing in a row that must not give up width to a long name.
   icon: {
     flexGrow: 0,

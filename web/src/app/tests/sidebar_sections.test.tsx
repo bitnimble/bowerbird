@@ -6,6 +6,7 @@ import { runInAction } from 'mobx';
 import { useEffect } from 'react';
 import { type Album } from '../../../../src/schemas/albums';
 import { type Library } from '../../../../src/schemas/libraries';
+import { type PairedPeer } from '../../../../src/schemas/replication';
 import { type Shoot } from '../../../../src/schemas/shoots';
 import { albumsApi } from '../../api/albums';
 import { shootsApi } from '../../api/shoots';
@@ -17,7 +18,7 @@ registerDom();
 const { act, cleanup, fireEvent, render, screen, within } = await import('@testing-library/react');
 const { MemoryRouter } = await import('react-router-dom');
 const { Sidebar } = await import('../app');
-const { StoresProvider, useLibrariesStore } = await import('../stores_context');
+const { StoresProvider, useLibrariesStore, useReplicationStore } = await import('../stores_context');
 
 restoreApiAfterTests();
 afterEach(cleanup);
@@ -51,23 +52,36 @@ const ALBUMS: Album[] = [{ id: 'best', name: 'Best of', ordering: 'taken_asc', b
 shootsApi.list = (): Promise<Shoot[]> => Promise.resolve(SHOOTS);
 albumsApi.list = (): Promise<Album[]> => Promise.resolve(ALBUMS);
 
+const PEER: PairedPeer = {
+  peer_id: 'nas',
+  name: 'NAS',
+  paired_at: '2026-01-01T00:00:00.000Z',
+  last_replicated_at: null,
+  last_error: null,
+  wants_originals: true,
+};
+
 // The stores belong to the provider, so the one library these rows are of is
 // written from inside it rather than handed in.
-function Seed({ library }: { library: Library }): null {
+function Seed({ library, peers }: { library: Library; peers: PairedPeer[] }): null {
   const libraries = useLibrariesStore();
+  const replication = useReplicationStore();
   useEffect(() => {
-    runInAction(() => (libraries.libraries = [library]));
-  }, [libraries, library]);
+    runInAction(() => {
+      libraries.libraries = [library];
+      replication.peersByLibrary = new Map([[library.id, peers]]);
+    });
+  }, [libraries, replication, library, peers]);
   return null;
 }
 
 // Every section reads when it opens, so both the first render and each click
 // settle before anything is asserted on.
-async function open(library = LIBRARY): Promise<void> {
+async function open(library = LIBRARY, peers: PairedPeer[] = []): Promise<void> {
   render(
     <MemoryRouter>
       <StoresProvider>
-        <Seed library={library} />
+        <Seed library={library} peers={peers} />
         <Sidebar onCollapse={() => {}} />
       </StoresProvider>
     </MemoryRouter>,
@@ -111,6 +125,17 @@ test('a read-only library wears a badge, and is read as read-only', async () => 
 test('a writable library wears no badge', async () => {
   await open();
   expect(within(screen.getByRole('link', { name: 'Reef, 12 photos' })).queryByTitle('Read-only')).toBeNull();
+});
+
+test('a library whose sync failed links to its sync settings', async () => {
+  await open(LIBRARY, [{ ...PEER, last_error: 'connection refused' }]);
+  const link = screen.getByRole('link', { name: 'Sync errors' });
+  expect(link.getAttribute('href')).toBe('/settings/libraries/lib/sync');
+});
+
+test('a library syncing cleanly has no sync errors row', async () => {
+  await open(LIBRARY, [PEER]);
+  expect(screen.queryByRole('link', { name: 'Sync errors' })).toBeNull();
 });
 
 test('closing a library takes its pages with it and leaves the library', async () => {

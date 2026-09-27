@@ -1,7 +1,7 @@
 import { Dialog } from '@base-ui-components/react/dialog';
 import * as stylex from '@stylexjs/stylex';
 import { X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { Button } from './button';
 import { headingStyles } from './heading';
 import { ICON } from './icon';
@@ -45,18 +45,20 @@ export function Modal({
   open,
   onOpenChange,
   title,
+  initialFocus,
   children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
+  initialFocus?: RefObject<HTMLElement | null>;
   children: ReactNode;
 }): JSX.Element {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop {...stylex.props(styles.backdrop)} />
-        <Dialog.Popup {...stylex.props(styles.popup)}>
+        <Dialog.Popup {...stylex.props(styles.popup)} initialFocus={initialFocus}>
           <div {...stylex.props(styles.head)}>
             <Dialog.Title {...stylex.props(headingStyles.base, headingStyles.h2)}>{title}</Dialog.Title>
             <Dialog.Close render={<Button variant="ghost" iconOnly aria-label={ModalStrings.close()} />}>

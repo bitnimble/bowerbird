@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   CircleStop,
   HardDriveUpload,
@@ -12,6 +13,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { type Library } from '../../../../src/schemas/libraries';
+import { PathSegment, route } from '../../../../src/schemas/route';
 import {
   useBackupStore,
   useLibrariesStore,
@@ -96,6 +98,9 @@ const styles = stylex.create({
     flexBasis: '0%',
     minWidth: 0,
   },
+  focusTarget: {
+    outline: 'none',
+  },
 });
 
 // Syncing lives here, not on the gallery: it is a maintenance action on the
@@ -115,7 +120,17 @@ export const LibraryList = observer(function LibraryList(): JSX.Element {
 const LibraryTile = observer(function LibraryTile({ library }: { library: Library }): JSX.Element {
   const scan = useScanStore();
   const { libraries, scan: scanPresenter } = usePresenters();
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const navigate = useNavigate();
+  const params = useParams();
+  const settingsOpen = params.libraryId === library.id;
+  const syncSection = useRef<HTMLDivElement>(null);
+  const setSettingsOpen = (open: boolean): void =>
+    navigate(
+      open ?
+        route(PathSegment.settings(), PathSegment.libraries(), library.id)
+      : route(PathSegment.settings(), PathSegment.libraries()),
+      { replace: true },
+    );
 
   return (
     <Panel role="listitem" style={styles.tile}>
@@ -171,6 +186,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         title={SettingsStrings.librarySettingsTitle(libraryLabel(library))}
+        initialFocus={params.section === PathSegment.sync() ? syncSection : undefined}
       >
         <DialogBody wide>
           <DialogColumns>
@@ -178,7 +194,9 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
               <FolderSettings library={library} />
               <RenditionSettings library={library} />
               <StackSettings library={library} />
-              <SyncedDevicesPanel library={library} />
+              <div ref={syncSection} tabIndex={-1} {...stylex.props(styles.focusTarget)}>
+                <SyncedDevicesPanel library={library} />
+              </div>
             </div>
             <div>
               <RenderStagesPanel library={library} />

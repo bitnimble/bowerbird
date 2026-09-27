@@ -6,7 +6,6 @@ import {
   Bug,
   ChevronDown,
   ChevronRight,
-  CloudOff,
   Folder,
   FolderOutput,
   GitMerge,
@@ -19,6 +18,7 @@ import {
   Settings,
   Sun,
   Trash2,
+  TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
 import { PathSegment, route } from '../../../src/schemas/route';
@@ -371,6 +371,7 @@ const SidebarRow = observer(function SidebarRow({
   name,
   count,
   readOnly = false,
+  tone,
   depth,
   sectionKey,
   children,
@@ -382,6 +383,7 @@ const SidebarRow = observer(function SidebarRow({
   name: string;
   count?: number;
   readOnly?: boolean;
+  tone?: 'warning';
   depth: number;
   /** What its chevron opens, absent for a row with nothing under it. */
   sectionKey?: string;
@@ -397,6 +399,7 @@ const SidebarRow = observer(function SidebarRow({
       styles.rowLink,
       sectionKey != null && count == null && styles.rowLinkUncounted,
       isActive && sidebarStyles.active,
+      tone === 'warning' && sidebarStyles.warning,
       styles.indent(`calc(${size.sidebarStep} * ${depth})`),
       focusRing.ring,
     );
@@ -518,6 +521,7 @@ const SidebarAlbums = observer(function SidebarAlbums(): JSX.Element {
 // you navigate through on every visit.
 const LibraryNav = observer(function LibraryNav(): JSX.Element {
   const libraries = useLibrariesStore();
+  const replication = useReplicationStore();
 
   if (libraries.libraries.length === 0) {
     return (
@@ -569,6 +573,15 @@ const LibraryNav = observer(function LibraryNav(): JSX.Element {
               name={BinPageStrings.bin()}
               depth={1}
             />
+            {replication.hasSyncErrors(library.id) && (
+              <SidebarRow
+                to={route(PathSegment.settings(), PathSegment.libraries(), library.id, PathSegment.sync())}
+                icon={TriangleAlert}
+                name={AppStrings.syncErrors()}
+                tone="warning"
+                depth={1}
+              />
+            )}
           </SidebarRow>
         </div>
       ))}
@@ -587,22 +600,6 @@ const EditConflictsLink = observer(function EditConflictsLink(): JSX.Element | n
     <SidebarLink to={route(PathSegment.editConflicts())} icon={GitMerge}>
       <SidebarText>{AppStrings.editsToChoose()}</SidebarText>
       <span {...stylex.props(sidebarStyles.count)}>{waiting}</span>
-    </SidebarLink>
-  );
-});
-
-// Replication that has stopped working must not be a timestamp buried in
-// Settings (§8.6): a laptop out of touch for a fortnight is exactly the failure
-// a trip depends on noticing.
-const ReplicationTroubleLink = observer(function ReplicationTroubleLink(): JSX.Element | null {
-  const store = useReplicationStore();
-  const failing = store.failingPeers;
-  if (failing === 0) return null;
-
-  return (
-    <SidebarLink to={route(PathSegment.settings())} icon={CloudOff}>
-      <SidebarText>{AppStrings.notSyncing()}</SidebarText>
-      <span {...stylex.props(sidebarStyles.count)}>{failing}</span>
     </SidebarLink>
   );
 });
@@ -719,7 +716,6 @@ export function Sidebar({
             <SidebarAlbums />
           </SidebarRow>
           <EditConflictsLink />
-          <ReplicationTroubleLink />
         </div>
 
         {/* About the app rather than the photos, so away from the catalogue. */}
@@ -913,7 +909,15 @@ export const App = observer(function App(): JSX.Element {
           <ShowSidebar.Provider value={sidebarOpen ? null : toggleSidebar}>
             <Routes>
               <Route path={route()} element={<Home />} />
-              <Route path={route(PathSegment.settings(), PathSegment.optionalParam('tab'))} element={<SettingsPage />} />
+              <Route
+                path={route(
+                  PathSegment.settings(),
+                  PathSegment.optionalParam('tab'),
+                  PathSegment.optionalParam('libraryId'),
+                  PathSegment.optionalParam('section'),
+                )}
+                element={<SettingsPage />}
+              />
               <Route path={route(PathSegment.exports())} element={<ExportsPage />} />
               <Route path={route(PathSegment.hdr())} element={<HdrPage />} />
               <Route path={route(PathSegment.libraries(), PathSegment.param('libraryId'))} element={<LibraryPhotosPage />} />

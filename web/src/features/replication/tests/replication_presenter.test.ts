@@ -199,7 +199,7 @@ test('a session the server announces re-reads that library, and only libraries t
 
   expect(asked).toEqual(['lib']);
   expect(activities).toEqual(['background', 'background']);
-  expect(store.failingPeers).toBe(1);
+  expect(store.hasSyncErrors('lib')).toBe(true);
 });
 
 // A library list re-read that changed nothing is not news: the store replaces the
@@ -269,13 +269,14 @@ test('a library that lost its peers stops rendering as one that has them', async
   expect(store.hasPeers('lib')).toBe(false);
 });
 
-test('a peer whose sessions are failing is counted wherever the reader is', async () => {
+test('a peer whose sessions are failing marks only its own library', async () => {
   const { store, presenter } = harness();
   replicationApi.listPeers = () => peersAnswer([{ ...PEER, last_error: 'connection refused' }]);
 
   await presenter.loadPeers('lib');
 
-  expect(store.failingPeers).toBe(1);
+  expect(store.hasSyncErrors('lib')).toBe(true);
+  expect(store.hasSyncErrors('solo')).toBe(false);
 });
 
 test('a queued fetch is not queued again while it is still running', async () => {
