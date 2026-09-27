@@ -82,17 +82,14 @@ export class LocalDecoder {
     ]);
   }
 
-  /**
-   * The same open, from a rendition's own file, decoded in this tab. Null where it is an AVIF this
-   * browser cannot hand over as planar PQ, and the server prepares the rendition instead.
-   */
+  /** The same open, from a rendition's own file, decoded in this tab. */
   holdRendition(
     file: Uint8Array<ArrayBuffer>,
     request: LocalOpen,
     onStage?: (stage: OpenStage) => void,
-  ): Promise<string | null> {
+  ): Promise<string> {
     return this.ask(
-      JsonSchema.nullable(),
+      JsonSchema,
       { kind: 'holdRendition', file, request: JSON.stringify(request) },
       [file.buffer],
       onStage,

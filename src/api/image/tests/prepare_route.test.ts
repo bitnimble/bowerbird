@@ -29,9 +29,7 @@ function framed(header: object, samples: number): Uint8Array {
 function serving(
   pictures: {
     preparePicture: (photoId: string, shown?: unknown, missing?: unknown, develop?: unknown) => Promise<Uint8Array>;
-    prepareRendition?: (photoId: string, rendition: string, shown?: unknown, missing?: unknown) => Promise<Uint8Array>;
   } | null,
-  built: string[] = [],
 ): Hono {
   const photos = {
     locate: (photoId: string) => {
@@ -40,9 +38,6 @@ function serving(
         library: { id: 'lib', root_path: '/nowhere' },
         photo: { id: photoId, file_path: 'a.arw', recipe: { kind: 'file', path: 'a.arw' } },
       };
-    },
-    buildRendition: async (photoId: string, rendition: string) => {
-      built.push(`${photoId}:${rendition}`);
     },
   };
   const app = new Hono();
@@ -54,9 +49,7 @@ function serving(
       null,
       localOriginals(),
       {} as ConstructorParameters<typeof ImageApi>[4],
-      pictures == null
-        ? null
-        : { prepareRendition: async () => new Uint8Array(), ...pictures },
+      pictures,
     ).routes,
   );
   applyErrorHandler(app);
@@ -116,29 +109,6 @@ describe('GET /image/:photoId/prepare', () => {
     await app.request(`${url}?develop=not-json`);
 
     expect(develops).toEqual([develop, undefined, undefined]);
-  });
-
-  it('prepares the rendition the client names, brought up to date first', async () => {
-    const built: string[] = [];
-    const asked: string[] = [];
-    const app = serving(
-      {
-        preparePicture: async () => {
-          throw new Error('the original was prepared');
-        },
-        prepareRendition: async (photoId, rendition) => {
-          asked.push(`${photoId}:${rendition}`);
-          return framed({ width: 2, height: 2 }, 12);
-        },
-      },
-      built,
-    );
-    const url = route(PathSegment.image(), 'p1', PathSegment.prepare());
-    for (const rendition of ['max', 'full', 'embedded']) {
-      expect((await app.request(`${url}?from=${rendition}`)).status).toBe(200);
-    }
-    expect(built).toEqual(['p1:max', 'p1:full', 'p1:embedded']);
-    expect(asked).toEqual(['p1:max', 'p1:full', 'p1:embedded']);
   });
 
   it('refuses a photograph nothing knows about', async () => {

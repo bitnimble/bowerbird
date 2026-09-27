@@ -162,20 +162,21 @@ pressing Escape returns to the photograph. The mockup draws the rendition the vi
 rather than the RAW - the camera's JPEG, `full` or `max`, carried on the navigation because opening
 the mockup clears the reader's own choice, and `max` for an address opened directly. Every edit is
 already in a rendition, so the page asks for it to be built or fetched where it is missing or behind
-the edits and downloads the file. The camera's JPEG is decoded by the module, as a JPEG original is,
-turned by its EXIF. An AVIF is decoded with WebCodecs' `ImageDecoder` in the worker.
-The module has no AV1 decoder (`decode_rendered::av1`), so what it takes is the planes `copyTo`
-writes, and `planes.slang` converts them to the sixteen-bit codes libavif would have given - by the
-same video-range arithmetic the viewer's stage draws with (`video_range.slang`), and pinned against
-libavif (`planes_convert_to_the_codes_libavif_decodes`). The open is a finished picture's, unedited,
-with no analysis read or filed, and anchored at the white its file states (`EditRequest::stated_white`)
-rather than at a quantile, and the page draws it at neutral without reading the saved edits. A
-neutral grade of that frame is the file's own light, so the print starts from the picture the viewer
-shows, and what crosses the network is the AVIF rather than the samples it decodes to - 3MB against
-59MB for a 10MP rendition. A browser with no `ImageDecoder` - Safari - gets the same planes from
-`native/avif_planes` (below). One that can decode neither way, or that hands back anything other
-than planar PQ, gets the server's prepare of the same file instead (`from=<rendition>`, which runs
-the job with `Job::stated_white`).
+the edits and downloads the file, and nothing of it is prepared on the server. The camera's JPEG is
+decoded by the module, as a JPEG original is, turned by its EXIF. The module has no AV1 decoder
+(`decode_rendered::av1`), so an HDR AVIF reaches it as the planes WebCodecs' `ImageDecoder` hands
+back from `copyTo`, or `native/avif_planes` (below) where there is no `ImageDecoder` or it declines,
+and `planes.slang` converts them to the sixteen-bit codes libavif would have given - by the same
+video-range arithmetic the viewer's stage draws with (`video_range.slang`), and pinned against
+libavif (`planes_convert_to_the_codes_libavif_decodes`). Both decoders take limited-range PQ only,
+so an SDR AVIF - a library with HDR renditions off, a composite's camera view - is decoded by the
+browser to RGBA, which is all an SDR picture is, and handed over with the file for its colour
+(`decode_rendered::hold_pixels`, which refuses an HDR file that got that far rather than clip it).
+The open is a finished picture's, unedited, with no analysis read or filed, and anchored at the
+white its file states (`EditRequest::stated_white`) rather than at a quantile, and the page draws it
+at neutral without reading the saved edits. A neutral grade of that frame is the file's own light,
+so the print starts from the picture the viewer shows, and what crosses the network is the file
+rather than the samples it decodes to - 3MB against 59MB for a 10MP rendition.
 
 **Safari has no `ImageDecoder`, and every other way it decodes a picture flattens HDR** - an
 `<img>` drawn to a canvas, `createImageBitmap`, a `VideoFrame` built from an image, all SDR by the

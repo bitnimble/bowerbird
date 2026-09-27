@@ -2,16 +2,14 @@ import { AppError } from '../../../errors';
 import type { Library } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
-import type { ViewerRendition } from '../../../schemas/settings';
-import { fileRecipe, isComposite } from '../../../schemas/recipes';
-import { getDataPath, getRenditionPath, originalPathOf } from '../../../utils/paths';
-import { readRawHeader } from '../rawshim/raw_decoder';
+import { isComposite } from '../../../schemas/recipes';
+import { getDataPath, originalPathOf } from '../../../utils/paths';
 import type { PhotoListingRepository } from '../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../photos/paths/photo_paths_repository';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import { openPrepareWorker, pictureLevel, type Missing, type PrepareWorker, type Shown } from '../workers/prepare_pool';
 import type { CompositeJobSource, WorkerJob } from '../workers/processing_types';
-import { AS_METERED, developed } from './developed';
+import { developed } from './developed';
 import type { RenderTargets } from './render_targets';
 
 export class PrepareRenderer {
@@ -112,43 +110,6 @@ export class PrepareRenderer {
           ...shared,
         };
 
-    return this.prepares()
-      .run({ job, level, width: size.width, height: size.height, window, parts });
-  }
-
-  /**
-   * One of the photograph's renditions as a picture to prepare, for a client that only shows it.
-   *
-   * Every edit is already in the file, so it is prepared unedited and at the white it was encoded
-   * with, and the client draws it with neutral edits. The caller makes sure the file is current.
-   */
-  async prepareRendition(photoId: string, rendition: ViewerRendition, shown?: Shown, missing?: Missing): Promise<Uint8Array> {
-    const photo = this.photoPaths.getBasicById(photoId);
-    if (photo == null) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
-    const library = this.libraryOf(photo.library_id);
-    if (library == null) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
-    // The camera's JPEG inside a single file is no file of ours to prepare; a client decodes it itself.
-    if (rendition === 'embedded' && !isComposite(photo.recipe)) {
-      throw new AppError('VALIDATION_ERROR', `${photoId}'s embedded JPEG is decoded by the client`);
-    }
-    const path = getRenditionPath(library, photoId, rendition, library.rendition_hdr && rendition !== 'embedded');
-    // Sized off the file rather than the row: the rendition is cropped.
-    const at = pictureLevel(fileRecipe(path), readRawHeader(path), shown, missing);
-    if (at == null) throw new AppError('VALIDATION_ERROR', `${photoId}'s rendition has no dimensions`);
-    const { level, size, window, parts } = at;
-    const job: WorkerJob = {
-      kind: 'rendition',
-      photoId,
-      dataPath: getDataPath(library),
-      rawFilePath: path,
-      cameraMatch: 'none',
-      statedWhite: true,
-      targets: [],
-      grade: this.targets.grade(),
-      ...AS_METERED,
-      sharpen: 0,
-      defringe: 0,
-    };
     return this.prepares()
       .run({ job, level, width: size.width, height: size.height, window, parts });
   }

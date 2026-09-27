@@ -865,18 +865,6 @@ describe('the level a zoom is served at', () => {
     expect(develop(asked.at(-1))).toMatchObject({ sharpening: 80 });
   });
 
-  test('an open of a rendition asks for that rendition on every window and tile after it', async () => {
-    Object.assign(presenter, { fromRendition: 'full' });
-    presenter.showRegion(QUARTER);
-    await settled();
-    decoder.missing = [[[1024, 2048, 1024, 1024]]];
-    presenter.showRegion({ ...QUARTER, x: QUARTER.x + 900 });
-    await settled();
-
-    expect(asked.map((url) => url.searchParams.get('from'))).toEqual(['full', 'full']);
-    expect(asked.map((url) => url.searchParams.get('develop'))).toEqual([null, null]);
-  });
-
   test('a small pan inside what is held asks for nothing', async () => {
     presenter.showRegion(QUARTER);
     await settled();

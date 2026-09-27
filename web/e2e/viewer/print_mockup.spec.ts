@@ -3,6 +3,7 @@
 // it turns under a pointer, is `editor/raw_editing.spec.ts`; this is the way in, what it is drawn
 // from, and the way back out.
 import { type Page, expect } from '@playwright/test';
+import { z } from 'zod';
 import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PRINT_PHOTOS_DIR } from '../fixture_library';
@@ -112,37 +113,38 @@ test('the mockup opens on its own address, and escape leaves it', async ({ page 
   expect(new URL(page.url()).pathname).toBe(photoPath);
 });
 
-// A stage that outgrows the rendition is served tiles of it from the server, and the frame drawn
-// from them takes its camera match and balance from the open's own answer.
-test('a rendition opened in the browser draws from the tiles it is served', async ({ page }) => {
+// An HDR rendition arrives as its planes and an SDR one - the grid tile is never HDR - as the
+// browser's own RGBA, and neither is handed to the server to prepare.
+test('a rendition of either range is opened in the browser', async ({ page }) => {
   const photoId = await gotoPhoto(page, PRINT_PHOTOS_DIR);
-  const shown = await page.evaluate(async (photoId) => {
+  const drawn = drawnFrom(page, photoId);
+  const sizes = await page.evaluate(async (photoId) => {
     const { LocalDecoder } = await import('/src/features/raw_edit/local_decode/local_decoder.ts');
-    const { preparedPicture } = await import('/src/features/raw_edit/local_decode/open_photo.ts');
     const { renditionsApi } = await import('/src/api/renditions.ts');
+    const opened: Record<string, unknown> = {};
     await renditionsApi.build(photoId, 'max');
-    const avif = new Uint8Array(await (await fetch(renditionsApi.url(photoId, 'max'))).arrayBuffer());
-    const decoder = new LocalDecoder();
-    try {
-      const opened = await decoder.holdRendition(avif, {
-        longEdge: 0,
-        grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
-        defringe: 0,
-        statedWhite: true,
-      });
-      if (opened == null) return 'this browser cannot hand over planar PQ';
-      const { width, height } = JSON.parse(opened) as { width: number; height: number };
-      const level: [number, number] = [width, height];
-      const whole: [number, number, number, number] = [0, 0, width, height];
-      const { missing } = await decoder.showTiles(level, whole);
-      if (missing == null) return 'nothing was missing';
-      await decoder.takeTiles(await preparedPicture(photoId, { level: 0, at: whole, parts: missing }, 'max'), missing);
-      return JSON.stringify(await decoder.showTiles(level, whole));
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
-    } finally {
-      decoder.close();
+    for (const rendition of ['max', 'grid'] as const) {
+      const file = new Uint8Array(await (await fetch(renditionsApi.url(photoId, rendition))).arrayBuffer());
+      const decoder = new LocalDecoder();
+      try {
+        const header = await decoder.holdRendition(file, {
+          longEdge: 0,
+          grade: { referenceWhiteNits: 203, whiteQuantile: 0.995 },
+          defringe: 0,
+          statedWhite: true,
+        });
+        const { width, height } = JSON.parse(header) as { width: number; height: number };
+        opened[rendition] = [width, height];
+      } catch (error) {
+        opened[rendition] = error instanceof Error ? error.message : String(error);
+      } finally {
+        decoder.close();
+      }
     }
+    return opened;
   }, photoId);
-  expect(shown).toBe('{"missing":null}');
+  const Size = z.tuple([z.number().positive(), z.number().positive()]);
+  const { max, grid } = z.object({ max: Size, grid: Size }).parse(sizes);
+  expect(Math.max(...max)).toBeGreaterThan(Math.max(...grid));
+  expect(drawn.others()).toEqual([]);
 });

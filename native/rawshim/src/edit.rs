@@ -61,7 +61,7 @@ pub struct EditRequest {
     #[serde(default)]
     pub repairs: Vec<crate::repair::Repair>,
     /// Diffuse white where a finished picture states it rather than where its histogram puts it:
-    /// a rendition shown as it was encoded (`job::Job::stated_white`).
+    /// a rendition shown as it was encoded.
     #[serde(default)]
     pub stated_white: bool,
 }

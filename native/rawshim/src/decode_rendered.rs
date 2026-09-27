@@ -122,6 +122,31 @@ pub fn hold_planes(avif: &[u8], planes: &[u8], layout: &crate::planes::Layout) -
     Ok(Held { picture, camera: None })
 }
 
+/// An SDR AVIF the page decoded to RGBA itself, upright: `avif` for what the container says its
+/// colour is.
+pub fn hold_pixels(avif: &[u8], rgba: &[u8], width: usize, height: usize) -> Result<Held, String> {
+    holding(pixels_read(avif, rgba, width, height)?)
+}
+
+fn pixels_read(avif: &[u8], rgba: &[u8], width: usize, height: usize) -> Result<Read, String> {
+    let coding = coding_of(&read_heif(avif)?.primary, 8);
+    if matches!(coding.curve, Curve::Pq | Curve::Hlg) {
+        return Err("this AVIF is HDR, which eight bits of RGBA would clip: it has to arrive as its planes".to_string());
+    }
+    if width.checked_mul(height).and_then(|pixels| pixels.checked_mul(4)) != Some(rgba.len()) {
+        return Err(format!("{} bytes are not a {width}x{height} RGBA picture", rgba.len()));
+    }
+    Ok(Read {
+        codes: interleave(rgba, width * height, 4, false),
+        width,
+        height,
+        coding,
+        turn: Orientation::Normal,
+        gain: None,
+        exif: None,
+    })
+}
+
 impl Held {
     /// The picture's size the way a reader sees it.
     pub fn size(&self) -> crate::px::Size<crate::px::Photograph> {
@@ -731,5 +756,30 @@ mod tests {
     #[test]
     fn a_truncated_gain_map_metadata_is_declined_rather_than_half_read() {
         assert!(iso_21496_terms(&[0u8; 8]).is_none());
+    }
+
+    /// What a browser hands over for an SDR rendition, read in the colour the file states.
+    #[cfg(feature = "renditions")]
+    #[test]
+    fn an_sdr_avif_decoded_by_the_page_is_held_at_its_own_colour_and_an_hdr_one_is_refused() {
+        let (width, height) = (4, 2);
+        let rgb: Vec<u8> = (0..width * height * 3).map(|at| (at * 9) as u8).collect();
+        let sdr = crate::avif::encode_rgb8(rgb.as_slice().into(), width, height, 0, 10, true).expect("the SDR still encodes");
+        let rgba: Vec<u8> = rgb.chunks_exact(3).flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255]).collect();
+        let read = pixels_read(&sdr, &rgba, width, height).expect("an SDR AVIF is read");
+        assert!(matches!(read.coding.curve, Curve::Srgb));
+        assert_eq!(read.codes, rgb.iter().map(|&code| u16::from(code)).collect::<Vec<_>>());
+        assert!(pixels_read(&sdr, &rgba[4..], width, height).is_err(), "a short buffer is refused");
+
+        let options = crate::avif::StillOptions {
+            cicp: crate::avif::Cicp { primaries: 9, transfer: 16, matrix: 9 },
+            format: crate::raw::avifPixelFormat::AVIF_PIXEL_FORMAT_YUV444,
+            quantizer: 0,
+            speed: 10,
+            light: None,
+        };
+        let pq = crate::avif::encode_still(vec![30_000u16; width * height * 3].into(), width, height, &options)
+            .expect("the PQ still encodes");
+        assert!(pixels_read(&pq, &rgba, width, height).is_err(), "a PQ AVIF flattened to RGBA is refused");
     }
 }

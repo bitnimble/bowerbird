@@ -3,6 +3,7 @@ import init, {
   type HeldRaw,
   finishDraw,
   holdPicture,
+  holdPixels,
   holdPlanes,
   holdPmridWeights,
   holdPrintEnvironment,
@@ -334,23 +335,14 @@ class Open {
   }
 
   /**
-   * The same open, from a rendition this browser decodes, so what crosses the network is the file
-   * rather than the samples the server would decode it to. A JPEG is decoded by the module; an AVIF
-   * by the browser, and null where that decode is not planar PQ.
+   * The same open, from a rendition's own file decoded in this tab. A JPEG is decoded by the
+   * module; an HDR AVIF arrives as its planes, and an SDR one as the browser's own RGBA.
    */
-  private async renditionAt(file: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<string | null> {
+  private async renditionAt(file: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<string> {
     report('decoding');
-    const isJpeg = file[0] === 0xff && file[1] === 0xd8;
-    const planes = isJpeg ? null : await decodedPlanes(file);
-    if (!isJpeg && planes == null) return null;
+    const held = await heldRendition(file, request, report);
     this.release();
-    const held = this.keep(
-      planes == null
-        ? await holdRaw(file, request, report)
-        : await holdPlanes(file, planes.samples, JSON.stringify(planes.layout), request),
-      request,
-    );
-    return held.prepare(undefined, undefined, 'galosh', 0, false, 0, 0, '[]', report);
+    return this.keep(held, request).prepare(undefined, undefined, 'galosh', 0, false, 0, 0, '[]', report);
   }
 }
 
@@ -404,11 +396,33 @@ async function printEnvironment(environment: Environment): Promise<void> {
   await fetching;
 }
 
-async function decodedPlanes(avif: Uint8Array<ArrayBuffer>): Promise<PlanarPicture | null> {
-  if (WebCodecs == null) return canDecodeAvifPlanes() ? decodeAvifPlanes(avif) : null;
+async function heldRendition(file: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<HeldRaw> {
+  if (file[0] === 0xff && file[1] === 0xd8) return holdRaw(file, request, report);
+  const planes = (await webCodecsPlanes(file)) ?? (canDecodeAvifPlanes() ? await decodeAvifPlanes(file) : null);
+  if (planes != null) return holdPlanes(file, planes.samples, JSON.stringify(planes.layout), request);
+  // Neither decoder hands over anything but PQ, and the module refuses an HDR file that got here.
+  const { rgba, width, height } = await decodedPixels(file);
+  return holdPixels(file, rgba, width, height, request);
+}
+
+async function decodedPixels(avif: Uint8Array<ArrayBuffer>): Promise<{ rgba: Uint8Array; width: number; height: number }> {
+  const bitmap = await createImageBitmap(new Blob([avif], { type: 'image/avif' }));
+  try {
+    const { width, height } = bitmap;
+    const context = new OffscreenCanvas(width, height).getContext('2d');
+    if (context == null) throw new Error('this worker would not open a 2D canvas to read an SDR rendition');
+    context.drawImage(bitmap, 0, 0);
+    return { rgba: new Uint8Array(context.getImageData(0, 0, width, height).data.buffer), width, height };
+  } finally {
+    bitmap.close();
+  }
+}
+
+async function webCodecsPlanes(avif: Uint8Array<ArrayBuffer>): Promise<PlanarPicture | null> {
+  if (WebCodecs == null) return null;
   const decoder = new WebCodecs({ data: avif, type: 'image/avif' });
   try {
-    // A file this browser will not decode is one the server can still prepare.
+    // A file this browser will not decode is one rav1d can still take.
     const decoded = await decoder.decode().catch(() => null);
     if (decoded == null) return null;
     const { image } = decoded;

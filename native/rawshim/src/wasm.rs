@@ -316,6 +316,17 @@ pub async fn hold_planes(avif: &[u8], planes: &[u8], layout: &str, request: &str
     Ok(HeldRaw::new(Some(crate::decode::Held::Rendered(held)), Vec::new(), false, None, request))
 }
 
+/// Opens an SDR AVIF rendition the page decoded to upright RGBA, which is what a browser hands back
+/// for one: `avif` is the file, for its colour.
+#[wasm_bindgen(js_name = holdPixels)]
+pub async fn hold_pixels(avif: &[u8], rgba: &[u8], width: usize, height: usize, request: &str) -> Result<HeldRaw, JsValue> {
+    needs_webgpu().await?;
+    let request = request_of(request)?;
+    let held = crate::decode_rendered::hold_pixels(avif, rgba, width, height)
+        .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
+    Ok(HeldRaw::new(Some(crate::decode::Held::Rendered(held)), Vec::new(), false, None, request))
+}
+
 #[wasm_bindgen]
 extern "C" {
     /// Called with each [`crate::open_stage::Stage`]'s name as it begins.
