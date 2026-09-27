@@ -76,7 +76,10 @@ pub enum Texel {}
 /// The stage the editor draws onto, in the pixels the browser hands out.
 pub enum Canvas {}
 
+/// Half the paper's long edge, what the print's camera, bend and lamp are placed in.
 pub enum PrintUnit {}
+
+/// A millimetre of the physical print, resolved from its long edge.
 pub enum Millimetre {}
 
 /// The camera match's own plane, a fixed 1280 across the photograph.

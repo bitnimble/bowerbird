@@ -111,7 +111,10 @@ public struct Tap : IAbsolute {}
 /// every blob on the sensor.
 public struct BlobRadius : IAbsolute {}
 
+/// Half the paper's long edge, what the print's camera, bend and lamp are placed in.
 public struct PrintUnit : IAbsolute {}
+
+/// A millimetre of the physical print, resolved from its long edge.
 public struct Millimetre : IAbsolute {}
 
 /// Buckets of a histogram, indexed along a value and never a place.
