@@ -316,6 +316,17 @@ pub async fn hold_planes(avif: &[u8], planes: &[u8], layout: &str, request: &str
     Ok(HeldRaw::new(Some(crate::decode::Held::Rendered(held)), Vec::new(), false, None, request))
 }
 
+/// Opens an SDR AVIF rendition the page decoded to upright RGBA, which is what a browser hands back
+/// for one: `avif` is the file, for its colour.
+#[wasm_bindgen(js_name = holdPixels)]
+pub async fn hold_pixels(avif: &[u8], rgba: &[u8], width: usize, height: usize, request: &str) -> Result<HeldRaw, JsValue> {
+    needs_webgpu().await?;
+    let request = request_of(request)?;
+    let held = crate::decode_rendered::hold_pixels(avif, rgba, width, height)
+        .map_err(|why| JsValue::from_str(&format!("rawshim: {why}")))?;
+    Ok(HeldRaw::new(Some(crate::decode::Held::Rendered(held)), Vec::new(), false, None, request))
+}
+
 #[wasm_bindgen]
 extern "C" {
     /// Called with each [`crate::open_stage::Stage`]'s name as it begins.
@@ -448,6 +459,15 @@ fn denoiser_of(name: &str) -> Result<crate::galosh::Denoiser, JsValue> {
 #[wasm_bindgen(js_name = holdPmridWeights)]
 pub fn hold_pmrid_weights(bytes: Vec<u8>) {
     crate::pmrid::hold_weights(bytes);
+}
+
+/// A print environment's map, which the page fetches before the first scene that names it.
+#[wasm_bindgen(js_name = holdPrintEnvironment)]
+pub fn hold_print_environment(name: &str, bytes: Vec<u8>) -> Result<(), JsValue> {
+    let environment: crate::print::Environment = serde_json::from_value(serde_json::Value::from(name))
+        .map_err(|_| JsValue::from_str(&format!("rawshim: {name} is not a print environment")))?;
+    crate::print::environment::hold(environment, bytes);
+    Ok(())
 }
 
 /// Where a fill is read from, from where it lands, on the `px::Stored` grid.
@@ -1867,6 +1887,9 @@ impl HeldRaw {
     pub fn set_print(&self, scene: Option<String>) -> Result<(), JsValue> {
         let parsed = scene.as_deref().map(crate::print::Scene::parse).transpose()
             .map_err(|error| JsValue::from_str(&format!("rawshim: invalid print scene: {error}")))?;
+        if let Some(environment) = parsed.map(|scene| scene.environment).filter(|environment| !crate::print::environment::held(*environment)) {
+            return Err(JsValue::from_str(&format!("rawshim: the {} environment has not been fetched", environment.name())));
+        }
         self.print.set(parsed);
         Ok(())
     }

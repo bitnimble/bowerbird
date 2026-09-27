@@ -3,6 +3,7 @@ import { test } from '../fixtures';
 import { z } from 'zod';
 import { EditStateSchema, TONE_CURVE_KIND } from '../../../src/schemas/photo_edits';
 import { PathSegment, route } from '../../../src/schemas/route';
+import { MOST_LUX } from '../../src/features/raw_edit/print/print_scene';
 import { EDIT_PHOTOS_DIR } from '../fixture_library';
 import {
   addLibrary,
@@ -67,14 +68,14 @@ test.beforeAll(async ({ browser }) => {
  * allocated, never dispatched into, or bound at the wrong entry leaves every fixture green. What
  * the *value* does is `raw_edit_presenter.test.ts`; that the passes run at all needs a device.
  *
- * The open is the tab's own: there is nothing on the server to prepare a frame any more, so the
- * request it did not get is what would catch a transport creeping back in, and the console is what
- * says the frame that went live was not half-written by a refused dispatch.
+ * The open is the tab's own, so a request to the server's prepare is what would catch the photograph
+ * being sent there instead, and the console is what says the frame that went live was not
+ * half-written by a refused dispatch.
  */
 test('opens in the tab and grades on the GPU, into a stage sized for the viewport', async ({ page }) => {
   const askedTheServer: string[] = [];
   page.on('request', (request) => {
-    if (new URL(request.url()).pathname.endsWith(route(PathSegment.prepared()))) askedTheServer.push(request.url());
+    if (new URL(request.url()).pathname.endsWith(route(PathSegment.prepare()))) askedTheServer.push(request.url());
   });
   const declined = watchForComplaints(page);
   // Stored rather than dragged: what a value *does* is answered without a browser, so the only
@@ -937,10 +938,10 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   await print.press('ArrowRight');
   await print.press('ArrowRight');
   await expect(page.getByRole('slider', { name: 'Vertical rotation' })).toHaveAttribute('aria-valuenow', '-37');
-  const readbackId = z.number().parse(await worker.evaluate(() => {
+  const readbackId = z.number().parse(await worker.evaluate((keyLux) => {
     const request = Reflect.get(globalThis, 'requestEditorReadback');
-    return request({ paper: 'gloss', yawDegrees: -2, pitchDegrees: -37, keyLux: 10000 });
-  }));
+    return request({ paper: 'gloss', yawDegrees: -2, pitchDegrees: -37, keyLux });
+  }, MOST_LUX));
   await page.getByRole('slider', { name: 'Light intensity' }).press('End');
   const Readbacks = z.array(z.object({ id: z.number(), rgb: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]) }));
   const readbacks = async (): Promise<z.infer<typeof Readbacks>> => Readbacks.parse(

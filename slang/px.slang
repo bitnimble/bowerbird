@@ -47,7 +47,8 @@
 //   shader only resolved, as `repair.slang`'s `cell` and `feather`.
 //   Print geometry and lighting use `PrintUnit`, half the paper's long edge, for camera, bend and emitter distances.
 //   Stock thickness, coating texture, frame rails, mat and glass depths use millimetres resolved from the physical long edge.
-//   The room's walls and windows are millimetres from the print's centre.
+//   The room is a map of directions, so a lobe reading it and the blur behind the print are angles
+//   in radians, which the map's texels are resolved against.
 //
 // **A struct constant used inside a loop wants its number hoisted first.** Slang synthesises an
 // initializer per use site, and a struct returned by value under a loop is a call Metal drops
@@ -110,7 +111,10 @@ public struct Tap : IAbsolute {}
 /// every blob on the sensor.
 public struct BlobRadius : IAbsolute {}
 
+/// Half the paper's long edge, what the print's camera, bend and lamp are placed in.
 public struct PrintUnit : IAbsolute {}
+
+/// A millimetre of the physical print, resolved from its long edge.
 public struct Millimetre : IAbsolute {}
 
 /// Buckets of a histogram, indexed along a value and never a place.

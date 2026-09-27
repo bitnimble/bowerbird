@@ -15,16 +15,23 @@ const named = (chosen: ViewerRendition | null) =>
   renderHook<boolean, ViewerRendition | null>(useNamedRendition, { initialProps: chosen });
 
 test('a pick is named', () => {
-  const { result } = named('full');
+  const { rerender, result } = named(null);
+  rerender('full');
   expect(result.current).toBe(true);
 });
 
-// The bug: opening a photograph clears the pick an effect after the stage has seen the
-// previous photograph's, so the label was raised and then had only its timer cancelled.
+test('a pick the stage mounts holding is not named', () => {
+  const { result } = named('full');
+  expect(result.current).toBe(false);
+});
+
+// The bug: stepping to another photograph clears the pick an effect after the stage has seen
+// the previous photograph's, so the label was raised and then had only its timer cancelled.
 // It sat over the next photograph naming a rendition nobody had asked for, for the rest of
-// the visit - and going back out and in again showed nothing, the pick being null by then.
+// the visit.
 test('the label goes when the pick does', () => {
-  const { rerender, result } = named('full');
+  const { rerender, result } = named(null);
+  rerender('full');
   rerender(null);
   expect(result.current).toBe(false);
 });

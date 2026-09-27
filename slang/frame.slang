@@ -451,7 +451,7 @@ Colour<DisplayNits> print_scene_nits(float2 pos)
         paper_dy = dy / shape;
     } else {
         hit = paper_covered(pos, edit.canvas_size, shape);
-        background = print_background().v;
+        background = print_backdrop(print_view_ray(pos, edit.canvas_size, shape)).v;
         if (hit.coverage == 0.0) { return measured<DisplayNits>(background); }
         let center_uv = paper_uv(pos, edit.canvas_size, shape, hit);
         paper_dx = paper_uv(pos + float2(1.0, 0.0), edit.canvas_size, shape, hit) - center_uv;

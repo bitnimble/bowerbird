@@ -1,8 +1,9 @@
 import { action } from 'mobx';
 import { type EditDoc, type EditState, type ToneCurve } from '../../../../../src/schemas/photo_edits';
+import type { ViewerRendition } from '../../../../../src/schemas/settings';
 import { adapterName } from '../../../adapter_name';
 import { photoEditsApi } from '../../../api/photo_edits';
-import { photosApi, type PreparedFrom } from '../../../api/photos';
+import { photosApi } from '../../../api/photos';
 import { preparesOnTheBackend } from './prepare_choice';
 import { describe } from '../../../errors';
 import type { CropGrip, CropRect } from '../crop/crop_turn';
@@ -126,8 +127,6 @@ export class RawEditPresenter {
   private remembersProof = false;
 
   private photoId: string | null = null;
-  /** Whether the open is of the max rendition, which every window after it has to be too. */
-  private fromRendition = false;
 
   readonly edit: EditPresenter;
   readonly prepare: PreparePresenter;
@@ -352,7 +351,7 @@ export class RawEditPresenter {
 
   /**
    * Opens the picture behind `photoId` and grades it at `longEdge` pixels on its long edge, or
-   * opens its max rendition to show rather than edit: every edit is already in that, so it is
+   * opens one of its renditions to show rather than edit: every edit is already in that, so it is
    * drawn at neutral and the saved edits are never read.
    *
    * **The recipe is read here rather than passed in**, and awaited: which device prepares the
@@ -363,15 +362,15 @@ export class RawEditPresenter {
    * Never rejects: both callers fire this and forget it, so anything escaping would leave
    * the page at "loading" with no reason given.
    */
-  async open(photoId: string, longEdge: number | 'rendition'): Promise<void> {
+  async open(photoId: string, longEdge: number | ViewerRendition): Promise<void> {
     this.begin();
     this.edit.begin(photoId);
     this.photoId = photoId;
-    this.fromRendition = longEdge === 'rendition';
+    const fromRendition = typeof longEdge === 'string';
     // Awaited before the decode rather than alongside it: the open denoises the mosaic at this
     // document's Detail, so the document is an input to the decode rather than something applied
     // to a frame that is already prepared. One small row ahead of seconds of LibRaw.
-    const edits = this.fromRendition ? Promise.resolve(null) : photoEditsApi.checkpoint(photoId).catch(() => null);
+    const edits = fromRendition ? Promise.resolve(null) : photoEditsApi.checkpoint(photoId).catch(() => null);
     // The recipe, for the one decision that cannot be made without it. Alongside the document
     // rather than after it: both are small rows and both are wanted before the decode.
     const described = photosApi.get(photoId).catch(() => null);
@@ -404,8 +403,8 @@ export class RawEditPresenter {
       // photograph.
       const photo = await described;
       const onTheBackend = photo != null && preparesOnTheBackend(photo.recipe, photo);
-      const { header, local } = longEdge === 'rendition'
-        ? await fetchPrepared(photoId, 0, mosaic, true, this.reached, true)
+      const { header, local } = typeof longEdge === 'string'
+        ? await fetchPrepared(photoId, 0, mosaic, false, this.reached, longEdge)
         : await fetchPrepared(photoId, longEdge, mosaic, onTheBackend, this.reached);
       if (this.closed) {
         // Closed here rather than left to `close`, which has already run and found no decoder
@@ -439,7 +438,7 @@ export class RawEditPresenter {
       // opens graded by the exposure and nothing else. That now includes the denoise, which
       // is a chain of passes rather than a uniform word. A read that failed leaves `doc`
       // null and `preview` returns on it, which is the editor usable at neutral.
-      if (this.fromRendition) this.draw();
+      if (fromRendition) this.draw();
       else this.preview({});
     } catch (error) {
       if (!this.closed) this.fail(describe(error));
@@ -788,7 +787,7 @@ export class RawEditPresenter {
       // the tiles of that window seed the grid. Every pan after that asks the module what it is
       // short of and fetches only that.
       if (!this.enough(shown)) {
-        const framed = await preparedPicture(photoId, { ...shown, signal: attempt.signal }, this.preparedFrom());
+        const framed = await preparedPicture(photoId, { ...shown, signal: attempt.signal }, this.prepare.developing);
         if (!mine()) return;
         // Every square the window covers, which is what an empty list means: a whole level's
         // window is the whole of what was wanted, so there is no corner to discard.
@@ -818,7 +817,7 @@ export class RawEditPresenter {
         const framed = await preparedPicture(
           photoId,
           { level: level.number, at: spanning(missing), parts: missing, signal: attempt.signal },
-          this.preparedFrom(),
+          this.prepare.developing,
         );
         if (!mine()) return;
         const kept = readPreparedHeader(await source.decoder.takeTiles(framed, missing));
@@ -835,10 +834,6 @@ export class RawEditPresenter {
     } finally {
       if (this.rewindowing === attempt) this.rewindowing = null;
     }
-  }
-
-  private preparedFrom(): PreparedFrom {
-    return this.fromRendition ? 'rendition' : this.prepare.developing;
   }
 
   /**

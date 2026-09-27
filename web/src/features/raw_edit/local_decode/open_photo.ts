@@ -1,9 +1,10 @@
 import { type EditDoc } from '../../../../../src/schemas/photo_edits';
 import { REQUEST_ACTIVITY_HEADER } from '../../../../../src/schemas/request_activity';
-import { photosApi, type PreparedFrom } from '../../../api/photos';
+import { photosApi } from '../../../api/photos';
 import { renditionsApi } from '../../../api/renditions';
 import { envelopeOf } from '../../../api/request';
 import { settingsApi } from '../../../api/settings';
+import type { ViewerRendition } from '../../../../../src/schemas/settings';
 import { dustSettings } from '../../../../../src/schemas/dust_settings';
 import type { PrepareDevelop } from '../../../../../src/schemas/prepare_develop';
 import { readPreparedHeader, type PreparedHeader } from '../../../../../src/schemas/prepared';
@@ -32,15 +33,17 @@ export async function fetchPrepared(
   mosaic: LocalPrepare,
   onTheBackend: boolean,
   onStep: (step: OpenStep) => void,
-  fromRendition = false,
+  fromRendition: ViewerRendition | null = null,
 ): Promise<{
   header: PreparedHeader;
   /** What the loupe's tiles are built from. */
   local: LocalSource;
 }> {
-  const local = onTheBackend || fromRendition
-    ? await preparedThere(photoId, fromRendition ? 'rendition' : undefined, onStep)
-    : await preparedHere(photoId, longEdge, mosaic, onStep);
+  const local = fromRendition != null
+    ? await renditionHere(photoId, fromRendition, onStep)
+    : onTheBackend
+      ? await preparedThere(photoId, onStep)
+      : await preparedHere(photoId, longEdge, mosaic, onStep);
   const header = readPreparedHeader(local.prepared);
   // What this open had to measure, where nothing had kept it: a tile cannot fit its own match, and
   // an unmatched tile is a magnifier showing a different picture from the stage it sits over.
@@ -56,8 +59,8 @@ export async function fetchPrepared(
     // Not on the backend arm: a prepare fills its analysis whatever it measured, because its
     // client holds nothing to fill it from - and the worker that measured it has already written
     // it beside the photograph. Sending it back would be this page returning the server's own
-    // bytes to it on every open.
-    if (!local.onTheBackend) keepPhotoAnalysis(photoId, measured);
+    // bytes to it on every open. Nor for a rendition, which is a picture of the RAW rather than it.
+    if (!local.onTheBackend && fromRendition == null) keepPhotoAnalysis(photoId, measured);
   }
   return { header, local };
 }
@@ -94,14 +97,12 @@ export type LocalSource = {
  */
 async function preparedThere(
   photoId: string,
-  from: PreparedFrom,
   onStep: (step: OpenStep) => void,
 ): Promise<LocalSource & { prepared: string }> {
   const { LocalDecoder } = await import('./local_decoder');
   const decoder = new LocalDecoder();
   try {
-    const rendition = from === 'rendition';
-    const [settings, avif] = await Promise.all([settingsApi.get(), rendition ? maxRendition(photoId, onStep) : null]);
+    const settings = await settingsApi.get();
     // The grade the module is told about, which for this arm the prepare already used: the picture
     // arrived coded against these, and a tick anchors to the same numbers.
     const open: LocalOpen = {
@@ -110,13 +111,9 @@ async function preparedThere(
         referenceWhiteNits: settings.hdr_reference_white_nits,
         whiteQuantile: settings.hdr_white_quantile,
       },
-      // A rendition is shown as it was encoded, as `prepareRendition` shows it on the server.
-      defringe: rendition ? 0 : settings.raw_defringe,
-      statedWhite: rendition,
+      defringe: settings.raw_defringe,
     };
-    const prepared =
-      (avif == null ? null : await decoder.holdRendition(avif, open, onStep)) ??
-      (await decoder.holdPicture(await preparedPicture(photoId, undefined, from, onStep), open));
+    const prepared = await decoder.holdPicture(await preparedPicture(photoId, undefined, undefined, onStep), open);
     return { decoder, open, onTheBackend: true, prepared };
   } catch (error) {
     // Closed on the way out, for `preparedHere`'s reason: nothing else can reach a decoder the
@@ -126,12 +123,46 @@ async function preparedThere(
   }
 }
 
-/** The max rendition's file, built where it is missing or behind the edits. */
-async function maxRendition(photoId: string, onStep: (step: OpenStep) => void): Promise<Uint8Array<ArrayBuffer>> {
+/**
+ * The same open, from one of the photograph's renditions, decoded in this tab: what crosses the
+ * network is the file rather than the samples it decodes to, and nothing is prepared on the server.
+ */
+async function renditionHere(
+  photoId: string,
+  rendition: ViewerRendition,
+  onStep: (step: OpenStep) => void,
+): Promise<LocalSource & { prepared: string }> {
+  const { LocalDecoder } = await import('./local_decoder');
+  const decoder = new LocalDecoder();
+  try {
+    const [settings, file] = await Promise.all([settingsApi.get(), renditionFile(photoId, rendition, onStep)]);
+    const open: LocalOpen = {
+      longEdge: 0,
+      grade: {
+        referenceWhiteNits: settings.hdr_reference_white_nits,
+        whiteQuantile: settings.hdr_white_quantile,
+      },
+      // Every edit is already in the file, so it is shown as it was encoded.
+      defringe: 0,
+      statedWhite: true,
+    };
+    return { decoder, open, onTheBackend: false, prepared: await decoder.holdRendition(file, open, onStep) };
+  } catch (error) {
+    decoder.close();
+    throw error;
+  }
+}
+
+/** A rendition's file, built where it is missing or behind the edits. */
+async function renditionFile(
+  photoId: string,
+  rendition: ViewerRendition,
+  onStep: (step: OpenStep) => void,
+): Promise<Uint8Array<ArrayBuffer>> {
   onStep('rendering');
-  await renditionsApi.build(photoId, 'max');
+  await renditionsApi.build(photoId, rendition);
   onStep('preparing');
-  const reply = await fetch(renditionsApi.url(photoId, 'max'), {
+  const reply = await fetch(renditionsApi.url(photoId, rendition), {
     headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
   });
   if (!reply.ok) throw new Error(await refusal(reply));
@@ -142,11 +173,11 @@ async function maxRendition(photoId: string, onStep: (step: OpenStep) => void): 
 export async function preparedPicture(
   photoId: string,
   shown?: Shown,
-  from?: PreparedFrom,
+  develop?: PrepareDevelop,
   onStep?: (step: OpenStep) => void,
 ): Promise<Uint8Array<ArrayBuffer>> {
   onStep?.('rendering');
-  const reply = await fetch(photosApi.preparedPictureUrl(photoId, shown, from), {
+  const reply = await fetch(photosApi.preparedPictureUrl(photoId, shown, develop), {
     signal: shown?.signal ?? null,
     headers: { [REQUEST_ACTIVITY_HEADER]: 'interactive' },
   });

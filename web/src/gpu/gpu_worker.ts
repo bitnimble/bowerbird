@@ -3,13 +3,17 @@ import init, {
   type HeldRaw,
   finishDraw,
   holdPicture,
+  holdPixels,
   holdPlanes,
   holdPmridWeights,
+  holdPrintEnvironment,
   holdRaw,
   pageDevice,
   renderRendition,
 } from '../../../native/rawshim/pkg/rawshim';
 import { pmridWeightsUrl } from '../../../native/rawshim/pkg/pmrid_weights';
+import { printEnvironmentUrls } from '../../../native/rawshim/pkg/print_environments';
+import type { Environment } from '../features/raw_edit/print/print_scene';
 import { z } from 'zod';
 import type { OpenAsk, PrepareCrossing } from '../features/raw_edit/local_decode/local_open';
 import { cachedRecipes, PipelineWarmth } from '../features/raw_edit/stage/pipeline_warmth';
@@ -30,6 +34,7 @@ const device: Promise<GPUDevice | null> = openDevice();
 const painter: Promise<StagePainter> = device.then((opened) => new StagePainter(opened));
 const opens = new Map<number, Open>();
 let weights: Promise<void> | null = null;
+const environments = new Map<Environment, Promise<void>>();
 let lost: string | null = null;
 void device.then((opened) =>
   opened?.lost.then((info) => {
@@ -133,7 +138,7 @@ class Open {
       case 'holdPicture':
         return { value: await this.pictureAt(ask.framed, ask.request) };
       case 'holdRendition':
-        return { value: await this.renditionAt(ask.avif, ask.request, report) };
+        return { value: await this.renditionAt(ask.file, ask.request, report) };
       case 'takePicture':
         // The same open, a different picture of it: the stage stays where it was transferred.
         return { value: this.drawing().takePicture(ask.framed) };
@@ -232,6 +237,7 @@ class Open {
         if (ask.geometry != null) editor.setGeometry(ask.geometry);
         if (ask.proof != null) editor.setProof(ask.proof.output, ask.proof.intent, ask.proof.displayPeakNits ?? undefined);
         if (ask.printerProfile !== undefined) editor.setPrinterProfile(ask.printerProfile ?? undefined);
+        if (ask.print != null) await printEnvironment(ask.print.environment);
         editor.setPrint(ask.print == null ? undefined : JSON.stringify(ask.print));
         if (ask.drawStage) editor.tick(ask.ev, ask.region ?? undefined);
         if (ask.loupe != null) editor.tickLoupe(ask.ev, ask.loupe);
@@ -329,16 +335,14 @@ class Open {
   }
 
   /**
-   * The same open, from a rendition this browser decodes, so what crosses the network is the file
-   * rather than the samples the server would decode it to. Null where the decode is not planar PQ.
+   * The same open, from a rendition's own file decoded in this tab. A JPEG is decoded by the
+   * module; an HDR AVIF arrives as its planes, and an SDR one as the browser's own RGBA.
    */
-  private async renditionAt(avif: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<string | null> {
+  private async renditionAt(file: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<string> {
     report('decoding');
-    const planes = await decodedPlanes(avif);
-    if (planes == null) return null;
+    const held = await heldRendition(file, request, report);
     this.release();
-    const held = this.keep(await holdPlanes(avif, planes.samples, JSON.stringify(planes.layout), request), request);
-    return held.prepare(undefined, undefined, 'galosh', 0, false, 0, 0, '[]', report);
+    return this.keep(held, request).prepare(undefined, undefined, 'galosh', 0, false, 0, 0, '[]', report);
   }
 }
 
@@ -377,11 +381,48 @@ async function networkWeights(denoiser: PrepareCrossing['denoiser']): Promise<vo
   await weights;
 }
 
-async function decodedPlanes(avif: Uint8Array<ArrayBuffer>): Promise<PlanarPicture | null> {
-  if (WebCodecs == null) return canDecodeAvifPlanes() ? decodeAvifPlanes(avif) : null;
+/** A print environment's map, fetched once for the tab the first time a scene names it. */
+async function printEnvironment(environment: Environment): Promise<void> {
+  const fetching = environments.get(environment) ?? fetch(printEnvironmentUrls[environment])
+    .then(async (answer) => {
+      if (!answer.ok) throw new Error(`${answer.status} ${answer.statusText}`);
+      holdPrintEnvironment(environment, new Uint8Array(await answer.arrayBuffer()));
+    })
+    .catch((why: unknown) => {
+      environments.delete(environment);
+      throw why;
+    });
+  environments.set(environment, fetching);
+  await fetching;
+}
+
+async function heldRendition(file: Uint8Array<ArrayBuffer>, request: string, report: Report): Promise<HeldRaw> {
+  if (file[0] === 0xff && file[1] === 0xd8) return holdRaw(file, request, report);
+  const planes = (await webCodecsPlanes(file)) ?? (canDecodeAvifPlanes() ? await decodeAvifPlanes(file) : null);
+  if (planes != null) return holdPlanes(file, planes.samples, JSON.stringify(planes.layout), request);
+  // Neither decoder hands over anything but PQ, and the module refuses an HDR file that got here.
+  const { rgba, width, height } = await decodedPixels(file);
+  return holdPixels(file, rgba, width, height, request);
+}
+
+async function decodedPixels(avif: Uint8Array<ArrayBuffer>): Promise<{ rgba: Uint8Array; width: number; height: number }> {
+  const bitmap = await createImageBitmap(new Blob([avif], { type: 'image/avif' }));
+  try {
+    const { width, height } = bitmap;
+    const context = new OffscreenCanvas(width, height).getContext('2d');
+    if (context == null) throw new Error('this worker would not open a 2D canvas to read an SDR rendition');
+    context.drawImage(bitmap, 0, 0);
+    return { rgba: new Uint8Array(context.getImageData(0, 0, width, height).data.buffer), width, height };
+  } finally {
+    bitmap.close();
+  }
+}
+
+async function webCodecsPlanes(avif: Uint8Array<ArrayBuffer>): Promise<PlanarPicture | null> {
+  if (WebCodecs == null) return null;
   const decoder = new WebCodecs({ data: avif, type: 'image/avif' });
   try {
-    // A file this browser will not decode is one the server can still prepare.
+    // A file this browser will not decode is one rav1d can still take.
     const decoded = await decoder.decode().catch(() => null);
     if (decoded == null) return null;
     const { image } = decoded;

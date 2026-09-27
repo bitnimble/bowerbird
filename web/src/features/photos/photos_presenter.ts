@@ -924,6 +924,12 @@ export class PhotosPresenter {
     await this.detailPresenter.openDetail(photoId, from);
   }
 
+  /** Holds the open photograph at a rendition without building it, which its caller already has. */
+  @action.bound
+  holdRendition(photoId: string, rendition: ViewerRendition): void {
+    if (this.isCurrent(photoId)) this.viewerPresenter.chooseRendition(rendition);
+  }
+
   async loadEdits(photoId: string): Promise<void> {
     await this.detailPresenter.loadEdits(photoId);
   }
@@ -1402,11 +1408,9 @@ export class PhotosPresenter {
     // is when that stops being true (`renditionPolicyMoved`).
     //
     // **Including the photograph it was itself.** This runs on an open or a step and never on
-    // a swap - a swap is `chooseRendition`, which is why the drop can be deferred here at all
-    // - so reaching it means the reader has arrived at the photo afresh, and `store.rendition`
-    // has just been cleared below. Held back for that one id, a reader who pressed `i`, left
-    // for the grid and came back was given the render they had just refused, out of a detail
-    // read before they refused it, with nothing to re-read it.
+    // a swap - a swap is `chooseRendition`, which is why the drop can be deferred here at all.
+    // A held detail is never read again (`openDetail`), so one kept back for that id answers
+    // every later open with the rendition resolved before the setting moved.
     const staleDetailId = this.staleDetailId;
     this.staleDetailId = null;
     // Per photo, not sticky: the next photo may have nothing cached for the

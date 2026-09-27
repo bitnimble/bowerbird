@@ -108,16 +108,17 @@ fn a_tick_names_its_print_scene_the_way_this_host_reads_it() {
     assert!((scene.ink_spread.raw() - 0.045).abs() < 1e-12);
     assert!(matches!(scene.presentation, rawshim::print::Presentation::Scene));
     assert!(scene.framed);
+    assert_eq!(scene.environment, rawshim::print::Environment::Hotel);
     assert_eq!(scene.yaw_degrees, -12.0);
     assert_eq!(scene.pitch_degrees, 8.0);
-    assert_eq!(scene.key_lux.raw(), 1000.0);
+    assert_eq!(scene.key_lux.raw(), 30.0);
     assert_eq!(
         (scene.light_across.raw(), scene.light_height.raw(), scene.light_forward.raw()),
-        (-0.6, 3.9, 1.7),
+        (-0.6, 4.2, 2.65),
     );
-    assert_eq!(scene.light_angular_degrees, 1.0);
-    assert_eq!(scene.fill_lux.raw(), 500.0);
-    assert_eq!(scene.light_temperature_kelvin, 6500.0);
+    assert_eq!(scene.light_angular_degrees, 1.4);
+    assert_eq!(scene.fill_lux.raw(), 15.0);
+    assert_eq!(scene.light_temperature_kelvin, 3600.0);
     assert_eq!(scene.roughness, 0.28);
     assert_eq!(scene.white_reflectance.raw(), 0.95);
     assert_eq!(scene.black_reflectance.raw(), 0.0042);
@@ -128,11 +129,13 @@ fn a_tick_names_its_print_scene_the_way_this_host_reads_it() {
 }
 
 #[test]
-fn a_print_scene_without_framing_is_unframed() {
+fn a_print_scene_naming_no_frame_or_environment_is_unframed_in_the_studio() {
     let mut sample: serde_json::Value = serde_json::from_str(include_str!("../../../test/fixtures/tables/module-json.json"))
         .expect("the shared module sample");
     let print = sample["print"].as_object_mut().expect("the print scene");
     print.remove("framed");
+    print.remove("environment");
     let scene = rawshim::print::Scene::parse(&sample["print"].to_string()).expect("an unframed scene");
     assert!(!scene.framed);
+    assert_eq!(scene.environment, rawshim::print::Environment::Studio);
 }

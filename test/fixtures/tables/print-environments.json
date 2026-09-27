@@ -1,0 +1,5 @@
+{
+  "studio": { "keyLux": 133, "fillLux": 500, "lightTemperatureKelvin": 7800, "lightAcross": 0.45, "lightHeight": 4.7, "lightForward": 1.65, "lightAngularDegrees": 1.5 },
+  "meadow": { "keyLux": 80000, "fillLux": 9570, "lightTemperatureKelvin": 5400, "lightAcross": 4.45, "lightHeight": 4.55, "lightForward": 7.7, "lightAngularDegrees": 0.5 },
+  "hotel": { "keyLux": 30, "fillLux": 15, "lightTemperatureKelvin": 3600, "lightAcross": 0.7, "lightHeight": 4.2, "lightForward": 2.65, "lightAngularDegrees": 1.4 }
+}

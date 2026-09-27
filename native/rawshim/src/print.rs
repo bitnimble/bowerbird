@@ -1,12 +1,19 @@
 use crate::light::{DisplayNits, Gain, Illuminance, Light};
 use crate::px::{Extent, Millimetre, PrintUnit, Share, Span};
 
+pub mod environment;
+
+pub use environment::Environment;
+
 pub(crate) const ALBEDO_VIEWS: u32 = 128;
 pub(crate) const ALBEDO_ROUGHNESSES: u32 = 64;
 pub(crate) const ALBEDO_BYTES: u64 = (ALBEDO_VIEWS as u64 + 1) * ALBEDO_ROUGHNESSES as u64 * 4;
+/// `print_light_calibrate.slang`'s words: the lamp's seven, then the room's nine bands in three channels.
+pub(crate) const CALIBRATION_BYTES: u64 = (7 + 9 * 3) * 4;
 const FRAME_BORDER: Share = Share::of(1, 8);
 const LAMP_REACH: f64 = 10.0;
 const LAMP_NEAREST: f64 = 1.0;
+const MOST_LUX: f64 = 150000.0;
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -88,6 +95,8 @@ pub struct Scene {
     pub presentation: Presentation,
     #[serde(default)]
     pub framed: bool,
+    #[serde(default)]
+    pub environment: Environment,
     pub yaw_degrees: f64,
     pub pitch_degrees: f64,
     pub key_lux: Light<Illuminance>,
@@ -129,6 +138,7 @@ fn yes() -> bool {
 impl Default for Scene {
     fn default() -> Self {
         let satin = Paper::Satin.material();
+        let lighting = Environment::default().lighting();
         Self {
             paper: Paper::Satin,
             rendering_intent: crate::gpu::Intent::Perceptual,
@@ -138,15 +148,16 @@ impl Default for Scene {
             ink_spread: Extent::exactly(0.055),
             presentation: Presentation::Scene,
             framed: false,
+            environment: Environment::default(),
             yaw_degrees: -12.0,
             pitch_degrees: 8.0,
-            key_lux: Light::exactly(1000.0),
-            light_across: Share::of(0, 1),
-            light_height: Share::measured(3.9, 1.0),
-            light_forward: Share::measured(1.7, 1.0),
-            light_angular_degrees: 1.0,
-            fill_lux: Light::exactly(500.0),
-            light_temperature_kelvin: 6500.0,
+            key_lux: lighting.key_lux,
+            light_across: lighting.light_across,
+            light_height: lighting.light_height,
+            light_forward: lighting.light_forward,
+            light_angular_degrees: lighting.light_angular_degrees,
+            fill_lux: lighting.fill_lux,
+            light_temperature_kelvin: lighting.light_temperature_kelvin,
             roughness: satin.roughness,
             white_reflectance: satin.white_reflectance,
             black_reflectance: satin.black_reflectance,
@@ -174,6 +185,22 @@ impl Scene {
         }
     }
 
+    /// The scene hung in `environment`, lit as it is.
+    pub fn in_environment(self, environment: Environment) -> Self {
+        let lighting = environment.lighting();
+        Self {
+            environment,
+            key_lux: lighting.key_lux,
+            fill_lux: lighting.fill_lux,
+            light_temperature_kelvin: lighting.light_temperature_kelvin,
+            light_across: lighting.light_across,
+            light_height: lighting.light_height,
+            light_forward: lighting.light_forward,
+            light_angular_degrees: lighting.light_angular_degrees,
+            ..self
+        }
+    }
+
     pub fn parse(json: &str) -> Result<Self, String> {
         let scene: Self = serde_json::from_str(json).map_err(|error| error.to_string())?;
         scene.validate()?;
@@ -184,12 +211,12 @@ impl Scene {
         for (name, value, minimum, maximum) in [
             ("yawDegrees", self.yaw_degrees, -180.0, 180.0),
             ("pitchDegrees", self.pitch_degrees, -85.0, 85.0),
-            ("keyLux", self.key_lux.raw(), 0.0, 10000.0),
+            ("keyLux", self.key_lux.raw(), 0.0, MOST_LUX),
             ("lightAcross", self.light_across.raw(), -LAMP_REACH, LAMP_REACH),
             ("lightHeight", self.light_height.raw(), -LAMP_REACH, LAMP_REACH),
             ("lightForward", self.light_forward.raw(), -LAMP_REACH, LAMP_REACH),
             ("lightAngularDegrees", self.light_angular_degrees, 0.1, 90.0),
-            ("fillLux", self.fill_lux.raw(), 0.0, 10000.0),
+            ("fillLux", self.fill_lux.raw(), 0.0, MOST_LUX),
             ("lightTemperatureKelvin", self.light_temperature_kelvin, 2000.0, 10000.0),
             ("roughness", self.roughness, 0.03, 1.0),
             ("whiteReflectance", self.white_reflectance.raw(), 0.5, 0.99),
@@ -370,7 +397,9 @@ mod tests {
         let mut recording = gpu.record();
         let albedo = gpu.print_albedo_table(scene.refractive_index as f32);
         recording.holding(&albedo);
-        let calibration = gpu.print_light_calibration(scene.light_parameters(), scene.light_temperature_kelvin as f32);
+        let environment = gpu.print_environment(scene.environment).expect("the print's environment");
+        recording.holding_texture(&environment);
+        let calibration = gpu.print_light_calibration(scene.light_parameters(), scene.light_temperature_kelvin as f32, &environment);
         recording.holding(&calibration);
         let inputs = recording.init(&wgpu::util::BufferInitDescriptor {
             label: Some("print optical probes"),
@@ -404,6 +433,17 @@ mod tests {
                 binding(0, wgpu::BufferBindingType::Uniform),
                 binding(1, wgpu::BufferBindingType::Storage { read_only: true }),
                 binding(2, wgpu::BufferBindingType::Storage { read_only: true }),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2, multisampled: false,
+                    }, count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None,
+                },
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -430,6 +470,8 @@ mod tests {
                 wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: albedo.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: calibration.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&environment.view()) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(gpu.print_environment_sampler()) },
             ],
         });
         {
@@ -450,7 +492,8 @@ mod tests {
 
     fn calibrated(scene: &Scene) -> [f32; 2] {
         let gpu = crate::gpu::device().expect("print requires Vulkan");
-        let calibration = gpu.print_light_calibration(scene.light_parameters(), scene.light_temperature_kelvin as f32);
+        let environment = gpu.print_environment(scene.environment).expect("the print's environment");
+        let calibration = gpu.print_light_calibration(scene.light_parameters(), scene.light_temperature_kelvin as f32, &environment);
         let mut recording = gpu.record();
         recording.holding(&calibration);
         let readback = recording.buffer(&wgpu::BufferDescriptor {
@@ -535,6 +578,7 @@ mod tests {
         let scene = Scene {
             yaw_degrees: 0.0, pitch_degrees: 0.0,
             light_angular_degrees: 2.0 * 0.5_f64.atan().to_degrees(),
+            key_lux: Light::exactly(1000.0),
             refractive_index: 1.0, fill_lux: Light::ZERO, ..Scene::default()
         }.lit_from(0.0, 0.0, 1.0);
         let inputs = [
@@ -589,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn print_gloss_reflects_more_uniform_fill_at_grazing_angles() {
+    fn print_gloss_reflects_more_of_the_room_at_grazing_angles() {
         let scene = Scene {
             yaw_degrees: 0.0, pitch_degrees: 0.0,
             key_lux: Light::ZERO, fill_lux: Light::exactly(1000.0),
@@ -597,9 +641,10 @@ mod tests {
         };
         let probes = [0.0_f32, 60.0, 85.0].map(|angle|
             [0.08, angle.to_radians().tan(), 0.0, 128.0, 0.0, 0.0, 0.0, 0.0]);
-        let reflected = probe(&scene, "lighting", &probes);
-        assert!(reflected[1][0] > reflected[0][0] * 2.0, "60° reflection: {reflected:?}");
-        assert!(reflected[2][0] > reflected[1][0] * 5.0, "85° reflection: {reflected:?}");
+        let results = probe(&scene, "lighting", &probes);
+        let share = |at: usize| luminance(results[at]) / f64::from(results[at][7]);
+        assert!(share(1) > share(0) * 2.0, "60° reflection: {results:?}");
+        assert!(share(2) > share(1) * 5.0, "85° reflection: {results:?}");
         let matched = Scene { refractive_index: 1.0, ..scene };
         for reflected in probe(&matched, "lighting", &probes) {
             assert_eq!(&reflected[..3], &[0.0, 0.0, 0.0]);
@@ -612,6 +657,8 @@ mod tests {
         assert!(shader.contains(&format!("ALBEDO_VIEWS = {ALBEDO_VIEWS};")));
         assert!(shader.contains(&format!("ALBEDO_ROUGHNESSES = {ALBEDO_ROUGHNESSES};")));
         assert!(shader.contains("ALBEDO_STRIDE = ALBEDO_VIEWS + 1;"));
+        let room = include_str!("../../../slang/print_environment.slang");
+        assert!(room.contains(&format!("ROOM_BANDS = {};", CALIBRATION_BYTES / 4 - 27)));
         let mut scene = Scene::default();
         assert!(scene.validate().is_ok());
         scene.key_lux = Light::measured(f64::INFINITY);

@@ -29,9 +29,7 @@ function framed(header: object, samples: number): Uint8Array {
 function serving(
   pictures: {
     preparePicture: (photoId: string, shown?: unknown, missing?: unknown, develop?: unknown) => Promise<Uint8Array>;
-    prepareRendition?: (photoId: string, shown?: unknown, missing?: unknown) => Promise<Uint8Array>;
   } | null,
-  built: string[] = [],
 ): Hono {
   const photos = {
     locate: (photoId: string) => {
@@ -40,9 +38,6 @@ function serving(
         library: { id: 'lib', root_path: '/nowhere' },
         photo: { id: photoId, file_path: 'a.arw', recipe: { kind: 'file', path: 'a.arw' } },
       };
-    },
-    buildRendition: async (photoId: string, rendition: string) => {
-      built.push(`${photoId}:${rendition}`);
     },
   };
   const app = new Hono();
@@ -54,9 +49,7 @@ function serving(
       null,
       localOriginals(),
       {} as ConstructorParameters<typeof ImageApi>[4],
-      pictures == null
-        ? null
-        : { prepareRendition: async () => new Uint8Array(), ...pictures },
+      pictures,
     ).routes,
   );
   applyErrorHandler(app);
@@ -116,27 +109,6 @@ describe('GET /image/:photoId/prepare', () => {
     await app.request(`${url}?develop=not-json`);
 
     expect(develops).toEqual([develop, undefined, undefined]);
-  });
-
-  it('prepares the max rendition, brought up to date first, where the client asks for it', async () => {
-    const built: string[] = [];
-    const asked: string[] = [];
-    const app = serving(
-      {
-        preparePicture: async () => {
-          throw new Error('the original was prepared');
-        },
-        prepareRendition: async (photoId) => {
-          asked.push(photoId);
-          return framed({ width: 2, height: 2 }, 12);
-        },
-      },
-      built,
-    );
-    const got = await app.request(`${route(PathSegment.image(), 'p1', PathSegment.prepare())}?from=rendition`);
-    expect(got.status).toBe(200);
-    expect(built).toEqual(['p1:max']);
-    expect(asked).toEqual(['p1']);
   });
 
   it('refuses a photograph nothing knows about', async () => {

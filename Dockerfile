@@ -121,6 +121,14 @@ RUN apt-get update \
 COPY scripts/pinned.ts scripts/get-swiftshader.ts ./scripts/
 RUN bun run scripts/get-swiftshader.ts
 
+# The print preview's HDR environments, which `hash-pkg.ts` serves beside the wasm module.
+FROM base AS environments
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+COPY scripts/pinned.ts scripts/get-environments.ts ./scripts/
+RUN bun run scripts/get-environments.ts
+
 # The Slang compiler, on the same terms: one stage fetches the pinned build and the three
 # that need it copy the tree, rather than each refetching it. Through vcpkg, like the codecs.
 FROM base AS slangc
@@ -236,6 +244,7 @@ COPY slang ./slang
 COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
 COPY --from=codecs /app/native/rawshim/.codecs ./native/rawshim/.codecs
 COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
+COPY --from=environments /app/native/rawshim/.environments ./native/rawshim/.environments
 # One target dir, emptied between levels. Changing target-cpu invalidates every
 # artefact, so a dir per level caches nothing that three passes over one does not -
 # it only holds all three at once, 2.5GB apiece, which a GitHub runner cannot fit.
@@ -335,6 +344,7 @@ RUN cd web && bun install --frozen-lockfile
 COPY . .
 COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
 COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
+COPY --from=environments /app/native/rawshim/.environments ./native/rawshim/.environments
 
 FROM base AS cross
 RUN apt-get update \

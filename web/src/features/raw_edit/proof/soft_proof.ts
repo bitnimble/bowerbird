@@ -12,6 +12,6 @@ export function isSoftProof(value: string | null): value is SoftProof {
   return SOFT_PROOFS.some((proof) => proof === value);
 }
 
-export function isPrintProof(proof: SoftProof): boolean {
+export function isPrintProof(proof: SoftProof): proof is 'print' | 'print3d' {
   return proof === 'print' || proof === 'print3d';
 }

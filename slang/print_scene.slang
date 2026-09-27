@@ -128,12 +128,12 @@ public Gain print_exposure()
     // The sheet hung facing the reader, never the pose: a camera meters a room once and a print
     // turned in the hand does not re-expose it, so metering the turned normal would move the
     // background and every unturned thing in the picture along with the sheet.
-    let surround = room_illuminance(float3(0.0, 0.0, 1.0));
+    let surround = dot(LUMA, room_illuminance(float3(0.0, 0.0, 1.0)).v);
     // The lamp's incidence on that same facing sheet, not `print_light_calibration[1]`, which is
     // the cosine the current pose presents: metering through it re-exposes the whole scene as the
     // sheet turns, and turned far enough it forgets the lamp and exposes for the room instead.
     let facing = print.illumination.x * max(print.light.z, 0.0);
-    let received = measured<Illuminance>(surround.v + facing);
+    let received = measured<Illuminance>(surround + facing);
     let minimum = exactly<Illuminance>(50.0);
     return gain(PRINT_PI * print_white().v / max(received.v, minimum.v));
 }
@@ -152,56 +152,50 @@ public Colour<DisplayNits> print_displayed(Colour<DisplayNits> nits)
     return rolled(nits, rolloff(exactly<DisplayNits>(PQ_MAX_NITS), measured<DisplayNits>(print.view.w), print_white()));
 }
 
-/// The ambient the reader set, and what the lamp returns off the room's own surfaces.
+/// The ambient the reader set.
 Light<Illuminance> room_lit()
 {
     return measured<Illuminance>(print.illumination.z);
 }
 
-/// The lamp's own output, never its incidence on the sheet: `print_light_calibration[1]` is the
-/// cosine the *pose* presents to the lamp, and it falls to zero exactly when the sheet is turned
-/// away - which is the one case a room's bounce is the whole of the light reaching it.
-Light<Illuminance> bounce_lit()
-{
-    return measured<Illuminance>(ROOM_BOUNCE * print.illumination.x);
-}
+/// How far the room is out of focus to a camera on the print, as a lobe's width: a 50mm lens at f/2.8
+/// focused a metre away, on a room a few metres behind it. Its mirror images in the glass are as far
+/// away again.
+static const float ROOM_DEFOCUS = 0.012;
 
-public Colour<DisplayNits> print_background()
+/// The room behind the print along the camera's `world_ray`.
+public Colour<DisplayNits> print_backdrop(float3 world_ray)
 {
-    let lit = measured<Illuminance>(room_lit().v + bounce_lit().v);
-    return measured<DisplayNits>(0.18 * lit.v / PRINT_PI * print_illuminant() * print_exposure().g);
+    let radiance = room_lit().v * print_light_calibration[6] * environment_radiance(world_ray, ROOM_DEFOCUS);
+    return measured<DisplayNits>(radiance * print_exposure().g);
 }
 
 /// The room's radiance along a world direction, read by a lobe of the given roughness from a
 /// surface the reader is looking at along `world_view`.
-public Light<DisplayNits> room_radiance(float3 world_direction, float3 world_view, float roughness)
+public Colour<DisplayNits> room_radiance(float3 world_direction, float3 world_view, float roughness)
 {
-    let spread = min(2.0 * roughness * roughness, 1.0);
-    Room room;
-    measure_room(room);
-    let lit = room_lit().v * print_light_calibration[6] * room_shape(room, world_direction, spread)
-        + bounce_lit().v * print_light_calibration[16] * bounce_profile(world_direction.y, spread);
+    let spread = clamp(2.0 * roughness * roughness, ROOM_DEFOCUS, 1.0);
+    let lit = room_lit().v * print_light_calibration[6] * environment_radiance(world_direction, spread);
     return measured<DisplayNits>(lit * reader_share(world_direction, world_view, spread));
 }
 
+float3 room_band(uint band)
+{
+    let at = ROOM_BANDS + band * 3;
+    return float3(print_light_calibration[at], print_light_calibration[at + 1], print_light_calibration[at + 2]);
+}
+
 /// The room's illuminance on a surface facing a world direction.
-public Light<Illuminance> room_illuminance(float3 world_normal)
+public Colour<Illuminance> room_illuminance(float3 world_normal)
 {
     let n = world_normal;
-    let first = float3(print_light_calibration[8], print_light_calibration[9], print_light_calibration[10]);
-    let mixed = float3(print_light_calibration[11], print_light_calibration[12], print_light_calibration[14]);
-    // Clamped per profile, not on the sum: the bands of a room whose light is all on one side ring
-    // below zero on the other, and a floor's bounce owes an upturned sheet nothing rather than
-    // owing it a debt against the ceiling's.
-    let ambient = max(print_light_calibration[7] * 0.282095 + 0.488603 * dot(first, n.yzx)
-        + 1.092548 * dot(mixed, float3(n.x * n.y, n.y * n.z, n.x * n.z))
-        + print_light_calibration[13] * 0.315392 * (3.0 * n.z * n.z - 1.0)
-        + print_light_calibration[15] * 0.546274 * (n.x * n.x - n.y * n.y), 0.0);
-    let up = n.y;
-    let zonal = float3(1.0, up, 0.5 * (3.0 * up * up - 1.0));
-    let bounced = max(dot(zonal, float3(print_light_calibration[17], print_light_calibration[18],
-        print_light_calibration[19])), 0.0);
-    return measured<Illuminance>(room_lit().v * ambient + bounce_lit().v * bounced);
+    // The bands of a room whose light is all on one side ring below zero on the other.
+    let ambient = max(room_band(0) * 0.282095
+        + 0.488603 * (room_band(1) * n.y + room_band(2) * n.z + room_band(3) * n.x)
+        + 1.092548 * (room_band(4) * n.x * n.y + room_band(5) * n.y * n.z + room_band(7) * n.x * n.z)
+        + room_band(6) * 0.315392 * (3.0 * n.z * n.z - 1.0)
+        + room_band(8) * 0.546274 * (n.x * n.x - n.y * n.y), float3(0.0));
+    return measured<Illuminance>(room_lit().v * ambient);
 }
 
 public float paper_albedo(float cosine, float roughness)
@@ -511,8 +505,8 @@ public float3 print_from_coefficients(float3 reflectance, PrintHit hit, float ro
     let sheen = albedo * lerp(room_radiance(mirrored, paper_rotation(hit.view), roughness).v, averaged, lobe)
         * specular_transmission;
     let body = reflectance * (1.0 - albedo) * diffuse_transmission * averaged;
-    return (sheen + body + print.illumination.x * print_light_calibration[0]
-        * (direct.x * reflectance + direct.y)) * print_illuminant();
+    return sheen + body + print.illumination.x * print_light_calibration[0]
+        * (direct.x * reflectance + direct.y) * print_illuminant();
 }
 
 float frame_rectangle_coverage(float2 point, float2 half, float2 footprint)
@@ -559,9 +553,8 @@ float3 glass_reflected_light(PrintHit hit)
     let offset = float2(dot(world - lamp, tangent), dot(world - lamp, bitangent));
     let lamp_radius = half_width.d / length(toward);
     let haze = total * irradiance * glass_haze(max(0.0, length(offset) - lamp_radius));
-    let radiance = measured<DisplayNits>(
-        total * room_radiance(world, paper_rotation(hit.view), 0.0).v + glass_mirrored() * direct + haze);
-    return radiance.v * print_illuminant();
+    return total * room_radiance(world, paper_rotation(hit.view), 0.0).v
+        + (glass_mirrored() * direct + haze) * print_illuminant();
 }
 
 static const float FLARE_SHARE = 0.03;
@@ -598,9 +591,8 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
     let front = frame_front_depth();
     let focal = print_focal(canvas, frame_outer_half(photo_half));
     let radians = min(canvas.x, canvas.y) * focal;
-    let mirror = float3(lamp.xy, 2.0 * depth - lamp.z) - eye;
-    let lamp_angle = print.surface.y / length(mirror);
-    let middle = paper_pixel(normalize(mirror), canvas, focal);
+    let lamp_angle = print.surface.y / length(float3(lamp.xy, 2.0 * depth - lamp.z) - eye);
+    let middle = paper_pixel(mirrored_image(lamp, eye, depth, !sheet), canvas, focal);
     if (length(pixel - middle) / radians > 1.5 * lamp_angle + 12.0 * FLARE_REACH) { return 0.0; }
     // A rough sheet spreads the lamp over a lobe wider than the lamp, and its image dims by as much.
     let alpha = print.material.x * print.material.x;
@@ -610,6 +602,8 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
     let width = max(spacing, 0.75 / radians);
     let tangent = lamp_tangent();
     let bitangent = cross(print.light.xyz, tangent);
+    let magnified = sheet ? 1.0 : wave_magnification(lamp, eye, depth,
+        paper_inverse(print.surface.y * tangent), paper_inverse(print.surface.y * bitangent));
     var flare = 0.0;
     for (int j = 0; j < FLARE_SAMPLES; j += 1) {
         for (int i = 0; i < FLARE_SAMPLES; i += 1) {
@@ -617,7 +611,7 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
             if (dot(at, at) > 1.0) { continue; }
             let face = paper_inverse(lamp_face(at, tangent, bitangent));
             if (face.z <= depth) { continue; }
-            let image = normalize(float3(face.xy, 2.0 * depth - face.z) - eye);
+            let image = mirrored_image(face, eye, depth, !sheet);
             let crossing = eye + image * ((depth - eye.z) / image.z);
             if (any(abs(crossing.xy) > bound)) { continue; }
             if (framed && (frame_occluded(crossing, -image, aperture, front)
@@ -640,26 +634,57 @@ float mirrored_flare(float2 pixel, float2 canvas, float2 shape, float depth, boo
     // Each sample stands for its patch of the lamp's face, over the spike's own area, so a lamp
     // larger than a spike is long gives a spike as bright as the lamp times the share and no more.
     let patch = spacing * spacing / (2.0 * FLARE_REACH * sqrt(PRINT_PI) * width);
-    return sharpness * patch * flare;
+    return sharpness * magnified * patch * flare;
+}
+
+/// How much larger the pane's wave draws the lamp's image than a flat pane would, by area: a
+/// curved patch of the pane is a weak mirror lens, and the flux the camera's star spreads is the
+/// lamp's radiance over its image.
+float wave_magnification(float3 lamp, float3 eye, float depth, float3 along, float3 across)
+{
+    let flat = mirrored_image(lamp, eye, depth, false);
+    let wavy = mirrored_image(lamp, eye, depth, true);
+    let flat_area = cross(mirrored_image(lamp + along, eye, depth, false) - flat,
+        mirrored_image(lamp + across, eye, depth, false) - flat);
+    let wavy_area = cross(mirrored_image(lamp + along, eye, depth, true) - wavy,
+        mirrored_image(lamp + across, eye, depth, true) - wavy);
+    return length(wavy_area) / max(length(flat_area), 1e-20);
+}
+
+/// The direction from `eye` to `face`'s image in the plane at `depth`, tipped by the pane's wave
+/// where `wavy` exactly as [`glass_reflected_light`] tips it.
+float3 mirrored_image(float3 face, float3 eye, float depth, bool wavy)
+{
+    var image = normalize(float3(face.xy, 2.0 * depth - face.z) - eye);
+    if (!wavy) { return image; }
+    for (uint i = 0; i < 2; i += 1) {
+        let crossing = eye + image * ((depth - eye.z) / image.z);
+        let normal = normalize(float3(-glass_wave(crossing.xy * print.surface.z), 1.0));
+        image = normalize(face - 2.0 * dot(face - crossing, normal) * normal - eye);
+    }
+    return image;
 }
 
 public float3 framed_from_coefficients(float3 reflectance, PrintHit hit, float roughness,
     float4 direct, float2 footprint)
 {
-    let source = measured<DisplayNits>(print.illumination.x * print_light_calibration[0]);
+    let source = measured<DisplayNits>(print.illumination.x * print_light_calibration[0] * print_illuminant());
     let ambient = measured<DisplayNits>(room_illuminance(paper_rotation(hit.normal)).v / PRINT_PI);
-    let rim = float3(0.018) * (ambient.v + source.v * direct.w) * print_illuminant();
+    let rim = float3(0.018) * (ambient.v + source.v * direct.w);
     if (hit.material == BACK) {
-        return float3(0.12, 0.085, 0.055) * (ambient.v + source.v * direct.w) * print_illuminant();
+        return float3(0.12, 0.085, 0.055) * (ambient.v + source.v * direct.w);
     }
-    if (hit.material == RIM && (print.illumination.w < 0.5 || hit.normal.z < 0.5)) { return rim; }
+    if (hit.material == RIM && (print.illumination.w < 0.5 || hit.normal.z < 0.5)) {
+        let behind_glass = hit.normal.z < 0.5 && dot(hit.normal.xy, hit.position.xy) < 0.0
+            && hit.position.z < frame_glass_depth();
+        return behind_glass ? rim * glass_transmittance(hit.view.z) + glass_reflected_light(hit) : rim;
+    }
     let glass_coverage = print.illumination.w < 0.5 ? 1.0
         : frame_rectangle_coverage(hit.position.xy, frame_aperture(hit.half), footprint);
     if (glass_coverage == 0.0) { return rim; }
     let photo_coverage = print.illumination.w < 0.5 ? float(hit.material == PHOTO)
         : (hit.normal.z < 0.5 ? 0.0 : frame_rectangle_coverage(hit.position.xy, hit.half, footprint));
-    let mat = MAT_ALBEDO
-        * (ambient.v * print_light_calibration[5] + source.v * direct.z) * print_illuminant();
+    let mat = MAT_ALBEDO * (ambient.v * print_light_calibration[5] + source.v * direct.z);
     var substrate = mat;
     if (photo_coverage > 0.0) {
         substrate = lerp(mat, print_from_coefficients(reflectance, hit, roughness, direct), photo_coverage);

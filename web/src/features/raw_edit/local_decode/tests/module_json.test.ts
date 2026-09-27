@@ -8,7 +8,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { TONE_CURVE_KIND } from '../../../../../../src/schemas/photo_edits';
 import type { EditAdjust, EditGeometry, Region } from '../../edits';
-import { DEFAULT_PRINT_SCENE, PrintSceneSchema } from '../../print/print_scene';
+import { DEFAULT_PRINT_SCENE, litBy, PrintSceneSchema } from '../../print/print_scene';
 import { OpenAskSchema } from '../local_open';
 
 // Typed as what it is meant to be so the comparisons below read straight. It is the *literals*
@@ -28,6 +28,7 @@ describe('what a tick carries', () => {
     ).json();
     expect(z.object({ print: PrintSceneSchema }).parse(wire).print).toEqual({
       ...DEFAULT_PRINT_SCENE,
+      ...litBy('hotel'),
       framed: true,
       renderingIntent: 'relativeColorimetric',
       blackPointCompensation: false,

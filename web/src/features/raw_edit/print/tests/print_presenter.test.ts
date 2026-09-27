@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { drawnBy, GRADE, openEditor, openedWith, type Editor } from '../../stage/tests/raw_edit_harness';
 import { REWINDOW_QUIET_MS } from '../../stage/raw_edit_presenter';
 import { regionOf } from '../../../photos/viewer/zoom_pan';
-import { DEFAULT_PRINT_SCENE, printDisplaySize, PrintSceneSchema } from '../print_scene';
+import { DEFAULT_PRINT_SCENE, ENVIRONMENT_LIGHTING, printDisplaySize, PrintSceneSchema } from '../print_scene';
 
 let editor: Editor;
 beforeEach(() => { editor = openEditor(); });
@@ -117,7 +117,28 @@ describe('print viewing', () => {
     editor.presenter.print.resetControl('roughness');
     editor.presenter.print.resetControl('keyLux');
     editor.presenter.print.resetControl('lightForward');
-    expect(editor.print.scene).toMatchObject({ paper: 'gloss', roughness: 0.16, keyLux: 1000, lightForward: 1.7 });
+    expect(editor.print.scene).toMatchObject({ paper: 'gloss', roughness: 0.16, keyLux: 133, lightForward: 1.65 });
+  });
+
+  test('choosing an environment lights the print as that room does, and a reset goes back to its light', async () => {
+    editor.presenter.setSoftProof('print3d');
+    editor.presenter.print.setPaper('matte');
+    editor.presenter.print.setControl('fillLux', 40);
+    editor.presenter.print.setEnvironment('meadow');
+    expect(editor.print.scene).toMatchObject({
+      environment: 'meadow', paper: 'matte', keyLux: 80000, fillLux: 9570, lightTemperatureKelvin: 5400,
+      lightAcross: 4.45, lightHeight: 4.55, lightForward: 7.7, lightAngularDegrees: 0.5,
+    });
+    editor.presenter.print.setControl('keyLux', 20000);
+    editor.presenter.print.resetControl('keyLux');
+    expect(editor.print.scene.keyLux).toBe(80000);
+    await drawnBy(editor);
+    expect(editor.decoder.print?.environment).toBe('meadow');
+  });
+
+  test('every environment is lit as the module measures its map', async () => {
+    const table = await Bun.file(new URL('../../../../../../test/fixtures/tables/print-environments.json', import.meta.url).pathname).json();
+    expect(ENVIRONMENT_LIGHTING).toEqual(table);
   });
 
   test('choosing a paper replaces every material control a reader moved, and leaves the rest', () => {
@@ -135,7 +156,7 @@ describe('print viewing', () => {
     editor.presenter.setSoftProof('print3d');
     editor.presenter.print.setControl('lightHeight', 0.5);
     editor.presenter.print.setControl('lightForward', 0.5);
-    expect(editor.print.scene).toMatchObject({ lightHeight: 0.5, lightForward: 1.7 });
+    expect(editor.print.scene).toMatchObject({ lightHeight: 0.5, lightForward: 1.65 });
   });
 
   test('print framing defaults off and rejects non-boolean values', () => {

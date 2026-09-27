@@ -42,7 +42,6 @@ type PreparesPictures = {
     missing?: Missing,
     develop?: PrepareDevelop,
   ) => Promise<Uint8Array>;
-  prepareRendition: (photoId: string, shown?: Shown, missing?: Missing) => Promise<Uint8Array>;
 };
 
 const JPEG_QUALITY = 92;
@@ -331,9 +330,6 @@ export class ImageApi {
    * everything a reader is browsing to hold one they are editing - and what it is a function of
    * includes a library setting, the document, and every source's own analysis, so an entry that
    * outlived any of those would serve a picture the grade is no longer anchored to.
-   *
-   * `from=rendition` prepares the photograph's max rendition instead, edits and all, for a client
-   * that shows the picture rather than editing it.
    */
   private async servePrepared(c: Context): Promise<Response> {
     const photoId = c.req.param('photoId');
@@ -344,9 +340,7 @@ export class ImageApi {
     // Refused here rather than resolved, so the reason names the photograph: `locate` is what
     // says whether this id is one at all.
     const { photo, library } = this.photoRenditions.locate(photoId);
-    const framed = c.req.query('from') === 'rendition'
-      ? await this.preparedRendition(this.pictures, photoId, c)
-      : await this.preparedPicture(this.pictures, photo, library, c);
+    const framed = await this.preparedPicture(this.pictures, photo, library, c);
     return new Response(framed, {
       headers: {
         'Content-Type': 'application/octet-stream',
@@ -367,17 +361,6 @@ export class ImageApi {
     // before the prepare asks (§14.4).
     await this.originals.openAll(library, photo);
     return pictures.preparePicture(photo.id, shownIn(c), missingIn(c), developIn(c));
-  }
-
-  private async preparedRendition(
-    pictures: PreparesPictures,
-    photoId: string,
-    c: Context,
-  ): Promise<Uint8Array> {
-    // Built or fetched from a peer where it is missing or behind the edits, as the viewer's own
-    // request for it would be.
-    await this.photoRenditions.buildRendition(photoId, 'max');
-    return pictures.prepareRendition(photoId, shownIn(c), missingIn(c));
   }
 
   /**

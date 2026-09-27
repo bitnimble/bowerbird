@@ -63,11 +63,11 @@ fn check_photo(width: usize, height: usize, half_height: usize) {
     std::fs::remove_file(path).expect("fixture removed");
 }
 
-/// The print mockup's claim about a rendition: graded neutral, it shows the light it was encoded with.
+/// The print mockup's claim about a rendition the page opens: graded neutral, it shows the light it
+/// was encoded with.
 #[test]
-fn a_rendition_prepared_at_its_stated_white_grades_neutral_to_itself() {
+fn a_rendition_opened_at_its_stated_white_grades_neutral_to_itself() {
     let (width, height) = (64usize, 48usize);
-    let path = std::env::temp_dir().join(format!("bowerbird-picture-stated-{}.png", std::process::id()));
     // Dim and coloured, which a quantile would lift to reference white.
     let pixels: Vec<u8> = (0..width * height)
         .flat_map(|at| {
@@ -75,20 +75,24 @@ fn a_rendition_prepared_at_its_stated_white_grades_neutral_to_itself() {
             [level + 20, level / 2 + 40, 110 - level]
         })
         .collect();
-    let mut encoder = png::Encoder::new(std::fs::File::create(&path).expect("fixture file"), width as u32, height as u32);
+    let mut file = Vec::new();
+    let mut encoder = png::Encoder::new(&mut file, width as u32, height as u32);
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.write_header().expect("PNG header").write_image_data(&pixels).expect("PNG pixels");
 
-    let mut job = job(path.to_str().expect("fixture path"));
-    job.camera_match = rawshim::hdr_fit::CameraMatch::None;
-    job.sharpen = 0.0;
-    job.defringe = 0.0;
-    let measured = rawshim::picture::prepared(&job, 0, None, &[]).expect("the picture prepares");
+    let request = |stated_white: bool| -> rawshim::edit::EditRequest {
+        serde_json::from_value(serde_json::json!({
+            "longEdge": 0,
+            "grade": { "referenceWhiteNits": 203.0, "whiteQuantile": 0.99 },
+            "defringe": 0.0,
+            "statedWhite": stated_white,
+        }))
+        .expect("an open request")
+    };
+    let measured = rawshim::edit::prepare_bytes(&file, &request(false), 0.0).expect("the picture opens");
     assert!(!measured.header.mosaic, "a finished picture has nothing to denoise");
-    job.stated_white = true;
-    let stated = rawshim::picture::prepared(&job, 0, None, &[]).expect("the rendition prepares");
-    std::fs::remove_file(path).expect("fixture removed");
+    let stated = rawshim::edit::prepare_bytes(&file, &request(true), 0.0).expect("the rendition opens");
 
     let shown = |prepared: &rawshim::edit::Prepared| -> Vec<u8> {
         let gpu = rawshim::gpu::device().expect("an adapter");

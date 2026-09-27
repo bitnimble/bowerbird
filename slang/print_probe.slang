@@ -4,6 +4,7 @@ import print_geometry;
 import print_material;
 import print_light;
 import px;
+import prelude;
 
 struct Probe { float4 material; float4 position; };
 [vk::binding(0, 0)] StructuredBuffer<Probe> probes;
@@ -84,7 +85,9 @@ void lighting(uint3 group : SV_GroupID)
     let emitter = lamp_hit(hit.position, float3(0.0, 0.0, 1.0),
         float3(1.0, 0.0, 0.0), float3(0.0, 1.0, 0.0), distance, half_width);
     results[group.x * 2] = float4(value.v, emitter.x);
+    let mirrored = room_radiance(paper_rotation(reflect(-hit.view, hit.normal)), paper_rotation(hit.view), probe.material.x);
     results[group.x * 2 + 1] = float4(paper_texture(hit.position, float2(0.0)).slope.x,
         paper_texture(hit.position, float2(1.0)).roughness,
-        paper_hit(float2(64.0, 48.0), float2(128.0, 96.0), float2(300.0, 200.0)).position.z * print.surface.z, 0.0);
+        paper_hit(float2(64.0, 48.0), float2(128.0, 96.0), float2(300.0, 200.0)).position.z * print.surface.z,
+        dot(LUMA, mirrored.v));
 }
