@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { AppError } from '../../errors';
 import type { Library } from '../../schemas/libraries';
-import { ensureDir } from '../../utils/files';
 import { getBinPath } from '../../utils/paths';
 import type { LibrariesRepository } from './libraries_repository';
 
@@ -22,7 +22,15 @@ export async function ensureBinFolder(library: Library, libraries: LibrariesRepo
   const before = statSync(bin, { throwIfNoEntry: false });
   if (before != null) return bin;
 
-  await ensureDir(bin);
+  try {
+    await mkdir(bin);
+  } catch (err) {
+    const createdConcurrently = err instanceof Error && 'code' in err && err.code === 'EEXIST' &&
+      statSync(bin, { throwIfNoEntry: false })?.isDirectory() === true;
+    if (!createdConcurrently) {
+      throw new AppError('IO_ERROR', `failed to create directory ${bin}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   const made = statSync(bin, { throwIfNoEntry: false });
   libraries.setBinIdentity(library.id, {
     dev: made?.dev ?? null,

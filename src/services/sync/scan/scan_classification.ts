@@ -81,7 +81,6 @@ export interface ClassifiedScan {
     const livePresent = new Set([...present].filter((p) => !isBinSide(p)));
     const binPresent = new Set([...present].filter(isBinSide));
     const liveChanged = changed.filter((c) => !isBinSide(c.filePath));
-    const binChanged = changed.filter((c) => isBinSide(c.filePath));
 
     // A row binned **in place** (§12.1) is not in the bin, so the bin's walk is not
     // the walk that answers for it - the live one is, its file being in the live
@@ -93,6 +92,7 @@ export interface ClassifiedScan {
     const inPlace = binned.filter((row) => binFolder == null || !shootContains(binFolder, row.file_path));
     const resident = binned.filter((row) => binFolder != null && shootContains(binFolder, row.file_path));
     const inPlacePaths = new Set(inPlace.map((row) => row.file_path));
+    const binChanged = changed.filter((c) => isBinSide(c.filePath) && !inPlacePaths.has(c.filePath));
 
     const live = buildDiff(dbPhotos, livePresent, liveChanged, failed);
     // On a scoped run both halves are discarded rather than diffed: there was no

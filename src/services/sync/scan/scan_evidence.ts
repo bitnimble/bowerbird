@@ -32,6 +32,7 @@ export interface CollectedEvidence {
   dbPhotos: readonly ScanDbPhoto[];
   files: readonly ScannedFile[];
   dirs: readonly ScannedDir[];
+  walkComplete: boolean;
   stalled: readonly { photoId: string; wasAt: string }[];
   followed: ReturnType<ScanReconciler['followBinRename']>;
   binRoot: string | null;
@@ -115,6 +116,7 @@ function keepsItsBinFiles(
     // recognise it (including one holding no photos, whose move nothing else
     // leaves a trace of).
     let dirs: readonly ScannedDir[];
+    let walkComplete = false;
     if (changedScope != null) {
       // Reconcile the changed paths themselves against their rows, plus the
       // missing move-source pool. The watcher names both halves of a move
@@ -132,7 +134,7 @@ function keepsItsBinFiles(
       dirs = await reconciler.scopedDirs(scope, scopePaths ?? []);
     } else {
       dbPhotos = photoScan.listForScan(libraryId);
-      ({ files, dirs } = await scanLibraryTree(scope, '', keepLease));
+      ({ files, dirs, complete: walkComplete } = await scanLibraryTree(scope, '', keepLease));
     }
 
     // A merged move the drain above could not make - a file the editor holds
@@ -208,6 +210,6 @@ function keepsItsBinFiles(
     // different question from whether the bin was walked.
     const binFolder = followed.rename?.to ?? library.bin_name;
 
-    return { scope, binned, dbPhotos, files, dirs, stalled, followed, binRoot, binFolder, binFiles, byIdentity, onDisk };
+    return { scope, binned, dbPhotos, files, dirs, walkComplete, stalled, followed, binRoot, binFolder, binFiles, byIdentity, onDisk };
   
 }

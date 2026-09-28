@@ -41,7 +41,7 @@ export interface CompletedScan {
   const { libraryId, scopePaths, startedAt, tiles, batch, evidence, classified, counts } = input;
 
     const library = batch.library;
-    const { scope, dirs, followed } = evidence;
+    const { scope, dirs, walkComplete, followed } = evidence;
     const { present, livePresent, diff, relocations, nowUtc } = classified;
     const { removed, moved, modified } = counts;
 
@@ -67,7 +67,7 @@ export interface CompletedScan {
     // folders hold photographs is the whole question mirroring answers. The
     // live half only - the bin mirrors the folder tree inside itself, and a
     // shoot per bin folder is not a thing anyone asked for.
-    const mirrored = reconciler.reconcileShootFolders(library, scope, dirs, livePresent, scopePaths == null);
+    const mirrored = reconciler.reconcileShootFolders(library, scope, dirs, livePresent, scopePaths == null && walkComplete);
 
     // Survives a restart, unlike the in-memory status, so the UI can always say
     // how stale the catalogue is (§9.6).

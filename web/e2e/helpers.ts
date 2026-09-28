@@ -219,6 +219,7 @@ export async function addShoot(page: Page, name: string): Promise<void> {
   await page.getByRole('button', { name: 'Create shoot' }).click();
   await page.getByLabel('Shoot name').fill(name);
   await page.getByRole('dialog').getByRole('button', { name: 'Create shoot' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
 }
 
 // The sidebar lists every library by its folder name, with the full path as the
