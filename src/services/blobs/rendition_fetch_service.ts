@@ -14,6 +14,7 @@ import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_pat
 import type { PhotoProcessingRepository } from '../photos/renditions/photo_processing_repository';
 import { renditionVariant, storedAsHdr, type Rendition } from '../processing/renditions/renditions';
 import { pairedPeers, syncsOriginals } from '../replication/pairing';
+import { replicates } from '../replication/tombstones';
 import type { BlobLocations } from './blob_locations';
 import { contentHash } from '../../utils/hash';
 import { appendToStage } from './blob_store';
@@ -94,10 +95,18 @@ export class RenditionFetchService {
     // check that says so wants the sources on the row, so it lands with them.
     if (originalPathOf(library, photo) == null && syncsOriginals(this.db, library.id)) return;
 
+    const hdr = storedAsHdr(rendition, library.rendition_hdr);
+    if (!replicates(this.db, library.id)) {
+      if (!force && existsSync(getRenditionPath(library, photo.id, rendition, hdr))) return;
+      throw new AppError(
+        'NOT_FOUND',
+        `This photo's original is missing. Restore it to "${originalPathOf(library, photo)}" and scan the library again.`,
+      );
+    }
+
     const key = `${photoId}:${rendition}:${force}`;
     const running = this.fetching.get(key);
     if (running != null) return running;
-    const hdr = storedAsHdr(rendition, library.rendition_hdr);
     let reported = false;
     // A grid scroll fetches tiles by the hundred, and nothing draws a tile's wait.
     const report =

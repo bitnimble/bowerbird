@@ -154,6 +154,7 @@ export interface ScannedDir {
 export interface TreeScan {
   files: ScannedFile[];
   dirs: ScannedDir[];
+  complete: boolean;
 }
 
 // Walk everything the library contains, per `isInScope` (§9.1). Directories are
@@ -184,11 +185,17 @@ export async function scanLibraryTree(
 
   const relative = (abs: string): string => path.relative(scope.rootPath, abs).split(path.sep).join('/');
 
-  async function walk(absDir: string): Promise<void> {
+  async function walk(absDir: string): Promise<boolean> {
     onDir?.();
-    const entries = await readdir(absDir, { withFileTypes: true });
+    const entries = await readdir(absDir, { withFileTypes: true }).catch((err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
+      throw err;
+    });
+    if (entries == null) return false;
+    let complete = true;
     for (const entry of entries) {
       const abs = path.join(absDir, entry.name);
+      const rel = relative(abs);
 
       // dirent flags describe the link itself; follow symlinks to classify them.
       let isDir = entry.isDirectory();
@@ -199,11 +206,11 @@ export async function scanLibraryTree(
           isDir = target.isDirectory();
           isFile = target.isFile();
         } catch {
-          continue; // broken symlink
+          if (isDirInScope(scope, rel)) complete = false;
+          continue;
         }
       }
 
-      const rel = relative(abs);
       if (isDir) {
         if (!descend(rel)) continue;
         const real = await realpath(abs).catch(() => abs);
@@ -215,17 +222,19 @@ export async function scanLibraryTree(
         // walk spent on nothing.
         const stats = statSync(abs, { throwIfNoEntry: false });
         if (stats != null) dirs.push({ relPath: rel, dev: stats.dev, ino: stats.ino, birthtimeMs: stats.birthtimeMs });
-        await walk(abs);
+        else complete = false;
+        if (!(await walk(abs))) complete = false;
       } else if (isFile && importsFormat(scope, entry.name)) {
         files.push({ relPath: rel, absPath: abs });
       }
     }
+    return complete;
   }
 
   const absStart = startDir === '' ? scope.rootPath : path.join(scope.rootPath, startDir);
   visitedDirs.add(await realpath(absStart).catch(() => path.resolve(absStart))); // so a symlink back to the start can't re-walk the tree
-  await walk(absStart);
-  return { files, dirs };
+  const complete = await walk(absStart);
+  return { files, dirs, complete };
 }
 
 // Every original anywhere under `dir`, excluded directories included: used to

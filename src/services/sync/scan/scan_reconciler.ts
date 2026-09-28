@@ -53,6 +53,15 @@ function claimsToRestate(created: readonly string[], byFolder: ReadonlyMap<strin
   return [...byFolder.keys()].filter(isTouched).sort((a, b) => a.split('/').length - b.split('/').length);
 }
 
+function rootIsDirectory(rootPath: string): boolean {
+  try {
+    return statSync(rootPath).isDirectory();
+  } catch (err) {
+    if (err instanceof Error && 'code' in err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return false;
+    throw err;
+  }
+}
+
 export class ScanReconciler {
   constructor(
     private readonly photoPaths: PhotoPathsRepository,
@@ -151,6 +160,7 @@ export class ScanReconciler {
     presentFiles: ReadonlySet<string>,
     fullRun: boolean,
   ): number {
+    if (!rootIsDirectory(library.root_path)) return 0;
     const seen = new Map(dirs.map((d) => [d.relPath, d]));
     const seenPaths = new Set(seen.keys());
     const identities = this.shoots.listIdentities(library.id);
@@ -282,6 +292,7 @@ export class ScanReconciler {
   // Scoped to the bin, so an unreadable root still fails the run loudly rather
   // than reading as "the whole bin was deleted".
   async scanBinTree(library: Library, binRoot: string, keepLease: () => void): Promise<ScannedFile[] | null> {
+    if (!rootIsDirectory(library.root_path)) return [];
     const abs = path.join(library.root_path, binRoot);
     if (statSync(abs, { throwIfNoEntry: false })?.isDirectory() !== true) {
       log.warn('the bin folder is not there; skipping the bin channel for this run', { library: library.id, bin: binRoot });

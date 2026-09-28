@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import { Database } from '../../../db/driver';
 import type { Hono } from 'hono';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -49,6 +49,7 @@ interface Peer {
   /** The camera JPEG inside each original this peer holds. */
   camera: Map<string, string>;
   fetch: RenditionFetchService;
+  transport: PeerTransport;
   routes: Hono;
   /** Every fetched copy this peer told its clients had changed, as `stage of photo`. */
   announced: string[];
@@ -181,6 +182,7 @@ function makePeer(name: string): Peer {
     camera,
     routes: api.routes,
     fetch,
+    transport,
     announced,
     phases,
   };
@@ -295,6 +297,47 @@ describe('renditionCurrent', () => {
 });
 
 describe('fetching a rendition through a peer', () => {
+  it('reports the missing original for a standalone library', async () => {
+    const local = makePeer('local');
+    local.db.query('DELETE FROM replication_libraries WHERE library_id = ?').run(local.lib);
+    addPhoto(local, 'photo1', 'Day1/one.arw');
+    const request = spyOn(local.transport, 'request');
+    const canReach = spyOn(local.transport, 'canReach');
+    const message = `This photo's original is missing. Restore it to "${path.join(local.root, 'Day1/one.arw')}" and scan the library again.`;
+
+    for (const rendition of ['full', 'max'] as const) {
+      await expect(local.fetch.ensureCurrent('photo1', rendition)).rejects.toMatchObject({ code: 'NOT_FOUND', message });
+    }
+
+    expect(request).not.toHaveBeenCalled();
+    expect(canReach).not.toHaveBeenCalled();
+  });
+
+  it('keeps a standalone cached rendition and refuses to rebuild without its original', async () => {
+    const local = makePeer('local');
+    local.db.query('DELETE FROM replication_libraries WHERE library_id = ?').run(local.lib);
+    addPhoto(local, 'photo1', 'Day1/one.arw');
+    const request = spyOn(local.transport, 'request');
+    const canReach = spyOn(local.transport, 'canReach');
+    const hdr = storedAsHdr('max', library(local).rendition_hdr);
+    const target = getRenditionPath(library(local), 'photo1', 'max', hdr);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, 'MAX-BYTES');
+    local.photoProcessing.markCopyBuilt('photo1', BUILT_AT, BUILT_FROM, renditionVariant('max', hdr));
+    edited(local, 'photo1', EDITED_AFTER);
+
+    await local.fetch.ensureCurrent('photo1', 'max');
+    expect(readFileSync(target, 'utf8')).toBe('MAX-BYTES');
+    await expect(local.fetch.ensureCurrent('photo1', 'max', true)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: `This photo's original is missing. Restore it to "${path.join(local.root, 'Day1/one.arw')}" and scan the library again.`,
+    });
+
+    expect(readFileSync(target, 'utf8')).toBe('MAX-BYTES');
+    expect(request).not.toHaveBeenCalled();
+    expect(canReach).not.toHaveBeenCalled();
+  });
+
   it('caches a holder-built tile where the local pipeline would have written it', async () => {
     const { a, b } = holderAndReplica();
     buildTile(a, 'photo1', 'TILE-BYTES', BUILT_FROM);
