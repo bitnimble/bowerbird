@@ -1,7 +1,8 @@
 // A name already in the picked folder is numbered rather than truncated, and it has to be
 // numbered the way `src-tauri/src/export.rs` numbers the shell's - the rule is written twice
 // because the two destinations are different APIs, so it is pinned in both places.
-import { expect, test } from 'bun:test';
+import { afterEach, expect, test } from 'bun:test';
+import { ExportOptionsSchema } from '../../../../../src/schemas/export';
 import { exportsApi } from '../../../api/exports';
 import { registerDom } from '../../../test_dom';
 import { restoreApiAfterTests } from '../../../test_api';
@@ -12,6 +13,15 @@ registerDom();
 const { chooseSink } = await import('../export_sink');
 
 restoreApiAfterTests();
+const bridge = Object.getOwnPropertyDescriptor(globalThis, '__TAURI__');
+const browserPicker = Object.getOwnPropertyDescriptor(window, 'showDirectoryPicker');
+
+afterEach(() => {
+  if (bridge == null) Reflect.deleteProperty(globalThis, '__TAURI__');
+  else Object.defineProperty(globalThis, '__TAURI__', bridge);
+  if (browserPicker == null) Reflect.deleteProperty(window, 'showDirectoryPicker');
+  else Object.defineProperty(window, 'showDirectoryPicker', browserPicker);
+});
 
 /** Just enough of the handle for the sink: names that exist, and what it was asked to create. */
 function folder(holding: string[]): { handle: FileSystemDirectoryHandle; created: string[] } {
@@ -102,4 +112,41 @@ test('a render the library did not name is refused', async () => {
   const { created, save } = await exportInto([], null);
   await expect(save('a')).rejects.toThrow(/has no filename/);
   expect(created).toEqual([]);
+});
+
+test.each([1, 2])('a native export of %s photos picks a folder and saves through the shell', async (count) => {
+  const calls: { command: string; args: unknown }[] = [];
+  const path = 'C:\\Users\\Reader\\Autumn trip';
+  Object.defineProperty(globalThis, '__TAURI__', {
+    value: {
+      core: {
+        invoke: async (command: string, args: unknown) => {
+          calls.push({ command, args });
+          return command === 'pick_export_folder' ? { kind: 'picked', path } : `${path}\\photo.jpg`;
+        },
+      },
+    },
+    configurable: true,
+  });
+  const options = ExportOptionsSchema.parse({});
+
+  const sink = await chooseSink(count);
+  expect(sink).not.toBeNull();
+  expect(await sink?.save('photo1', options, 'run1')).toBe(`${path}\\photo.jpg`);
+  expect(calls).toEqual([
+    { command: 'pick_export_folder', args: {} },
+    { command: 'export_to_folder', args: { folder: path, photoId: 'photo1', options, runId: 'run1' } },
+  ]);
+});
+
+test.each(['dismissed', 'unsupported'])('the shell’s %s folder answer preserves export behavior', async (kind) => {
+  Object.defineProperty(globalThis, '__TAURI__', {
+    value: { core: { invoke: async () => ({ kind }) } },
+    configurable: true,
+  });
+
+  const sink = await chooseSink(2);
+
+  if (kind === 'dismissed') expect(sink).toBeNull();
+  else expect(sink).not.toBeNull();
 });

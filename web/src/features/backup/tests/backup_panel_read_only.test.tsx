@@ -4,16 +4,22 @@ import { useEffect } from 'react';
 import { type BackupStatus } from '../../../../../src/schemas/backup';
 import { type Library } from '../../../../../src/schemas/libraries';
 import { backupApi } from '../../../api/backup';
+import { browseApi } from '../../../api/browse';
 import { restoreApiAfterTests } from '../../../test_api';
 import { registerDom } from '../../../test_dom';
 
 registerDom();
-const { act, cleanup, fireEvent, render, screen } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, screen, within } = await import('@testing-library/react');
 const { StoresProvider, useBackupStore } = await import('../../../app/stores_context');
 const { BackupPanel } = await import('../backup_panel');
 
 restoreApiAfterTests();
-afterEach(cleanup);
+const bridge = Object.getOwnPropertyDescriptor(globalThis, '__TAURI__');
+afterEach(() => {
+  cleanup();
+  if (bridge == null) Reflect.deleteProperty(globalThis, '__TAURI__');
+  else Object.defineProperty(globalThis, '__TAURI__', bridge);
+});
 
 const status: BackupStatus = {
   library_id: 'lib',
@@ -133,4 +139,44 @@ test('what the backup holds, what this device keeps and where the backup is are 
   await open(false);
 
   expect(screen.getByText('12 photos backed up · using 3.0 GB · /backup')).toBeTruthy();
+});
+
+test.each(['web', 'desktop'])('backup folder selection uses the shared %s chooser directly', async (platform) => {
+  const calls: { libraryId: string; path: string }[] = [];
+  const commands: string[] = [];
+  backupApi.setFolder = async (libraryId, path) => {
+    calls.push({ libraryId, path });
+    return { ...status, path };
+  };
+  browseApi.get = async (path) => ({ path: path ?? '/home/reader', parent: null, directories: [], writable: true });
+  if (platform === 'desktop') {
+    Object.defineProperty(globalThis, '__TAURI__', {
+      configurable: true,
+      value: { core: { invoke: async (command: string) => {
+        commands.push(command);
+        return { kind: 'picked', path: '/backups' };
+      } } },
+    });
+  }
+  render(<StoresProvider><BackupPanel library={library(false)} /></StoresProvider>);
+
+  expect(screen.queryByRole('textbox')).toBeNull();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Choose folder' })); });
+  if (platform === 'web') {
+    const dialog = screen.getByRole('dialog', { name: 'Choose folder' });
+    expect(calls).toEqual([]);
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: '/backups' } });
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: 'Choose folder' })); });
+  }
+
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(calls).toEqual([{ libraryId: 'lib', path: '/backups' }]);
+  expect(commands).toEqual(platform === 'desktop' ? ['pick_export_folder'] : []);
+
+  backupApi.remove = async () => {};
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Remove backup' })); });
+  const removeDialog = screen.getByRole('dialog', { name: 'Remove backup folder "Backup"?' });
+  await act(async () => { fireEvent.click(within(removeDialog).getByRole('button', { name: 'Remove backup' })); });
+  expect(screen.getByRole('button', { name: 'Choose folder' })).toBeTruthy();
+  expect(calls).toEqual([{ libraryId: 'lib', path: '/backups' }]);
 });

@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
-import { FolderOpen, HardDrive, X } from 'lucide-react';
+import { FolderOpen, X } from 'lucide-react';
 import { type BackupStatus, type FetchBackProgress } from '../../../../src/schemas/backup';
 import { type Library } from '../../../../src/schemas/libraries';
 import { canRevealFile } from '../../api/transport';
@@ -9,7 +9,6 @@ import { useBackupStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { DialogActions, DialogBody } from '../../ui/dialog_layout';
 import { ErrorBanner } from '../../ui/error_banner';
-import { Field } from '../../ui/field';
 import { ICON } from '../../ui/icon';
 import { Modal } from '../../ui/modal';
 import { ModalStrings } from '../../ui/modal.strings';
@@ -19,7 +18,6 @@ import { Row, Spacer } from '../../ui/row';
 import { Spinner } from '../../ui/spinner';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
-import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
 import { FolderBrowser } from '../browse/folder_browser';
 import { FolderBrowserPresenter } from '../browse/folder_browser_presenter';
 import { FolderBrowserStore } from '../browse/folder_browser_store';
@@ -47,8 +45,6 @@ const inGb = (bytes: number): string => (bytes / GB).toFixed(1);
 // Where this library's originals are copied to, and how much of them this device keeps (§14).
 export const BackupPanel = observer(function BackupPanel({ library }: { library: Library }): JSX.Element {
   const store = useBackupStore();
-  const { backup } = usePresenters();
-  const [choosing, setChoosing] = useState(false);
   const status = store.statusOf(library.id);
 
   return (
@@ -58,25 +54,29 @@ export const BackupPanel = observer(function BackupPanel({ library }: { library:
           <Text variant="muted" as="p">
             {BackupStrings.noFolder()}
           </Text>
-          <Row>
-            <Button onClick={() => setChoosing(true)}>
-              <HardDrive size={ICON} />
-              {BackupStrings.chooseFolder()}
-            </Button>
-          </Row>
+          <ChooseBackupFolder key={library.id} libraryId={library.id} />
         </>
       : <ConfiguredBackup library={library} status={status} />}
-
-      <ChooseFolderDialog
-        open={choosing}
-        onOpenChange={setChoosing}
-        onChoose={async (path) => {
-          if (await backup.setFolder(library.id, path)) setChoosing(false);
-        }}
-      />
     </Panel>
   );
 });
+
+function ChooseBackupFolder({ libraryId }: { libraryId: string }): JSX.Element {
+  const { backup } = usePresenters();
+  const [browser] = useState(newBrowser);
+  return (
+    <FolderBrowser
+      store={browser.store}
+      presenter={browser.presenter}
+      label={BackupStrings.folderLabel()}
+      placeholder={BackupStrings.folderPlaceholder()}
+      canCreate
+      onPathChange={(path) => {
+        if (path !== '') void backup.setFolder(libraryId, path);
+      }}
+    />
+  );
+}
 
 const ConfiguredBackup = observer(function ConfiguredBackup({
   library,
@@ -235,53 +235,6 @@ function FetchBackProgressView({ progress }: { progress: FetchBackProgress | nul
         </Text>
       )}
     </div>
-  );
-}
-
-function ChooseFolderDialog({
-  open,
-  onOpenChange,
-  onChoose,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onChoose: (path: string) => Promise<void>;
-}): JSX.Element {
-  const [browser, setBrowser] = useState(newBrowser);
-  const [path, setPath] = useState('');
-
-  useEffect(() => {
-    if (!open) return;
-    const next = newBrowser();
-    setBrowser(next);
-    setPath('');
-    void next.presenter.open('/');
-  }, [open]);
-
-  return (
-    <Modal open={open} onOpenChange={onOpenChange} title={BackupStrings.folderLabel()}>
-      <DialogBody height="capped">
-        <Field>
-          <Text variant="label" as="span">
-            {BackupStrings.folderLabel()}
-          </Text>
-          <FolderBrowser
-            store={browser.store}
-            presenter={browser.presenter}
-            label={AddLibraryStrings.libraryRootPath()}
-            placeholder={BackupStrings.folderPlaceholder()}
-            canCreate
-            onPathChange={setPath}
-          />
-        </Field>
-        <DialogActions>
-          <Button onClick={() => onOpenChange(false)}>{ModalStrings.cancel()}</Button>
-          <Button variant="primary" disabled={path.trim() === ''} onClick={() => void onChoose(path.trim())}>
-            {BackupStrings.chooseFolder()}
-          </Button>
-        </DialogActions>
-      </DialogBody>
-    </Modal>
   );
 }
 

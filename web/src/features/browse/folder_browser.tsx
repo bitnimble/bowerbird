@@ -3,14 +3,17 @@ import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
 import { CornerLeftUp, Folder, FolderPlus } from 'lucide-react';
 import { Button } from '../../ui/button';
+import { DialogActions, DialogBody } from '../../ui/dialog_layout';
 import { focusRing } from '../../ui/focus_ring';
 import { ICON } from '../../ui/icon';
+import { Modal } from '../../ui/modal';
+import { ModalStrings } from '../../ui/modal.strings';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { color, size } from '../../ui/tokens.stylex';
 import { FolderBrowserStrings } from './folder_browser.strings';
-import type { FolderBrowserPresenter } from './folder_browser_presenter';
-import type { FolderBrowserStore } from './folder_browser_store';
+import { FolderBrowserPresenter } from './folder_browser_presenter';
+import { FolderBrowserStore } from './folder_browser_store';
 
 const styles = stylex.create({
   browse: {
@@ -19,6 +22,19 @@ const styles = stylex.create({
     borderColor: color.slate,
     borderRadius: size.radius,
     overflow: 'hidden',
+    margin: 0,
+    padding: 0,
+    minWidth: 0,
+  },
+  picker: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: '6px',
+    minWidth: 0,
+  },
+  path: {
+    overflowWrap: 'anywhere',
   },
   bar: {
     display: 'flex',
@@ -50,9 +66,20 @@ const styles = stylex.create({
   },
 });
 
-// Walking the server's folders: where the walk is now, one level up, and what is
-// inside. Typing a path is offered alongside clicking through it, because a path
-// already known should not have to be walked to.
+interface FolderBrowserProps {
+  store: FolderBrowserStore;
+  presenter: FolderBrowserPresenter;
+  label: string;
+  placeholder?: string;
+  canCreate?: boolean;
+  onPathChange: (path: string) => void;
+}
+
+function newBrowser(): { store: FolderBrowserStore; presenter: FolderBrowserPresenter } {
+  const store = new FolderBrowserStore();
+  return { store, presenter: new FolderBrowserPresenter(store) };
+}
+
 export const FolderBrowser = observer(function FolderBrowser({
   store,
   presenter,
@@ -60,15 +87,103 @@ export const FolderBrowser = observer(function FolderBrowser({
   placeholder,
   canCreate = false,
   onPathChange,
-}: {
-  store: FolderBrowserStore;
-  presenter: FolderBrowserPresenter;
-  label: string;
-  placeholder?: string;
-  canCreate?: boolean;
-  /** Every folder the walk lands on, and every path typed into the box. */
-  onPathChange: (path: string) => void;
-}): JSX.Element {
+}: FolderBrowserProps): JSX.Element {
+  const selection = store.selection;
+  const [browser, setBrowser] = useState(newBrowser);
+  const [choosing, setChoosing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [path, setPath] = useState('');
+  const opening = useRef(0);
+
+  useEffect(() => {
+    opening.current++;
+    setChoosing(false);
+    setConfirming(false);
+  }, [store]);
+
+  useEffect(() => {
+    onPathChange(selection?.path ?? '');
+  }, [selection, store]);
+
+  function open(): void {
+    if (presenter.native) {
+      void presenter.pick();
+      return;
+    }
+    const next = newBrowser();
+    opening.current++;
+    setBrowser(next);
+    setPath('');
+    setConfirming(false);
+    setChoosing(true);
+    void next.presenter.open(store.selectedPath || store.listing?.path);
+  }
+
+  function close(): void {
+    opening.current++;
+    setChoosing(false);
+    setConfirming(false);
+  }
+
+  async function choose(): Promise<void> {
+    const mine = opening.current;
+    const root = path;
+    if (root.trim() === '' || browser.store.loading || confirming) return;
+    setConfirming(true);
+    try {
+      if (browser.store.listing?.path !== root && !await browser.presenter.open(root)) return;
+      if (mine !== opening.current) return;
+      const listing = browser.store.listing;
+      if (listing == null) return;
+      presenter.confirm(listing);
+      close();
+    } finally {
+      if (mine === opening.current) setConfirming(false);
+    }
+  }
+
+  return (
+    <div role="group" aria-label={label} aria-busy={store.loading} {...stylex.props(styles.picker)}>
+      <Button disabled={store.loading} onClick={open}>
+        <Folder size={ICON} />
+        {FolderBrowserStrings.chooseFolder()}
+      </Button>
+      {store.selectedPath !== '' && <Text variant="mono" as="p" style={styles.path}>{store.selectedPath}</Text>}
+      {store.error != null && <Text variant="mono" tone="error">{store.error}</Text>}
+      {!presenter.native && (
+        <Modal open={choosing} onOpenChange={(next) => !next && close()} title={FolderBrowserStrings.chooseFolder()}>
+          <DialogBody height="capped">
+            <FolderTree
+              store={browser.store}
+              presenter={browser.presenter}
+              label={label}
+              placeholder={placeholder}
+              canCreate={canCreate}
+              onPathChange={setPath}
+              disabled={confirming}
+            />
+            <DialogActions>
+              <Button onClick={close}>{ModalStrings.cancel()}</Button>
+              <Button variant="primary" disabled={path.trim() === '' || browser.store.loading} onClick={() => void choose()}>
+                {FolderBrowserStrings.chooseFolder()}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </Modal>
+      )}
+    </div>
+  );
+});
+
+const FolderTree = observer(function FolderTree({
+  store,
+  presenter,
+  label,
+  placeholder,
+  canCreate = false,
+  onPathChange,
+  disabled,
+}: FolderBrowserProps & { disabled: boolean }): JSX.Element {
   const listing = store.listing;
   const [draft, setDraft] = useState('');
   const [naming, setNaming] = useState<string | null>(null);
@@ -79,13 +194,6 @@ export const FolderBrowser = observer(function FolderBrowser({
     if (await presenter.createFolder(naming)) setNaming(null);
   }
 
-  // The box is the answer and browsing is one way of filling it in, so every
-  // move through the tree writes the folder it landed on back into it. A walk
-  // that has not landed anywhere yet empties it rather than leaving the previous
-  // one's answer standing, which would otherwise be submittable while the first
-  // listing is still in flight. Only the listing is followed: the caller
-  // rebuilds `onPathChange` on every render, so depending on it would re-run
-  // this over whatever is being typed.
   useEffect(() => {
     const landed = listing?.path ?? '';
     // A listing the typing itself asked for must not write itself back: the
@@ -98,10 +206,10 @@ export const FolderBrowser = observer(function FolderBrowser({
     typedTo.current = null;
     setDraft(landed);
     onPathChange(landed);
-  }, [listing]);
+  }, [listing, store]);
 
   return (
-    <div {...stylex.props(styles.browse)}>
+    <fieldset disabled={disabled} {...stylex.props(styles.browse)}>
       <div {...stylex.props(styles.bar)}>
         <Button
           iconOnly
@@ -134,7 +242,7 @@ export const FolderBrowser = observer(function FolderBrowser({
               void presenter.open(asked);
             }
           }}
-          onKeyDown={(e) => e.key === 'Enter' && void presenter.open(draft.trim())}
+          onKeyDown={(e) => e.key === 'Enter' && draft.trim() !== '' && void presenter.open(draft)}
         />
         {canCreate && (
           <Button
@@ -185,6 +293,6 @@ export const FolderBrowser = observer(function FolderBrowser({
           </button>
         ))}
       </div>
-    </div>
+    </fieldset>
   );
 });

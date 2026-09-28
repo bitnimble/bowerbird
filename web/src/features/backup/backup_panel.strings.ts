@@ -5,7 +5,6 @@ function photos(count: number): string {
 export const BackupStrings = {
   heading: () => 'Backup',
   noFolder: () => 'Copy every original to a folder, drive, or share.',
-  chooseFolder: () => 'Choose folder',
   folderLabel: () => 'Backup folder',
   folderPlaceholder: () => '/Volumes/NAS/Photos',
   backingUp: () => 'Backing up…',

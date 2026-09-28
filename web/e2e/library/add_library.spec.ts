@@ -9,7 +9,7 @@ import { E2E_ROOT } from '../fixture_library';
 // bin rather than refused, so what is inside imports as already-binned - which
 // is a different library from the one the reader may have meant, and the dialog
 // says so while the name can still be changed (§12.3).
-const ROOT_WITH_BIN = path.join(E2E_ROOT, 'has-a-bin');
+const ROOT_WITH_BIN = path.join(E2E_ROOT, 'has-a-bin ');
 
 // Nothing here is submitted, so the run's shared catalogue is left as it was and
 // the sidebar the other specs read stays theirs.
@@ -19,16 +19,18 @@ test('the add-library dialog warns that a bin name the root already uses will be
   await page.goto(route(PathSegment.settings()));
   await page.getByRole('button', { name: 'Add library' }).click();
 
-  // Enter walks the picker to the typed path, which is what puts the listing on
-  // the folder the box names - the dialog answers from that listing.
-  // Scoped to the dialog: every library already in Settings carries a bin name of
-  // its own, so an unscoped field matches one per row in the sidebar.
   const dialog = page.getByRole('dialog', { name: 'Add library' });
-  const root = dialog.getByLabel('Library root');
-  await expect(root).not.toHaveValue('');
+  await expect(dialog.getByRole('textbox', { name: 'Library root' })).toHaveCount(0);
   const height = (await dialog.boundingBox())!.height;
+  await dialog.getByRole('button', { name: 'Choose folder' }).click();
+  const chooser = page.getByRole('dialog', { name: 'Choose folder' });
+  const root = chooser.getByLabel('Library root');
+  await expect(root).not.toHaveValue('');
   await root.fill(ROOT_WITH_BIN);
   await root.press('Enter');
+  await expect(chooser.getByRole('button', { name: 'Bin', exact: true })).toBeVisible();
+  await chooser.getByRole('button', { name: 'Choose folder' }).click();
+  await expect(chooser).toHaveCount(0);
 
   const binName = dialog.getByLabel('Bin folder name');
   const confirm = dialog.getByRole('button', { name: 'Add library' });
@@ -64,9 +66,6 @@ test('the add-library dialog offers the finished formats, switched off', async (
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 });
 
-// The walk following the typing is what a file manager does, and the dialog only
-// answers about a folder it is standing on - so a path typed to the end without
-// an Enter would otherwise be added unwarned.
 test('a path closed with a slash walks the picker into it without an Enter', async ({ page }) => {
   mkdirSync(path.join(ROOT_WITH_BIN, 'Bin'), { recursive: true });
 
@@ -74,14 +73,15 @@ test('a path closed with a slash walks the picker into it without an Enter', asy
   await page.getByRole('button', { name: 'Add library' }).click();
 
   const dialog = page.getByRole('dialog', { name: 'Add library' });
-  const root = dialog.getByLabel('Library root');
+  await dialog.getByRole('button', { name: 'Choose folder' }).click();
+  const chooser = page.getByRole('dialog', { name: 'Choose folder' });
+  const root = chooser.getByLabel('Library root');
   await expect(root).not.toHaveValue('');
   await root.fill(`${ROOT_WITH_BIN}/`);
 
-  // Named without the slash, so what is added is the folder rather than a path
-  // with an empty name on the end of it.
+  await expect(chooser.getByRole('button', { name: 'Bin', exact: true })).toHaveCount(1);
+  await chooser.getByRole('button', { name: 'Choose folder' }).click();
   await expect(dialog.getByText(`${ROOT_WITH_BIN} already has a folder called "Bin"`)).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Bin', exact: true })).toHaveCount(1);
 
   await dialog.getByRole('button', { name: 'Cancel' }).click();
 });

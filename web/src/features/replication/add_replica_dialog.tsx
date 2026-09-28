@@ -70,7 +70,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     void next.presenter.open('/');
   }, [open, replication]);
 
-  const root = path.trim();
+  const root = path;
 
   async function connect(): Promise<void> {
     const mine = opening.current;
@@ -218,7 +218,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 
             <DialogActions>
               <Button onClick={() => setStep('pick')}>{AddReplicaStrings.back()}</Button>
-              <Button variant="primary" disabled={root === '' || busy} onClick={() => void add()}>
+              <Button variant="primary" disabled={root.trim() === '' || busy} onClick={() => void add()}>
                 {busy ? AddReplicaStrings.settingUp() : AddReplicaStrings.add(picked.name)}
               </Button>
             </DialogActions>

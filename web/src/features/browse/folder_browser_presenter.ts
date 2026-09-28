@@ -1,21 +1,50 @@
 import { action } from 'mobx';
 import { type BrowseResponse } from '../../../../src/schemas/browse';
 import { browseApi } from '../../api/browse';
-import { ApiError } from '../../api/request';
+import { canPickFolder, pickFolder } from '../../api/pick_folder';
+import { PickFolderStrings } from '../../api/pick_folder.strings';
 import type { FolderBrowserStore } from './folder_browser_store';
 
-// Walks the whole server in absolute paths, which is what choosing a library
-// root needs. Folders inside a library are the Shoots page's own tree (§18.3.2).
 export class FolderBrowserPresenter {
+  readonly native = canPickFolder();
   private walk = 0;
 
   constructor(private readonly store: FolderBrowserStore) {}
 
-  // Undefined asks for wherever the walk starts, the account's home directory. A
-  // path that cannot be read leaves the previous listing on screen rather than
-  // emptying the picker, so the way back out is still there.
-  async open(path?: string): Promise<void> {
-    await this.land(() => browseApi.get(path));
+  async open(path?: string): Promise<boolean> {
+    if (this.native) return false;
+    return await this.land(() => browseApi.get(path));
+  }
+
+  async pick(): Promise<void> {
+    if (!this.native || this.store.loading) return;
+    this.beginLoad();
+    try {
+      const folder = await pickFolder();
+      switch (folder.kind) {
+        case 'picked':
+          this.selected(folder.path);
+          await this.land(() => browseApi.get(folder.path));
+          return;
+        case 'dismissed':
+          this.finishLoad();
+          return;
+        case 'unsupported':
+          this.fail(PickFolderStrings.couldNotChoose());
+          return;
+      }
+    } catch (err) {
+      this.fail(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  @action.bound
+  confirm(listing: BrowseResponse): void {
+    this.walk++;
+    this.store.selection = { path: listing.path };
+    this.store.listing = listing;
+    this.store.loading = false;
+    this.store.error = null;
   }
 
   /** Makes a folder inside the one listed and walks into it. False where it was refused. */
@@ -33,10 +62,11 @@ export class FolderBrowserPresenter {
     this.beginLoad();
     try {
       const listing = await read();
-      if (walk === this.walk) this.landed(listing);
+      if (walk !== this.walk) return false;
+      this.landed(listing);
       return true;
     } catch (err) {
-      if (walk === this.walk) this.fail(err instanceof ApiError ? err.message : (err as Error).message);
+      if (walk === this.walk) this.fail(err instanceof Error ? err.message : String(err));
       return false;
     }
   }
@@ -45,6 +75,17 @@ export class FolderBrowserPresenter {
   private beginLoad(): void {
     this.store.loading = true;
     this.store.error = null;
+  }
+
+  @action.bound
+  private selected(path: string): void {
+    this.store.selection = { path };
+    this.store.listing = null;
+  }
+
+  @action.bound
+  private finishLoad(): void {
+    this.store.loading = false;
   }
 
   @action.bound

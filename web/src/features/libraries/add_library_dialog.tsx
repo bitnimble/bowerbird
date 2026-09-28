@@ -92,7 +92,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   // Only answerable while the walk is standing on the folder the box names, which
   // is every path reached by clicking. A path typed but not opened goes ahead
   // unwarned.
-  const root = path.trim();
+  const root = path;
   const bin = binName.trim();
   const listing = browser.store.listing;
   const binExists = bin !== '' && listing?.path === root && listing.directories.some((directory) => directory.name === bin);
@@ -268,7 +268,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
             variant="primary"
             // The bin name is not part of the answer for a read-only library, so
             // it must not be part of the guard either - Add would never enable.
-            disabled={root === '' || name.trim() === '' || (!readOnlyLibrary && bin === '') || saving}
+            disabled={root.trim() === '' || name.trim() === '' || (!readOnlyLibrary && bin === '') || saving}
             onClick={() => void submit()}
           >
             {AddLibraryStrings.title()}

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ExportOptions } from '../../../../src/schemas/export';
 import { exportsApi } from '../../api/exports';
+import { pickFolder } from '../../api/pick_folder';
 import { shellInvoke, type Invoke } from '../../api/transport';
 import { ExportStrings } from './export.strings';
 
@@ -43,18 +44,8 @@ export function chooseSink(count: number): Promise<ExportSink | null> {
   return picker == null || count < 2 ? Promise.resolve(downloads()) : pickedDirectory(picker);
 }
 
-/** `src-tauri/src/export.rs`. Android has no folder to pick, so the shell says so. */
-const FolderSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('unsupported') }),
-  z.object({ kind: z.literal('dismissed') }),
-  z.object({ kind: z.literal('picked'), path: z.string() }),
-]);
-
 async function shellFolder(invoke: Invoke): Promise<ExportSink | null> {
-  const answer = FolderSchema.safeParse(await invoke('pick_export_folder', {}));
-  // A shell newer than this page.
-  if (!answer.success) throw new Error(ExportStrings.unknownFolderAnswer());
-  const folder = answer.data;
+  const folder = await pickFolder();
   switch (folder.kind) {
     case 'dismissed':
       return null;
