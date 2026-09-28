@@ -56,7 +56,7 @@ class StageCanvases {
   /** A decoded frame, or `region` of it, drawn into `canvas` at `size`. */
   async paint(canvas: HTMLCanvasElement, size: CanvasSize, frame: Decoded, shown: Shown): Promise<void> {
     if (this.released.has(canvas)) return;
-    const { id, handed, readback } = this.handOver(canvas, drawsOnThePage(shown.devicePeakNits));
+    const { id, handed, readback } = this.handOver(canvas, size, drawsOnThePage(shown.devicePeakNits));
     const common = {
       kind: 'paint',
       canvas: id,
@@ -107,7 +107,7 @@ class StageCanvases {
     try {
       if (this.released.has(canvas)) return false;
       // Always transferred: RGB9E5 carries no alpha for the layers to be composited with.
-      const { id, handed } = this.handOver(canvas, false);
+      const { id, handed } = this.handOver(canvas, size, false);
       const painted = await gpuThread().ask(
         PaintedSchema,
         {
@@ -144,9 +144,11 @@ class StageCanvases {
       .catch(() => undefined);
   }
 
-  private handOver(canvas: HTMLCanvasElement, readback: boolean): Numbered & { handed: OffscreenCanvas | null } {
+  private handOver(canvas: HTMLCanvasElement, size: CanvasSize, readback: boolean): Numbered & { handed: OffscreenCanvas | null } {
     const numbered = this.numbered.get(canvas);
     if (numbered != null) return { ...numbered, handed: null };
+    canvas.width = size.width;
+    canvas.height = size.height;
     const fresh = { id: ++this.counted, readback };
     this.numbered.set(canvas, fresh);
     return { ...fresh, handed: readback ? null : canvas.transferControlToOffscreen() };

@@ -67,6 +67,43 @@ function cameFrom(picture: Locator): Promise<string | undefined> {
   });
 }
 
+test('frames have their fitted dimensions before they are handed to the GPU worker', async ({ page }) => {
+  await page.addInitScript(() => {
+    const handovers = new WeakMap<HTMLCanvasElement, readonly [number, number]>();
+    (window as unknown as { canvasHandovers: typeof handovers }).canvasHandovers = handovers;
+    const transfer = HTMLCanvasElement.prototype.transferControlToOffscreen;
+    HTMLCanvasElement.prototype.transferControlToOffscreen = function (this: HTMLCanvasElement): OffscreenCanvas {
+      handovers.set(this, [this.width, this.height]);
+      return transfer.call(this);
+    };
+  });
+  await gotoPhoto(page, FRAME_PHOTOS_DIR);
+  await expect(shownFrame(page)).toBeVisible(FIRST_FRAME);
+  const openName = await shownFilename(page);
+  const otherName = PHOTO_NAMES.find((name) => name !== openName);
+  const dimensions = (): Promise<{ handed: readonly [number, number] | undefined; drawn: number[] }> =>
+    shownFrame(page).evaluate((frame) => {
+      if (!(frame instanceof HTMLCanvasElement)) throw new Error('The photo is not drawn on a canvas');
+      const { canvasHandovers } = window as unknown as {
+        canvasHandovers: WeakMap<HTMLCanvasElement, readonly [number, number]>;
+      };
+      return { handed: canvasHandovers.get(frame), drawn: [frame.width, frame.height] };
+    });
+  const samples: Awaited<ReturnType<typeof dimensions>>[] = [];
+
+  for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowRight', 'ArrowLeft']) {
+    await page.keyboard.press(key);
+    await expect(shownFrame(page)).toHaveAccessibleName(new RegExp(`^${key === 'ArrowRight' ? otherName : openName}, `), FIRST_FRAME);
+    await expect.poll(async () => (await dimensions()).drawn).not.toEqual([300, 150]);
+    samples.push(await dimensions());
+  }
+  for (const { handed, drawn } of samples) {
+    expect(drawn[0]).toBeGreaterThan(300);
+    expect(drawn[1]).toBeGreaterThan(150);
+    expect(handed).toEqual(drawn);
+  }
+});
+
 // A frame that arrives around the moment the held one is dropped still goes up.
 //
 // Every other check here has the image arrive instantly, so nothing covered a
