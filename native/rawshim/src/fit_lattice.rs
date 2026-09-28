@@ -5,9 +5,8 @@
 //! same `ChromaMoments` the per-node solves have always taken.
 //!
 //! **A pair lands on sixteen nodes, so this needed a compaction the other folds did not.** The
-//! landings are binned by their cell in pair order, and a thread per (node, corner) then walks the
-//! one cell that reaches it that way. Twenty-one thousand threads rather than the lattice's
-//! thirteen hundred, which is what makes it worth doing at all.
+//! landings are binned by their cell in pair order, cut into slices of `SLICE`, and a thread per
+//! (slice, corner) then walks one slice for one of the nodes it reaches.
 
 /// Sums a node carries, which `fit_lattice.slang` states for itself.
 pub(crate) const NODE_WORDS: usize = 26;
@@ -15,6 +14,8 @@ pub(crate) const NODE_WORDS: usize = 26;
 const LANDING_WORDS: usize = 12;
 /// Corners of a cell, which is how many cells a node is a corner of.
 const CORNERS: usize = 16;
+/// Landings one gathering thread walks at most.
+const SLICE: usize = 256;
 /// Pairs one thread of the count and the write walks.
 const BLOCK: usize = 4096;
 
@@ -130,9 +131,11 @@ pub(crate) async fn moments(
         })
     };
     let landed = buffer("fit lattice landings", pairs * LANDING_WORDS, storage);
-    let counts = buffer("fit lattice counts", 2 * blocks * cells + cells, storage);
+    let counts = buffer("fit lattice counts", 2 * blocks * cells + 2 * cells, storage);
     let ordered = buffer("fit lattice order", pairs, storage);
-    let corners = buffer("fit lattice corners", nodes * CORNERS * NODE_WORDS, storage);
+    // Each cell's last slice may be part-filled, so a cell adds at most one past the even share.
+    let slices = pairs.div_ceil(SLICE) + cells;
+    let corners = buffer("fit lattice corners", slices * CORNERS * NODE_WORDS, storage);
     let out = buffer(
         "fit lattice moments",
         nodes * NODE_WORDS,
@@ -184,7 +187,7 @@ pub(crate) async fn moments(
         (&built.total, over(cells)),
         (&built.scan, 1),
         (&built.write, over(blocks)),
-        (&built.gather, over(nodes * CORNERS)),
+        (&built.gather, over(slices * CORNERS)),
         (&built.fold, over(nodes)),
     ] {
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
@@ -220,6 +223,7 @@ mod tests {
             format!("static const int NODE_WORDS = {};", super::NODE_WORDS),
             format!("static const int LANDING_WORDS = {};", super::LANDING_WORDS),
             format!("static const int CORNERS = {};", super::CORNERS),
+            format!("static const int SLICE = {};", super::SLICE),
             format!("static const int MAP_CHROMA = {};", crate::hdr_fit::MAP_CHROMA),
             format!("static const int MAP_LEVEL = {};", crate::hdr_fit::MAP_LEVEL),
             format!("static const int MAP_SURROUND = {};", crate::hdr_fit::MAP_SURROUND),

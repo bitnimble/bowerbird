@@ -7,11 +7,9 @@
 // feeds. Every landing is visited the sixteen times it was always going to reach, rather than
 // scattered into sixteen places at once.
 //
-// **A thread is a (node, corner), not a node.** One thread a node is 1323 of them, which leaves a
-// GPU with thousands of lanes idle and made the whole fit 430ms slower than reading the samples
-// back; one thread per corner of every node is 21k, each walking one cell's run. What that gives
-// up is the host's summation order - a node's terms now arrive cell by cell rather than pair by
-// pair - so this is a different sum from the one the old `landed_on` wrote.
+// **A thread is a (slice, corner): `SLICE` landings of one cell, fed to one of its corners.** A
+// cell's run is as long as its share of the frame, and a dark frame puts most of its pairs in one
+// shadow cell, so no thread walks a whole run.
 
 import prelude;
 
@@ -41,11 +39,11 @@ struct Params {
 /// Per landing: the cell it fell in, then the eleven floats a node reads off it.
 [vk::binding(4, 0)] RWStructuredBuffer<float> landed;
 /// Landings per (block, cell), then where each block's run inside a cell starts, then each cell's
-/// cumulative end.
+/// cumulative end, then each cell's cumulative end in slices.
 [vk::binding(5, 0)] RWStructuredBuffer<uint> counts;
 /// Each cell's landings, in pair order, as indices into `landed`.
 [vk::binding(6, 0)] RWStructuredBuffer<uint> ordered;
-/// Per (node, corner), `NODE_WORDS` sums, which `lat_fold` adds up.
+/// Per (slice, corner), `NODE_WORDS` sums, which `lat_fold` adds up.
 [vk::binding(7, 0)] RWStructuredBuffer<float> corners;
 /// Per node, `NODE_WORDS` sums.
 [vk::binding(8, 0)] RWStructuredBuffer<float> moments;
@@ -66,6 +64,37 @@ static const int CORNERS = 16;
 static const int LANDING_WORDS = 12;
 /// Sums a node carries: `ata` 9, `atb` 6, `sx` 3, `st` 2, `btb`, `lta`, `lda` 2, `ltb`, `seen`.
 static const int NODE_WORDS = 26;
+/// Landings one gathering thread walks at most.
+static const int SLICE = 256;
+
+/// Where the cells' ends, in landings and in slices, start in `counts`.
+int ends() { return 2 * pc.blocks * CELLS; }
+int slice_ends() { return 2 * pc.blocks * CELLS + CELLS; }
+
+/// A cell's run of landings in `ordered`.
+uint2 run_of(int cell)
+{
+    return uint2(cell == 0 ? 0u : counts[ends() + cell - 1], counts[ends() + cell]);
+}
+
+/// A cell's run of slices.
+uint2 slices_of(int cell)
+{
+    return uint2(cell == 0 ? 0u : counts[slice_ends() + cell - 1], counts[slice_ends() + cell]);
+}
+
+/// The cell a corner of a node lies across, or -1 past the lattice's edge. `which`'s bits say which
+/// side on each axis, and a node is a cell's corner where the same bits are set.
+int cell_toward(int node, int which)
+{
+    let cx = node % MAP_CHROMA - (which & 1);
+    let cy = (node / MAP_CHROMA) % MAP_CHROMA - ((which >> 1) & 1);
+    let cz = (node / (MAP_CHROMA * MAP_CHROMA)) % MAP_LEVEL - ((which >> 2) & 1);
+    let cs = node / (MAP_CHROMA * MAP_CHROMA * MAP_LEVEL) - ((which >> 3) & 1);
+    let inside = cx >= 0 && cx < MAP_CHROMA - 1 && cy >= 0 && cy < MAP_CHROMA - 1
+        && cz >= 0 && cz < MAP_LEVEL - 1 && cs >= 0 && cs < MAP_SURROUND - 1;
+    return inside ? ((cs * (MAP_LEVEL - 1) + cz) * (MAP_CHROMA - 1) + cy) * (MAP_CHROMA - 1) + cx : -1;
+}
 
 /// Where a coordinate sits on an axis running up from `low`, and how far past.
 ///
@@ -160,7 +189,7 @@ void lat_total(uint3 id: SV_DispatchThreadID)
     for (int b = 0; b < pc.blocks; b++) {
         total += counts[b * CELLS + cell];
     }
-    counts[2 * pc.blocks * CELLS + cell] = total;
+    counts[ends() + cell] = total;
 }
 
 /// Where each block's run inside each cell starts, so the compaction below keeps pair order.
@@ -173,8 +202,9 @@ void lat_total(uint3 id: SV_DispatchThreadID)
 void lat_scan()
 {
     var base = 0u;
+    var sliced = 0u;
     for (int cell = 0; cell < CELLS; cell++) {
-        let total = counts[2 * pc.blocks * CELLS + cell];
+        let total = counts[ends() + cell];
         var seen = base;
         for (int b = 0; b < pc.blocks; b++) {
             let kept = counts[b * CELLS + cell];
@@ -182,8 +212,9 @@ void lat_scan()
             seen += kept;
         }
         base += total;
-        // The cell's end, which the fold reads as the run's bound.
-        counts[2 * pc.blocks * CELLS + cell] = base;
+        sliced += (total + uint(SLICE) - 1u) / uint(SLICE);
+        counts[ends() + cell] = base;
+        counts[slice_ends() + cell] = sliced;
     }
 }
 
@@ -203,98 +234,94 @@ void lat_write(uint3 id: SV_DispatchThreadID)
     }
 }
 
-/// One corner of one node: the cell that reaches this node through that corner, summed.
-///
-/// Twenty-one thousand threads rather than the lattice's thirteen hundred, which is the whole
-/// reason this is split by corner at all.
+/// One slice of one cell, summed for one of its corners.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void lat_gather(uint3 id: SV_DispatchThreadID)
 {
-    let slot = int(id.x);
-    if (slot >= MAP_NODES * CORNERS) { return; }
-    let node = slot / CORNERS;
-    let which = slot % CORNERS;
-
-    let nx = node % MAP_CHROMA;
-    let ny = (node / MAP_CHROMA) % MAP_CHROMA;
-    let nz = (node / (MAP_CHROMA * MAP_CHROMA)) % MAP_LEVEL;
-    let ns = node / (MAP_CHROMA * MAP_CHROMA * MAP_LEVEL);
-    // Which way this corner lies from the node, which is the cell on that side.
-    let cx = nx - (which & 1);
-    let cy = ny - ((which >> 1) & 1);
-    let cz = nz - ((which >> 2) & 1);
-    let cs = ns - ((which >> 3) & 1);
+    let which = int(id.x) % CORNERS;
+    let piece = id.x / uint(CORNERS);
+    if (piece >= counts[slice_ends() + CELLS - 1]) { return; }
+    // The first cell whose slices end past this one.
+    var low = 0;
+    var high = CELLS - 1;
+    while (low < high) {
+        let middle = (low + high) / 2;
+        if (counts[slice_ends() + middle] > piece) { high = middle; } else { low = middle + 1; }
+    }
+    let run = run_of(low);
+    let from = run.x + (piece - slices_of(low).x) * uint(SLICE);
+    let to = min(from + uint(SLICE), run.y);
 
     float sums[NODE_WORDS];
     for (int i = 0; i < NODE_WORDS; i++) { sums[i] = 0.0; }
+    for (uint at = from; at < to; at++) {
+        let base = int(ordered[int(at)]) * LANDING_WORDS;
+        let fx = landed[base + 1];
+        let fy = landed[base + 2];
+        let fz = landed[base + 3];
+        let fs = landed[base + 4];
+        // The share this corner takes, which is `nodes_of`'s weight for it.
+        let wx = (which & 1) != 0 ? fx : 1.0 - fx;
+        let wy = ((which >> 1) & 1) != 0 ? fy : 1.0 - fy;
+        let wz = ((which >> 2) & 1) != 0 ? fz : 1.0 - fz;
+        let ws = ((which >> 3) & 1) != 0 ? fs : 1.0 - fs;
+        let sw = landed[base + 11] * (ws * wz * wy * wx);
+        if (!(sw > 0.0)) { continue; }
 
-    let inside = cx >= 0 && cx < MAP_CHROMA - 1 && cy >= 0 && cy < MAP_CHROMA - 1
-        && cz >= 0 && cz < MAP_LEVEL - 1 && cs >= 0 && cs < MAP_SURROUND - 1;
-    if (inside) {
-        let cell = ((cs * (MAP_LEVEL - 1) + cz) * (MAP_CHROMA - 1) + cy) * (MAP_CHROMA - 1) + cx;
-        let from = cell == 0 ? 0u : counts[2 * pc.blocks * CELLS + cell - 1];
-        let to = counts[2 * pc.blocks * CELLS + cell];
-        for (uint at = from; at < to; at++) {
-            let base = int(ordered[int(at)]) * LANDING_WORDS;
-            let fx = landed[base + 1];
-            let fy = landed[base + 2];
-            let fz = landed[base + 3];
-            let fs = landed[base + 4];
-            // The share this corner takes, which is `nodes_of`'s weight for it.
-            let wx = (which & 1) != 0 ? fx : 1.0 - fx;
-            let wy = ((which >> 1) & 1) != 0 ? fy : 1.0 - fy;
-            let wz = ((which >> 2) & 1) != 0 ? fz : 1.0 - fz;
-            let ws = ((which >> 3) & 1) != 0 ? fs : 1.0 - fs;
-            let sw = landed[base + 11] * (ws * wz * wy * wx);
-            if (!(sw > 0.0)) { continue; }
+        let input = float3(landed[base + 5], landed[base + 6], landed[base + 7]);
+        let tgt = float2(landed[base + 8], landed[base + 9]);
+        let theirs = landed[base + 10];
+        let ours = input.z;
 
-            let input = float3(landed[base + 5], landed[base + 6], landed[base + 7]);
-            let tgt = float2(landed[base + 8], landed[base + 9]);
-            let theirs = landed[base + 10];
-            let ours = input.z;
-
-            for (int a = 0; a < 2; a++) {
-                for (int b = 0; b < 3; b++) {
-                    sums[9 + a * 3 + b] += sw * input[b] * tgt[a];
-                }
+        for (int a = 0; a < 2; a++) {
+            for (int b = 0; b < 3; b++) {
+                sums[9 + a * 3 + b] += sw * input[b] * tgt[a];
             }
-            for (int a = 0; a < 3; a++) {
-                for (int b = 0; b < 3; b++) {
-                    sums[a * 3 + b] += sw * input[a] * input[b];
-                }
-                sums[15 + a] += sw * input[a];
-            }
-            for (int a = 0; a < 2; a++) {
-                sums[18 + a] += sw * tgt[a];
-            }
-            sums[20] += sw * (tgt.x * tgt.x + tgt.y * tgt.y);
-            sums[21] += sw * ours * ours;
-            sums[22] += sw * ours * theirs;
-            sums[23] += sw * input.x * theirs;
-            sums[24] += sw * input.y * theirs;
-            sums[25] += sw;
         }
+        for (int a = 0; a < 3; a++) {
+            for (int b = 0; b < 3; b++) {
+                sums[a * 3 + b] += sw * input[a] * input[b];
+            }
+            sums[15 + a] += sw * input[a];
+        }
+        for (int a = 0; a < 2; a++) {
+            sums[18 + a] += sw * tgt[a];
+        }
+        sums[20] += sw * (tgt.x * tgt.x + tgt.y * tgt.y);
+        sums[21] += sw * ours * ours;
+        sums[22] += sw * ours * theirs;
+        sums[23] += sw * input.x * theirs;
+        sums[24] += sw * input.y * theirs;
+        sums[25] += sw;
     }
 
     for (int i = 0; i < NODE_WORDS; i++) {
-        corners[slot * NODE_WORDS + i] = sums[i];
+        corners[int(id.x) * NODE_WORDS + i] = sums[i];
     }
 }
 
-/// A node's sixteen corners added in corner order, which is what makes the answer the same on
-/// every adapter.
+/// A node's sixteen corners added in corner order, each cell's slices in pair order, which is what
+/// makes the answer the same on every adapter.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void lat_fold(uint3 id: SV_DispatchThreadID)
 {
     let node = int(id.x);
     if (node >= MAP_NODES) { return; }
-    for (int i = 0; i < NODE_WORDS; i++) {
-        var total = 0.0;
-        for (int c = 0; c < CORNERS; c++) {
-            total += corners[(node * CORNERS + c) * NODE_WORDS + i];
+    float sums[NODE_WORDS];
+    for (int i = 0; i < NODE_WORDS; i++) { sums[i] = 0.0; }
+    for (int c = 0; c < CORNERS; c++) {
+        let cell = cell_toward(node, c);
+        if (cell < 0) { continue; }
+        let slices = slices_of(cell);
+        for (uint piece = slices.x; piece < slices.y; piece++) {
+            for (int i = 0; i < NODE_WORDS; i++) {
+                sums[i] += corners[(int(piece) * CORNERS + c) * NODE_WORDS + i];
+            }
         }
-        moments[node * NODE_WORDS + i] = total;
+    }
+    for (int i = 0; i < NODE_WORDS; i++) {
+        moments[node * NODE_WORDS + i] = sums[i];
     }
 }

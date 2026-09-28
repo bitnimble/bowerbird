@@ -42,3 +42,13 @@ clipped highlights.
 which is the one the decoder reads for the lens id. Those blocks carry the body's internal serial
 number and its shutter count; nothing else in the file names anyone, and there is no GPS IFD. The
 decode is unchanged by it - same levels, same matrices, same sample sum.
+
+## DSC05726.ARW
+
+The project's own, a second ILCE-7CR frame: a street of old wooden buildings at night under warm
+lamps, with a red awning and red lanterns. The camera crushes blue across most of the frame, which
+is the case the colour fit's matrix has to be kept from - taken as a level, that blue fits a matrix
+that puts blue on red and renders the awning pink (`a_crushed_blue_does_not_put_blue_on_red`).
+
+**Scrubbed by `examples/scrub.rs`**: `scrub::scrubbed` for the standard identifying tags and the GPS
+IFD, then every enciphered Sony maker note block but `0x9416`, as above. The fit is unchanged by it.

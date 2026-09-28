@@ -148,6 +148,7 @@ mod fit_objective;
 mod fit_pairs;
 mod fit_lattice;
 mod fit_moments;
+mod fit_noise;
 pub mod fit_score;
 mod fit_span;
 mod fit_wide;

@@ -9,12 +9,15 @@
 /// would pool the bias over a different number of buckets on each side.
 const BIAS_BUCKETS: usize = super::hdr_fit::BIAS_BUCKETS;
 
-/// Per block: the trusted balance summed, every balance's magnitude summed, the trusted pairs
-/// counted, the pairs counted, then the tally per bucket.
-const INVARIANT: usize = 4 + BIAS_BUCKETS;
+/// `hdr_fit::COLOUR_CLASSES`, held to the shader's the same way.
+const COLOUR_CLASSES: usize = super::hdr_fit::COLOUR_CLASSES;
 
-/// Four sums, a signed chroma pair per bucket, then the block's invariant.
-const PARTIAL: usize = 4 + 2 * BIAS_BUCKETS + INVARIANT;
+/// Per block: the trusted balance summed, every balance's magnitude summed, the trusted pairs
+/// counted, the pairs counted, then the tally per bucket and per class.
+const INVARIANT: usize = 4 + BIAS_BUCKETS + COLOUR_CLASSES;
+
+/// Four sums, a signed chroma pair per bucket, the deltaE per class, then the block's invariant.
+const PARTIAL: usize = 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES + INVARIANT;
 
 /// Words a probe's parameters occupy: a 3x3, a scalar, and the padding that keeps the stride a
 /// round number so the shader indexes it by multiplication.
@@ -45,6 +48,9 @@ pub struct Partial {
     pub counted: f64,
     pub bias: [[f64; 2]; BIAS_BUCKETS],
     pub seen: [f64; BIAS_BUCKETS],
+    /// The trusted pairs' deltaE summed per class, and how many landed in each.
+    pub class_error: [f64; COLOUR_CLASSES],
+    pub class_seen: [f64; COLOUR_CLASSES],
 }
 
 struct Kernel {
@@ -169,19 +175,15 @@ pub struct Scoring {
     pairs: usize,
     blocks: usize,
     block: usize,
+    capacity: usize,
 }
-
-/// Probes one call may ask about, which is what the held buffers are sized for.
-///
-/// The saturation's sweep is the widest asker at `SATURATION_SWEEP` plus its neutral, and the ridge
-/// scan takes six. A caller past this splits, which nothing does.
-const MAX_PROBES: usize = 32;
 
 impl Scoring {
     /// `below` is each pair's colour beneath whatever the probes vary and the luma a saturation
     /// blend rotates about, already on the device (`hdr_fit::evaluate`, or [`below_buffer`]);
     /// `target` is the camera's rendering in the render's own linear Rec.2020, which `to_srgb`
     /// and `fit_target` put on the JPEG's own grid, and `balance` the hue weight beside it.
+    /// `probes` is the most one call will ask about, which the held buffers are sized for.
     pub fn new(
         gpu: &'static crate::gpu::Gpu,
         below: crate::gpu::Buffer,
@@ -189,10 +191,11 @@ impl Scoring {
         balance: &[f64],
         to_srgb: &[[f64; 3]; 3],
         block: usize,
+        probes: usize,
     ) -> Scoring {
         let pairs = target.len();
         let blocks = pairs.div_ceil(block.max(1));
-        let partial_bytes = (MAX_PROBES * blocks * PARTIAL * 4).max(4) as u64;
+        let partial_bytes = (probes * blocks * PARTIAL * 4).max(4) as u64;
         let held = |label, size, usage| {
             gpu.own_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -213,7 +216,7 @@ impl Scoring {
         );
         let parameters = held(
             "fit_score probes",
-            (MAX_PROBES * PROBE_WORDS * 4) as u64,
+            (probes.max(1) * PROBE_WORDS * 4) as u64,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         );
         let push = held(
@@ -269,6 +272,7 @@ impl Scoring {
             pairs,
             blocks,
             block,
+            capacity: probes,
         };
         if pairs > 0 {
             scoring.describe(0, &Shape::Saturation);
@@ -312,7 +316,7 @@ impl Scoring {
         if probes.is_empty() || self.pairs == 0 {
             return Some(vec![Vec::new(); probes.len()]);
         }
-        assert!(probes.len() <= MAX_PROBES, "{} probes at once", probes.len());
+        assert!(probes.len() <= self.capacity, "{} probes at once", probes.len());
         let units = probes.len() * self.blocks;
         let bytes = (units * PARTIAL * 4) as u64;
         // Written rather than created, which is the whole point of holding them.
@@ -333,7 +337,7 @@ impl Scoring {
         recording.encoder().copy_buffer_to_buffer(&self.partials, 0, &self.staging, 0, bytes);
         recording.submit();
 
-        // The buffer is sized for `MAX_PROBES` and this call wrote `units` of it, so the tail
+        // The buffer is sized for `capacity` and this call wrote `units` of it, so the tail
         // holds whatever the last call left.
         let read = crate::gpu::read_back(self.gpu, &self.staging, |mapped| {
             mapped
@@ -344,7 +348,8 @@ impl Scoring {
                         let word = &words[k * 4..k * 4 + 4];
                         f64::from(f32::from_ne_bytes([word[0], word[1], word[2], word[3]]))
                     };
-                    let invariant = 4 + 2 * BIAS_BUCKETS;
+                    let classes = 4 + 2 * BIAS_BUCKETS;
+                    let invariant = classes + COLOUR_CLASSES;
                     Partial {
                         balanced: at(0),
                         flat: at(1),
@@ -356,6 +361,10 @@ impl Scoring {
                         counted: at(invariant + 3),
                         bias: std::array::from_fn(|i| [at(4 + 2 * i), at(4 + 2 * i + 1)]),
                         seen: std::array::from_fn(|i| at(invariant + 4 + i)),
+                        class_error: std::array::from_fn(|i| at(classes + i)),
+                        class_seen: std::array::from_fn(|i| {
+                            at(invariant + 4 + BIAS_BUCKETS + i)
+                        }),
                     }
                 })
                 .collect::<Vec<Partial>>()
@@ -396,6 +405,9 @@ mod tests {
         const SOURCE: &str = include_str!("../../../slang/fit_score.slang");
         let line = format!("static const int BIAS_BUCKETS = {};", BIAS_BUCKETS);
         assert!(SOURCE.contains(&line), "fit_score.slang does not say `{line}`");
+        let sectors = format!("static const int HUE_SECTORS = {};", (COLOUR_CLASSES - 1) / 2);
+        assert!(SOURCE.contains(&sectors), "fit_score.slang does not say `{sectors}`");
+        assert!(SOURCE.contains("static const int COLOUR_CLASSES = 1 + 2 * HUE_SECTORS;"));
     }
 
     /// An sRGB level taken to light and handed over as a target comes back on the level it was
@@ -413,12 +425,39 @@ mod tests {
             .map(|codes| codes.map(crate::hdr_fit::srgb_eotf))
             .collect();
         let below: Vec<([f64; 3], f64)> = lit.iter().map(|v| (*v, 0.0)).collect();
-        let scoring = Scoring::new(gpu, below_buffer(gpu, &below), &lit, &[1.0; 4], &IDENTITY, 2);
+        let scoring = Scoring::new(gpu, below_buffer(gpu, &below), &lit, &[1.0; 4], &IDENTITY, 2, 1);
         let partials =
             pollster::block_on(scoring.partials(&Shape::Saturation, &[Probe::neutral()]))
                 .expect("the device scored");
         let flat: f64 = partials[0].iter().map(|p| p.flat).sum();
         assert!(flat < 1e-2, "the camera's side moved off its levels by {flat}");
+    }
+
+    /// Each pair's error lands in the class of the camera's colour: the neutrals first, then a muted
+    /// and a vivid class for every 30 degrees of Lab hue.
+    #[test]
+    fn a_pairs_error_lands_in_its_colours_class() {
+        let Some(gpu) = crate::gpu::device() else { return };
+        const IDENTITY: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let light = |codes: [u8; 3]| codes.map(crate::hdr_fit::srgb_eotf);
+        // Lab hues 37 and 73: a saturated red chroma past its lightness, and a lit orange wall under it.
+        let (grey, red, wall) = (light([128, 128, 128]), light([180, 20, 15]), light([200, 150, 100]));
+        let target = [grey, red, wall];
+        let purple = light([180, 20, 90]);
+        let below: Vec<([f64; 3], f64)> = [grey, purple, wall].iter().map(|v| (*v, 0.0)).collect();
+        let scoring = Scoring::new(gpu, below_buffer(gpu, &below), &target, &[1.0; 3], &IDENTITY, 2, 1);
+        let partials =
+            pollster::block_on(scoring.partials(&Shape::Saturation, &[Probe::neutral()]))
+                .expect("the device scored");
+        let seen = |class: usize| partials[0].iter().map(|p| p.class_seen[class]).sum::<f64>();
+        let error = |class: usize| partials[0].iter().map(|p| p.class_error[class]).sum::<f64>();
+        let (neutral, vivid_red, muted_orange) = (0, 1 + 2 + 1, 1 + 2 * 2);
+        for class in [neutral, vivid_red, muted_orange] {
+            assert_eq!(seen(class), 1.0, "class {class}");
+        }
+        assert_eq!((0..COLOUR_CLASSES).map(seen).sum::<f64>(), 3.0);
+        assert!(error(vivid_red) > 10.0, "the purple red is far off: {}", error(vivid_red));
+        assert!(error(neutral) + error(muted_orange) < 1e-2, "the other two are on their levels");
     }
 
     /// A colour past the sRGB hull is measured by how far, and a clipped target is measured by
@@ -434,7 +473,7 @@ mod tests {
         let below = vec![([1.0, -0.2, 0.0], 0.0), (inside, 0.0)];
         let target = [[1.0, 0.0, 0.0], inside];
         let balance = [-2.0, 1.0];
-        let scoring = Scoring::new(gpu, below_buffer(gpu, &below), &target, &balance, &IDENTITY, 2);
+        let scoring = Scoring::new(gpu, below_buffer(gpu, &below), &target, &balance, &IDENTITY, 2, 1);
         let partials =
             pollster::block_on(scoring.partials(&Shape::Saturation, &[Probe::neutral()]))
                 .expect("the device scored");

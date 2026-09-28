@@ -56,6 +56,12 @@ pub fn bayer_noisy() -> PathBuf {
     fixture("DSC05765.ARW")
 }
 
+/// A street at night under warm lamps, whose camera crushes blue across most of the frame and
+/// renders a red awning and red lanterns.
+pub fn night_crushed_blue() -> PathBuf {
+    fixture("DSC05726.ARW")
+}
+
 fn fixture(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures").join(name);
     // A hard failure rather than a skip. The feature is opt-in, so asking for it and
@@ -198,7 +204,6 @@ fn tile_job(path: &str, tile: Option<[usize; 4]>, levels: Option<crate::tone::Le
         noise_fit: None,
         levels,
         scene_peak: None,
-        stated_white: false,
         photo_analysis: None,
         // **On, and that took a bug to learn.** Off, this compared everything about a tile
         // except the one stage that reads a *neighbourhood* of the region it was handed - so a
@@ -2249,6 +2254,17 @@ mod camera_match {
         ))
         .expect("the fit finds something worth applying");
         (profile, matched)
+    }
+
+    /// A camera channel at its floor reaches the lattice and never the matrix: taken as a level,
+    /// this frame's crushed blue fits a blue row that puts blue on red, and its awning and
+    /// lanterns render pink.
+    #[test]
+    fn a_crushed_blue_does_not_put_blue_on_red() {
+        let (_, matched) = fitted(&night_crushed_blue());
+        let blue = matched.colour.expect("a colour fit").matrix[2];
+        assert!(blue[2] > 0.85, "blue row {blue:?}");
+        assert!(blue[0] < 0.1, "blue row {blue:?}");
     }
 
     /// **A caller that wants the fit and no picture asks for one.**

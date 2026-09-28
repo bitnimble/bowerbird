@@ -28,6 +28,14 @@ const NEUTRAL: f64 = 0.04;
 /// way to clipping, and a cast in the mid-tones is what the eye reads.
 const BAND: (u8, u8) = (60, 210);
 
+/// Samples a colour class needs before its mean is one.
+const MIN_CLASS_SAMPLES: f64 = 32.0;
+
+/// The `full` rendition's long edge, which the photo viewer opens at. A lattice's cost on a
+/// shadow depends on the size it is drawn at - per-pixel noise through a nonlinear map is a cast
+/// once averaged - so the picture is judged at the size people see.
+const VIEWED_EDGE: f64 = 3840.0;
+
 fn main() {
     let dir = env::args().nth(1).expect("a directory of RAWs");
     let limit: usize = env::args().nth(2).and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
@@ -45,11 +53,12 @@ fn main() {
     paths.truncate(limit);
 
     println!(
-        "{:<18} {:>7} {:>8} {:>8} {:>4} {:>8} {:>9} {:>9}  camera exposure, curve (max u error)",
-        "frame", "deltaE", "percept", "relative", "map", "neutrals", "drift g-r", "drift b-r"
+        "{:<18} {:>7} {:>8} {:>8} {:>8} {:>4} {:>8} {:>9} {:>9}  camera exposure, curve (max u error)",
+        "frame", "deltaE", "percept", "classed", "relative", "map", "neutrals", "drift g-r", "drift b-r"
     );
     let mut worst: Vec<(f64, String)> = Vec::new();
     let mut rendered: Vec<f64> = Vec::new();
+    let mut classed: Vec<f64> = Vec::new();
     let mut rendered_relative: Vec<f64> = Vec::new();
     let mut curve_errors: Vec<f64> = Vec::new();
     for path in &paths {
@@ -58,10 +67,11 @@ fn main() {
             None => println!("{name:<18} {:>7} {:>8} {:>8} {:>4}", "declined", "-", "-", "-"),
             Some(r) => {
                 println!(
-                    "{name:<18} {:>7.3} {:>8.3} {:>8.3} {:>4} {:>8} {:>+9.1} {:>+9.1}  \
+                    "{name:<18} {:>7.3} {:>8.3} {:>8.3} {:>8.3} {:>4} {:>8} {:>+9.1} {:>+9.1}  \
                      {:+.3} stops, {:?} ({:.6})",
                     r.delta_e,
                     r.rendered,
+                    r.classed,
                     r.rendered_relative,
                     match r.map {
                         true => "yes",
@@ -74,8 +84,18 @@ fn main() {
                     r.curve,
                     r.curve_error,
                 );
+                if env::var_os("SWEEP_CLASSES").is_some() {
+                    let means: Vec<String> = r
+                        .classes
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(k, mean)| mean.map(|m| format!("{k}:{m:.2}")))
+                        .collect();
+                    println!("  classes {}", means.join(" "));
+                }
                 worst.push((r.drift_gr.hypot(r.drift_br), name));
                 rendered.push(r.rendered);
+                classed.push(r.classed);
                 rendered_relative.push(r.rendered_relative);
                 curve_errors.push(r.curve_error);
             }
@@ -84,8 +104,9 @@ fn main() {
 
     let scored = rendered.len().max(1) as f64;
     println!(
-        "\nrendered against the camera, mean over set: perceptual {:.4}, relative colorimetric {:.4}, over {} frames",
+        "\nrendered against the camera, mean over set: perceptual {:.4}, classed {:.4}, relative colorimetric {:.4}, over {} frames",
         rendered.iter().sum::<f64>() / scored,
+        classed.iter().sum::<f64>() / scored,
         rendered_relative.iter().sum::<f64>() / scored,
         rendered.len(),
     );
@@ -106,6 +127,10 @@ struct Report {
     /// lattice size is actually making. `delta_e` beside it is the fit scoring itself on its own
     /// pairs.
     rendered: f64,
+    /// The same, with every colour class the frame holds counting once whatever its area: a mean
+    /// over pixels cannot see a small red object turn purple.
+    classed: f64,
+    classes: Vec<Option<f64>>,
     rendered_relative: f64,
     map: bool,
     neutrals: usize,
@@ -136,7 +161,7 @@ fn measure(path: &str) -> Option<Report> {
         preset: 6,
         strengths: Strengths::default(),
         sharpen_sigma: None,
-        max_edge: 100_000.0,
+        max_edge: VIEWED_EDGE,
         content_light: None,
     };
     let camera = rawshim::decode_embedded_rgb(path, 0)?;
@@ -145,6 +170,8 @@ fn measure(path: &str) -> Option<Report> {
     Some(Report {
         delta_e: matched.colour.as_ref()?.delta_e,
         rendered: perceptual.rendered,
+        classed: perceptual.classed,
+        classes: perceptual.classes,
         rendered_relative: relative.rendered,
         map: matched.colour.as_ref()?.chroma.is_some(),
         neutrals: perceptual.neutrals,
@@ -158,6 +185,8 @@ fn measure(path: &str) -> Option<Report> {
 
 struct Rendered {
     rendered: f64,
+    classed: f64,
+    classes: Vec<Option<f64>>,
     neutrals: usize,
     drift_gr: f64,
     drift_br: f64,
@@ -179,19 +208,38 @@ fn against_camera(
     // Sampled on a stride rather than every pixel: a 24MP frame has millions of neutrals and
     // the mean of a hundred thousand of them is the same number.
     let (mut count, mut gr, mut br) = (0usize, 0.0f64, 0.0f64);
-    // The rendered picture against the camera's, over every sampled pixel rather than the
-    // neutral ones. **This is the only number here the fit cannot flatter itself on.** The fit's
-    // own `delta_e` scores it against a sample of its own input, and no split of one photograph
-    // makes that independent - the same lawn is on both sides of any partition - so a lattice
-    // that memorises colours scores well on pairs it never saw. This is the output.
+    // The rendered picture against the camera's, over every cell rather than the neutral ones.
+    // **This is the only number here the fit cannot flatter itself on.** The fit's own `delta_e`
+    // scores it against a sample of its own input, and no split of one photograph makes that
+    // independent - the same lawn is on both sides of any partition - so a lattice that memorises
+    // colours scores well on pairs it never saw. This is the output.
+    //
+    // Each side is the mean of its cell in light, not one pixel of it: a single pixel carries
+    // both bodies' grain and sharpening, which no colour fit reproduces, and on a frame of dark
+    // rock that texture outweighs the colour.
     let (mut ours_linear, mut camera_linear) = (Vec::new(), Vec::new());
     let linear = |v: [f64; 3]| [0, 1, 2].map(|c| rawshim::hdr_fit::srgb_eotf(v[c] as u8));
+    let cell_mean = |data: &[u8], wide: usize, x: [usize; 2], y: [usize; 2]| -> [f64; 3] {
+        let mut sum = [0.0f64; 3];
+        for row in y[0]..y[1] {
+            for col in x[0]..x[1] {
+                let at = (row * wide + col) * 3;
+                let v = linear([0, 1, 2].map(|c| f64::from(data[at + c])));
+                (0..3).for_each(|c| sum[c] += v[c]);
+            }
+        }
+        let n = ((x[1] - x[0]) * (y[1] - y[0])).max(1) as f64;
+        sum.map(|s| s / n)
+    };
     let scale = camera.width as f64 / width as f64;
+    let on_camera = |v: usize, limit: usize| ((v as f64 * scale) as usize).min(limit);
     for y in (0..height).step_by(7) {
         let cy = (y as f64 * scale) as usize;
         if cy >= camera.height {
             continue;
         }
+        let rows = [y, (y + 7).min(height)];
+        let camera_rows = [cy, on_camera(rows[1], camera.height).max(cy + 1)];
         for x in (0..width).step_by(7) {
             let cx = (x as f64 * scale) as usize;
             if cx >= camera.width {
@@ -205,8 +253,10 @@ fn against_camera(
             ];
             let o = (y * width + x) * 3;
             let v = [f64::from(ours[o]), f64::from(ours[o + 1]), f64::from(ours[o + 2])];
-            ours_linear.push((linear(v), 0.0));
-            camera_linear.push(linear(t));
+            let cols = [x, (x + 7).min(width)];
+            let camera_cols = [cx, on_camera(cols[1], camera.width).max(cx + 1)];
+            ours_linear.push((cell_mean(&ours, width, cols, rows), 0.0));
+            camera_linear.push(cell_mean(&camera.data, camera.width, camera_cols, camera_rows));
 
             let high = t[0].max(t[1]).max(t[2]);
             let low = t[0].min(t[1]).min(t[2]);
@@ -231,12 +281,22 @@ fn against_camera(
         &vec![1.0; shown],
         &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         256,
+        1,
     );
     let neutral = [rawshim::fit_score::Probe::neutral()];
     let blocks = pollster::block_on(scoring.partials(&rawshim::fit_score::Shape::Saturation, &neutral))?
         .remove(0);
     let rendered = blocks.iter().map(|b| b.flat).sum::<f64>() / shown.max(1) as f64;
+    let classes: Vec<Option<f64>> = (0..blocks.first().map_or(0, |b| b.class_seen.len()))
+        .map(|k| {
+            let seen: f64 = blocks.iter().map(|b| b.class_seen[k]).sum();
+            let error: f64 = blocks.iter().map(|b| b.class_error[k]).sum();
+            (seen >= MIN_CLASS_SAMPLES).then(|| error / seen)
+        })
+        .collect();
+    let present: Vec<f64> = classes.iter().flatten().copied().collect();
+    let classed = present.iter().sum::<f64>() / present.len().max(1) as f64;
 
     let n = count.max(1) as f64;
-    Some(Rendered { rendered, neutrals: count, drift_gr: gr / n, drift_br: br / n })
+    Some(Rendered { rendered, classed, classes, neutrals: count, drift_gr: gr / n, drift_br: br / n })
 }

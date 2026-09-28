@@ -18,6 +18,7 @@
 // groups, whatever adapter runs it.
 
 import prelude;
+import fit_class;
 
 struct Params {
     int pairs;
@@ -47,21 +48,26 @@ struct Params {
 [vk::binding(4, 0)] StructuredBuffer<float> to_srgb;
 /// Per (probe, block), `PARTIAL` floats in `Partial`'s own order.
 [vk::binding(5, 0)] RWStructuredBuffer<float> partial;
-/// Per block, `INVARIANT` floats: the hue balance summed, then the pairs tallied per bucket.
+/// Per block, `INVARIANT` floats: the hue balance summed, then the pairs tallied per bucket and
+/// per class.
 [vk::binding(6, 0)] RWStructuredBuffer<float> invariant;
 
 /// `hdr_fit::BIAS_BUCKETS`, three bands of the camera's chroma against three of its lightness.
 static const int BIAS_BUCKETS = 9;
+/// `hdr_fit::COLOUR_CLASSES`: the neutrals, then each sector of the camera's hue as a muted
+/// class and a vivid one.
+static const int HUE_SECTORS = 12;
+static const int COLOUR_CLASSES = 1 + 2 * HUE_SECTORS;
 /// The trusted balance summed, every balance's magnitude summed, the trusted pairs counted, the
-/// pairs counted, then the tally per bucket.
-static const int INVARIANT = 4 + BIAS_BUCKETS;
-/// Four sums, a signed chroma pair per bucket, then the block's invariant.
+/// pairs counted, then the tally per bucket and per class.
+static const int INVARIANT = 4 + BIAS_BUCKETS + COLOUR_CLASSES;
+/// Four sums, a signed chroma pair per bucket, the deltaE per class, then the block's invariant.
 ///
 /// **The invariant is copied in rather than accumulated.** The hue balance's sum and the tally
 /// per bucket do not depend on the probe, and accumulating them in `fit_score` is ten more floats
 /// live in every thread - which on a small adapter is the difference between the accumulators
 /// living in registers and living in memory. `fit_target` sums them once per block instead.
-static const int PARTIAL = 4 + 2 * BIAS_BUCKETS + INVARIANT;
+static const int PARTIAL = 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES + INVARIANT;
 
 /// A probe scales the chroma about the pair's luma, which is `fitted_saturation`'s blend.
 static const int SHAPE_SATURATION = 0;
@@ -91,32 +97,21 @@ float degrees_of(float r)
     return d < 0.0 ? d + 360.0 : d;
 }
 
-/// CIE L*a*b* of a linear-light sRGB triple, D65, held to the gamut first.
-///
-/// `> 0.0` rather than a `clamp`, so a negative zero or a NaN out of the matrix lands on positive
-/// zero rather than in the distance. Out of gamut still has to land somewhere, and the
-/// alternative is a Lab reading for a colour sRGB cannot print.
-float3 lab_of(float3 v)
-{
-    let r = v.x > 0.0 ? min(v.x, 1.0) : 0.0;
-    let g = v.y > 0.0 ? min(v.y, 1.0) : 0.0;
-    let b = v.z > 0.0 ? min(v.z, 1.0) : 0.0;
-    let x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
-    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    let z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
-    let fx = x > 0.008856 ? pow(x, 1.0 / 3.0) : 7.787 * x + 16.0 / 116.0;
-    let fy = y > 0.008856 ? pow(y, 1.0 / 3.0) : 7.787 * y + 16.0 / 116.0;
-    let fz = z > 0.008856 ? pow(z, 1.0 / 3.0) : 7.787 * z + 16.0 / 116.0;
-    return float3(116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz));
-}
-
 /// Which of `BIAS_BUCKETS` the camera's own rendering puts a pair in.
 int bucket_of(float3 lab)
 {
-    let chroma = len2(lab.y, lab.z);
-    let band = chroma < 6.0 ? 0 : (chroma < 20.0 ? 1 : 2);
+    let chroma = chroma_of(lab);
+    let band = chroma < NEUTRAL_CHROMA ? 0 : (chroma < 20.0 ? 1 : 2);
     let light = lab.x < 30.0 ? 0 : (lab.x < 70.0 ? 1 : 2);
     return band * 3 + light;
+}
+
+/// Which of `COLOUR_CLASSES` the camera's own rendering puts a pair in.
+int class_of(float3 lab)
+{
+    if (chroma_of(lab) < NEUTRAL_CHROMA) { return 0; }
+    let sector = min(int(degrees_of(atan2(lab.z, lab.y)) * (float(HUE_SECTORS) / 360.0)), HUE_SECTORS - 1);
+    return 1 + 2 * sector + select(vivid(lab), 1, 0);
 }
 
 /// `t`'s four cosines by angle addition from one direction.
@@ -315,6 +310,11 @@ void fit_target(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < BIAS_BUCKETS; i++) {
         seen[i] = 0.0;
     }
+    float classed[COLOUR_CLASSES];
+    [ForceUnroll]
+    for (int i = 0; i < COLOUR_CLASSES; i++) {
+        classed[i] = 0.0;
+    }
     for (int k = start; k < end; k++) {
         let t = target[k];
         let srgb = through_srgb(t.xyz);
@@ -330,6 +330,11 @@ void fit_target(uint3 id : SV_DispatchThreadID)
         for (int i = 0; i < BIAS_BUCKETS; i++) {
             seen[i] = select(at == i, seen[i] + 1.0, seen[i]);
         }
+        let in_class = select(trust, class_of(lab), -1);
+        [ForceUnroll]
+        for (int i = 0; i < COLOUR_CLASSES; i++) {
+            classed[i] = select(in_class == i, classed[i] + 1.0, classed[i]);
+        }
     }
 
     let out = b * INVARIANT;
@@ -340,6 +345,10 @@ void fit_target(uint3 id : SV_DispatchThreadID)
     [ForceUnroll]
     for (int i = 0; i < BIAS_BUCKETS; i++) {
         invariant[out + 4 + i] = seen[i];
+    }
+    [ForceUnroll]
+    for (int i = 0; i < COLOUR_CLASSES; i++) {
+        invariant[out + 4 + BIAS_BUCKETS + i] = classed[i];
     }
 }
 
@@ -364,6 +373,11 @@ void fit_score(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < BIAS_BUCKETS; i++) {
         bias_a[i] = 0.0;
         bias_b[i] = 0.0;
+    }
+    float class_error[COLOUR_CLASSES];
+    [ForceUnroll]
+    for (int i = 0; i < COLOUR_CLASSES; i++) {
+        class_error[i] = 0.0;
     }
 
     for (int k = start; k < end; k++) {
@@ -391,6 +405,11 @@ void fit_score(uint3 id : SV_DispatchThreadID)
             bias_a[i] = select(mine, bias_a[i] + (ours.y - t.y), bias_a[i]);
             bias_b[i] = select(mine, bias_b[i] + (ours.z - t.z), bias_b[i]);
         }
+        let in_class = class_of(t.xyz);
+        [ForceUnroll]
+        for (int i = 0; i < COLOUR_CLASSES; i++) {
+            class_error[i] = select(in_class == i, class_error[i] + e, class_error[i]);
+        }
     }
 
     let out = unit * PARTIAL;
@@ -404,7 +423,11 @@ void fit_score(uint3 id : SV_DispatchThreadID)
         partial[out + 4 + 2 * i + 1] = bias_b[i];
     }
     [ForceUnroll]
+    for (int i = 0; i < COLOUR_CLASSES; i++) {
+        partial[out + 4 + 2 * BIAS_BUCKETS + i] = class_error[i];
+    }
+    [ForceUnroll]
     for (int j = 0; j < INVARIANT; j++) {
-        partial[out + 4 + 2 * BIAS_BUCKETS + j] = invariant[b * INVARIANT + j];
+        partial[out + 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES + j] = invariant[b * INVARIANT + j];
     }
 }
