@@ -13,6 +13,8 @@
 // which is legal because a non-negative float orders the same way its bit pattern does, and these
 // planes are box averages and gated blurs of non-negative light.
 import prelude;
+import primaries;
+import fit_class;
 
 struct Params {
     int width;
@@ -69,7 +71,10 @@ static const uint HALF_BINS = 65536;
 /// that sit *inside* the fit domain. The matrix still wants all three, being cross-channel.
 static const uint ALL = 8;
 
-/// All three channels carry colour, which is a weaker test than `ALL` and a different one.
+/// All three of our channels carry colour, which is a weaker test than `ALL` and a different one.
+/// However dark the camera's pixel, it is a pair: the stages that read one weigh it by how much its
+/// channels say (`hdr_fit::trust`), so a dark olive teaches the shadow's nodes a little rather than
+/// leaving them to extrapolate.
 ///
 /// `ALL` requires our side below the ceiling, because the stage it gates is a per-channel curve and
 /// that ceiling is the top of the curve's domain. The chroma stages want no such thing: they need a
@@ -221,19 +226,24 @@ void fit_extent_finish()
     marks[CEILING].store(asuint(chosen));
 }
 
-/// Which sixth of the hue circle the camera put this pixel in, and one bucket for everything too
-/// close to grey to have a hue at all.
+/// Which of `hue_bins` around the hue circle the camera put this pixel in, offset by `hue_bins`
+/// where it is vivid, and one bucket after those for everything too close to grey to have a hue.
 ///
 /// A chroma ratio taken between crushed codes is noise: a pixel the camera rendered 2/1/3 reads as
 /// 67% chroma and lands in a hue bin on nothing.
+///
+/// Vivid apart because the hues a scene is mostly made of hold its saturated objects too: a red
+/// shares its bin with every skin and every wooden table, and weighted as one of them it is
+/// outvoted by them.
 uint hue_bucket(int p)
 {
     let t = jpeg_at(p);
     let high = high_of(t);
     let low = low_of(t);
     if (!(high > pc.camera_crushed) || (high - low) / high < pc.hue_chroma) {
-        return uint(pc.hue_bins);
+        return uint(2 * pc.hue_bins);
     }
+    let vivid_offset = select(vivid(lab_of(mul(R2020_TO_SRGB, t))), uint(pc.hue_bins), 0u);
     let span = high - low;
     var sixth = 4.0 + (t.x - t.y) / span;
     if (t.x >= t.y && t.x >= t.z) {
@@ -242,7 +252,7 @@ uint hue_bucket(int p)
         sixth = 2.0 + (t.z - t.x) / span;
     }
     let turns = fmod(sixth + 6.0, 6.0) / 6.0;
-    return min(uint(turns * float(pc.hue_bins)), uint(pc.hue_bins - 1));
+    return min(uint(turns * float(pc.hue_bins)), uint(pc.hue_bins - 1)) + vivid_offset;
 }
 
 /// The camera's luma at a pixel, on the square root a gradient is measured over.
@@ -314,7 +324,7 @@ void fit_mask(uint3 id: SV_DispatchThreadID)
     }
     if (colour == 0) { return; }
     if (mask == 7) { mask |= ALL; }
-    if (colour == 7 && low_of(t) > pc.camera_crushed) { mask |= COLOUR; }
+    if (colour == 7) { mask |= COLOUR; }
 
     // Gradient on the square root of luma rather than on linear light. A fixed linear threshold is
     // not the same test at both ends - in the shadows almost nothing exceeds it and in the sky
@@ -325,7 +335,7 @@ void fit_mask(uint3 id: SV_DispatchThreadID)
     if (across > pc.gradient_limit) { return; }
 
     bits[p] = mask | frame | (hue << HUE_SHIFT);
-    if ((mask & ALL) != 0) { marks[HUES + hue].add(1); }
+    if ((mask & (ALL | COLOUR)) != 0) { marks[HUES + hue].add(1); }
 }
 
 /// Whether either side rendered this pixel near enough to neutral to count as one of the frame's

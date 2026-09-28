@@ -1,14 +1,14 @@
 // Phase 8: the chroma strength, as a walk along four anchors.
 //
-// The slider runs 0..3 across noisy, the LOESS baseline at half res, the quarter-res level
-// upsampled, and the eighth - so its unit is *how far the colour is allowed to be smoothed*, in
+// The slider runs 0..3 across noisy, the LOESS baseline at half res, the quarter-res reconstruction,
+// and the eighth - so its unit is *how far the colour is allowed to be smoothed*, in
 // scales, rather than an amount of anything. The smoothstep is what keeps the crossings from
 // showing as the slider moves.
 //
 // **Bound with only the anchors the slider can reach**, which is two sets of three planes beside
 // the regression: all four is twelve storage buffers, and an Apple GPU offers a stage ten
 // (`gpu::MOST_STORAGE_BUFFERS`). The slider is one number for the whole dispatch, so the host knows
-// which two. The green difference is weighed after, by `weigh_green_difference`.
+// which two.
 
 // The answer is written back over the second anchor rather than into a fourth set of
 // half-resolution planes: this is the last thing that reads the regression, and three more
@@ -30,24 +30,8 @@ struct Push {
     int width;
     int height;
     float slider;
-    /// `galosh::LEVEL_REACH`.
-    float reach;
 };
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
-
-/// A coarser level's chroma, let move the finer one's by about the noise and no further.
-///
-/// **A coarse level cannot see an edge its box downsample already averaged across**, and the
-/// guided upsample only clamps to those mixed samples, so taken whole it spreads a colour step
-/// by its own sample size: a saturated square on grey came back sixteen pixels wide off the
-/// eighth. What the level is for is mottle, which is residual noise and moves the chroma by less
-/// than one sigma, so gating the move on its own size keeps that and bounds any edge's bleed near
-/// `0.6 * reach` sigma of the GAT, whatever the mix.
-float3 reached(float3 fine, float3 coarse)
-{
-    let d = coarse - fine;
-    return fine + exp(-dot(d, d) / (6.0 * pc.reach * pc.reach)) * d;
-}
 
 /// `t_raw` of the way from `lo` to `hi`, eased.
 float3 walked(float3 lo, float3 hi, float t_raw)
@@ -73,14 +57,11 @@ void smoothstep_blend_3p(uint3 id : SV_DispatchThreadID)
         blended = near;
     } else if (pc.slider <= 1.0) {
         blended = walked(near, b, pc.slider);
+    } else if (pc.slider <= 2.0) {
+        blended = walked(b, near, pc.slider - 1.0);
     } else {
-        let c = reached(b, near);
-        if (pc.slider <= 2.0) {
-            blended = walked(b, c, pc.slider - 1.0);
-        } else {
-            let d = reached(c, float3(c1_far[p], c2_far[p], c3_far[p]));
-            blended = pc.slider >= 3.0 ? d : walked(c, d, pc.slider - 2.0);
-        }
+        let far = float3(c1_far[p], c2_far[p], c3_far[p]);
+        blended = pc.slider >= 3.0 ? far : walked(near, far, pc.slider - 2.0);
     }
     c1_loess_h[p] = blended.x;
     c2_loess_h[p] = blended.y;

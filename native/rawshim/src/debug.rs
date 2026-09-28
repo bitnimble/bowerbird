@@ -495,6 +495,7 @@ pub fn run(command: &Command) -> Result<Reply, String> {
                     &vec![1.0; counted],
                     &identity,
                     256,
+                    1,
                 );
                 let blocks = pollster::block_on(
                     scoring.partials(&crate::fit_score::Shape::Saturation, &[crate::fit_score::Probe::neutral()]),

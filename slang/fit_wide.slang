@@ -32,9 +32,8 @@ struct Params {
     float sample_range;
     /// Below this much chroma the camera's pixel is not what this pass exists for.
     float min_chroma;
-    /// `readable`: neither end of the camera's range says anything.
+    /// `readable`: above this the camera's range says nothing.
     float camera_clipping;
-    float camera_crushed;
     /// `MARGIN_DARK`, for the crumb rule the mask has.
     float margin_dark;
     /// `FLAT_ENOUGH`, and the ceiling our own side may not reach.
@@ -102,11 +101,11 @@ bool flat_about(StructuredBuffer<float> plane, int stride, int x, int y)
     return true;
 }
 
-/// Whether the camera's pixel measured anything: neither end of its range says anything.
+/// Whether the camera's pixel measured anything: clipped says nothing. A dark one says a little,
+/// and the lattice weighs it by how little (`hdr_fit::trust`).
 bool readable(float3 t)
 {
-    return max(t.x, max(t.y, t.z)) < pc.camera_clipping
-        && min(t.x, min(t.y, t.z)) > pc.camera_crushed;
+    return max(t.x, max(t.y, t.z)) < pc.camera_clipping;
 }
 
 /// Only the colours this pass exists for. A near-neutral costs the same neighbour test as a

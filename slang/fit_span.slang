@@ -106,26 +106,63 @@ void fit_span_high(uint3 id: SV_DispatchThreadID)
     histogram[uint(pc.axis) * AXIS_BINS + (ordered(spread_of(k)) >> 16)].add(1);
 }
 
+/// Lanes that walk a half's buckets together, each a contiguous share of them.
+static const uint WALKERS = 256;
+static const uint SHARE = HALF_BINS / WALKERS;
+groupshared uint shares[WALKERS];
+
+/// Where a walk of the `HALF_BINS` buckets from `from`, its count begun at `seen`, first passes
+/// `rank`: the bucket, and the count below it. Every lane of the group calls it, and the one whose
+/// share holds the answer is the one it returns true to.
+bool passed(uint lane, uint from, uint seen, uint rank, out uint bucket, out uint below)
+{
+    bucket = 0u;
+    below = 0u;
+    let first = from + lane * SHARE;
+    var total = 0u;
+    for (uint b = 0u; b < SHARE; b++) { total += histogram[first + b].load(); }
+    shares[lane] = total;
+    GroupMemoryBarrierWithGroupSync();
+    if (lane == 0u) {
+        var run = seen;
+        for (uint s = 0u; s < WALKERS; s++) {
+            let n = shares[s];
+            shares[s] = run;
+            run += n;
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+    var run = shares[lane];
+    // Before the next call writes `shares` over what this one is still reading.
+    GroupMemoryBarrierWithGroupSync();
+    if (rank < run || run + total <= rank) { return false; }
+    for (uint b = 0u; b < SHARE; b++) {
+        let count = histogram[first + b].load();
+        if (run + count > rank) {
+            bucket = lane * SHARE + b;
+            below = run;
+            return true;
+        }
+        run += count;
+    }
+    return false;
+}
+
 /// Which bucket each rank fell in, and how many samples sat below it.
 [shader("compute")]
-[numthreads(1, 1, 1)]
-void fit_span_pick()
+[numthreads(WALKERS, 1, 1)]
+void fit_span_pick(uint3 id: SV_GroupThreadID)
 {
     let bins = uint(pc.axis) * AXIS_BINS;
     let base = uint(pc.axis) * MARKS_PER_AXIS;
     let ranks = uint2(uint(pc.low_rank), uint(pc.high_rank));
-    var found = uint2(0, 0);
-    var seen = 0u;
-    for (uint bucket = 0u; bucket < HALF_BINS; bucket++) {
-        let count = histogram[bins + bucket].load();
-        for (uint r = 0; r < 2; r++) {
-            if (found[r] == 0 && seen + count > ranks[r]) {
-                marks[base + r * PER_RANK] = bucket;
-                marks[base + r * PER_RANK + 1] = seen;
-                found[r] = 1;
-            }
+    for (uint r = 0; r < 2; r++) {
+        uint bucket;
+        uint below;
+        if (passed(id.x, bins, 0u, ranks[r], bucket, below)) {
+            marks[base + r * PER_RANK] = bucket;
+            marks[base + r * PER_RANK + 1] = below;
         }
-        seen += count;
     }
 }
 
@@ -146,22 +183,18 @@ void fit_span_low(uint3 id: SV_DispatchThreadID)
 }
 
 [shader("compute")]
-[numthreads(1, 1, 1)]
-void fit_span_finish()
+[numthreads(WALKERS, 1, 1)]
+void fit_span_finish(uint3 id: SV_GroupThreadID)
 {
     let bins = uint(pc.axis) * AXIS_BINS;
     let base = uint(pc.axis) * MARKS_PER_AXIS;
     let ranks = uint2(uint(pc.low_rank), uint(pc.high_rank));
     for (uint r = 0; r < 2; r++) {
-        var seen = marks[base + r * PER_RANK + 1];
-        for (uint low = 0u; low < HALF_BINS; low++) {
-            let count = histogram[bins + (r + 1) * HALF_BINS + low].load();
-            if (seen + count > ranks[r]) {
-                marks[base + r * PER_RANK + 2] =
-                    unordered((marks[base + r * PER_RANK] << 16) | low);
-                break;
-            }
-            seen += count;
+        let seen = marks[base + r * PER_RANK + 1];
+        uint low;
+        uint below;
+        if (passed(id.x, bins + (r + 1) * HALF_BINS, seen, ranks[r], low, below)) {
+            marks[base + r * PER_RANK + 2] = unordered((marks[base + r * PER_RANK] << 16) | low);
         }
     }
 }

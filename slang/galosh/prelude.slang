@@ -4,6 +4,13 @@
 // names are the kernel's own - and the host writes one 256-byte-aligned slot per dispatch and
 // binds it with a dynamic offset.
 module prelude;
+import "../px.slang";
+import "../light.slang";
+
+public static const Span<Tap> COLOUR_GUIDE_RADIUS = { 1 };
+public static const float GREEN_DIFFERENCE_VARIANCE = 6.0;
+public static const float DETAIL_TAPS[3] = { 29.0 / 64.0, -1.0 / 8.0, 1.0 / 64.0 };
+public static const float PHASE_BW = 4.0;
 
 // `params_buf` slots. Every consumer reads them off the device: only α, σ² and the IRLS scale
 // ever cross back to the host.
@@ -42,6 +49,72 @@ public uint cfa_colour(Pattern p, int r, int c)
     let word = slot / 12u;
     let packed = word == 0u ? p.packed0 : (word == 1u ? p.packed1 : p.packed2);
     return (packed >> ((slot - word * 12u) * 2u)) & 3u;
+}
+
+public float2 colour_axes(float3 c, float green_sign)
+{
+    if (green_sign == 0.0) { return c.xy; }
+    return float2((c.x - green_sign * c.y) / sqrt(2.0), c.z);
+}
+
+public float green_confidence(float difference)
+{
+    let observed = difference * difference;
+    return max(observed - GREEN_DIFFERENCE_VARIANCE, 0.0) / max(observed, 1e-10);
+}
+
+public float luma_sample(StructuredBuffer<float> luma, int width, int height, int x, int y)
+{
+    return luma[clamp(y, 0, height - 1) * width + clamp(x, 0, width - 1)];
+}
+
+public float pooled_luma(StructuredBuffer<float> luma, int width, int height, int x, int y, bool pooled)
+{
+    x = clamp(x, 0, width - 1);
+    y = clamp(y, 0, height - 1);
+    let centre = luma_sample(luma, width, height, x, y);
+    if (!pooled) { return centre; }
+    var sum = 0.0;
+    var weights = 0.0;
+    for (int dy = -1; dy <= 1; dy++) {
+        let sy = y + dy;
+        if (sy < 0 || sy >= height) { continue; }
+        for (int dx = -1; dx <= 1; dx++) {
+            let sx = x + dx;
+            if (sx < 0 || sx >= width) { continue; }
+            let value = luma_sample(luma, width, height, sx, sy);
+            let delta = value - centre;
+            let weight = float((2 - abs(dx)) * (2 - abs(dy)))
+                * exp(-delta * delta / (2.0 * PHASE_BW * PHASE_BW));
+            sum += weight * value;
+            weights += weight;
+        }
+    }
+    return sum / weights;
+}
+
+float brightness_across(StructuredBuffer<float> luma, int width, int height, int x, int y)
+{
+    var result = 0.0;
+    for (int k = 1; k <= 3; k++) {
+        result += DETAIL_TAPS[k - 1] * (luma_sample(luma, width, height, x + k, y)
+            - luma_sample(luma, width, height, x - k, y));
+    }
+    return result;
+}
+
+public float3 brightness_derivatives(StructuredBuffer<float> luma, int width, int height, int x, int y)
+{
+    let across = brightness_across(luma, width, height, x, y);
+    var down = 0.0;
+    var mixed = 0.0;
+    for (int k = 1; k <= 3; k++) {
+        down += DETAIL_TAPS[k - 1] * (luma_sample(luma, width, height, x, y + k)
+            - luma_sample(luma, width, height, x, y - k));
+        mixed += DETAIL_TAPS[k - 1] * (brightness_across(luma, width, height, x, y + k)
+            - brightness_across(luma, width, height, x, y - k));
+    }
+    return float3(across, down, mixed);
 }
 
 /// How far a photosite of this colour sits from the luma its neighbourhood carries, in terms of
@@ -88,6 +161,22 @@ public static const float BLOCK_MEAN_CEILING = 0.97;
 // a frame with no measurable shot noise is a frame the transform still has to code - because
 // `build_inv_lut` is accurate at any alpha now that it stops summing where f32 cannot.
 public static const float ALPHA_MIN = 1e-8;
+
+public float gat_forward(Gain sample, float alpha, float sigma_sq)
+{
+    let a = max(alpha, ALPHA_MIN);
+    let sigma_raw = sqrt(max(sigma_sq, 1e-20));
+    let y_break = -0.375 * a;
+    let t_break = 2.0 * sigma_raw / a;
+    let x = sample.g;
+    var x_safe = x;
+    if (!(x == x)) { x_safe = 0.0; }
+    if (x_safe >= y_break) {
+        let arg = a * x_safe + 0.375 * a * a + sigma_sq;
+        return (2.0 / a) * sqrt(max(arg, 0.0));
+    }
+    return t_break + (x_safe - y_break) / sigma_raw;
+}
 
 /// Workgroups the two dark-reference reducers are dispatched over, which they stride their
 /// grid by.

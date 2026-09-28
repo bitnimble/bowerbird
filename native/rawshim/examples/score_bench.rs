@@ -81,6 +81,7 @@ fn scoring(gpu: &'static rawshim::gpu::Gpu, pairs: usize) -> Scoring {
         &balance,
         &rawshim::hdr_fit::rec2020_to_srgb(),
         BLOCK,
+        32,
     )
 }
 

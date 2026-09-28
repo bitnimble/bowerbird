@@ -202,7 +202,7 @@ pub(crate) async fn select(
 ) -> Option<Selected> {
     let pixels = width * height;
     let blocks = pixels.div_ceil(BLOCK).max(1);
-    let hue_slots = crate::hdr_fit::HUE_BINS + 1;
+    let hue_slots = crate::hdr_fit::HUE_SLOTS;
     let marks_words = HUES + hue_slots;
 
     let held = |label, words: usize, usage| {

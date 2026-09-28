@@ -56,6 +56,18 @@ pub fn bayer_noisy() -> PathBuf {
     fixture("DSC05765.ARW")
 }
 
+/// A street at night under warm lamps, whose camera crushes blue across most of the frame and
+/// renders a red awning and red lanterns.
+pub fn night_crushed_blue() -> PathBuf {
+    fixture("DSC05726.ARW")
+}
+
+/// Two brown dogs on a lawn, beside a wall: a frame mostly of one green, whose fit the grass can
+/// take over and tint everything else with.
+pub fn lawn() -> PathBuf {
+    fixture("IMG_8789.CR3")
+}
+
 fn fixture(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures").join(name);
     // A hard failure rather than a skip. The feature is opt-in, so asking for it and
@@ -198,7 +210,6 @@ fn tile_job(path: &str, tile: Option<[usize; 4]>, levels: Option<crate::tone::Le
         noise_fit: None,
         levels,
         scene_peak: None,
-        stated_white: false,
         photo_analysis: None,
         // **On, and that took a bug to learn.** Off, this compared everything about a tile
         // except the one stage that reads a *neighbourhood* of the region it was handed - so a
@@ -2249,6 +2260,126 @@ mod camera_match {
         ))
         .expect("the fit finds something worth applying");
         (profile, matched)
+    }
+
+    /// A camera channel at its floor reaches the lattice and never the matrix: taken as a level,
+    /// this frame's crushed blue fits a blue row that puts blue on red, and its awning and
+    /// lanterns render pink.
+    #[test]
+    fn a_crushed_blue_does_not_put_blue_on_red() {
+        let (_, matched) = fitted(&night_crushed_blue());
+        let blue = matched.colour.expect("a colour fit").matrix[2];
+        assert!(blue[2] > 0.85, "blue row {blue:?}");
+        assert!(blue[0] < 0.1, "blue row {blue:?}");
+    }
+
+    /// The lawn does not tint the rest of the picture: on the pixels the camera renders neutral,
+    /// and on the warm ones - the dogs, the wall, the wood - the render is no greener than the
+    /// camera's own JPEG. Signed, so a green cast cannot hide in a mean of magnitudes.
+    #[test]
+    fn a_lawn_does_not_tint_the_dogs_green() {
+        let path = lawn();
+        let (_, matched) = fitted(&path);
+        let frame = decode(&path, 3840);
+        let source = crate::hdr::Source {
+            samples: frame.samples16().expect("a 16-bit decode"),
+            width: frame.width,
+            height: frame.height,
+        };
+        let options = crate::hdr_args::EncodeOptions {
+            still_chroma: crate::hdr_args::Chroma::Yuv444,
+            output_path: String::new(),
+            grade: crate::hdr::Grade {
+                reference_white_nits: crate::light::Light::exactly(203.0),
+                white_quantile: 0.9,
+            },
+            crf: 26,
+            preset: 6,
+            strengths: crate::image::Strengths::default(),
+            sharpen_sigma: None,
+            max_edge: 1600.0,
+            content_light: None,
+        };
+        let (ours, width, height) = crate::hdr::graded_under(
+            &source,
+            &options,
+            Some(&matched),
+            crate::gpu::Output::Srgb,
+            crate::gpu::Intent::Perceptual,
+        );
+        let camera = crate::decode_embedded_rgb(path.to_str().unwrap(), width.max(height))
+            .expect("the embedded JPEG");
+        let scale = camera.width as f64 / width as f64;
+
+        // Signed green over red, ours less the camera's, summed per population.
+        let (mut neutral, mut warm) = ((0.0, 0usize), (0.0, 0usize));
+        let mut warm_chroma = 0.0;
+        for y in (0..height).step_by(3) {
+            for x in (0..width).step_by(3) {
+                let (cx, cy) = ((x as f64 * scale) as usize, (y as f64 * scale) as usize);
+                if cx >= camera.width || cy >= camera.height {
+                    continue;
+                }
+                let t: [f64; 3] = std::array::from_fn(|c| f64::from(camera.data[(cy * camera.width + cx) * 3 + c]));
+                let v: [f64; 3] = std::array::from_fn(|c| f64::from(ours[(y * width + x) * 3 + c]));
+                let (high, low) = (t[0].max(t[1]).max(t[2]), t[0].min(t[1]).min(t[2]));
+                if !(60.0..=210.0).contains(&high) {
+                    continue;
+                }
+                let (opponent, hue, retained) = green_drift(t, v);
+                let (into, greener) = match ((high - low) / high, t[0] > t[1] && t[1] > t[2]) {
+                    (spread, _) if spread < 0.04 => (&mut neutral, opponent),
+                    (spread, true) if spread > 0.15 => {
+                        warm_chroma += retained;
+                        (&mut warm, hue)
+                    }
+                    _ => continue,
+                };
+                (into.0, into.1) = (into.0 + greener, into.1 + 1);
+            }
+        }
+        let drift = |(sum, count): (f64, usize)| sum / count.max(1) as f64;
+        let said = format!(
+            "greener than the camera's by {:+.2} counts on {} neutrals, {:+.2} on {} warm pixels",
+            drift(neutral), neutral.1, drift(warm), warm.1,
+        );
+        assert!(neutral.1 > 500 && warm.1 > 500, "{said}");
+        assert!(warm_chroma > 0.0, "warm pixels lost or reversed their chroma");
+        assert!(drift(neutral) < 2.0 && drift(warm) < 2.0, "{said}");
+    }
+
+    fn green_drift(reference: [f64; 3], colour: [f64; 3]) -> (f64, f64, f64) {
+        let weights = crate::image::LUMA.map(f64::from);
+        let total = weights.iter().sum::<f64>();
+        let luma = |rgb: [f64; 3]| -> f64 {
+            rgb.into_iter().zip(weights).map(|(value, weight)| value * weight).sum::<f64>() / total
+        };
+        let level = luma(reference);
+        let source_level = luma(colour);
+        let scale = level / source_level.max(f64::EPSILON);
+        let target = reference.map(|value| value - level);
+        let chroma = colour.map(|value| (value - source_level) * scale);
+        let power = target.iter().map(|value| value * value).sum::<f64>();
+        let retained = chroma.iter().zip(target).map(|(value, target)| value * target).sum::<f64>()
+            / power.max(f64::EPSILON);
+        let opponent = (colour[1] - colour[0]) * scale - (reference[1] - reference[0]);
+        let hue = (chroma[1] - retained * target[1]) - (chroma[0] - retained * target[0]);
+        (opponent, hue, retained)
+    }
+
+    #[test]
+    fn brightness_does_not_hide_a_green_cast() {
+        let reference = [100.0, 80.0, 60.0];
+        for scale in [0.5, 2.0] {
+            let (opponent, hue, retained) = green_drift(reference, reference.map(|value| value * scale));
+            assert!(opponent.abs() < 1e-12 && hue.abs() < 1e-12);
+            assert!((retained - 1.0).abs() < 1e-12);
+        }
+        let (opponent, hue, retained) = green_drift(reference, [90.0, 80.0, 70.0]);
+        assert!(opponent > 2.0 && hue.abs() < 1e-12);
+        assert!(retained > 0.0 && retained < 1.0);
+        assert!(green_drift(reference, [200.0, 165.0, 120.0]).1 > 2.0);
+        assert_eq!(green_drift(reference, [80.0; 3]).2, 0.0);
     }
 
     /// **A caller that wants the fit and no picture asks for one.**

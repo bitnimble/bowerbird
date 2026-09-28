@@ -5,7 +5,8 @@
 //! ```
 //!
 //! Writes the window of the conditioned mosaic before and after the denoise, and their
-//! difference amplified, as PGMs. Coordinates are the sensor's own.
+//! difference amplified, as PGMs, and the window before as little-endian f32 for a fixture.
+//! Coordinates are the sensor's own; the window origin must align to the CFA period.
 
 use rawshim::galosh::Amounts;
 
@@ -55,6 +56,7 @@ fn main() {
     );
 
     let cfa = held.cfa();
+    assert!(cfa.aligned(x, y), "the window origin must align to the CFA period");
     let fit = pollster::block_on(rawshim::galosh::fit(gpu, kernels, mosaic, &cfa));
     eprintln!("fit: {fit:?}");
 
@@ -72,6 +74,9 @@ fn main() {
 
     let before = window(&noisy, stride, x, y, w, h);
     let after = window(&denoised, stride, x, y, w, h);
+    let raw: Vec<u8> = before.iter().flat_map(|v| v.to_le_bytes()).collect();
+    std::fs::write(format!("{out}/window.f32"), raw).expect("wrote");
+    eprintln!("cfa {:?}", cfa);
 
     // The scene is dark; a fixed gain makes the window readable without inventing a grade.
     let lifted = |values: &[f32]| values.iter().map(|v| v * 8.0).collect::<Vec<f32>>();

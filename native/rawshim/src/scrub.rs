@@ -12,6 +12,8 @@
 //! told the file was cleaned.
 
 use std::collections::HashSet;
+use rawler::formats::bmff::ext_cr3::cr3desc::Cr3DescBox;
+use rawler::formats::bmff::ext_cr3::cr3xpacket::Cr3XpacketBox;
 
 /// Tags whose values name somebody, somewhere, or one particular camera.
 ///
@@ -64,7 +66,7 @@ fn type_size(kind: u16) -> usize {
     match kind {
         1 | 2 | 6 | 7 => 1,
         3 | 8 => 2,
-        4 | 9 | 11 => 4,
+        4 | 9 | 11 | 13 => 4,
         5 | 10 | 12 => 8,
         _ => 0,
     }
@@ -77,26 +79,18 @@ struct Block<'a> {
 
 impl Block<'_> {
     fn short(&self, at: usize) -> Option<u16> {
-        let bytes = self.bytes.get(at..at + 2)?.try_into().ok()?;
+        let bytes = self.bytes.get(at..at.checked_add(2)?)?.try_into().ok()?;
         Some(if self.big_endian { u16::from_be_bytes(bytes) } else { u16::from_le_bytes(bytes) })
     }
 
     fn long(&self, at: usize) -> Option<u32> {
-        let bytes = self.bytes.get(at..at + 4)?.try_into().ok()?;
+        let bytes = self.bytes.get(at..at.checked_add(4)?)?.try_into().ok()?;
         Some(if self.big_endian { u32::from_be_bytes(bytes) } else { u32::from_le_bytes(bytes) })
     }
 
-    fn clear_short(&mut self, at: usize) {
-        if let Some(slot) = self.bytes.get_mut(at..at + 2) {
-            slot.fill(0);
-        }
-    }
-
-    fn blank(&mut self, at: usize, len: usize) {
-        let end = at.saturating_add(len).min(self.bytes.len());
-        if let Some(slot) = self.bytes.get_mut(at..end) {
-            slot.fill(0);
-        }
+    fn blank(&mut self, at: usize, len: usize) -> Option<()> {
+        self.bytes.get_mut(at..at.checked_add(len)?)?.fill(0);
+        Some(())
     }
 }
 
@@ -104,10 +98,15 @@ impl Block<'_> {
 /// not just the walk: an entry's own SubIFD list is already bounded by the block, but a directory
 /// may repeat the tag once per twelve bytes of itself, and the product of the two is a queue
 /// quadratic in the size of the file that asked for it - grown whole before the first pop.
-fn queue(pending: &mut Vec<(usize, bool)>, at: Option<u32>, is_gps: bool) {
-    if pending.len() < IFD_CEILING {
-        pending.push((at.unwrap_or(0) as usize, is_gps));
+fn queue(pending: &mut Vec<(usize, bool)>, at: u32, is_gps: bool) -> Option<()> {
+    if at == 0 {
+        return Some(());
     }
+    if pending.len() >= IFD_CEILING {
+        return None;
+    }
+    pending.push((at as usize, is_gps));
+    Some(())
 }
 
 /// Blanks one TIFF block in place. False where these bytes are not one.
@@ -116,67 +115,66 @@ fn queue(pending: &mut Vec<(usize, bool)>, at: Option<u32>, is_gps: bool) {
 /// is a TIFF, a `CMT1` box inside a CR3, and the APP1 of a preview: in all three the offsets
 /// inside are relative to the header rather than to the file.
 pub fn scrub_tiff(bytes: &mut [u8]) -> bool {
+    scrub_block(bytes, false).is_some()
+}
+
+/// A TIFF block whose first directory is itself a GPS directory, as a CR3's `CMT4` is.
+fn scrub_block(bytes: &mut [u8], gps_first: bool) -> Option<()> {
     let big_endian = match bytes.get(..2) {
         Some(b"MM") => true,
         Some(b"II") => false,
-        _ => return false,
+        _ => return None,
     };
     let mut block = Block { bytes, big_endian };
     // 42 is TIFF's; Panasonic writes 85 into an RW2 and is otherwise an ordinary TIFF.
     if !matches!(block.short(2), Some(42 | 85)) {
-        return false;
+        return None;
     }
-    let Some(first) = block.long(4) else {
-        return false;
-    };
+    let first = block.long(4)? as usize;
+    if first < 8 { return None; }
 
-    let mut seen: HashSet<usize> = HashSet::new();
-    let mut pending = vec![(first as usize, false)];
+    let mut seen = HashSet::new();
+    let mut pending = vec![(first, gps_first)];
     let mut walked = 0;
 
     while let Some((ifd, is_gps)) = pending.pop() {
-        if ifd == 0 || !seen.insert(ifd) {
+        if !seen.insert((ifd, is_gps)) {
             continue;
         }
         walked += 1;
-        if walked > IFD_CEILING {
-            break;
+        if ifd < 8 || walked > IFD_CEILING {
+            return None;
         }
-        let Some(entries) = block.short(ifd) else {
-            continue;
-        };
+        let entries = block.short(ifd)?;
+        let start = ifd.checked_add(2)?;
+        let next_at = start.checked_add(usize::from(entries) * 12)?;
+        let next = block.long(next_at)?;
         for i in 0..usize::from(entries) {
-            let at = ifd + 2 + i * 12;
-            let (Some(tag), Some(kind), Some(count)) =
-                (block.short(at), block.short(at + 2), block.long(at + 4))
-            else {
-                break;
-            };
-            let len = type_size(kind).saturating_mul(count as usize);
+            let at = start + i * 12;
+            let tag = block.short(at)?;
+            let kind = block.short(at + 2)?;
+            let count = block.long(at + 4)? as usize;
+            let size = type_size(kind);
+            if size == 0 { return None; }
+            let len = size.checked_mul(count)?;
             // Four bytes or fewer live in the entry; anything longer is addressed from here.
-            let value_at = if len <= 4 { at + 8 } else { block.long(at + 8).unwrap_or(0) as usize };
+            let value_at = if len <= 4 { at + 8 } else { block.long(at + 8)? as usize };
+            if value_at < 8 { return None; }
+            block.bytes.get(value_at..value_at.checked_add(len)?)?;
 
             if is_gps || IDENTIFYING.contains(&tag) {
-                block.blank(value_at, len);
+                block.blank(value_at, len)?;
                 continue;
             }
             match tag {
-                EXIF_IFD | INTEROP_IFD => queue(&mut pending, block.long(at + 8), false),
-                GPS_IFD => queue(&mut pending, block.long(at + 8), true),
-                // One SubIFD sits in the entry; several are a list of addresses it points at.
-                //
-                // Bounded by what the block could actually hold rather than by the count the tag
-                // declares: `count` is four bytes off the file, so a corrupt one asks for four
-                // billion addresses and is answered with four billion pushes before anything
-                // above gets to refuse it.
+                EXIF_IFD | INTEROP_IFD | GPS_IFD => {
+                    if !matches!(kind, 4 | 13) || count != 1 { return None; }
+                    queue(&mut pending, block.long(value_at)?, tag == GPS_IFD)?;
+                }
                 SUBIFDS => {
-                    let slots = (count as usize).min(block.bytes.len().saturating_sub(value_at) / 4);
-                    for slot in 0..slots {
-                        if pending.len() >= IFD_CEILING {
-                            break;
-                        }
-                        let address = if count == 1 { block.long(at + 8) } else { block.long(value_at + slot * 4) };
-                        queue(&mut pending, address, false);
+                    if !matches!(kind, 4 | 13) || count > IFD_CEILING { return None; }
+                    for slot in 0..count {
+                        queue(&mut pending, block.long(value_at + slot * 4)?, false)?;
                     }
                 }
                 _ => {}
@@ -184,13 +182,18 @@ pub fn scrub_tiff(bytes: &mut [u8]) -> bool {
         }
         // The values are gone above; this is what stops a reader finding an empty latitude and
         // reporting the equator rather than nothing.
-        if is_gps {
-            block.clear_short(ifd);
-            continue;
+        // A root directory keeps its entries, values blanked, since a TIFF reader refuses a root
+        // with none - a CR3's `CMT4` then refuses to open. A blanked rational is 0/0, not the equator.
+        queue(&mut pending, next, is_gps)?;
+        if is_gps && ifd != first {
+            block.blank(ifd, 2)?;
+            // An empty directory's next pointer is read where its first entry was: left as that
+            // entry's tag and type, a reader follows it into the file and gives up on the whole
+            // CR3.
+            block.blank(ifd + 2, 4)?;
         }
-        queue(&mut pending, block.long(ifd + 2 + usize::from(entries) * 12), false);
     }
-    true
+    Some(())
 }
 
 /// Every segment a JPEG hides identity in, blanked, and how many EXIF directories there were.
@@ -200,10 +203,10 @@ pub fn scrub_tiff(bytes: &mut [u8]) -> bool {
 /// is also the whole of the work for a Fuji RAF, which keeps its EXIF in the preview - and the
 /// count is how that case knows it understood the file at all. Only the EXIF is counted: the
 /// other two are text a file may simply not carry, so finding none of either says nothing.
-fn scrub_app1(bytes: &mut [u8]) -> usize {
+fn scrub_app1(bytes: &mut [u8]) -> Result<usize, ()> {
     let mut at = 0;
     let mut found = 0;
-    while at + 14 < bytes.len() {
+    while at + 4 <= bytes.len() {
         let app1 = bytes[at + 1] == 0xe1;
         let app13 = bytes[at + 1] == 0xed;
         if bytes[at] != 0xff || !(app1 || app13) {
@@ -212,14 +215,24 @@ fn scrub_app1(bytes: &mut [u8]) -> usize {
         }
         let length = usize::from(u16::from_be_bytes([bytes[at + 2], bytes[at + 3]]));
         let end = at + 2 + length;
-        if length < 8 || end > bytes.len() {
+        let payload = &bytes[at + 4..];
+        let metadata_length = match (app1, app13) {
+            (true, _) if payload.starts_with(b"Exif\0\0") => 6,
+            (true, _) if payload.starts_with(XMP) => XMP.len(),
+            (true, _) if payload.starts_with(XMP_EXTENSION) => XMP_EXTENSION.len(),
+            (_, true) if payload.starts_with(PHOTOSHOP) => PHOTOSHOP.len(),
+            _ => 0,
+        };
+        if length < metadata_length + 2 || end > bytes.len() {
+            if metadata_length > 0 { return Err(()); }
             at += 2;
             continue;
         }
         if app1 && bytes[at + 4..end].starts_with(b"Exif\0\0") {
-            if scrub_tiff(&mut bytes[at + 10..end]) {
-                found += 1;
+            if !scrub_tiff(&mut bytes[at + 10..end]) {
+                return Err(());
             }
+            found += 1;
             at = end;
             continue;
         }
@@ -240,63 +253,68 @@ fn scrub_app1(bytes: &mut [u8]) -> usize {
         bytes[at + 4 + signature..end].fill(0);
         at = end;
     }
-    found
+    Ok(found)
 }
 
-/// The Canon boxes that hold a CR3's EXIF, and whether any were found. `CMT3` and `CMT4` are
-/// the maker notes and stay.
+/// The Canon boxes that hold a CR3's EXIF, and whether any were found. `CMT3` is the maker note
+/// and stays; `CMT4` is the GPS directory, blanked whole.
 ///
 /// **Finding none is a failure, not a clean file.** Every box walk here bails on arithmetic that
 /// does not add up - a truncated download, a container that is not Canon's - and a bail that
 /// reported success would hand back a CR3 whose EXIF had never been looked at.
-fn scrub_bmff(bytes: &mut [u8], from: usize, to: usize, depth: usize) -> bool {
-    if depth > 8 {
-        return false;
+fn scrub_bmff(bytes: &mut [u8], from: usize, to: usize, depth: usize) -> Result<bool, ()> {
+    if depth > 8 || from > to || to > bytes.len() {
+        return Err(());
     }
     let mut found = false;
     let mut at = from;
-    while at + 8 <= to {
+    while at < to {
+        if to - at < 8 { return Err(()); }
         let declared = u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize;
         let kind: [u8; 4] = [bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]];
         let (header, size) = match declared {
             0 => (8, to - at),
-            1 if at + 16 <= to => {
-                let large = u64::from_be_bytes(bytes[at + 8..at + 16].try_into().unwrap_or_default());
-                (16, usize::try_from(large).unwrap_or(to - at))
+            1 => {
+                if to - at < 16 { return Err(()); }
+                let large = u64::from_be_bytes(bytes[at + 8..at + 16].try_into().map_err(|_| ())?);
+                (16, usize::try_from(large).map_err(|_| ())?)
             }
             _ => (8, declared),
         };
-        if size < header || at + size > to {
-            return found;
+        if size < header || size > to - at {
+            return Err(());
         }
         match &kind {
             b"CMT1" | b"CMT2" => {
-                found |= scrub_tiff(&mut bytes[at + header..at + size]);
+                if !scrub_tiff(&mut bytes[at + header..at + size]) {
+                    return Err(());
+                }
+                found = true;
             }
-            // A `uuid` names itself in the sixteen bytes after the header, and Canon's holds the
-            // CMT boxes; the rest are ordinary containers.
-            b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" | b"uuid" => {
-                let inner = at + header + if &kind == b"uuid" { 16 } else { 0 };
-                if inner <= at + size {
-                    // The other `uuid` a CR3 carries is the XMP packet, which is XML rather than
-                    // boxes: recursing into it finds nothing and leaves the creator and the place
-                    // an editor wrote there sitting in the file.
-                    if bytes[inner..at + size].starts_with(b"<?xpacket") {
-                        bytes[inner..at + size].fill(0);
-                    } else {
-                        found |= scrub_bmff(bytes, inner, at + size, depth + 1);
-                    }
+            b"CMT4" => {
+                scrub_block(&mut bytes[at + header..at + size], true).ok_or(())?;
+            }
+            b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" => {
+                found |= scrub_bmff(bytes, at + header, at + size, depth + 1)?;
+            }
+            b"uuid" => {
+                if size - header < 16 { return Err(()); }
+                let uuid = &bytes[at + header..at + header + 16];
+                let inner = at + header + 16;
+                if uuid == Cr3XpacketBox::UUID.as_slice() || bytes[inner..at + size].starts_with(b"<?xpacket") {
+                    bytes[inner..at + size].fill(0);
+                } else if uuid == Cr3DescBox::UUID.as_slice() {
+                    found |= scrub_bmff(bytes, inner, at + size, depth + 1)?;
                 }
             }
             _ => {}
         }
         at += size;
     }
-    found
+    Ok(found)
 }
 
-/// Blanks every identifying tag where it lies. False for a container this cannot read, in which
-/// case the bytes are left exactly as they were and the caller has to refuse to send them.
+/// Blanks identifying tags in place. On false, bytes may be partly scrubbed and must not be sent.
 ///
 /// In place because the file is the size of a RAW and the edit never changes that size: a copy
 /// here would be tens of megabytes to hand back bytes that are mostly the same ones.
@@ -309,11 +327,11 @@ pub fn scrub_in_place(bytes: &mut [u8]) -> bool {
         Container::Tiff => scrub_tiff(bytes),
         Container::Bmff => {
             let end = bytes.len();
-            scrub_bmff(bytes, 0, end, 0)
+            scrub_bmff(bytes, 0, end, 0).unwrap_or(false)
         }
         Container::Jpeg | Container::Fuji => false,
     };
-    let previews = scrub_app1(bytes) > 0;
+    let Ok(previews) = scrub_app1(bytes) else { return false };
 
     match kind {
         // Everything a preview has to lose is in an APP1, so one with none is already in the
@@ -321,7 +339,7 @@ pub fn scrub_in_place(bytes: &mut [u8]) -> bool {
         Container::Jpeg => true,
         // Fuji's EXIF is inside its preview, so finding no preview is finding no EXIF in a file
         // that certainly has some: this did not understand it.
-        Container::Fuji => previews,
+        Container::Fuji => previews > 0,
         Container::Tiff | Container::Bmff => directories,
     }
 }
@@ -427,10 +445,11 @@ mod fixtures {
     /// claim is made on a synthetic file with a latitude in it instead.
     ///
     /// **The Canon is the interesting one.** Its EXIF is reached - `scrubbed` would answer None
-    /// otherwise, since a CR3 whose `CMT1` was never found is refused - and its directories hold
-    /// nothing to blank, because Canon writes the body's identity into the maker note, which is
-    /// kept on purpose. What it loses is the XMP packet it carries as a `uuid` box of its own,
-    /// which no directory names and which is where an editor writes a creator and a place.
+    /// otherwise, since a CR3 whose `CMT1` was never found is refused - and its EXIF directories
+    /// hold nothing to blank, because Canon writes the body's identity into the maker note, which
+    /// is kept on purpose. What it loses is its `CMT4` GPS box, here a version and no position,
+    /// and the XMP packet it carries as a `uuid` box of its own, which no directory names and
+    /// which is where an editor writes a creator and a place.
     #[test]
     fn what_each_fixture_has_to_lose() {
         assert!(blanked(&sony()) > 0, "the Sony carries standard tags worth removing");
@@ -443,7 +462,11 @@ mod fixtures {
             .position(|window| window == b"<?xpacket")
             .expect("the Canon carries an XMP packet to begin with");
         assert_eq!(&after[at..at + 9], &[0u8; 9], "which goes");
-        assert_eq!(before[..at], after[..at], "and nothing before it moves");
+        let gps = before.windows(4).position(|window| window == b"CMT4").expect("a GPS box");
+        let gps_end = gps - 4 + u32::from_be_bytes(before[gps - 4..gps].try_into().unwrap()) as usize;
+        assert!(gps_end <= at);
+        assert_eq!(before[..gps], after[..gps], "and nothing before the GPS box moves");
+        assert_eq!(before[gps_end..at], after[gps_end..at], "nor between it and the packet");
     }
 
     fn blanked(path: &std::path::Path) -> usize {
@@ -540,7 +563,7 @@ mod tests {
         bytes[14..18].copy_from_slice(&u32::MAX.to_le_bytes());
         bytes[18..22].copy_from_slice(&24u32.to_le_bytes());
 
-        assert!(scrub_tiff(&mut bytes));
+        assert!(!scrub_tiff(&mut bytes));
     }
 
     /// The count above is bounded per entry, which a directory defeats by carrying the tag again:
@@ -563,7 +586,123 @@ mod tests {
             bytes[at + 8..at + 12].copy_from_slice(&0u32.to_le_bytes());
         }
 
-        assert!(scrub_tiff(&mut bytes));
+        assert!(!scrub_tiff(&mut bytes));
+    }
+
+    /// A CR3 keeps its GPS directory as a box of its own, `CMT4`, whose first directory is the
+    /// GPS one: nothing points at it from the EXIF, so a walk of `CMT1` never reaches it.
+    #[test]
+    fn a_cr3_loses_the_position_in_its_own_box() {
+        let exif = synthetic();
+        let mut gps = synthetic();
+        // The same latitude, with the GPS directory now the block's first.
+        gps[4..8].copy_from_slice(&300u32.to_le_bytes());
+        let mut moov = boxed(b"CMT1", &exif);
+        moov.extend(boxed(b"CMT4", &gps));
+        let mut file = boxed(b"ftyp", b"crx isom");
+        file.extend(boxed(b"moov", &moov));
+        let cmt4 = file.len() - gps.len();
+
+        assert!(scrub_in_place(&mut file));
+        assert_eq!(&file[cmt4 + 400..cmt4 + 424], &[0u8; 24], "the coordinates are gone");
+        let entries = u16::from_le_bytes([file[cmt4 + 300], file[cmt4 + 301]]);
+        assert_eq!(entries, 1, "and the root keeps its entry, without which the CR3 will not open");
+        assert_eq!(file.len(), 16 + 8 + 2 * 8 + 2 * 512);
+    }
+
+    fn boxed(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut out = ((payload.len() + 8) as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(kind);
+        out.extend_from_slice(payload);
+        out
+    }
+
+    #[test]
+    fn a_valid_directory_cannot_hide_a_failed_metadata_scrub() {
+        for kind in [b"CMT4", b"CMT1", b"CMT2"] {
+            let malformed = boxed(kind, b"unreadable metadata");
+            let mut uuid = Cr3DescBox::UUID.to_vec();
+            uuid.extend_from_slice(&malformed);
+            for container in [malformed.clone(), boxed(b"moov", &malformed), boxed(b"uuid", &uuid)] {
+                let mut file = boxed(b"ftyp", b"crx isom");
+                file.extend(boxed(b"CMT1", &synthetic()));
+                file.extend(container);
+                file.extend(boxed(b"CMT1", &synthetic()));
+                assert!(scrubbed(&file).is_none(),
+                    "malformed {} was returned as clean", String::from_utf8_lossy(kind));
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_metadata_box_lengths_are_refused_after_valid_metadata() {
+        for declared in [1u32, 4, 4096] {
+            let mut malformed = declared.to_be_bytes().to_vec();
+            malformed.extend_from_slice(b"CMT4");
+            let mut uuid = Cr3DescBox::UUID.to_vec();
+            uuid.extend_from_slice(&malformed);
+            for container in [malformed.clone(), boxed(b"moov", &malformed), boxed(b"uuid", &uuid)] {
+                let mut file = boxed(b"ftyp", b"crx isom");
+                file.extend(boxed(b"CMT1", &synthetic()));
+                file.extend(container);
+                assert!(scrubbed(&file).is_none(), "a box length of {declared} was accepted");
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_tiff_directories_entries_and_payloads_are_refused() {
+        let malformed = [
+            (4, u32::MAX.to_le_bytes().to_vec()),
+            (4, 0u32.to_le_bytes().to_vec()),
+            (8, u16::MAX.to_le_bytes().to_vec()),
+            (24, 0u16.to_le_bytes().to_vec()),
+            (26, u32::MAX.to_le_bytes().to_vec()),
+            (30, 509u32.to_le_bytes().to_vec()),
+            (42, 510u32.to_le_bytes().to_vec()),
+            (46, u32::MAX.to_le_bytes().to_vec()),
+            (310, 509u32.to_le_bytes().to_vec()),
+            (314, u32::MAX.to_le_bytes().to_vec()),
+        ];
+        for (at, value) in malformed {
+            let mut bytes = synthetic();
+            bytes[at..at + value.len()].copy_from_slice(&value);
+            assert!(!scrub_tiff(&mut bytes.clone()), "accepted malformed TIFF field at {at}");
+            let mut file = boxed(b"ftyp", b"crx isom");
+            file.extend(boxed(b"CMT1", &synthetic()));
+            file.extend(boxed(b"CMT2", &bytes));
+            assert!(scrubbed(&file).is_none(), "accepted nested malformed TIFF field at {at}");
+        }
+    }
+
+    #[test]
+    fn opaque_uuid_payloads_are_kept_and_known_metadata_still_scrubbed() {
+        let mut opaque = vec![0x55; 16];
+        opaque.extend_from_slice(b"opaque vendor data, not a box stream");
+        let mut metadata = Cr3DescBox::UUID.to_vec();
+        metadata.extend(boxed(b"CMT1", &synthetic()));
+        let mut file = boxed(b"ftyp", b"crx isom");
+        let opaque_at = file.len() + 8;
+        file.extend(boxed(b"uuid", &opaque));
+        let tiff_at = file.len() + 8 + 16 + 8;
+        file.extend(boxed(b"uuid", &metadata));
+
+        let after = scrubbed(&file).expect("an opaque UUID beside Canon metadata");
+        assert_eq!(&after[opaque_at..opaque_at + opaque.len()], &opaque);
+        assert_eq!(&after[tiff_at + 220..tiff_at + 228], &[0; 8]);
+        assert_eq!(&after[tiff_at + 400..tiff_at + 424], &[0; 24]);
+    }
+
+    #[test]
+    fn a_valid_directory_cannot_hide_an_invalid_preview() {
+        let mut malformed = synthetic();
+        malformed[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+        let preview = with_exif(&malformed);
+        assert!(scrubbed(&preview).is_none());
+
+        let mut file = synthetic();
+        file.extend_from_slice(&preview[2..]);
+        assert!(scrubbed(&file).is_none());
     }
 
     /// A download that stopped short is the plausible way to meet this, and answering it with

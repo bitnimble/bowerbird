@@ -1,8 +1,5 @@
 // Phase 7: a plane copied into one of another size, reads clamped to the source's last row and
 // column - so a smaller destination is a top-left crop and a larger one is edge-padded.
-//
-// `k16_jbu_3p` writes exactly twice its input's dimensions, so an odd level's guide is cropped to
-// even on the way in and its output padded back out on the way up.
 
 [vk::binding(0, 0)] StructuredBuffer<float> src;
 [vk::binding(1, 0)] RWStructuredBuffer<float> dst;

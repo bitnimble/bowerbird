@@ -1110,7 +1110,9 @@ mod tests {
     /// **Green's ceiling is the lowest on every body here, so every blown highlight needs green
     /// raised past it.** The A7CR's gains put green at 0.358 where blue reaches 1.0: a neutral
     /// bright enough to clip red as well leaves green a third under both its neighbours, which is
-    /// DSC04519's daylit rock rendering as a magenta band a stop and a half wide.
+    /// DSC04519's daylit rock rendering as a magenta band a stop and a half wide. Red is raised
+    /// too: left on its own ceiling under the blue still reading, the same highlight comes back
+    /// blue, which is a tungsten lamp's rim on a wall.
     #[test]
     fn a_blown_neutral_is_not_left_at_greens_ceiling() {
         let Some(gpu) = crate::gpu::device() else { return };
@@ -1122,16 +1124,14 @@ mod tests {
         let level = [ceiling[0], ceiling[1], 0.68];
 
         let at = flat_field(gpu, rcd, colour, level);
-        assert!(
-            at[1] > at[0] && at[1] < at[2],
-            "green came back {at:?}, outside the red and blue that were still reading"
-        );
-        let want = f64::from(level[0]).sqrt() * f64::from(level[2]).sqrt() * 65535.0;
-        assert!(
-            (f64::from(at[1]) - want).abs() <= 0.03 * want,
-            "green came back {} against the {want:.0} its neighbours state - {at:?}",
-            at[1],
-        );
+        let want = f64::from(level[2]) * 65535.0;
+        for c in 0..3 {
+            assert!(
+                (f64::from(at[c]) - want).abs() <= 0.03 * want,
+                "channel {c} came back {} against the neutral {want:.0} blue states - {at:?}",
+                at[c],
+            );
+        }
     }
 
     const IDENTITY_F32: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];

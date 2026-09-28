@@ -1,7 +1,7 @@
 //! What the editor shows, which is what a rendition ships, from the same RAW, without a browser.
 //!
 //! ```text
-//! renders <raw> <out-dir> [--detail N|auto] [--denoiser galosh|pmrid] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr|--linear]
+//! renders <raw> <out-dir> [--detail N|auto] [--denoiser galosh|pmrid] [--crop x,y,side]... [--sharpen N] [--no-lens] [--encode q,420|444|--sdr [--relative]|--linear]
 //!         [--as-export] [--defocus r,b] [--phases 2|4|8|16] [--pool 0|1]
 //!         [--chroma-detail 0|1] [--reach N] [--ratio-floor N]
 //!         [--ev N] [--edge N]
@@ -96,6 +96,8 @@ struct Stages<'a> {
     /// as the light it is a modulation of, both codings having been built to compress exactly
     /// that.
     domain: Domain,
+    /// How an sRGB render is brought inside its gamut.
+    intent: rawshim::gpu::Intent,
     /// A PQ render goes through the rendition's AVIF encoder and back before it is cut, at this
     /// quantizer and chroma. `max` ships at `(1, Yuv420)`; `(0, Yuv444)` is the pipeline's own
     /// codes in a file `avif_crop` can measure, and the gap between the two is the encoder's.
@@ -411,7 +413,8 @@ fn graded(
         Domain::Pq => rawshim::gpu::Output::Pq,
         Domain::Linear => rawshim::gpu::Output::Rolled,
     };
-    let mut coded = hdr::encode_cut(gpu, &cut, &scene.gpu_grade(cut.width, cut.height, output));
+    let grade = rawshim::gpu::Grade { intent: stages.intent, ..scene.gpu_grade(cut.width, cut.height, output) };
+    let mut coded = hdr::encode_cut(gpu, &cut, &grade);
     if stages.domain == Domain::Pq {
         // What `job::run` reads to pick this still's chroma, so a render here says which way a
         // rendition of it would have gone.
@@ -497,6 +500,7 @@ fn main() {
         defocus: None,
         ev: None,
         domain: Domain::Pq,
+        intent: rawshim::gpu::Intent::Perceptual,
         encode: None,
         out: &out,
     };
@@ -517,6 +521,7 @@ fn main() {
                 stages.defringe = args.next().expect("a number").parse().expect("a number");
             }
             "--sdr" => stages.domain = Domain::Srgb,
+            "--relative" => stages.intent = rawshim::gpu::Intent::RelativeColorimetric,
             "--linear" => stages.domain = Domain::Linear,
             "--encode" => {
                 let spec = args.next().expect("quantizer,420|444");

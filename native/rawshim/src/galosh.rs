@@ -1,7 +1,5 @@
 //! GALOSH-RAW: the blind denoise, on the Bayer mosaic, on the GPU.
 //!
-//! Thirty-one compute kernels, and this file is the host that drives them.
-//!
 //! **Why the mosaic and not the frame.** Sensor noise is per-photosite. A demosaic averages
 //! neighbouring sites to invent the two colours each site did not record, which correlates
 //! the noise across pixels and smears a chroma error into a coloured smudge no
@@ -17,12 +15,10 @@
 //! way: a browser reaches these kernels through the wasm build of it rather than by binding them
 //! itself.
 
-/// The K16 upsample's bilateral bandwidth, and the LOESS strength.
-const K16_BW: f32 = 1.5;
 const LOESS_STRENGTH: f32 = 1.0;
 
 /// The least luma, in the GAT's units, the chroma pyramid divides a colour difference by
-/// (`loess_chroma_3p_tiled`, `k16_jbu_3p`); `renders --ratio-floor` sweeps it, and a floor of
+/// (`loess_chroma_3p_tiled`); `renders --ratio-floor` sweeps it, and a floor of
 /// zero is the pyramid on the differences themselves.
 ///
 /// ponytail: zero, so the pyramid runs on the differences as it always did. On `synth_raw
@@ -167,14 +163,6 @@ pub fn force_chroma_detail(bracketed: bool) {
     UNBRACKETED.store(!bracketed, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// How far a coarser chroma level may move the finer one, in the GAT's unit noise
-/// (`smoothstep_blend_3p`'s `reached`); `renders --reach` sweeps it.
-///
-/// **Two measurements pull on it.** On `synth_raw --square` at Colour 100, red across the step runs
-/// `176 167 158 148 139 131` ungated, `242 180 122 124` at 1.5 - Colour 0's own edge - and leaks
-/// again at three. On `DSC05282`'s night sky at Colour 76 the 32-pixel mottle reads 0.71 ungated,
-/// 1.19 with Colour off, 1.07 at one and 0.93 from 1.5 up to five: that sky's low-frequency chroma
-/// stands several sigma off the white-noise model, so a tighter reach hands it back.
 const LEVEL_REACH: f32 = 1.5;
 
 static FORCED_LEVEL_REACH: crate::base::AtomicF32 = crate::base::AtomicF32::new(-1.0);
@@ -303,11 +291,11 @@ pub struct Galosh {
     coarse_smooth: Kernel,
     coarse_correct: Kernel,
     loess_chroma_3p_tiled: Kernel,
-    k16_jbu_3p: Kernel,
+    chroma_reconstruct: Kernel,
     copy_2d_clamped: Kernel,
     smoothstep_blend_3p: Kernel,
-    weigh_green_difference: Kernel,
-    k16_inverse_fused: Kernel,
+    reconstruct_bayer: Kernel,
+    restore_mosaic: Kernel,
     lpixel_lh_den_unpooled: Kernel,
 }
 
@@ -476,9 +464,9 @@ impl Galosh {
             ),
             coarse_smooth: kernel!("coarse_smooth", &[(0, R), (1, W)]),
             coarse_correct: kernel!("coarse_correct", &[(0, R), (1, R), (2, W)]),
-            k16_jbu_3p: kernel!(
-                "k16_jbu_3p",
-                &[(0, R), (1, R), (2, R), (3, R), (4, W), (5, W), (6, W)]
+            chroma_reconstruct: kernel!(
+                "chroma_reconstruct",
+                &[(0, R), (1, R), (2, R), (3, R), (4, R), (5, R), (6, W), (7, W), (8, W)]
             ),
             copy_2d_clamped: kernel!("copy_2d_clamped", &[(0, R), (1, W)]),
             smoothstep_blend_3p: kernel!(
@@ -495,12 +483,12 @@ impl Galosh {
                     (8, R),
                 ]
             ),
-            weigh_green_difference: kernel!(
-                "weigh_green_difference",
-                &[(0, R), (1, R), (3, W), (4, W)]
+            reconstruct_bayer: kernel!(
+                "reconstruct_bayer",
+                &[(0, R), (1, R), (2, R), (3, R), (4, R), (5, R), (6, W)]
             ),
-            k16_inverse_fused: kernel!(
-                "k16_inverse_fused",
+            restore_mosaic: kernel!(
+                "restore_mosaic",
                 &[(0, R), (1, R), (2, R), (3, R), (4, W), (5, R), (6, R), (7, R), (8, R)]
             ),
         })
@@ -687,28 +675,6 @@ const TRACK_TOP: f64 = 1.6;
 /// 0.13 at the end of it, and the difference is visible on a night sky.
 const COLOUR_LEAD: f64 = 3.2;
 
-/// What the top of the Colour track asks for, which is not the same number and not the same unit.
-///
-/// **Colour's track is a distance, and 3.0 is the end of it rather than a strength chosen.** The
-/// shrinkage's amount is a multiple of the measured noise and has no natural ceiling, which is why
-/// [`TRACK_TOP`] had to be fitted to where a photograph stopped surviving. This one is a position
-/// across four anchors - noisy, the half-resolution regression, the quarter-resolution level, the
-/// eighth - and `smoothstep_blend_3p` returns the last anchor exactly at 3.0 and nothing further
-/// above it.
-///
-/// **The top third is where the mottle a reader actually complains about lives.** Every level below
-/// the eighth reaches tens of sensor pixels at most, so chroma structure wider than that survives a
-/// walk that ends on the quarter-resolution one: measured on `DSC05282`, an ISO 4000 night frame,
-/// the à trous band whose hole is 32 reads 0.87 on an undenoised render and 0.35 where the third
-/// anchor ends the walk, two fifths of it still there. The last third is what takes it to 0.13.
-///
-/// **And the last fifth of the track costs colour detail, which is why the ramp stops short of
-/// it.** The eighth level comes up two guided upsamples, each with the half-pixel siting bias
-/// `k16_jbu_3p` records, so chroma arrives translated against luma by more than a level's worth.
-/// On dense coloured detail that reads as a hue shift rather than as smoothing: measured on
-/// `DSC05282`'s planting, greens go olive and the chroma roughness at the pixel's own scale
-/// *doubles* between sliders 75 and 85, where the smoothstep hands the eighth level the majority
-/// of the blend. A reader who wants the flattest sky can still ask for it.
 const COLOUR_TRACK_TOP: f64 = 3.0;
 
 impl Amounts {
@@ -982,20 +948,15 @@ fn loess_binds<'a>(
     ]
 }
 
-/// A K16 dispatch's seven: the three chroma planes first, the guide fourth.
-fn k16_binds<'a>(
-    src: &'a [crate::gpu::Buffer; 3],
-    guide: &'a crate::gpu::Buffer,
-    dst: &'a [crate::gpu::Buffer; 3],
-) -> [(u32, &'a crate::gpu::Buffer); 7] {
+fn reconstruct_binds<'a>(
+    coarse: &'a [crate::gpu::Buffer; 3],
+    guide: &'a [crate::gpu::Buffer; 3],
+    out: &'a [crate::gpu::Buffer; 3],
+) -> [(u32, &'a crate::gpu::Buffer); 9] {
     [
-        (0, &src[0]),
-        (1, &src[1]),
-        (2, &src[2]),
-        (3, guide),
-        (4, &dst[0]),
-        (5, &dst[1]),
-        (6, &dst[2]),
+        (0, &coarse[0]), (1, &coarse[1]), (2, &coarse[2]),
+        (3, &guide[0]), (4, &guide[1]), (5, &guide[2]),
+        (6, &out[0]), (7, &out[1]), (8, &out[2]),
     ]
 }
 
@@ -1147,7 +1108,7 @@ pub async fn fit(
     mosaic: &crate::condition::Mosaic,
     cfa: &crate::cfa::Cfa,
 ) -> NoiseFit {
-    // Straight off the caller's frame: a fit stops before `k16_inverse_fused`, which is the only
+    // Straight off the caller's frame: a fit stops before `restore_mosaic`, which is the only
     // dispatch that writes what it was given, so there is nothing here to protect it from.
     run(gpu, galosh, mosaic, cfa, Work::FitOnly).await
 }
@@ -1210,21 +1171,6 @@ async fn run(
         Work::FitOnly => Amounts { luma: 0.0, colour: 0.0 },
         Work::Denoise { amounts, .. } => amounts,
     };
-    // **The colour amount is a distance up the chroma pyramid, and a period's plane starts further
-    // along it.** `chroma_extract_halfres` writes one value per half-resolution site whatever the
-    // pattern, but takes it over a whole period - two photosites a side on a 2x2 and six on a 6x6 -
-    // so the plane the pyramid is handed already carries the smoothing Bayer's first octave would
-    // have given it. Every level above therefore has `period / 2` times the support it does on a
-    // 2x2, and past the first one that support has crossed the picture's own edges. The joint
-    // upsample then puts that chroma back against luma's edges, which is a coloured blotch rather
-    // than a smoothing - the demosaic is blamed for it, and no slider position removes it.
-    //
-    // Measured on the church fixture's darkest blue at `2078,1020`, sweeping the slider: chroma
-    // roughness falls smoothly to 1.72/3.52 at 33 and jumps to 2.55/3.98 at 40. `walks_third` turns
-    // the quarter-resolution level on at 33.3. Divided, the track's top lands on the last anchor
-    // whose support is still the pattern's own, which is where the sweep's minimum is.
-    //
-    // A 2x2 divides by one, so nothing Bayer renders moves by this.
     let amounts = Amounts {
         colour: amounts.colour * 2.0 / (pw.max(ph) as f32),
         ..amounts
@@ -1246,10 +1192,6 @@ async fn run(
     let (hw, hh) = (width / 2, height / 2);
     let (cq_w, cq_h) = (hw / 2, hh / 2);
     let (ce_w, ce_h) = (cq_w / 2, cq_h / 2);
-    // K16 writes exactly twice its input, so a level with an odd dimension is upsampled from
-    // a cropped guide and edge-padded back out.
-    let (kq_w, kq_h) = (2 * cq_w, 2 * cq_h);
-    let (ke_w, ke_h) = (2 * ce_w, 2 * ce_h);
 
     let storage = wgpu::BufferUsages::STORAGE;
     // A run of this allocates about five frames of working planes; they go when the recording
@@ -1271,7 +1213,7 @@ async fn run(
         };
     }
 
-    // The caller's own frame, filtered where it lies. `k16_inverse_fused` is the only dispatch that
+    // The caller's own frame, filtered where it lies. `restore_mosaic` is the only dispatch that
     // writes it and a fit stops before that one.
     let raw = mosaic.buffer.clone();
     recording.holding(&raw);
@@ -1388,34 +1330,23 @@ async fn run(
     let eighth = |len: usize| if walks_fourth { tail(len) } else { 0 };
     let l_q = plane!("galosh L_q", quarter(cq_w * cq_h));
     let l_e = plane!("galosh L_e", eighth(ce_w * ce_h));
-    let l_for_q = plane!("galosh L_for_q", quarter(kq_w * kq_h));
-    let l_for_e = plane!("galosh L_for_e", eighth(ke_w * ke_h));
     let c_h = trio!("galosh C_h", half);
     // The half-res regression, and where the blend writes its answer back: nothing reads the
     // regression again afterwards, so a fifth trio of half-res planes would only be moving
     // values between two addresses.
     let c_loess_h = trio!("galosh C_loess_h / C_h_den", half);
     // `chroma_detail` models the 2x2 transform's three differences, which only a Bayer site has.
-    let brackets = amounts.colour > 0.0
-        && cfa.is_bayer()
-        && !UNBRACKETED.load(std::sync::atomic::Ordering::Relaxed);
+    let reconstructs_bayer = cfa.is_bayer();
+    let restores_detail = !UNBRACKETED.load(std::sync::atomic::Ordering::Relaxed);
+    let brackets = amounts.colour > 0.0 && reconstructs_bayer && restores_detail;
     let c_detail = trio!("galosh C detail", if brackets { half } else { 0 });
     let c_q = trio!("galosh C_q", quarter(cq_w * cq_h));
     let c_loess_q = trio!("galosh C_loess_q", quarter(cq_w * cq_h));
-    let c_q_up = trio!("galosh C_q_up", quarter(hw * hh));
+    let c_q_h = trio!("galosh quarter candidate", quarter(hw * hh));
     let c_e = trio!("galosh C_e", eighth(ce_w * ce_h));
     let c_loess_e = trio!("galosh C_loess_e", eighth(ce_w * ce_h));
-    let c_e_to_q = trio!("galosh C_e_to_q", eighth(cq_w * cq_h));
-    let c_e_up = trio!("galosh C_e_up", eighth(hw * hh));
-    // One scratch trio per scale, for the K16 whose output is not already the size its consumer
-    // wants. The two chains use them at different times, so one of each is enough - and on a frame
-    // whose half-resolution dimensions are both even there is no padding at all.
-    let padded_half = kq_w == hw && kq_h == hh;
-    let padded_quarter = ke_w == cq_w && ke_h == cq_h;
-    let scratch_half =
-        trio!("galosh K16 scratch", if padded_half { 0 } else { quarter(kq_w * kq_h) });
-    let scratch_quarter =
-        trio!("galosh K16 scratch", if padded_quarter { 0 } else { eighth(ke_w * ke_h) });
+    let c_e_q = trio!("galosh refined quarter", eighth(cq_w * cq_h));
+    let c_e_h = trio!("galosh eighth candidate", eighth(hw * hh));
 
     let fitted = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("galosh fitted model"),
@@ -1469,13 +1400,13 @@ async fn run(
         packed[2],
         gain_c1,
         gain_c2,
+        Word::I(reconstructs_bayer as i32),
     ]);
-    let detail_push = |sign: f32| {
-        [Word::I(w), Word::I(h), Word::I(hw as i32), Word::I(hh as i32), Word::F(sign)]
+    let detail_push = |subtract: bool| {
+        [Word::I(w), Word::I(h), Word::I(hw as i32), Word::I(hh as i32), Word::I(subtract as i32)]
     };
-    let detail_predict = pushes.add(&detail_push(0.0));
-    let detail_out = pushes.add(&detail_push(-1.0));
-    let detail_in = pushes.add(&detail_push(1.0));
+    let detail_predict = pushes.add(&detail_push(false));
+    let detail_out = pushes.add(&detail_push(true));
     let forward = pushes.add(&[
         Word::I(w),
         Word::I(h),
@@ -1487,6 +1418,7 @@ async fn run(
         packed[2],
         gain_c1,
         gain_c2,
+        Word::I(reconstructs_bayer as i32),
     ]);
     let shrink = pushes.add(&[Word::I(w), Word::I(h), Word::F(amounts.luma)]);
     let down_coarse = pushes.add(&[Word::I(hw as i32), Word::I(hh as i32)]);
@@ -1503,32 +1435,26 @@ async fn run(
         Word::I(COARSE_SCALE),
     ]);
     let overlap = pushes
-        .add(&[Word::I(w), Word::I(h), Word::I(hw as i32), Word::I(cfa.is_bayer() as i32)]);
+        .add(&[Word::I(w), Word::I(h), Word::I(hw as i32), Word::I(reconstructs_bayer as i32)]);
     let down_h = pushes.add(&[Word::I(hw as i32), Word::I(hh as i32)]);
+    let green_sign = Word::F(if !reconstructs_bayer {
+        0.0
+    } else if cfa.colour_at(0, 0) == crate::cfa::GREEN {
+        1.0
+    } else {
+        -1.0
+    });
     let floor = Word::F(FORCED_RATIO_FLOOR.or(f64::from(RATIO_FLOOR)));
-    let loess = |w: usize, h: usize| [Word::I(w as i32), Word::I(h as i32), Word::F(LOESS_STRENGTH), floor];
-    let loess_h = pushes.add(&loess(hw, hh));
+    let loess = |w: usize, h: usize, noise: f32| {
+        [Word::I(w as i32), Word::I(h as i32), Word::F(LOESS_STRENGTH), floor, Word::F(noise), green_sign]
+    };
+    let loess_h = pushes.add(&loess(hw, hh, 1.0));
     let down_q = pushes.add(&[Word::I(cq_w as i32), Word::I(cq_h as i32)]);
-    let loess_q = pushes.add(&loess(cq_w, cq_h));
-    let loess_e = pushes.add(&loess(ce_w, ce_h));
-    let crop_q = pushes.add(&[
+    let loess_q = pushes.add(&loess(cq_w, cq_h, 0.5));
+    let loess_e = pushes.add(&loess(ce_w, ce_h, 0.25));
+    let inverse = pushes.add(&[
         Word::I(hw as i32),
         Word::I(hh as i32),
-        Word::I(kq_w as i32),
-        Word::I(kq_h as i32),
-    ]);
-    let crop_e = pushes.add(&[
-        Word::I(cq_w as i32),
-        Word::I(cq_h as i32),
-        Word::I(ke_w as i32),
-        Word::I(ke_h as i32),
-    ]);
-    let k16_q = pushes.add(&[Word::I(cq_w as i32), Word::I(cq_h as i32), Word::F(K16_BW), floor]);
-    let k16_e = pushes.add(&[Word::I(ce_w as i32), Word::I(ce_h as i32), Word::F(K16_BW), floor]);
-    let k16_final = pushes.add(&[
-        Word::I(hw as i32),
-        Word::I(hh as i32),
-        Word::F(K16_BW),
         Word::I(pw as i32),
         Word::I(ph as i32),
         packed[0],
@@ -1536,27 +1462,27 @@ async fn run(
         packed[2],
         gain_c1,
         gain_c2,
-    ]);
-    let pad_to_half = pushes.add(&[
-        Word::I(kq_w as i32),
-        Word::I(kq_h as i32),
-        Word::I(hw as i32),
-        Word::I(hh as i32),
-    ]);
-    let pad_to_quarter = pushes.add(&[
-        Word::I(ke_w as i32),
-        Word::I(ke_h as i32),
-        Word::I(cq_w as i32),
-        Word::I(cq_h as i32),
+        Word::I(reconstructs_bayer as i32),
     ]);
     let blend = pushes.add(&[
         Word::I(hw as i32),
         Word::I(hh as i32),
-        Word::F(amounts.colour),
-        Word::F(FORCED_LEVEL_REACH.or(f64::from(LEVEL_REACH))),
+        Word::F(if reconstructs_bayer { amounts.colour.max(1.0) } else { amounts.colour }),
+    ]);
+    let reconstruct_bayer = pushes.add(&[
+        Word::I(w), Word::I(h), Word::I(hw as i32), Word::I(hh as i32), packed[0], Word::F(amounts.colour),
+        Word::I(phase_pooled() as i32),
+        Word::I(restores_detail as i32),
     ]);
     let whole_to_whole =
         pushes.add(&[Word::I(w), Word::I(h), Word::I(w), Word::I(h)]);
+    let reach = Word::F(FORCED_LEVEL_REACH.or(f64::from(LEVEL_REACH)));
+    let reconstruct = |fw: usize, fh: usize, cw: usize, ch: usize, noise: f32| {
+        [Word::I(fw as i32), Word::I(fh as i32), Word::I(cw as i32), Word::I(ch as i32), Word::F(noise), reach, green_sign]
+    };
+    let reconstruct_q_h = pushes.add(&reconstruct(hw, hh, cq_w, cq_h, 1.0));
+    let reconstruct_e_q = pushes.add(&reconstruct(cq_w, cq_h, ce_w, ce_h, 0.5));
+    let reconstruct_e_h = pushes.add(&reconstruct(hw, hh, cq_w, cq_h, 0.5));
 
     let uniforms = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("galosh pushes"),
@@ -1612,8 +1538,6 @@ async fn run(
     let (hx, hy) = groups(hw, hh, 16);
     let (qx, qy) = groups(cq_w, cq_h, 16);
     let (ex, ey) = groups(ce_w, ce_h, 16);
-    let (kx, ky) = groups(kq_w, kq_h, 16);
-    let (kex, key) = groups(ke_w, ke_h, 16);
 
     lap("allocate");
     let encoder = recording.encoder();
@@ -1723,7 +1647,7 @@ async fn run(
         // slot, so what the reduction would report as a fixed-pattern offset is the frame's own
         // colour - subtracted here and added back by the inverse, and in between it is a
         // checkerboard the shrinkage sees. Left at zero instead.
-        if supplied.is_none() && cfa.is_bayer() {
+        if supplied.is_none() && reconstructs_bayer {
             for iteration in 0..3 {
                 run(&galosh.dark_ref_reduce, &reduce, wh, DR_WORKGROUPS, 1);
                 run(&galosh.dark_ref_finalize, &reduce_fin, n_wg, 1, 1);
@@ -1801,27 +1725,8 @@ async fn run(
             run(&galosh.box_downsample_2x, &g, down_coarse, lx, ly);
             let g = bind(&galosh.coarse_smooth, &[(0, &coarse), (1, &coarse_den)]);
             run(&galosh.coarse_smooth, &g, smooth_coarse, lx, ly);
-            let g = bind(
-                &galosh.coarse_correct,
-                &[(0, &coarse_den), (1, &coarse), (2, &full_b)],
-            );
-            run(&galosh.coarse_correct, &g, coarse_correct, fx, fy);
         }
 
-        // Phase 7: the chroma pyramid, and the guided upsamples back up it.
-        //
-        // **A level is built only where the walk reaches it.** `smoothstep_blend_3p` ends on the
-        // anchor below wherever the slider stops and never reads the ones above it - so each of the
-        // two coarse levels is two downsamples, a whole LOESS, a crop and a joint upsample per
-        // octave it has to climb, all spent on a plane the blend would not read.
-        //
-        // **And at zero the walk never leaves the first anchor, so the half-resolution LOESS goes
-        // too.** `smoothstep_blend_3p` at `slider <= 0` takes `blended = a`, which makes the
-        // smoothed green difference `weigh_green_difference` weighs the raw one and its two outputs `a.x` and `a.y` exactly - an
-        // identity copy of `c_h` into `c_loess_h`, written over whatever the regression computed.
-        // So the LOESS and the blend are both skipped and `k16_inverse_fused` reads `c_h` where it
-        // would have read the copy. Bit-identical, and the LOESS is a fifth of the denoise: 89ms of
-        // 396 on a 24MP mosaic, with the blend another 19ms.
         let filters_colour = amounts.colour > 0.0;
         if brackets {
             for push in [detail_predict, detail_out] {
@@ -1864,55 +1769,23 @@ async fn run(
             let g = bind(&galosh.loess_chroma_3p_tiled, &loess_binds(&l_q, &c_q, &c_loess_q));
             let (lx, ly) = groups(cq_w, cq_h, LOESS_TILE);
             run(&galosh.loess_chroma_3p_tiled, &g, loess_q, lx, ly);
-
-            let g = bind(&galosh.copy_2d_clamped, &[(0, &l_h_den), (1, &l_for_q)]);
-            run(&galosh.copy_2d_clamped, &g, crop_q, kx, ky);
-
-            let q_up_target = if padded_half { &c_q_up } else { &scratch_half };
-
-            let g = bind(&galosh.k16_jbu_3p, &k16_binds(&c_loess_q, &l_for_q, q_up_target));
-            run(&galosh.k16_jbu_3p, &g, k16_q, kx, ky);
-            if !padded_half {
-                for at in 0..3 {
-                    let g =
-                        bind(&galosh.copy_2d_clamped, &[(0, &scratch_half[at]), (1, &c_q_up[at])]);
-                    run(&galosh.copy_2d_clamped, &g, pad_to_half, hx, hy);
-                }
-            }
         }
-
-        // The eighth level comes up two scales rather than one, each step guided by the luma of the
-        // level it lands on: a K16 writes exactly twice its input, and a jump of four across a
-        // frame's own chroma is where a joint upsample stops following an edge and starts inventing
-        // one.
         if walks_fourth {
             let g = bind(&galosh.loess_chroma_3p_tiled, &loess_binds(&l_e, &c_e, &c_loess_e));
             let (lx, ly) = groups(ce_w, ce_h, LOESS_TILE);
             run(&galosh.loess_chroma_3p_tiled, &g, loess_e, lx, ly);
+        }
 
-            let g = bind(&galosh.copy_2d_clamped, &[(0, &l_q), (1, &l_for_e)]);
-            run(&galosh.copy_2d_clamped, &g, crop_e, kex, key);
+        if walks_third {
+            let g = bind(&galosh.chroma_reconstruct, &reconstruct_binds(&c_loess_q, &c_loess_h, &c_q_h));
+            run(&galosh.chroma_reconstruct, &g, reconstruct_q_h, hx, hy);
+        }
 
-            let e_to_q_target = if padded_quarter { &c_e_to_q } else { &scratch_quarter };
-            let g = bind(&galosh.k16_jbu_3p, &k16_binds(&c_loess_e, &l_for_e, e_to_q_target));
-            run(&galosh.k16_jbu_3p, &g, k16_e, kex, key);
-            if !padded_quarter {
-                for at in 0..3 {
-                    let g =
-                        bind(&galosh.copy_2d_clamped, &[(0, &scratch_quarter[at]), (1, &c_e_to_q[at])]);
-                    run(&galosh.copy_2d_clamped, &g, pad_to_quarter, qx, qy);
-                }
-            }
-
-            let e_up_target = if padded_half { &c_e_up } else { &scratch_half };
-            let g = bind(&galosh.k16_jbu_3p, &k16_binds(&c_e_to_q, &l_for_q, e_up_target));
-            run(&galosh.k16_jbu_3p, &g, k16_q, kx, ky);
-            if !padded_half {
-                for at in 0..3 {
-                    let g = bind(&galosh.copy_2d_clamped, &[(0, &scratch_half[at]), (1, &c_e_up[at])]);
-                    run(&galosh.copy_2d_clamped, &g, pad_to_half, hx, hy);
-                }
-            }
+        if walks_fourth {
+            let g = bind(&galosh.chroma_reconstruct, &reconstruct_binds(&c_loess_e, &c_loess_q, &c_e_q));
+            run(&galosh.chroma_reconstruct, &g, reconstruct_e_q, qx, qy);
+            let g = bind(&galosh.chroma_reconstruct, &reconstruct_binds(&c_e_q, &c_q_h, &c_e_h));
+            run(&galosh.chroma_reconstruct, &g, reconstruct_e_h, hx, hy);
         }
 
         // Phase 8: the colour strength, as a walk along those four anchors, answered back
@@ -1921,48 +1794,42 @@ async fn run(
             let g = bind(
                 &galosh.smoothstep_blend_3p,
                 &[
-                    (0, if walks_third { &c_q_up[0] } else { &c_h[0] }),
-                    (1, if walks_third { &c_q_up[1] } else { &c_h[1] }),
-                    (2, if walks_third { &c_q_up[2] } else { &c_h[2] }),
+                    (0, if walks_third { &c_q_h[0] } else { &c_h[0] }),
+                    (1, if walks_third { &c_q_h[1] } else { &c_h[1] }),
+                    (2, if walks_third { &c_q_h[2] } else { &c_h[2] }),
                     (3, &c_loess_h[0]),
                     (4, &c_loess_h[1]),
                     (5, &c_loess_h[2]),
                     // The first anchor where the fourth was never built, which is never read: a
                     // binding cannot be left empty, and a plane of no length cannot be bound.
-                    (6, if walks_fourth { &c_e_up[0] } else { &c_h[0] }),
-                    (7, if walks_fourth { &c_e_up[1] } else { &c_h[1] }),
-                    (8, if walks_fourth { &c_e_up[2] } else { &c_h[2] }),
+                    (6, if walks_fourth { &c_e_h[0] } else { &c_h[0] }),
+                    (7, if walks_fourth { &c_e_h[1] } else { &c_h[1] }),
+                    (8, if walks_fourth { &c_e_h[2] } else { &c_h[2] }),
                 ],
             );
             run(&galosh.smoothstep_blend_3p, &g, blend, hx, hy);
-            if cfa.is_bayer() {
-                let g = bind(
-                    &galosh.weigh_green_difference,
-                    &[(0, &c_h[0]), (1, &c_h[1]), (3, &c_loess_h[0]), (4, &c_loess_h[1])],
-                );
-                run(&galosh.weigh_green_difference, &g, blend, hx, hy);
-            }
         }
-        if brackets {
+        if reconstructs_bayer {
             let g = bind(
-                &galosh.chroma_detail,
+                &galosh.reconstruct_bayer,
                 &[
-                    (0, &full_a),
-                    (1, &c_loess_h[0]),
-                    (2, &c_loess_h[1]),
-                    (3, &c_loess_h[2]),
-                    (4, &c_detail[0]),
-                    (5, &c_detail[1]),
-                    (6, &c_detail[2]),
+                    (0, &c_loess_h[0]), (1, &c_loess_h[1]), (2, &c_loess_h[2]),
+                    (3, &full_a), (4, &raw), (5, &params), (6, &full_b),
                 ],
             );
-            run(&galosh.chroma_detail, &g, detail_in, hx, hy);
+            run(&galosh.reconstruct_bayer, &g, reconstruct_bayer, fx, fy);
+        }
+        if walks {
+            let g = bind(
+                &galosh.coarse_correct,
+                &[(0, &coarse_den), (1, &coarse), (2, &full_b)],
+            );
+            run(&galosh.coarse_correct, &g, coarse_correct, fx, fy);
         }
         let chroma = if filters_colour { &c_loess_h } else { &c_h };
 
-        // Phases 9 and 10: upsampled and inverted in one pass, back over the input.
         let g = bind(
-            &galosh.k16_inverse_fused,
+            &galosh.restore_mosaic,
             &[
                 (0, &chroma[0]),
                 (1, &chroma[1]),
@@ -1975,7 +1842,7 @@ async fn run(
                 (8, &params),
             ],
         );
-        run(&galosh.k16_inverse_fused, &g, k16_final, fx, fy);
+        run(&galosh.restore_mosaic, &g, inverse, fx, fy);
     }
     // Only where nothing was supplied. Phase 0 and Phase 2 are the dispatches that write these
     // slots, both are skipped when the caller brought a fit, and `irls_seed` - the one thing that
@@ -2395,7 +2262,11 @@ mod tests {
                 tile,
                 |done| ticks.push(done),
             ));
-            assert_eq!(read(gpu, &tiled), whole, "a {tile}px tiling moved a sample");
+            let actual = read(gpu, &tiled);
+            assert_eq!(actual.len(), whole.len());
+            if let Some((at, (&got, &expected))) = actual.iter().zip(&whole).enumerate().find(|(_, (a, b))| a != b) {
+                panic!("a {tile}px tiling moved sample {at}: {got} instead of {expected}");
+            }
             assert!(ticks.len() > 1, "a {tile}px tiling reported {} tiles", ticks.len());
             assert!(ticks.windows(2).all(|pair| pair[1] > pair[0]), "{ticks:?} went backwards");
             assert_eq!(ticks.last(), Some(&1.0), "{tile}px did not report finished");
@@ -2640,6 +2511,181 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_plate_keeps_its_colour_without_noise_or_directional_grain() {
+        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let galosh = device(gpu).expect("the GALOSH kernels");
+
+        let (width, height) = (720, 208);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test/fixtures/mosaics/red-plate-rim.f32");
+        let bytes = std::fs::read(path).expect("the plate's mosaic");
+        assert_eq!(bytes.len(), width * height * 4);
+        let mosaic: Vec<f32> =
+            bytes.chunks_exact(4).map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]])).collect();
+        let rcd = crate::demosaic::device(gpu).expect("the demosaic kernels");
+        let low_pass = |plane: &[f64], hole: isize| -> Vec<f64> {
+            let mut smoothed = plane.to_vec();
+            for (stride, size) in [(1, width), (width, height)] {
+                smoothed = (0..plane.len()).map(|at| {
+                    let position = at / stride % size;
+                    [1.0, 4.0, 6.0, 4.0, 1.0].into_iter().enumerate().map(|(tap, weight)| {
+                        let neighbour = (position as isize + (tap as isize - 2) * hole)
+                            .clamp(0, size as isize - 1) as usize;
+                        weight * smoothed[at - position * stride + neighbour * stride] / 16.0
+                    }).sum()
+                }).collect();
+            }
+            smoothed
+        };
+        // Fixed noise budgets in preview codes of 255; changing them weakens regression coverage.
+        let budgets = [
+            (1.0, [
+                [[1.297094919, 0.712056294], [0.619382527, 0.474773657], [0.362962954, 0.334762412]],
+                [[2.455099568, 1.143731500], [1.131751345, 0.889216033], [0.737119740, 0.651836320]],
+            ]),
+            (1.35, [
+                [[1.239549811, 0.673791894], [0.595188773, 0.438468152], [0.327387536, 0.286349654]],
+                [[2.249911676, 1.032192491], [1.023864620, 0.789141386], [0.637942304, 0.559494575]],
+            ]),
+            (2.0, [
+                [[1.130417958, 0.589624808], [0.582204233, 0.400156991], [0.331636811, 0.273442708]],
+                [[1.944914664, 0.827576316], [0.870718198, 0.625624022], [0.546510353, 0.483125570]],
+            ]),
+            (3.0, [
+                [[1.115272005, 0.581262017], [0.558324149, 0.369815323], [0.294650478, 0.227699657]],
+                [[1.893297836, 0.798270642], [0.780362605, 0.542186515], [0.440758418, 0.387218849]],
+            ]),
+        ];
+        for sensor_orientation in [false, true] {
+            let orientation = if sensor_orientation { "sensor" } else { "upright" };
+            let index = |x: usize, y: usize| {
+                if sensor_orientation { x * height + height - 1 - y } else { y * width + x }
+            };
+            let (sample_width, sample_height, quad, dark_ref) = if sensor_orientation {
+                (height, width, [0, 1, 1, 2], [37.809074, 37.36227, 37.358116, 36.996742])
+            } else {
+                (width, height, [1, 2, 0, 1], [37.358116, 37.809074, 36.996742, 37.36227])
+            };
+            let mut samples = vec![0.0; mosaic.len()];
+            for y in 0..height {
+                for x in 0..width {
+                    samples[index(x, y)] = mosaic[y * width + x];
+                }
+            }
+            let cfa = crate::cfa::Cfa::bayer(quad).expect("the plate's Bayer pattern");
+            let fit = NoiseFit {
+                alpha: 9.370247e-5,
+                sigma_sq: 5.7659613e-6,
+                unified_sigma: 1.4446775,
+                dark_ref,
+            };
+            let filtered = |colour: f32| -> crate::condition::Mosaic {
+                let uploaded = crate::condition::Mosaic::upload(gpu, &samples, sample_width, sample_height);
+                let amounts = Amounts { luma: 0.528, colour };
+                pollster::block_on(super::denoise_with(gpu, galosh, &uploaded, &cfa, amounts, fit));
+                uploaded
+            };
+            let rows = |denoised: &[f32]| -> Vec<[f64; 2]> {
+                (0..height / 2).map(|site| {
+                    let mean = |dx: usize, dy: usize| {
+                        (200..520).step_by(2).map(|x| f64::from(denoised[index(x + dx, site * 2 + dy)]))
+                            .sum::<f64>() / 160.0
+                    };
+                    [mean(0, 1), mean(1, 0)]
+                }).collect()
+            };
+            let band_contrast = |profile: &[[f64; 2]]| {
+                (138..154).step_by(2).map(|y| profile[y / 2][1] - profile[y / 2][0]).sum::<f64>()
+            };
+            let chroma_noise = |rgb: &[u8]| -> [[[f64; 2]; 3]; 2] {
+                std::array::from_fn(|axis| {
+                    let mut plane: Vec<f64> = (0..width * height).map(|at| {
+                        let pixel = &rgb[index(at % width, at / width) * 3..][..3];
+                        let luma = pixel.iter().zip(crate::image::LUMA)
+                            .map(|(&value, weight)| f64::from(value) * f64::from(weight)).sum::<f64>();
+                        f64::from(pixel[2 * axis]) - luma
+                    }).collect();
+                    std::array::from_fn(|band| {
+                        let hole = 1isize << band;
+                        let smoothed = low_pass(&plane, hole);
+                        let mut detail: Vec<f64> = (16..42).flat_map(|y| (160..560).map(move |x| y * width + x))
+                            .map(|at| (plane[at] - smoothed[at]).abs()).collect();
+                        let rms = (detail.iter().map(|value| value * value).sum::<f64>() / detail.len() as f64).sqrt();
+                        detail.sort_unstable_by(f64::total_cmp);
+                        let middle = detail.len() / 2;
+                        let mad = 1.4826 * (detail[middle - 1] + detail[middle]) * 0.5;
+                        plane = smoothed;
+                        [rms, mad]
+                    })
+                })
+            };
+            let reference = band_contrast(&rows(&read(gpu, &filtered(0.0))));
+            for (colour, budget) in budgets {
+                let uploaded = filtered(colour);
+                let denoised = rows(&read(gpu, &uploaded));
+                let retained = band_contrast(&denoised) / reference;
+                assert!(retained > 0.8,
+                    "{orientation}, colour {colour} retained {retained:.3} of the blue band's contrast");
+                for y in (100..120).step_by(2) {
+                    let [red, blue] = denoised[y / 2];
+                    assert!(red > blue, "{orientation}, colour {colour}, red plate row {y}: R {red:.5}, B {blue:.5}");
+                }
+                for y in (140..148).step_by(2) {
+                    let [red, blue] = denoised[y / 2];
+                    assert!(blue > red, "{orientation}, colour {colour}, blue rim row {y}: R {red:.5}, B {blue:.5}");
+                }
+                let rgb = pollster::block_on(crate::demosaic::demosaic_plane(gpu, rcd, &uploaded, &cfa, |bytes| {
+                    bytes.chunks_exact(4).map(|word| {
+                        let value = f32::from_ne_bytes(word.try_into().unwrap());
+                        ((value * 8.0).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
+                    }).collect::<Vec<_>>()
+                })).expect("the plate's preview");
+                let noise = chroma_noise(&rgb);
+                for (axis, name) in ["Cr", "Cb"].into_iter().enumerate() {
+                    for band in 0..3 {
+                        for (metric, label) in ["RMS", "MAD"].into_iter().enumerate() {
+                            let (actual, original) = (noise[axis][band][metric], budget[axis][band][metric]);
+                            assert!(actual <= original * 1.05,
+                                "{orientation}, colour {colour}, background {name}, hole {}, {label}: {actual:.6} exceeds original {original:.6} by more than 5%",
+                                1 << band);
+                        }
+                    }
+                }
+                if colour == 3.0 {
+                    let luma: Vec<f64> = (0..width * height).map(|at| {
+                        rgb[index(at % width, at / width) * 3..][..3].iter().zip(crate::image::LUMA)
+                            .map(|(&value, weight)| f64::from(value) * f64::from(weight)).sum()
+                    }).collect();
+                    let blurred = low_pass(&low_pass(&luma, 1), 1);
+                    let detail: Vec<_> = luma.iter().zip(blurred).map(|(a, b)| a - b).collect();
+                    let correlation = |dx: isize| {
+                        let mut sums = [0.0f64; 6];
+                        for y in 90..126 {
+                            for x in 200..520 {
+                                let a = detail[y * width + x];
+                                let b = detail[(y + 2) * width + (x as isize + dx) as usize];
+                                for (sum, value) in sums.iter_mut().zip([a, b, a*a, b*b, a*b, 1.0]) {
+                                    *sum += value;
+                                }
+                            }
+                        }
+                        let [a, b, aa, bb, ab, n] = sums;
+                        let correlation = (ab - a*b/n) / ((aa - a*a/n) * (bb - b*b/n)).sqrt();
+                        (correlation, (aa/n).sqrt())
+                    };
+                    let (along, rms) = correlation(2);
+                    let (across, _) = correlation(-2);
+                    assert!((along - across).abs() < 0.06,
+                        "{orientation}: diagonal grain correlations {along:.4}/{across:.4} favour one direction");
+                    assert!(rms < 5.59 * 1.05,
+                        "{orientation}: removing streaks increased fine-grain RMS to {rms:.4}");
+                }
+            }
+        }
+    }
+
     /// A bright curved edge must not come back with a rim of its own light on the dark side.
     ///
     /// A curve carries every sequency of the block transform, so a gain that scales the interior
@@ -2688,98 +2734,89 @@ mod tests {
         }
     }
 
-    /// Fine detail on a grey subject must not come back as colour.
-    ///
-    /// The two greens of a site sample the same filter at two positions, so `gr - gb` holds the
-    /// luma gradient across the site's anti-diagonal and no hue at all. It reaches the chroma
-    /// planes anyway - it is `c1 - c2` of the 2x2 transform - and the colour arm treated the trio
-    /// alike, so a gradient the half-resolution guide cannot see was flattened and the site came
-    /// back with its greens disagreeing. That is a green imbalance, and a directional demosaic
-    /// spreads one into a crosshatch: measured on a synthetic siemens star, a coloured weave over
-    /// every radius where the spokes pass the red and blue sampling limit.
-    ///
-    /// Achromatic by construction - one scene function, sampled by all four photosites - so any
-    /// colour in the answer was invented. Resolvable too, at six pixels along the diagonal, which
-    /// leaves no argument that the pattern was beyond what the mosaic could carry.
     #[test]
     fn fine_detail_on_a_grey_subject_does_not_come_back_as_colour() {
-        let Some(gpu) = crate::gpu::device() else {
-            return;
-        };
-        let Some(galosh) = device(gpu) else {
-            return;
+        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let galosh = device(gpu).expect("the GALOSH kernels");
+        let rcd = crate::demosaic::device(gpu).expect("the demosaic kernels");
+        let fit = NoiseFit {
+            alpha: 1e-5, sigma_sq: 1e-6, unified_sigma: 1.0, dark_ref: [200.00375; 4],
         };
 
         let (width, height) = (256, 192);
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-        let mut uniform = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 40) as f32 / 16777216.0
-        };
-        // A 45-degree grating over the lower half, which is where a site's two greens are furthest
-        // apart - the whole of the signal this is about lands in `gr - gb` and none of it in the
-        // site's mean.
-        //
-        // **Flat above it, and the fit is why.** Phase 0 reads the frame's noise off per-block
-        // variance, so a frame that is nothing but a grating reports the grating as noise: the
-        // normalised space then puts this pattern a couple of sigma up instead of sixty, and every
-        // threshold below reads as though the picture were grain.
-        let scene = |x: usize, y: usize| {
-            if y < height / 2 {
-                return 0.25;
-            }
-            let along = (x as f32 - y as f32) * std::f32::consts::TAU / 6.0;
-            0.25 * (1.0 + 0.4 * along.sin())
-        };
-        let noisy: Vec<f32> = (0..width * height)
-            .map(|at| {
-                let (x, y) = (at % width, at / width);
-                let level = scene(x, y);
-                (level + (uniform() + uniform() + uniform() - 1.5) * 0.004).clamp(0.0, 1.0)
-            })
-            .collect();
-
-        // Per site, and over the interior: the transform reflects at the frame's edge, so the
-        // outermost sites answer for the boundary rule rather than for this.
-        let greens = |frame: &[f32], site_x: usize, site_y: usize| {
-            let (x, y) = (site_x * 2, site_y * 2);
-            f64::from(frame[y * width + x + 1] - frame[(y + 1) * width + x])
-        };
-        // **Against the same chain with the colour arm off, not against the frame that went in.**
-        // The final upsample places one site's chroma on all four of its pixels whatever the
-        // sliders say, and on a grating this fine that alone moves the difference - so a bound
-        // against the input would be a bound on a stage this test is not about, and would pass or
-        // fail on the pattern's period rather than on the colour arm's behaviour.
-        let moved_at = |colour: f32| {
-            let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
-            pollster::block_on(denoise(gpu, galosh, &uploaded, &rggb(), Amounts { luma: 0.0, colour }));
-            let denoised = read(gpu, &uploaded);
-            let mut moved = 0f64;
-            let mut sites = 0f64;
-            for site_y in height / 4 + 4..height / 2 - 4 {
-                for site_x in 4..width / 2 - 4 {
-                    let delta = greens(&denoised, site_x, site_y) - greens(&noisy, site_x, site_y);
-                    moved += delta * delta;
-                    sites += 1.0;
+        for quad in [[0, 1, 1, 2], [2, 1, 1, 0], [1, 0, 2, 1], [1, 2, 0, 1]] {
+            let cfa = crate::cfa::Cfa::bayer(quad).expect("Bayer pattern");
+            let green_at_origin = cfa.colour_at(0, 0) == crate::cfa::GREEN;
+            let diagonal = if green_at_origin { 1.0 } else { -1.0 };
+            let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+            let mut uniform = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                (seed >> 40) as f32 / 16777216.0
+            };
+            let scene = |x: usize, y: usize| {
+                if y < height / 2 {
+                    return 0.25;
                 }
-            }
-            (moved / sites).sqrt()
-        };
-        let untouched = moved_at(0.0);
-        let smoothed = moved_at(2.0);
+                let along = (x as f32 + diagonal * y as f32) * std::f32::consts::TAU / 6.0;
+                0.25 * (1.0 + 0.4 * along.sin())
+            };
+            let clean: Vec<f32> = (0..width * height).map(|at| scene(at % width, at / width)).collect();
+            let noisy: Vec<f32> = (0..width * height)
+                .map(|at| {
+                    let level = clean[at];
+                    let sigma = (fit.alpha * level + fit.sigma_sq).sqrt();
+                    (level + (uniform() + uniform() + uniform() - 1.5) * 2.0 * sigma).clamp(0.0, 1.0)
+                })
+                .collect();
 
-        // No more than leaving colour off moves it, which is the claim rather than a number: a
-        // grey subject has no hue for the colour arm to find, so whatever it does here is invented.
-        // Smoothed as though it were one, this ran 1.45x the floor; weighed against the noise it
-        // sits under it. The 5% is for a driver's arithmetic, not for a little smoothing.
-        assert!(
-            smoothed < untouched * 1.05,
-            "the colour arm moved a grey subject's green difference by {smoothed:.5} where \
-             leaving colour alone moves it {untouched:.5}, and the excess can only come back \
-             as a hue",
-        );
+            let error_at = |colour: f32| {
+                let uploaded = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+                pollster::block_on(super::denoise_with(
+                    gpu, galosh, &uploaded, &cfa, Amounts { luma: 0.0, colour }, fit,
+                ));
+                let rgb = pollster::block_on(crate::demosaic::demosaic_plane(gpu, rcd, &uploaded, &cfa, |bytes| {
+                    bytes.chunks_exact(4).map(|word| f32::from_ne_bytes(word.try_into().unwrap())).collect::<Vec<_>>()
+                })).expect("the grey picture");
+                let margin = crate::demosaic::MARGIN as usize;
+                let mut sums = [0.0f64; 7];
+                for y in height / 2 + margin..height - margin {
+                    for x in margin..width - margin {
+                        let at = y * width + x;
+                        let pixel = &rgb[at * 3..][..3];
+                        let luma = pixel.iter().zip(crate::image::LUMA)
+                            .map(|(&value, weight)| f64::from(value) * f64::from(weight)).sum::<f64>();
+                        let truth = f64::from(clean[at]);
+                        let red_green = f64::from(pixel[0] - pixel[1]);
+                        let blue_green = f64::from(pixel[2] - pixel[1]);
+                        for (sum, value) in sums.iter_mut().zip([
+                            truth, luma, truth*truth, truth*luma, red_green*red_green, blue_green*blue_green, 1.0,
+                        ]) {
+                            *sum += value;
+                        }
+                    }
+                }
+                let [truth, luma, power, product, red, blue, n] = sums;
+                let gain = (product - truth*luma/n) / (power - truth*truth/n);
+                ([(red/n).sqrt(), (blue/n).sqrt()], gain)
+            };
+            let untouched = error_at(0.0);
+            for colour in [1.0, 2.0, 3.0] {
+                let smoothed = error_at(colour);
+                for axis in 0..2 {
+                    assert!(smoothed.0[axis] <= untouched.0[axis] * 1.05,
+                        "Bayer {quad:?}, colour {colour}: false-colour RMS {} against {} without colour denoise",
+                        smoothed.0[axis], untouched.0[axis]);
+                }
+                assert!(
+                    smoothed.1 >= untouched.1 * 0.95,
+                    "Bayer {quad:?}, colour {colour}: texture gain {} against {} without colour denoise",
+                    smoothed.1, untouched.1,
+                );
+            }
+        }
     }
 
     /// Texture on a coloured surface must survive the colour denoise.
@@ -2890,6 +2927,86 @@ mod tests {
             (0..size).flat_map(|y| (0..size).map(move |x| (x, y))).map(|(x, y)| at(x0 + 2 * x, y0 + 2 * y)).collect();
         let mean = samples.iter().sum::<f32>() / samples.len() as f32;
         samples.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / samples.len() as f32
+    }
+
+    #[test]
+    fn a_non_bayer_two_by_two_preserves_neutral_brightness() {
+        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let galosh = device(gpu).expect("the GALOSH kernels");
+        let cfa = crate::cfa::Cfa::new(2, 2, &[0, 1, 2, 1]).expect("an RGB pattern");
+        assert!(!cfa.is_bayer() && super::filters(&cfa));
+        let (width, height) = (64, 64);
+        let level = 0.25;
+        let fit = NoiseFit {
+            alpha: 1e-5, sigma_sq: 1e-6, unified_sigma: 1.0, dark_ref: [0.0; 4],
+        };
+        for colour in [0.0, 3.0] {
+            let mosaic = crate::condition::Mosaic::upload(gpu, &vec![level; width * height], width, height);
+            pollster::block_on(super::denoise_with(
+                gpu, galosh, &mosaic, &cfa, Amounts { luma: 0.528, colour }, fit,
+            ));
+            for value in read(gpu, &mosaic) {
+                assert!((value - level).abs() < 1e-4,
+                    "colour {colour}: neutral brightness {level} became {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn colour_denoise_preserves_mean_colour_on_a_flat_surface() {
+        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let galosh = device(gpu).expect("the GALOSH kernels");
+        let (width, height) = (256, 192);
+        let mut noisy = frame(width, height);
+        for (at, value) in noisy.iter_mut().enumerate() {
+            if (at % width) % 2 == 1 && (at / width) % 2 == 0 {
+                *value += 0.02;
+            }
+        }
+        let original = crate::condition::Mosaic::upload(gpu, &noisy, width, height);
+        let fit = pollster::block_on(super::fit(gpu, galosh, &original, &rggb()));
+        for colour in [1.0, 1.35, 2.0, 3.0] {
+            let uploaded = original.duplicate(gpu);
+            pollster::block_on(super::denoise_with(
+                gpu, galosh, &uploaded, &rggb(), Amounts { luma: 0.528, colour }, fit,
+            ));
+            let denoised = read(gpu, &uploaded);
+            for (slot, expected) in [0.20, 0.34, 0.36, 0.12].into_iter().enumerate() {
+                let (dx, dy) = (slot >> 1, slot & 1);
+                let mean = (16..80).step_by(2).flat_map(|y| {
+                    let values = &denoised;
+                    (16..80).step_by(2).map(move |x| f64::from(values[(y + dy) * width + x + dx]))
+                }).sum::<f64>() / 1024.0;
+                assert!((mean - expected).abs() < 0.003,
+                    "colour {colour}, slot {slot}: mean {mean:.5}, expected {expected:.5}");
+            }
+            assert!(variance(&denoised, width, 16, 16, 32) < variance(&noisy, width, 16, 16, 32) * 0.5,
+                "colour {colour} leaves more than half the flat surface's noise variance");
+        }
+    }
+
+    #[test]
+    fn colour_amount_starts_from_zero_without_a_jump() {
+        let _held = ONE_DENOISE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner());
+        let gpu = crate::gpu::device().expect("a Vulkan adapter");
+        let galosh = device(gpu).expect("the GALOSH kernels");
+        let (width, height) = (256, 192);
+        let source = crate::condition::Mosaic::upload(gpu, &frame(width, height), width, height);
+        let fit = pollster::block_on(super::fit(gpu, galosh, &source, &rggb()));
+        let at = |colour| {
+            let mosaic = source.duplicate(gpu);
+            pollster::block_on(super::denoise_with(
+                gpu, galosh, &mosaic, &rggb(), Amounts { luma: 0.528, colour }, fit,
+            ));
+            read(gpu, &mosaic)
+        };
+        let zero = at(0.0);
+        let near = at(0.001);
+        let jump = zero.iter().zip(near).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        assert!(jump * 65535.0 <= 2.0,
+            "colour amount approaching zero jumps by {} full-scale counts", jump * 65535.0);
     }
 
     #[test]

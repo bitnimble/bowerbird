@@ -79,12 +79,100 @@ fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
     })
 }
 
-/// Both ranks of both axes: `[axis][rank]`, in the units the lattice is sized in.
-pub(crate) async fn spans(
+/// Every pixel of `plane` as a sample the colour model reads, with the lens's falloff the plane
+/// does not carry lifted in.
+pub(crate) fn lifted(
     gpu: &'static crate::gpu::Gpu,
-    colour: &crate::hdr_fit::HdrColour,
     plane: &crate::hdr_fit::Source,
     falloff: Option<(f64, f64)>,
+) -> crate::gpu::Buffer {
+    let storage = wgpu::BufferUsages::STORAGE;
+    let sized = |label, words: usize| {
+        gpu.own_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: (words * 4).max(4) as u64,
+            usage: storage,
+            mapped_at_creation: false,
+        })
+    };
+    let held = |label| sized(label, 1);
+    let samples = sized("fit lifted samples", plane.width * plane.height * 4);
+    let mut recording = gpu.record();
+    recording.holding(&plane.buffer);
+    let gains: Vec<u8> = match falloff {
+        None => vec![0u8; 4],
+        Some((a, b)) => (0..=u8::MAX)
+            .flat_map(|r| (crate::fit::Gain::at(a, b, r) as f32).to_ne_bytes())
+            .collect(),
+    };
+    let gains = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("fit lifted gains"),
+        contents: &gains,
+        usage: storage,
+    });
+    let push = describing(gpu, plane, falloff.is_some(), 0, [0, 0]);
+    let (evaluated, histogram, marks) = (held("unused"), held("unused"), held("unused"));
+    let group = gpu.bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("fit_span gather"),
+        layout: &kernels(gpu).layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: plane.buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: gains.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: samples.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: evaluated.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 4, resource: histogram.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 5, resource: marks.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
+        ],
+    });
+    {
+        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
+        pass.set_pipeline(&kernels(gpu).gather);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(
+            (plane.width as u32).div_ceil(16),
+            (plane.height as u32).div_ceil(16),
+            1,
+        );
+    }
+    recording.submit();
+    samples
+}
+
+fn describing(
+    gpu: &'static crate::gpu::Gpu,
+    plane: &crate::hdr_fit::Source,
+    falloff: bool,
+    axis: usize,
+    ranks: [usize; 2],
+) -> crate::gpu::Buffer {
+    let (cx, cy) = (plane.width as f64 / 2.0, plane.height as f64 / 2.0);
+    let half = (cx * cx + cy * cy).sqrt().max(1.0);
+    let mut block: Vec<u8> = [
+        (plane.width as i32).to_ne_bytes(),
+        (plane.height as i32).to_ne_bytes(),
+        i32::from(falloff).to_ne_bytes(),
+        (half as f32).to_ne_bytes(),
+        (axis as i32).to_ne_bytes(),
+        (ranks[0] as i32).to_ne_bytes(),
+        (ranks[1] as i32).to_ne_bytes(),
+    ]
+    .concat();
+    // Seven fields is twenty-eight bytes and a uniform block is rounded up to sixteen.
+    block.resize(32, 0);
+    gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("fit_span push"),
+        contents: &block,
+        usage: wgpu::BufferUsages::UNIFORM,
+    })
+}
+
+/// Both ranks of both axes: `[axis][rank]`, in the units the lattice is sized in, over `evaluated`,
+/// which is the model's output over every pixel of `plane` as [`lifted`].
+pub(crate) async fn spans(
+    gpu: &'static crate::gpu::Gpu,
+    evaluated: &crate::gpu::Buffer,
+    plane: &crate::hdr_fit::Source,
     ranks: [usize; 2],
 ) -> Option<[[f64; 2]; 2]> {
     let pixels = plane.width * plane.height;
@@ -97,80 +185,14 @@ pub(crate) async fn spans(
         })
     };
     let storage = wgpu::BufferUsages::STORAGE;
-    let samples = held("fit span samples", pixels * 4, storage);
-
-    // The gather is a submit of its own because the model runs between it and the ranking, and the
-    // model is a submit of `hdr_fit`'s own.
-    let mut recording = gpu.record();
-    recording.holding(&plane.buffer);
-    let gains: Vec<u8> = match falloff {
-        None => vec![0u8; 4],
-        Some((a, b)) => (0..=u8::MAX)
-            .flat_map(|r| (crate::fit::Gain::at(a, b, r) as f32).to_ne_bytes())
-            .collect(),
-    };
-    let gains = recording.init(&wgpu::util::BufferInitDescriptor {
-        label: Some("fit span gains"),
-        contents: &gains,
-        usage: storage,
-    });
     // Zeroed by the driver, which the counting relies on.
     let histogram = held("fit span histogram", 2 * AXIS_BINS, storage);
     let marks = held("fit span marks", 2 * MARKS_PER_AXIS, storage | wgpu::BufferUsages::COPY_SRC);
-    let (cx, cy) = (plane.width as f64 / 2.0, plane.height as f64 / 2.0);
-    let half = (cx * cx + cy * cy).sqrt().max(1.0);
     let built = kernels(gpu);
-    let describing = |axis: usize| {
-        let mut block: Vec<u8> = [
-            (plane.width as i32).to_ne_bytes(),
-            (plane.height as i32).to_ne_bytes(),
-            i32::from(falloff.is_some()).to_ne_bytes(),
-            (half as f32).to_ne_bytes(),
-            (axis as i32).to_ne_bytes(),
-            (ranks[0] as i32).to_ne_bytes(),
-            (ranks[1] as i32).to_ne_bytes(),
-        ]
-        .concat();
-        // Seven fields is twenty-eight bytes and a uniform block is rounded up to sixteen.
-        block.resize(32, 0);
-        gpu.own_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("fit_span push"),
-            contents: &block,
-            usage: wgpu::BufferUsages::UNIFORM,
-        })
-    };
-    // One layout serves the gather and the ranking, and each binds a stub where the other's plane
-    // goes: `samples` bound as both the written and the read one in a single dispatch is a
-    // conflicting usage, whichever of the two the kernel actually touches.
     let idle = held("unused", 1, storage);
-    let pushes: Vec<crate::gpu::Buffer> = (0..2).map(describing).collect();
-    let gathering = gpu.bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("fit_span gather"),
-        layout: &built.layout,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: plane.buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: gains.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: samples.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 3, resource: idle.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 4, resource: histogram.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: marks.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 20, resource: pushes[0].as_entire_binding() },
-        ],
-    });
-    {
-        let mut pass = recording.encoder().begin_compute_pass(&Default::default());
-        pass.set_pipeline(&built.gather);
-        pass.set_bind_group(0, &gathering, &[]);
-        pass.dispatch_workgroups(
-            (plane.width as u32).div_ceil(16),
-            (plane.height as u32).div_ceil(16),
-            1,
-        );
-    }
-    recording.submit();
-
-    let evaluated =
-        crate::hdr_fit::evaluate_over(gpu, colour, &samples, pixels, crate::hdr_fit::Stage::ToneMatrix);
+    let no_gains = held("unused gains", 1, storage);
+    let pushes: Vec<crate::gpu::Buffer> =
+        (0..2).map(|axis| describing(gpu, plane, false, axis, ranks)).collect();
 
     // The ranking reads what the model wrote, so the bind group points at that rather than at the
     // samples the gather filled - the two are the same shape and the second overwrites nothing.
@@ -182,11 +204,11 @@ pub(crate) async fn spans(
                 layout: &built.layout,
                 entries: &[
                     wgpu::BindGroupEntry { binding: 0, resource: plane.buffer.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: gains.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: no_gains.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 2, resource: idle.as_entire_binding() },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: evaluated.buffer.as_entire_binding(),
+                        resource: evaluated.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry { binding: 4, resource: histogram.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: marks.as_entire_binding() },

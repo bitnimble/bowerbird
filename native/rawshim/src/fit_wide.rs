@@ -105,7 +105,7 @@ pub(crate) fn params_block() -> usize {
     std::mem::size_of::<Block>()
 }
 
-/// `Params` in `fit_wide.slang`. The trailing pad is what rounds the block up to sixteen bytes.
+/// `Params` in `fit_wide.slang`, twenty words and so already a multiple of sixteen bytes.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Block {
@@ -124,13 +124,11 @@ struct Block {
     sample_range: f32,
     min_chroma: f32,
     camera_clipping: f32,
-    camera_crushed: f32,
     margin_dark: f32,
     flat_enough: f32,
     ceiling: f32,
     has_falloff: i32,
     half_diagonal: f32,
-    pad: [u32; 3],
 }
 
 fn block(planes: &Planes<'_>, blocks: usize, count: usize) -> Block {
@@ -152,13 +150,11 @@ fn block(planes: &Planes<'_>, blocks: usize, count: usize) -> Block {
         sample_range: crate::hdr_fit::SAMPLE_RANGE as f32,
         min_chroma: crate::hdr_fit::WIDE_MIN_CHROMA as f32,
         camera_clipping: crate::hdr_fit::CAMERA_CLIPPING as f32,
-        camera_crushed: crate::hdr_fit::CAMERA_CRUSHED as f32,
         margin_dark: crate::hdr_fit::MARGIN_DARK as f32,
         flat_enough: crate::hdr_fit::FLAT_ENOUGH as f32,
         ceiling: planes.ceiling as f32,
         has_falloff: i32::from(planes.falloff.is_some()),
         half_diagonal: (cx * cx + cy * cy).sqrt().max(1.0) as f32,
-        pad: [0; 3],
     }
 }
 
