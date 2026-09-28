@@ -4,7 +4,7 @@
 //   bun run release 1.2.0      that version
 //   bun run release 3f9c2ab    0.0.0-3f9c2ab
 //
-// Pushing the tag (`git push --follow-tags`) is what starts the release workflow.
+// Pushing the commit to `main` (`git push --follow-tags`) is what starts the release workflow.
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,6 +43,7 @@ function nextVersion(requested: string | undefined): string {
 
 const dirty = git('status', '--porcelain');
 if (dirty !== '') fail(`the working tree has uncommitted or untracked files:\n${dirty}`);
+if (git('branch', '--show-current') !== 'main') fail('releases must be cut on main');
 
 const version = nextVersion(process.argv[2]);
 const tag = `v${version}`;

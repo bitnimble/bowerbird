@@ -233,9 +233,10 @@ COPY package.json bun.lock ./
 COPY packages/samsung-frame-art ./packages/samsung-frame-art
 RUN bun install --frozen-lockfile --production
 
-FROM base AS native
-# The codecs arrive built, from `codecs`; what the crate needs from apt is a linker and
-# libclang-dev, without which bindgen cannot parse their headers.
+# The toolchain and the sources both builds of the crate read: the library below and
+# the wasm package after it. What the crate needs from apt is a linker and libclang-dev,
+# without which bindgen cannot parse the codecs' headers.
+FROM base AS rust
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
      build-essential ca-certificates curl git libclang-dev \
@@ -253,15 +254,18 @@ COPY native ./native
 # stage that produces a picture has one implementation and it is these files (§0.4).
 COPY slang ./slang
 COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
-COPY --from=codecs /app/native/rawshim/.codecs ./native/rawshim/.codecs
 COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
 COPY --from=environments /app/native/rawshim/.environments ./native/rawshim/.environments
-RUN RUSTFLAGS="-C target-cpu=x86-64" cargo build --release \
+
+FROM rust AS native
+COPY --from=codecs /app/native/rawshim/.codecs ./native/rawshim/.codecs
+RUN --mount=type=cache,id=bowerbird-cargo-registry,target=/root/.cargo/registry \
+    --mount=type=cache,id=bowerbird-native-target,target=/build/target \
+  RUSTFLAGS="-C target-cpu=x86-64" cargo build --release \
     --manifest-path native/rawshim/Cargo.toml \
     --target x86_64-unknown-linux-gnu \
     --target-dir /build/target \
-  && mv /build/target/x86_64-unknown-linux-gnu/release/librawshim.so /build/librawshim.so \
-  && rm -rf /build/target
+  && cp /build/target/x86_64-unknown-linux-gnu/release/librawshim.so /build/librawshim.so
 
 # The same crate again as wasm, which is what the editor ticks through in the
 # browser (§0.4: one implementation, and this is it running on the other host).
@@ -269,6 +273,7 @@ RUN RUSTFLAGS="-C target-cpu=x86-64" cargo build --release \
 #
 # The release binary rather than `cargo install wasm-pack`, which builds it from
 # source and costs minutes for a tool that publishes one.
+FROM rust AS wasm-build
 COPY package.json bun.lock ./
 COPY scripts ./scripts
 RUN rustup target add wasm32-unknown-unknown wasm32-wasip1-threads \
@@ -276,6 +281,11 @@ RUN rustup target add wasm32-unknown-unknown wasm32-wasip1-threads \
      | tar -xz --strip-components=1 -C /usr/local/bin --wildcards '*/wasm-pack' \
   && bun run build:wasm \
   && rm -rf native/rawshim/target
+
+# The package alone, so the release workflow can hand in the one its `wasm` job built
+# (`--build-context wasm=native/rawshim/pkg`) and skip the stage above.
+FROM scratch AS wasm
+COPY --from=wasm-build /app/native/rawshim/pkg /
 
 # The web client, served by the bun server beside it in the final image.
 #
@@ -308,7 +318,7 @@ COPY web ./web
 COPY packages ./packages
 # The wasm decoder the editor ticks through. Its filenames are hashed into the
 # bundle, so the package has to be there before vite resolves the import.
-COPY --from=native /app/native/rawshim/pkg ./native/rawshim/pkg
+COPY --from=wasm / ./native/rawshim/pkg
 # The browser's copy of the shaders, which is a build artefact and not committed: a Vite
 # plugin runs `scripts/build-web-shaders.ts` from `buildStart`, so the config does not
 # even *load* without that script, and the script does not run without the shaders and the
@@ -323,7 +333,7 @@ ARG VITE_SENTRY_DSN=
 ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 RUN cd web && bun run build
 
-# The release workflow's `android` and `desktop` jobs, for building the apps before a tag does
+# The release workflow's `android` and `desktop` jobs, for building the apps locally
 # (`bun run release:check`). Nothing in `runtime` reads any of them.
 #
 # The checkout they build, with every platform's optional packages: a cross-built sidecar ships

@@ -299,14 +299,17 @@ check compares against; `bundle-app.ts`, `android-build.ts` and `mac-build.ts` h
 Tauri CLI as `--config`, so no manifest carries a version of its own; `write-release-manifest.ts`
 names the release after it, and the APK is named after it.
 
-**`bun run release` cuts one**: on a clean tree it writes the next patch version into
+**`bun run release` cuts one**: on a clean tree on `main` it writes the next patch version into
 `VERSION` - or the semver version it is given, or `0.0.0-<hash>` for a commit hash - commits it,
-and tags the commit `v<VERSION>`; `git push --follow-tags` then starts the workflow. Its first
-job refuses a tag that names anything else, because a build that ships calling itself something
-other than its tag is the failure that leaves an update check offering a version that is already
-installed, forever.
+and tags the commit `v<VERSION>`; `git push --follow-tags` then starts the workflow, which runs
+on a push to `main` that changes `VERSION`. GitHub restores caches from the current ref and
+`main`; distinct release tags cannot share entries they save. Running on `main` lets each
+release reuse caches saved by earlier releases.
+Its first job refuses a `v<VERSION>` tag on any commit but the one it built, because a build that
+ships calling itself something other than its tag is the failure that leaves an update check
+offering a version that is already installed, forever; with no tag pushed, `publish` makes one.
 
-**`bun run release:check` builds what a tag would, before there is one.** It builds HEAD in a
+**`bun run release:check` builds the release artifacts locally.** It builds HEAD in a
 detached worktree, since a tag releases the commit and an uncommitted edit would otherwise decide
 the answer. The container is `docker build` on the same Dockerfile, and the apps are its
 `android`, `macos` and `windows` stages, which run the workflow's own scripts and write each

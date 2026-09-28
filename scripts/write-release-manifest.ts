@@ -61,7 +61,7 @@ for (const entry of readdirSync(dist, { withFileTypes: true })) {
 
 // The image is the container's installer: there is no file to download, and a container is
 // updated by pulling it. The repository is named and the tag is not: `docker/metadata-action`'s
-// `{{version}}` strips the `v` off a tag push, so the image is `…:0.2.0` - `…:v0.2.0` is a tag
+// `{{version}}` strips the `v` off the tag, so the image is `…:0.2.0` - `…:v0.2.0` is a tag
 // that was never pushed and a `docker pull` that 404s.
 const imageRepo = flag('image-repo');
 if (imageRepo != null) assets['docker-x86_64'] = { image: `${imageRepo}:${version}` };
