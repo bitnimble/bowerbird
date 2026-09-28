@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { type Library } from '../../../../src/schemas/libraries';
 import { PathSegment, route } from '../../../../src/schemas/route';
+import { canRevealFile } from '../../api/transport';
 import {
   useBackupStore,
   useLibrariesStore,
@@ -33,6 +34,7 @@ import { Button } from '../../ui/button';
 import { DialogBody, DialogColumns } from '../../ui/dialog_layout';
 import { focusRing } from '../../ui/focus_ring';
 import { ICON } from '../../ui/icon';
+import { TextLink } from '../../ui/link';
 import { Modal } from '../../ui/modal';
 import { Panel } from '../../ui/panel';
 import { Row } from '../../ui/row';
@@ -134,7 +136,20 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
     <Panel role="listitem" style={styles.tile}>
       <LibraryName library={library} />
       <Text variant="mono" as="div" style={styles.meta}>
-        {SettingsStrings.libraryMeta(library.root_path, library.photo_count)}
+        {canRevealFile() ? (
+          <TextLink
+            to={library.root_path}
+            tooltip={SettingsStrings.openLibraryFolder()}
+            onClick={(event) => {
+              event.preventDefault();
+              void libraries.openFolder(library.root_path);
+            }}
+          >
+            {library.root_path}
+          </TextLink>
+        ) : library.root_path}
+        {' · '}
+        {SettingsStrings.libraryPhotoCount(library.photo_count)}
       </Text>
       <ScanStrip library={library} />
       <LibraryJobs library={library} />

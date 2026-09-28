@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import type { ReactNode } from 'react';
+import type { MouseEventHandler, ReactNode } from 'react';
 import * as stylex from '@stylexjs/stylex';
 import { focusRing } from './focus_ring';
 import { color } from './tokens.stylex';
@@ -23,10 +23,20 @@ const styles = stylex.create({
  * A link that reads as one: text inside a sentence or a field, rather than a whole row, tile
  * or sidebar entry that happens to navigate.
  */
-export function TextLink({ to, tooltip, children }: { to: string; tooltip?: string; children: ReactNode }): JSX.Element {
+export function TextLink({
+  to,
+  tooltip,
+  onClick,
+  children,
+}: {
+  to: string;
+  tooltip?: string;
+  onClick?: MouseEventHandler<HTMLAnchorElement>;
+  children: ReactNode;
+}): JSX.Element {
   return (
     <Tooltip label={tooltip}>
-      <Link {...stylex.props(styles.link, focusRing.ring)} to={to}>
+      <Link {...stylex.props(styles.link, focusRing.ring)} to={to} onClick={onClick}>
         {children}
       </Link>
     </Tooltip>

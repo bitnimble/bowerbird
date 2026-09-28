@@ -7,13 +7,11 @@ import { setStage, type OptionalStage, type RenderedRendition } from '../../../.
 import { folderRulesApi } from '../../api/folder_rules';
 import { librariesApi } from '../../api/libraries';
 import { ApiError } from '../../api/request';
+import { openFolder } from '../../api/transport';
+import { describe } from '../../errors';
 import type { ToastsPresenter } from '../toasts/toasts_presenter';
 import { LibrariesPresenterStrings } from './libraries_presenter.strings';
 import type { LibrariesStore } from './libraries_store';
-
-function message(err: unknown): string {
-  return err instanceof ApiError ? err.message : (err as Error).message;
-}
 
 export class LibrariesPresenter {
   constructor(
@@ -34,7 +32,7 @@ export class LibrariesPresenter {
         this.store.loading = false;
       });
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
     }
   }
 
@@ -52,11 +50,19 @@ export class LibrariesPresenter {
     try {
       created = await librariesApi.create(request);
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return { created: null, readOnlyRoot: err instanceof ApiError && err.code === 'READ_ONLY' };
     }
     await this.load();
     return { created, readOnlyRoot: false };
+  }
+
+  async openFolder(path: string): Promise<void> {
+    try {
+      await openFolder(path);
+    } catch (err) {
+      this.toasts.showError(LibrariesPresenterStrings.couldNotOpenFolder(), describe(err));
+    }
   }
 
   async setOrdering(libraryId: string, ordering: Ordering): Promise<void> {
@@ -128,7 +134,7 @@ export class LibrariesPresenter {
       const { stacks } = await librariesApi.detectStacks(libraryId);
       this.toasts.show(LibrariesPresenterStrings.stacksDetected(stacks));
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
     }
   }
 
@@ -164,7 +170,7 @@ export class LibrariesPresenter {
       const rules = await folderRulesApi.list(libraryId);
       this.putFolderRules(libraryId, rules);
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
     }
   }
 
@@ -174,7 +180,7 @@ export class LibrariesPresenter {
     try {
       await folderRulesApi.clear(libraryId, folderPath);
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.loadFolderRules(libraryId);
@@ -189,7 +195,7 @@ export class LibrariesPresenter {
     try {
       await librariesApi.update(libraryId, body);
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.load();
@@ -199,7 +205,7 @@ export class LibrariesPresenter {
     try {
       await librariesApi.delete(libraryId);
     } catch (err) {
-      this.fail(message(err));
+      this.fail(describe(err));
       return;
     }
     await this.load();

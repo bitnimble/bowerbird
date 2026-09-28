@@ -4,12 +4,12 @@ export const SettingsStrings = {
   stop: () => 'Stop',
   stopping: () => 'Stopping…',
   scanNow: () => 'Scan library',
+  openLibraryFolder: () => 'Open library folder',
   remove: () => 'Remove',
   removeLibraryQuestion: (libraryName: string) => `Remove "${libraryName}" from Bowerbird?`,
   removeLibraryWarning: (photoCount: number) =>
     `Your ${photoCount} ${photoCount === 1 ? 'photo stays' : 'photos stay'} on disk. Ratings, notes, Picks, albums, and shoots can't be recovered.`,
-  libraryMeta: (rootPath: string, photoCount: number) =>
-    `${rootPath} · ${photoCount} ${photoCount === 1 ? 'photo' : 'photos'}`,
+  libraryPhotoCount: (photoCount: number) => `${photoCount} ${photoCount === 1 ? 'photo' : 'photos'}`,
   /** Opens one library's settings; `settings` names the whole page. */
   openLibrarySettings: () => 'Settings',
   librarySettingsTitle: (libraryName: string) => `Settings for ${libraryName}`,
