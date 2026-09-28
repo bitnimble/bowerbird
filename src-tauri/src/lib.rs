@@ -32,7 +32,7 @@ pub type Runtime = tauri::Wry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .setup(|app| {
             api::load_config(app.handle());
             open_window(app.handle())?;
@@ -73,7 +73,10 @@ pub fn run() {
             reveal::reveal_original,
             server::app_data_dir,
             server::open_app_data_dir
-        ])
+        ]);
+    #[cfg(target_os = "macos")]
+    let builder = builder.on_web_content_process_terminate(server::recover);
+    builder
         .run(tauri::generate_context!())
         .expect("error while running the Bowerbird shell");
 }

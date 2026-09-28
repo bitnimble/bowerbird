@@ -14,15 +14,17 @@ export const SIGN_IN_PARAM = 'token';
  */
 export function requireToken(token: string): MiddlewareHandler {
   return async (c, next) => {
+    if (c.req.method === 'GET' && same(c.req.query(SIGN_IN_PARAM), token)) {
+      setCookie(c, cookieName(c), token, { httpOnly: true, sameSite: 'Strict', path: '/' });
+      const url = new URL(c.req.url);
+      url.searchParams.delete(SIGN_IN_PARAM);
+      c.header('Cache-Control', 'no-store');
+      return c.redirect(url.href);
+    }
     const bearer = c.req.header('authorization')?.match(/^Bearer (.*)$/)?.[1];
     if (same(bearer, token) || same(getCookie(c, cookieName(c)), token)) {
       await next();
       return;
-    }
-    if (c.req.method === 'GET' && same(c.req.query(SIGN_IN_PARAM), token)) {
-      setCookie(c, cookieName(c), token, { httpOnly: true, sameSite: 'Strict', path: '/' });
-      // Off the address bar and out of the history, which would otherwise hold the token.
-      return c.redirect(c.req.path);
     }
     throw new AppError('UNAUTHORIZED', 'this server only answers the app that started it');
   };

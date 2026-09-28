@@ -45,7 +45,7 @@ test('signs the page in once, and answers its cookie from then on', async () => 
   const server = app();
   const signIn = await server.request(`${ORIGIN}/api/libraries?token=secret`);
   expect(signIn.status).toBe(302);
-  expect(signIn.headers.get('location')).toBe('/api/libraries');
+  expect(signIn.headers.get('location')).toBe(`${ORIGIN}/api/libraries`);
   const cookie = signIn.headers.get('set-cookie') ?? '';
   expect(cookie).toContain('bowerbird_token_4100=secret');
   expect(cookie).toContain('HttpOnly');
@@ -53,6 +53,30 @@ test('signs the page in once, and answers its cookie from then on', async () => 
 
   const reply = await server.request(`${ORIGIN}/api/libraries`, { headers: { Cookie: cookie.split(';')[0]! } });
   expect(reply.status).toBe(200);
+});
+
+test.each<{ name: string; headers: Record<string, string> }>([
+  { name: 'without a cookie', headers: {} },
+  { name: 'with its current cookie', headers: { Cookie: 'bowerbird_token_4100=secret' } },
+  { name: 'with a stale cookie', headers: { Cookie: 'bowerbird_token_4100=old-secret' } },
+])('signs a restored page in $name, preserving its query and removing the token', async ({ headers }) => {
+  const server = app();
+  const signIn = await server.request(`${ORIGIN}/api/libraries?view=grid&token=secret&filter=kept`, { headers });
+
+  expect(signIn.status).toBe(302);
+  expect(signIn.headers.get('location')).toBe(`${ORIGIN}/api/libraries?view=grid&filter=kept`);
+  expect(signIn.headers.get('cache-control')).toBe('no-store');
+  const cookie = signIn.headers.get('set-cookie')?.split(';')[0];
+  expect(cookie).toBe('bowerbird_token_4100=secret');
+  const reply = await server.request(signIn.headers.get('location')!, { headers: { Cookie: cookie! } });
+  expect(reply.status).toBe(200);
+  expect(await reply.json()).toEqual([]);
+});
+
+test('keeps sign-in redirects on this server for a path starting with two slashes', async () => {
+  const reply = await app().request(`${ORIGIN}//another.example/photo?token=secret&view=full`);
+  expect(reply.status).toBe(302);
+  expect(reply.headers.get('location')).toBe(`${ORIGIN}//another.example/photo?view=full`);
 });
 
 test.each<{ name: string; url: string; headers: Record<string, string> }>([
