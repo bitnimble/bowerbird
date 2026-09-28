@@ -146,3 +146,20 @@ Someone who worked at Canva for a while.
 ## what does the name mean?
 
 I like birds. Australian bowerbirds collect and arrange bright, shiny things.
+
+## development formatting
+
+Install Prettier with `bun install` and rustfmt with `rustup component add rustfmt`.
+
+Repository-wide formatting is deferred until the pending branches merge. For now, format only
+selected files. See [Formatting in AGENTS.md](AGENTS.md#formatting) for the working rules.
+
+Run `bun run format` to format project files, or `bun run format:check` to check them without writing.
+Use `format:prettier` or `format:rust` to run either formatter separately. Their `:check` variants only check.
+Rust formatting covers the owned crates, including the desktop shell and local `parking_lot` shim.
+Vendored dependencies and generated files are excluded.
+
+To format selected files, run `bunx --no-install prettier --write path/to/file.ts` or
+`rustfmt --edition 2024 --config-path rustfmt.toml path/to/file.rs`. To format one Rust crate,
+run `bun run scripts/cargo.ts fmt --manifest-path native/heif/Cargo.toml`.
+Use the Rust edition declared in the crate's `Cargo.toml` when formatting individual files.

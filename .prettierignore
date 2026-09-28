@@ -1,0 +1,11 @@
+native/vendor/
+native/rawshim/patched/
+native/rawshim/pkg/
+web/src/features/photos/generated/
+src-tauri/gen/
+src-tauri/icons/
+src/db/migrations/
+test/fixtures/
+**/Cargo.lock
+**/bun.lock
+**/package-lock.json

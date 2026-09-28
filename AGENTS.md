@@ -118,6 +118,28 @@ Run getters in each worktree to create symlinks. `XDG_CACHE_HOME` moves cache;
 - Names are mangled: `Params_std140_0`, `FROM_FRAME_0`. `wgsl_layout.rs` matches block prefixes;
   draw constants use `[vk::constant_id(0)]` IDs.
 
+## Formatting
+
+Use Prettier with `.prettierrc.json` for supported source and text files, and rustfmt with
+`rustfmt.toml` for Rust. Install them with `bun install` and `rustup component add rustfmt`.
+
+**Repository-wide formatting is deferred until the pending branches merge.** Keep formatting
+limited to files deliberately selected for the task. Defer formatting hooks and CI enforcement
+until the full formatting pass. Avoid unrelated formatting changes in feature diffs.
+
+- Selected Prettier files: `bunx --no-install prettier --write path/to/file.ts`.
+  Replace `--write` with `--check` to check without writing.
+- Selected Rust files: `rustfmt --edition 2024 --config-path rustfmt.toml path/to/file.rs`.
+  Use the edition declared in the crate's `Cargo.toml`; add `--check` to check without writing.
+- One Rust crate: `bun run scripts/cargo.ts fmt --manifest-path native/heif/Cargo.toml`.
+  Add `--check` to check without writing. Keep `--all` off, since it includes local vendored dependencies.
+- Full formatting pass: `bun run format`; full check: `bun run format:check`.
+  `format:prettier` and `format:rust` run each formatter separately; their `:check` variants only check.
+
+`scripts/format-rust.ts` covers the owned Rust crates, including the desktop shell and local
+`parking_lot` shim. `.prettierignore` excludes vendored code, generated files, migrations,
+fixtures, and lockfiles. Keep formatter scope and exclusions current when adding crates or generators.
+
 ## Running the suites
 
 Typical times: e2e four minutes, `test:bench` five with release build, real RAW tests

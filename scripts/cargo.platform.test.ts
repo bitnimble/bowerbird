@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,6 +29,29 @@ function fingerprint(hash: string, seconds?: number, asked?: unknown): void {
   if (asked != null) writeFileSync(join(dir, 'lib-rawshim.json'), JSON.stringify(asked));
   file(join(dir, 'invoked.timestamp'), 0, seconds);
 }
+
+test('cargo fmt checks and formats only the selected crate', () => {
+  profile = mkdtempSync(join(tmpdir(), 'fmt-'));
+  const manifest = join(profile, 'Cargo.toml');
+  const source = join(profile, 'src', 'lib.rs');
+  const original = 'pub fn answer()->u32{42}\n';
+  mkdirSync(join(profile, 'src'));
+  writeFileSync(manifest, '[package]\nname = "format_probe"\nversion = "0.1.0"\nedition = "2024"\n');
+  writeFileSync(source, original);
+
+  const run = (...args: string[]) =>
+    spawnSync(
+      process.execPath,
+      ['run', join(import.meta.dir, 'cargo.ts'), 'fmt', '--manifest-path', manifest, ...args],
+      { encoding: 'utf8' },
+    );
+
+  expect(run('--check').status).toBe(1);
+  expect(readFileSync(source, 'utf8')).toBe(original);
+  expect(run().status).toBe(0);
+  expect(readFileSync(source, 'utf8')).toBe('pub fn answer() -> u32 {\n    42\n}\n');
+  expect(run('--check').status).toBe(0);
+});
 
 test('a fortnight-old generation goes, and every directory that carries its hash with it', () => {
   profile = mkdtempSync(join(tmpdir(), 'sweep-'));

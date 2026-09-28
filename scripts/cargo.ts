@@ -50,6 +50,7 @@ function main(): void {
   // Inherited rather than captured, so a test run prints as it goes rather than in one block at
   // the end. The artefact list is asked for separately below.
   const cargo = spawnSync('cargo', args, { cwd: ROOT, stdio: 'inherit' });
+  if (args[0] === 'fmt') process.exit(cargo.status ?? 1);
 
   const built = live(args);
   let freed = 0;
