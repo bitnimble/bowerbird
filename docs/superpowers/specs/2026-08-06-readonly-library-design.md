@@ -6,15 +6,11 @@ A **read-only library** is one Bowerbird never writes to: an archive volume, a N
 export mounted read-only, or a collection the photographer would rather no software
 rearranged.
 
-Almost nothing the catalogue knows was ever about the files. Ratings, triage
-verdicts, notes, albums, stacks, shoot labels and the renditions themselves are rows
-and generated files. What genuinely needs to write is a much shorter list than the
-code suggests, and most of it writes only because that is how it was built.
+Ratings, triage, notes, albums, stacks, shoot labels and renditions are catalogue
+rows or generated files. Few operations intrinsically need source-file writes.
 
-Binning is the example. A binned photograph is a RAW moved into `<root>/<bin_name>/`
-and a row flagged `is_deleted`. The move is not what makes it binned - the flag is.
-The move exists so the next scan does not re-import the file, and there is a cheaper
-way to arrange that.
+Binning moves a RAW into `<root>/<bin_name>/` and flags `is_deleted`. The flag
+defines binning; the move prevents re-import, which can be prevented more cheaply.
 
 **A bare `§N` is a section of this document. The main design is cited as `DESIGN §N`.**
 
@@ -38,8 +34,7 @@ Read-only-specific: the `read_only` flag (§2); binning, restoring and undo with
 move on disk (§4); shoots restricted to existing folders (§7); the API, error and UI
 surfaces of those (§10-§12).
 
-Four changes are worth making for **every** library and are specified that way. Each
-stands alone and each fixes something already wrong:
+Four independent fixes apply to **every** library:
 
 - **Generated files leave the library root** and `data_path` is deleted (§3).
 - **The bin folder is created with the library, and `bin_name` stops being
@@ -135,11 +130,9 @@ per child entry - and `POST /api/libraries` checks the root being added. The fie
 optional on `BrowseResponse`, which is shared with `GET /api/libraries/:id/browse`
 (`utils/browse.ts:13-38`).
 
-Not a real write test, though `access` can be fooled by an exotic ACL: a root where
-`access` lies is the same case as a volume remounted read-only later, and that
-already surfaces as an `IO_ERROR` from the write that fails. Writing nothing here is
-also what makes §14's byte-identical assertion unconditional rather than dependent on
-which folders the dialog visited.
+Exotic ACLs can fool `access`; failed writes then raise `IO_ERROR`, as for a later
+read-only remount. Avoid test writes so §14's byte-identical assertion holds
+regardless of folders visited through `access` in the dialog.
 
 A library created with `read_only: false` over a root that fails the check is refused
 with `READ_ONLY`, not silently upgraded: the client supplied a `bin_name` assuming
@@ -154,12 +147,9 @@ in-place (§4); the bin channel keeps reconciling the existing folder, so the
 photographer can go on managing it by hand. Photographs already binned in place stay
 flagged - they are in neither walk, so §6 has no opinion about them (§6.6).
 
-**Clearing it** on a library whose `bin_name` is `NULL` requires a `bin_name` in the
-same request, and creates the folder and records its identity exactly as creation
-does (§2.3). A flipped library already has both; clearing its flag creates nothing
-and re-stats nothing, and the "a folder of that name already exists" refusal does
-**not** apply to it - a library that already owns that folder is not colliding with
-anything. The `access` check (§2.1) runs first.
+**Clearing it:** run `access` (§2.1) first. If `bin_name` is `NULL`, require a
+`bin_name` in the same request and create/stat the folder (§2.3). Otherwise reuse
+the owned folder and identity without creation, restatting or existing-name refusal.
 
 A `PATCH` naming `bin_name` on a library that already has one is a **rename** (§2.4),
 not an error. It is a `VALIDATION_ERROR` only when the stored `bin_name` is `NULL`
@@ -175,19 +165,14 @@ stats it into the identity columns before the row is inserted - the order
 root holding a folder of that name (`libraries_service.ts:76-81`), so nothing is
 adopted.
 
-**One helper owns creating it: `ensureBinFolder(library)`**, which creates the folder
-*and* stats and records its identity whenever it creates. Three callers: creation,
-clearing `read_only` (§2.2), and `PhotosService.delete`. Without a single owner,
-`PhotosService.delete`'s `ensureDir` silently recreates a hand-deleted bin with a
-**new inode** while the columns still name the dead one - after which §6.3 can never
-follow a rename, and that freed inode number is the likeliest to be recycled into
-§6.3's false-positive case.
+**`ensureBinFolder(library)` owns creation, stat and identity recording.** Callers:
+creation, clearing `read_only` (§2.2), `PhotosService.delete`. Otherwise its
+`PhotosService.delete`'s `ensureDir` can recreate a hand-deleted bin with a **new inode** and stale identity,
+breaking §6.3 rename following and inviting recycled-inode false positives.
 
-**The folder is created only on a path that commits.** `create`'s insert can fail -
-its own catch expects a UNIQUE race (`libraries_service.ts:104-107`) - and a bin left
-behind by a failed insert is then refused by the very check above, so the library can
-never be created with that bin name again. Both mkdir-then-commit sequences (creation
-and clearing the flag) remove the directory they made if the commit fails.
+**Clean up failed commits.** `create` can lose a UNIQUE race
+(`libraries_service.ts:104-107`); a leftover bin blocks later creation. Both creation
+and flag-clearing remove their newly made directory if commit fails.
 
 That removal is a **deletion**, so it goes through `utils/deletions.ts` like every
 other one: `.oxlintrc.json` bans `rm`/`rmdir`/`unlink` outside that module, and the
@@ -243,10 +228,8 @@ operation has no commit to join - then `bin_name` and the prefix rewrite go into
 
 `bin_dev`/`bin_ino`/`bin_birthtime` are left alone - `rename` preserves the inode.
 
-**The rename goes first because §6.3 is the repair.** A crash between it and the
-commit leaves disk at `<new>` with stale columns, which is exactly what §6.3 follows.
-Committing first would leave the mirror image, and §6.3 would follow the *old* folder
-and revert the name, fighting the half-applied rename instead of completing it.
+**Rename before commit.** A crash leaves `<new>` with stale columns, repaired by
+§6.3. Commit-first would make recovery follow the *old* folder and revert the name.
 
 `LibrariesService.update` becomes `async` for this (it is synchronous today,
 `libraries_service.ts:145-168`, and `libraries_api.ts:92` gains an `await`).
@@ -307,12 +290,10 @@ where `ensureDir(getDataPath(library))` runs today (`libraries_service.ts:99`).
 Nothing is created lazily by a writer. A `DATA_DIR` the process cannot write is a
 fatal startup error naming the path.
 
-The two startup checks sit on **opposite sides of the database opening**, which is
-`createDatabase(config.dbPath)` at `src/index.ts:39`, the first statement in the file:
-creating `DATA_DIR` and testing that it is writable needs only `config`, so it goes
-before that line; the containment check (§3.1) reads every library's `root_path`, so it
-cannot run until `librariesRepo` exists at `:42`. Both are top-level throws during
-module evaluation, well before `serve`.
+Startup checks bracket `createDatabase(config.dbPath)` at `src/index.ts:39`:
+create/check writable `DATA_DIR` using `config` before it; check containment (§3.1)
+against each `root_path` after `librariesRepo` exists at `:42`. Both throw during
+module evaluation, before `serve`.
 
 The Bin does not move: originals belong beside the photographs they came from
 (DESIGN §12.3).
@@ -348,15 +329,10 @@ The Bin does not move: originals belong beside the photographs they came from
   this commit. Plus mechanical `data_path: null` removal in ~15 test files, which the
   compiler does find.
 
-**The dangerous one is silent, and it is how every test that writes a rendition
-isolates itself.** `data_path` is what points a test's generated files at its own
-`mkdtempSync` directory, and
-`test/integration/lossless_render.integration.test.ts:17-18` says so in as many words:
-"The output path is the library's business now, so the test asks for it the same way
-the server does rather than naming a file of its own." Once `getDataPath` is
-`path.join(config.dataDir, library.id)`, that test still writes a file, still reads it
-back, and still passes its PSNR assertion - into `./data/lib/` in the working tree,
-outside the tmpdir it cleans up. It stops isolating without failing.
+**Tests can silently lose isolation.** `data_path` redirects generated files into
+each test's `mkdtempSync`; `test/integration/lossless_render.integration.test.ts:17-18`
+explicitly relies on it. Changing `getDataPath` to `path.join(config.dataDir, library.id)`
+leaves PSNR green while writing `./data/lib/` under `DATA_DIR`, outside the cleaned tmpdir.
 
 Two things follow, and both need doing in this commit:
 
@@ -375,11 +351,9 @@ it. None of the ten migrations reads that column, so those fixtures should keep
 passing - but they now describe a shape the app never produces, and that is the kind of
 fixture that quietly stops meaning anything.
 
-One guard replaces all of it, in **both** directions: `DATA_DIR` inside a library's
-root, and a library's root inside `DATA_DIR`. The second is the one that loses
-photographs, since `removeDataDirectory` deletes recursively. Checked at creation and
-at startup, because `DATA_DIR` is an environment variable that can change under a
-catalogue that was already valid.
+Reject containment **both ways**: `DATA_DIR` under a library root, or root under
+`DATA_DIR` (recursive `removeDataDirectory` would delete photographs). Check at
+creation and startup because environment changes can invalidate existing catalogues.
 
 Every other `getDataPath` caller is unchanged (`prune_service.ts:17,27,68`,
 `photos_service.ts:407`, `processing_service.ts:128-129`).
@@ -435,21 +409,14 @@ branch may move anything. Three arms, because two would break every writable lib
 | inside the bin, writable | today's move out of the bin, unchanged |
 | inside the bin, read-only | refused with `READ_ONLY` |
 
-The first arm cannot merely skip the move:
-`moveIntoDir(from, dirname(from), basename(from))` claims the name the file already
-holds, hits `EEXIST`, walks its suffix loop to `a_1.arw`, and then `unlinkMovedFile`
-removes the source (`files.ts:31`). The file is not duplicated, it is **silently
-renamed** under the photographer.
+Avoid `moveIntoDir(from, dirname(from), basename(from))`: it hits `EEXIST`, chooses
+`a_1.arw`, then `unlinkMovedFile` removes the source (`files.ts:31`), **silently renaming** it.
 
-It also keeps today's existence check (`photos_service.ts:554`): "no move" is not "no
-validation". Without it a row whose file has gone goes live with `is_missing` cleared
-and nothing behind it, and the renditions make the grid look fine while every
-original 404s.
+Keep the existence check (`photos_service.ts:554`): otherwise an absent file goes
+live with `is_missing` cleared, cached renditions hiding original-file 404s.
 
-The third arm exists because otherwise the row goes live with its RAW still in the
-bin and the bin channel re-bins it next sync - a restore repeatable for ever, with
-`deleted_from_path` replaced by a guess each time. The message says to clear the flag
-first.
+The third arm prevents restore/re-bin loops with a RAW still in the bin and
+`deleted_from_path` repeatedly guessed. Message: clear the flag first.
 
 **Undo by batch** tests every row's position **before restoring any**, and refuses
 the whole batch with `READ_ONLY` if one is inside a read-only library's bin, naming
@@ -552,31 +519,19 @@ UPDATE photos SET file_path = ? || substr(file_path, ?)
   WHERE library_id = ? AND is_deleted = 1 AND file_path >= ? AND file_path < ?
 ```
 
-It is **not** `rewritePathPrefix` (`photos_repository.ts:634-649`), which does the two
-halves the opposite way round - `file_path` for live rows, `deleted_from_path` for
-binned ones - and, critically, **clears `is_missing`**. That is right for a shoot
-relocation, which is only inferred once every file is proven present at the new
-prefix; a bin rename proves nothing about individual files, and §6.2's diff is what
-decides `is_missing`. Copy that statement and flip the flag and every hand-deleted
-binned file is resurrected on every rename.
+Do **not** reuse `rewritePathPrefix` (`photos_repository.ts:634-649`): it rewrites
+live `file_path`, binned `deleted_from_path`, and **clears `is_missing`** after
+proven shoot relocation. Bin rename proves no individual file present; §6.2's diff
+owns `is_missing`. Copying that clear resurrects hand-deleted bin rows.
 
-**And `rewritePathPrefix` itself needs fixing for in-place binning**, which is a
-separate change in the same file. Its comment states the assumption it rests on: "A
-soft-deleted row's file is in the bin at the library root and did not move with the
-folder, so its `file_path` is left exactly as it is." An **in-place** binned row's
-file is not in the bin - it is under the shoot folder that just got renamed, and it
-*did* move with it. So a hand-renamed shoot folder in a read-only library leaves
-those rows with a stale `file_path`: §5 partitions the dead path out of the live
-channel so nothing notices, the file at the new path is unclaimed and imports as a
-**new live photograph**, and the binned row is orphaned pointing at nothing. One
-duplicate per in-place binned photo under any renamed folder.
+**Also fix `rewritePathPrefix` for in-place binning.** Its assumption that binned
+files stayed at the library-root bin fails when they moved with a renamed shoot.
+Leaving `file_path` stale makes §5 exclude the old `file_path` and import the new one as
+a **live duplicate**, orphaning every in-place binned row under that folder.
 
-The rule that replaces the comment's assumption: a binned row's `file_path` follows a
-folder rename when the row's file moved with the folder, which is exactly when the
-row is binned in place (`deleted_from_path = file_path`) - and `deleted_from_path`
-follows in that case too, since both name the same moved file. A bin-resident binned
-row keeps today's behaviour. `is_missing` is still only cleared for rows proven
-present, so the in-place arm does not clear it.
+For in-place binned rows (`deleted_from_path = file_path`), rewrite both `file_path`
+and `deleted_from_path` on folder rename. Bin-resident rows retain existing behavior.
+Do not clear `is_missing` in the in-place arm without proof of presence.
 
 `insertFromSync` also needs widening: it hardcodes `is_deleted = 0`,
 `needs_tile = 1`, `needs_renditions = 1` and takes no `deleted_from_path`
@@ -674,12 +629,10 @@ folder deep is not *expressible*, which is a constraint inherited from
 `BinNameSchema` rather than a principle), or two candidates, or `ino` 0: **the bin
 channel is skipped for that run** and the reason logged, rows untouched.
 
-**A missing bin root is a skip, not a throw.** `scanBinTree` tests its root before
-walking and never propagates `ENOENT` into the live channel's transaction - otherwise
-the state §2.4 hands to §6.3 for repair is one where the sync dies, and §2.4's safety
-argument is circular. Scoped to ENOENT on the bin with a healthy root: if `<root>`
-itself is unreadable the sync must still fail loudly, or an unmounted volume reads as
-"the whole bin was deleted".
+**Skip a missing bin root.** `scanBinTree` checks before walking; bin `ENOENT`
+must not abort the live transaction needed for §2.4 recovery. Only with a healthy
+`<root>`: unreadable library root must fail loudly, preventing an unmounted volume
+from appearing as a deleted bin.
 
 **Detection runs on a scoped sync too**, even though §6.6 skips the walk and diff
 there. It is a `dirs` test and costs nothing, and a Finder rename of a root-level
@@ -710,10 +663,9 @@ the other. The `channel` tags give the direction, so there is no position to tes
   Only fires on a row that is currently binned.
 - **bin removal + bin addition** - moved within the bin. `setFilePath` only.
 
-Keeping the channels separate is what makes this structural. Deciding it by testing
-whether a path is under the bin cannot be made correct: an in-place binned row is
-`is_deleted = 1` with its file *outside* the bin, indistinguishable by position from a
-hand-restore, so a folder rename in a flipped library would silently restore it.
+Channel tags are essential: an in-place `is_deleted = 1` file outside the bin is
+positionally indistinguishable from a hand-restore. `file_path`-only detection would
+silently restore it after a folder rename.
 
 ### 6.5 An unclaimed file under the bin is imported as already-binned
 
@@ -748,16 +700,11 @@ live diff** (`sync_service.ts:392-443`), so a run that aborts leaves neither hal
 The in-memory rewrites of §6.3 are not deferred to it - the diff has to see matched
 paths.
 
-**Order inside that transaction matters, because two of the writes are
-path-guarded.** §6.3's persisted prefix rewrite runs *first*. `setMissing(photoId,
-expectedFilePath)` only marks a row whose `file_path` still equals the path the scan
-saw, and its comment says why: "if a concurrent move/soft-delete changed `file_path`
-during the (async) scan, the row is no longer missing at that path, so this is a
-no-op" (`photos_repository.ts:890-895`). After a followed rename the scan's paths are
-the *new* ones while the rows still hold the old, so a `setMissing` issued before the
-prefix rewrite matches nothing and **silently does nothing** - a guard designed to
-absorb a race quietly absorbing a correct write instead. The same applies to any
-other path-guarded update the bin channel issues.
+**Apply §6.3's prefix rewrite first.** `setMissing(photoId,
+expectedFilePath)` requires matching `file_path` to protect against concurrent
+moves (`photos_repository.ts:890-895`). After following a rename, scan paths are
+new and persisted paths old; running `setMissing` first silently matches nothing.
+The same ordering applies to every path-guarded bin update.
 
 A **scoped sync runs no bin channel**: the watcher never reports events inside the bin
 (`library_watcher.ts:217`, kept - watching a tree that only grows costs an inotify
@@ -771,14 +718,10 @@ where `''` disables the reconcile entirely (`DailySync.start` returns immediatel
 or when the watcher's own pending set is empty or exceeds `MAX_SCOPE = 256` paths, at
 which point it falls back to a full run (`library_watcher.ts:309`).
 
-That gives an uneven guarantee, and the doc should say so rather than leaning on "the
-nightly sync catches it". A *large* hand-managed change self-corrects quickly: a bin
-folder rename delivers events for the folder and its contents, so a sizeable bin trips
-the 256-path fallback within a debounce window and the bin channel runs. A *small* one
-- three files dropped into the bin by hand - stays under the threshold, takes the
-scoped path, and is not noticed until something else triggers a full run. With
-`full_sync_at` off, "something else" may never come, and §2.4's `IO_ERROR` remedy ("run
-a full sync, then retry") has to be invoked by hand.
+Guarantee is uneven: large bin renames can exceed 256 paths within one debounce
+window and trigger full reconciliation. Three hand-added bin files remain scoped
+and wait for another full-run trigger. With `full_sync_at` off that may never
+arrive; invoke §2.4's `IO_ERROR` remedy, "run a full sync, then retry", manually.
 
 Acceptable, but the Settings copy for `full_sync_at` names the bin among what the
 nightly run reconciles, so turning it off is an informed choice rather than the silent
@@ -842,11 +785,9 @@ CREATE TABLE sync_locks (
 );
 ```
 
-`owner` per acquire, not per process: a per-process owner let a run whose lease had
-lapsed delete its successor's row on the way out, and let two syncs in one server
-both hold the lock. No `pid` column - a PID is what §8.1 is about, and the owner UUID
-goes in the log line. Timestamps are `toISOString()` UTC, which is what makes
-`refreshed_at < ?` a valid comparison. The lease is 30 seconds, so `?4` is `now - 30s`.
+Use `owner` per acquire: per-process ownership permits simultaneous holders and
+expired runs deleting successors. No `pid`; log owner UUID (§8.1). `toISOString()`
+UTC makes `refreshed_at < ?` valid. Lease 30 seconds; `?4` is `now - 30s`.
 
 **Acquire** is one statement, so there is no check-then-claim window:
 
@@ -883,11 +824,9 @@ there and the first write must then upgrade, returning `SQLITE_BUSY_SNAPSHOT`, w
 `busy_timeout` does **not** retry. Each batch on the first-scan path does the same;
 batches already committed are not rolled back.
 
-**`syncAll` retries what it skipped.** It swallows `SYNC_IN_PROGRESS` with no retry
-(`:176-181`), so under expiry-only reclaim a container killed and restarted within
-seconds has that library dropped until tomorrow. It collects the skipped libraries
-and re-attempts them once at the end of its loop, by which point a real lease has
-lapsed.
+**`syncAll` retries skipped libraries once after its loop.** Swallowing
+`SYNC_IN_PROGRESS` (`:176-181`) otherwise drops a rapidly restarted container's
+library until tomorrow; by loop end a stale lease has lapsed.
 
 Living in a `SyncLocksRepository` injected into `SyncService` (whose constructor takes
 repositories, `:128-136`), wired in `src/index.ts`.
@@ -1008,17 +947,12 @@ added to that `pick`:
   library look like", and a flag decided per root does not have a default worth
   publishing.
 
-**The web is not covered by the repo's typecheck.** `web/src/api/client.ts:31-32` says
-"Types come straight from the server's Zod schemas as type-only imports, so the client
-can never drift from the API" - true, and the mechanism is real - but the root
-`tsconfig.json` includes only `["src", "test", "scripts", "dev.ts"]`, and
-`bun run typecheck` is that project plus `e2e-tauri`. `web/` is typechecked only by
-`web/package.json`'s own `typecheck` and `build`. So a nullable `bin_name` or a deleted
-`data_path` reaching a web component is invisible to the check this repo runs, and
-these are precisely the schema changes that reach it. The blast radius today is one
-line - `add_library_dialog.tsx:89` sends `bin_name: bin` - so running
-`cd web && bun run typecheck` as part of this change is cheap; it is the assumption
-that the compiler finds things which is worth not trusting blindly.
+**Run web typecheck separately.** `web/src/api/client.ts:31-32` imports server Zod
+types, but root `tsconfig.json` includes only `["src", "test", "scripts", "dev.ts"]`;
+`bun run typecheck` adds `e2e-tauri`, not `web/`. Only `web/package.json`'s
+`typecheck`/`build` checks nullable `bin_name` and removed `data_path` in components.
+Current affected line: `add_library_dialog.tsx:89`, `bin_name: bin`. Run
+`cd web && bun run typecheck`.
 
 `BinNameSchema` (`schemas/libraries.ts:7-12`) is unchanged - one path segment,
 rejecting `/`, `\`, `.`, `..` and empty - and that is still the whole of the
@@ -1145,14 +1079,10 @@ and confirming the tree on disk is byte-identical.
 
 ## 15. Comments that stop being true
 
-This codebase states its invariants in comments, thoroughly enough that they are the
-fastest way to understand it - which makes a comment that quietly becomes false the
-most expensive kind of debt here. Several of the assumptions this design breaks are
-*written down* in the code today, and each must be rewritten in the commit that
-falsifies it, not left for a reader to trip over.
+Rewrite documented invariants in the commit that invalidates them; stale comments
+misdirect future edits.
 
-Every one of these is accurate right now. That is the point: they describe a world
-this document ends.
+These comments are currently accurate; this design changes their assumptions.
 
 **Falsified by in-place binning (§4)** - both assume a binned row's file is inside
 the bin, which stops being true when nothing moved it there:

@@ -5,36 +5,23 @@ description: Use when the user runs `/overnight <task>` to hand off autonomous u
 
 # /overnight
 
-Same destination as `/overnight-now` (unattended autonomous work to completion), but
-the user is **awake right now for a short window** (~15 minutes) and can answer
-questions before they go to sleep. The actual work happens *after* they leave.
-
-So there are two phases: a brief **interview** now, then the **autonomous** phase.
+Interview while user is awake (~15 minutes), then work unattended to completion,
+under `/overnight-now`, after they leave.
 
 ## Phase 1, Interview (user is awake, time is short)
 
-Your goal: leave Phase 1 with a confident, written understanding of the goal,
-scope, and done-criteria, so that in Phase 2 you never need to ask anything.
+Record goal, scope and done-criteria before Phase 2; no questions afterward.
 
-- **Front-load everything.** Surface every decision, ambiguity, and fork you can
-  anticipate *now*, while the user can answer. A question you skip here becomes a
-  blocked sub-task or a guess at 3am.
-- **Be fast and batched.** The user has minutes, not hours. Prefer
-  `AskUserQuestion` with concrete multiple-choice options over open-ended prose.
-  Group related decisions. Don't trickle one-at-a-time if you can ask four at once.
-- **Explore first so your questions are sharp.** Read the relevant code/docs
-  before asking, so you ask about real forks in *this* codebase, not generic ones.
-  A question you can answer yourself by reading a file is a wasted question.
-- **Pin down done-criteria explicitly.** What does "finished" look like? Which
-  checks must be green (`scripts/check*`, `bun run e2e`)? How will you know you've
-  succeeded without the user to confirm? Write these down.
+- **Front-load decisions, ambiguities and forks** while user can answer; don't leave guesses for 3am.
+- **Batch questions.** Prefer concrete choices through `AskUserQuestion`; group related decisions,
+  ask four together where possible.
+- **Read relevant code/docs first.** Ask only real forks that reading cannot resolve.
+- **Record done-criteria:** observable outcome and required checks (`scripts/check*`, `bun run e2e`).
 - **Record the answers** in `OVERNIGHT_LOG.md` (repo root, uncommitted) as the
   agreed brief: goal, scope, done-criteria, and every decision the user made.
 
-When you believe you have enough to work unattended, **say so and confirm**:
-summarize the brief in a few lines and tell the user you're ready to go autonomous.
-This is the one and only place you wait for them. Once they confirm (or say
-something like "ok, going to bed" / "go"), Phase 1 is over.
+When ready, summarise brief and **wait once for confirmation**. Confirmation, "going to bed"
+or "go" ends Phase 1.
 
 ## Phase 2, Autonomous (user is asleep)
 

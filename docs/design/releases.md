@@ -8,27 +8,20 @@ section the index in `DESIGN.md` maps §N to.
 
 ## 23. Releases and updates
 
-A release is a git tag. `.github/workflows/release.yml` builds every platform from it,
-attaches the binaries to a GitHub release, publishes the container to GHCR, and writes
-one small file - `release.yml` - that says which of those binaries belongs to which
-machine. An installed Bowerbird reads that file, decides whether there is anything newer
-than itself, downloads the payload for its own platform, and hands itself to an updater that
-swaps the payload in and starts it.
+A release is a git tag. `.github/workflows/release.yml` builds every platform, attaches
+binaries to a GitHub release, publishes the container to GHCR, and writes `release.yml`
+mapping binaries to platforms. Installed Bowerbird reads it, downloads a newer payload
+for its platform, and hands off to an updater that swaps it in and restarts.
 
 ### 23.1 The changelog is the release description
 
-There is no separate changelog. The release's body on GitHub
-is what the app shows, rendered from markdown in `release_notes.tsx`, and the workflow
-asks GitHub to generate it from the commits in the tag.
+The GitHub release body is the changelog, rendered from markdown in `release_notes.tsx`.
+The workflow asks GitHub to generate it from the tag's commits.
 
-The dialog is **cumulative**: every release newer than the one running, newest first,
-rather than only the newest. Somebody who has not opened the app for three months is owed
-the three months - a changelog that only ever describes one release is a changelog that is
-wrong for everybody who skipped one.
+The dialog is **cumulative**: every release newer than the running version, newest first,
+including all three months if the reader skipped three months.
 
-Nothing about that reaches the shipped bundle, which is why it can be this cheap: the notes
-are fetched when the dialog is opened, not compiled in, so a typo in a release note is
-fixed by editing the release.
+Notes are fetched when the dialog opens, not compiled in; correct typos by editing the release.
 
 ### 23.2 `release.yml`: a platform, and what it is called there
 
@@ -52,19 +45,16 @@ assets:
     image: ghcr.io/bitnimble/bowerbird:0.2.0
 ```
 
-`installer` is what a person downloads and runs, and `image` is the container's; `payload` is
-what an installed copy swaps into its own install. A platform may have either on its own -
-Android and the container can never replace themselves in place, and a payload with no
-installer is a build only an existing install can reach. A platform whose build failed is
-simply absent, and an install of that platform is told there is nothing for it rather than
-handed a 404. The image is named only when the container job pushed it
+`installer` is the user download; `image` is the container; `payload` replaces an existing
+install. Either may appear alone: Android and containers cannot replace themselves;
+a payload without an installer is reachable only by existing installs. Failed platforms
+are absent, so their installs report no available build instead of a 404.
+The image is named only when the container job pushed it
 (`write-release-manifest.ts --image-repo`).
 
-It is **generated from the files about to be uploaded** (`scripts/write-release-manifest.ts`),
-not from a list somebody maintains, and read by a reader and a writer that live in one
-module with a round-trip test holding them together (`release_manifest.ts`). The format has
-no library behind it; that test is the only thing stopping a change to one half from being
-a release every installed copy silently cannot read.
+It is **generated from upload files** (`scripts/write-release-manifest.ts`). Reader and
+writer share a module and round-trip test (`release_manifest.ts`); no format library
+protects their agreement, so that test prevents unreadable releases.
 
 ### 23.3 The updater, and why the app does not replace itself
 
@@ -92,7 +82,7 @@ is the binary. Tauri bundles every binary in the crate beside the shell - `Conte
 the `.app`, the install directory on Windows - so the installers carry it with nothing added to
 them. It knows nothing about GitHub, releases or downloads.
 
-Things it does that are worth naming:
+Updater guarantees:
 
 - **A copy runs, not the installed binary**, because the updater in the install is one of the
   entries a payload replaces.
@@ -130,9 +120,8 @@ the new image (`docker compose pull`), which the manifest names and the dialog s
 
 ### 23.4 What a payload is
 
-Everything a release changes and nothing a release cannot replace. Not the installer's own
-work - the Start menu entry, the registry keys - because none of that is what an update is
-for, and rewriting it is what needs an administrator.
+Payloads contain release files, excluding installer-owned Start menu entries and registry
+keys, whose replacement would need an administrator.
 
 | Platform | Payload |
 |---|---|
@@ -141,15 +130,12 @@ for, and rewriting it is what needs an administrator.
 
 ### 23.5 Where the check runs
 
-On the server, in `UpdateService`, and not in the page. The thing being updated is the
-install rather than the browser looking at it, so the install is what asks: a phone opening a
-NAS is offered the NAS's update, and one call an hour covers however many devices are
-watching the same library. The answer is cached for ten minutes, so a page that checks on
-launch and hourly costs GitHub at most six calls an hour.
+`UpdateService` checks on the server: a phone opening a NAS is offered the NAS's update.
+One hourly call covers every device watching that library. Answers are cached for ten
+minutes, limiting launch and hourly checks to six GitHub calls an hour.
 
-It fails **quietly**. A library on a machine with no route to the internet works perfectly,
-and an hourly error toast about a feature nobody asked for is the kind of thing people turn
-an app off over. Settings shows the reason; the sidebar simply has no badge.
+Failure is **quiet**: offline libraries still work. Settings shows the reason; the sidebar
+has no badge and no hourly error toast.
 
 `can_install` is the server reporting that there is something newer and that the desktop app
 told it where to stage an update (`BOWERBIRD_UPDATES`), which the app does only where it can
@@ -162,21 +148,14 @@ offers the installer or the image instead of a button that could only half work.
 the endpoint outright, for a mirror, an air-gapped release server, or a fork that does not
 live on GitHub at all. Either set empty turns checking off.
 
-The second URL - where a release's *files* live - is deliberately not a third setting:
-every release in the list carries its own `assets[].browser_download_url`, and that is what
-a download uses when it is there. An endpoint therefore says where its own files are. The
-constructed `github.com/<repo>/releases/download/<tag>/<file>` is the fallback for a
-response that names no assets; on github.com the two agree exactly, which is why this went
-unnoticed as dead code until there was somewhere else to point at.
+Release file locations need no third setting: downloads use each release's
+`assets[].browser_download_url` when present. For responses without assets,
+`github.com/<repo>/releases/download/<tag>/<file>` is the fallback; on github.com they agree.
 
-**That fallback applies only when github.com is where the list came from.** An endpoint
-somewhere else has no relationship to any repository, so guessing a github.com URL for a
-release of its that named no assets would send an air-gapped deployment - configured
-precisely never to talk to github.com - off to fetch a checksum and a payload from the
-public repo. Having nowhere to fall back to is the honest answer, and a download that
-reaches it fails naming the missing `assets`. `install_hint`, which is computed on every
-`GET /api/updates`, degrades to the release page instead: a status route is no place to
-raise this.
+**Fallback applies only to lists from github.com.** Other endpoints have no implied
+repository; guessing would send air-gapped deployments to the public repo. Downloads
+instead fail naming missing `assets`. `install_hint`, computed on every
+`GET /api/updates`, falls back to the release page so status requests do not fail.
 
 So an endpoint has to answer in GitHub's shape - a list of objects with `tag_name`, `body`,
 `published_at`, `html_url`, and, for anything that is not github.com, `assets`. That is a
@@ -194,11 +173,9 @@ carries everything else.
   fix is out, and one wondering whether the silence means "up to date" or "cannot reach
   GitHub".
 
-Pressing the button downloads the payload, checks it against the manifest's SHA-256, unpacks
-it and exits, and the app hands itself to the updater. The page then polls until the version
-answering is the new one, and reloads. It cannot reload at the click: the server is down
-between exiting and being started again, and a page reloaded into that is a blank screen with
-no way to tell it was ever working.
+The button downloads the payload, verifies the manifest's SHA-256, unpacks it and exits
+to the updater. The page polls until the new version answers, then reloads; reloading
+earlier would show a blank screen while the server restarts.
 
 ### 23.7 What the platforms can and cannot do
 
@@ -293,11 +270,10 @@ than anything this arrangement is in the way of.
 
 ### 23.8 Versions
 
-**The version is written once, in `VERSION` at the root, and everything reads it from
-there.** `src/version.ts` imports it, which is what the server reports and what an update
-check compares against; `bundle-app.ts`, `android-build.ts` and `mac-build.ts` hand it to the
-Tauri CLI as `--config`, so no manifest carries a version of its own; `write-release-manifest.ts`
-names the release after it, and the APK is named after it.
+**Root `VERSION` is the sole version source.** `src/version.ts` imports it for server
+reports and update comparisons. `bundle-app.ts`, `android-build.ts` and `mac-build.ts`
+pass it to Tauri as `--config`; manifests carry no separate version.
+`write-release-manifest.ts` and the APK use it in their names.
 
 **`bun run release` cuts one**: on a clean tree on `main` it writes the next patch version into
 `VERSION` - or the semver version it is given, or `0.0.0-<hash>` for a commit hash - commits it,
@@ -324,7 +300,6 @@ vcpkg building the codecs only for the machine it runs on. `release:check:remote
 check for those two: it pushes HEAD to the `release-check` branch and runs the workflow there,
 which builds without releasing.
 
-Comparison is dotted-numeric with a suffix ranked below its own release, so `1.2.0` beats
-`1.2.0-rc1` and shipping `1.2.0` does not leave every release candidate thinking it is
-current. It is deliberately not a semver implementation: every version it compares is one
-written in `VERSION`.
+Comparison is dotted-numeric, suffixes ranked below their release: `1.2.0` beats
+`1.2.0-rc1`, so candidates see the shipped `1.2.0` update. This is not full semver;
+every compared version comes from `VERSION`.

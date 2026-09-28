@@ -1,8 +1,7 @@
 # Bowerbird design: The processing pipeline
 
-A chapter of [`DESIGN.md`](../../DESIGN.md). The chapters are numbered as one document, so
-`DESIGN §N` anywhere in the repo, and a `§N` cited here that is not below, both mean the
-section the index in `DESIGN.md` maps §N to.
+A chapter of [`DESIGN.md`](../../DESIGN.md), numbered with the other chapters as one document.
+`DESIGN §N` anywhere in the repo, or a nonlocal `§N` here, refers to the section indexed in `DESIGN.md`.
 
 ---
 
@@ -20,18 +19,14 @@ Processing converts RAW files into **renditions**: derived copies of one photo, 
 
 Requested sizes and quality come from configuration (§15). Every encoded frame fits AVIF's dimension and area limits, including after crop and straighten.
 
-These were three trees under three names - `thumbnails/`, `previews/` and `lossless/` - with the vocabulary to match, which read backwards in both directions: `thumbnails/full` was a 3840px image the viewer showed *by default*, and `previews/` was the one thing it did *not*. They are the same idea at different sizes and dynamic ranges, so building any of them is one job type over a list of targets rather than three that differed mostly in what they called their output path.
+The three trees were `thumbnails/`, `previews/` and `lossless/`, misleadingly: `thumbnails/full` held the default 3840px viewer image; `previews/` did not. Renditions differ only in size and dynamic range, so one job takes a target list instead of three near-identical job types.
 
-**The cameras' own picture is a rendition (`embedded`), and how a row comes by one is its recipe's answer.** A row that names one file has that picture inside the file: it is served straight out of the RAW like the RAW itself, never resized into HDR or transcoded into AVIF and cached as a copy of its own. A row composed out of others (§19.4) has no file to lift one out of, so its frames' pictures are composited into one at the size the photo view takes and filed like any other copy - nothing queues it, and it is built when a reader opens it. That is what a library serving the cameras' pictures shows a composite at, so a merge writes nothing but the tile and the wait moves to the first open, which is where somebody is actually looking. Asking is the same question either way, over the same route, which is why it is a rendition and not an endpoint of its own. The grid tile is the one thing that is neither: it cannot be a 9504px preview, so it is re-encoded to 800px whatever its source.
+**The camera's picture is a rendition (`embedded`), supplied by the row's recipe.** A single-file row serves it directly from the RAW, without HDR resizing or a cached AVIF transcode. A composite (§19.4) combines its source pictures at viewer size and caches the result on first open; no queue builds it. Thus a merge in an embedded-picture library writes only its tile, deferring the view until someone opens it. Both recipes use the same rendition route. The grid always re-encodes to 800px rather than serving a 9504px preview.
 
-**Not every composite is framed the same size, and the tile a rendition is cut to knows it.**
-`PANORAMA_TILE_SCALE` widens a rendition's tile because a panorama's canvas can be several frames across,
-and a tile framed to one frame's own long edge would starve every source of it. An assembly's canvas is the
-near-identical *intersection* of its frames (§4.2.1) - roughly one frame's own size - so scaling its tile
-the same way would build a tile several times larger than the picture needs for no reason the panorama's
-own has. `processing_service.ts`'s `target()` keys that branch on whether the canvas is *wide* - a panorama,
-specifically - rather than on whether the row is a composite at all, which is the one distinction that
-tells the two composite kinds' tiles apart.
+**Composite canvas width determines tile sizing.** `PANORAMA_TILE_SCALE` widens panorama tiles: their
+canvas spans several frames, so one frame's long edge would undersample every source. An assembly uses
+its frames' near-identical *intersection* (§4.2.1), roughly one frame; scaling would oversize its tile.
+`processing_service.ts`'s `target()` therefore branches on panorama width, not composite status.
 
 **Dynamic range is in the directory, not the filename**, because the file is the cache: a copy built while the library was SDR would otherwise be handed back forever, so turning HDR on and asking for the full-size view returned the old sRGB AVIF and nothing ever rebuilt it. HDR is stored *beside* the SDR copy rather than replacing it, so turning the setting off does not throw away work that turning it back on would redo. There were once `-hdr-video` directories beside these holding a one-frame AV1 copy for Firefox; Firefox makes that for itself now (§10.7), and the prune sweep empties what they left (§10.6).
 
@@ -48,9 +43,9 @@ tells the two composite kinds' tiles apart.
 | full resolution, encode only | 4:4:4 | 1468ms | 10.34s | 918MB | 8.48 MB |
 | | 4:2:0 | 842ms | 7.25s | 651MB | 5.02 MB |
 
-The viewer rendition encodes in **less than half the time** - a larger margin than the HDR still gets, since 8-bit 4:4:4 is where libaom's chroma planes cost most relative to the rest of its state.
+The viewer encodes in **less than half the time**, a larger saving than HDR: libaom's chroma planes cost most relative to its remaining state at 8-bit 4:4:4.
 
-**The grid tile is a different measurement and has to be read as one.** It is the whole job rather than the encode alone, because the tile never decodes a RAW: it comes off the embedded JPEG, DCT-scaled during the decode (§10.4), so the entire thing is 76ms and ~60MB above baseline where the other two rows sit on top of a demosaic. 4:2:0 saves 9% of a 12.5kB file there and about 9ms.
+**The grid row measures the whole job.** It DCT-scales the embedded JPEG (§10.4), without RAW demosaic: 76ms and ~60MB above baseline. Other rows exclude demosaic. 4:2:0 saves 9% of a 12.5kB tile and about 9ms.
 
 **And the tile has no chroma to lose.** The camera's preview is already subsampled - `yuvj422p` on the fixture, which is typical - so a 4:4:4 tile was storing chroma at a resolution the source never had. Measured against a near-lossless encode of the same tile, the combined SSIM goes 0.992211 to 0.991865, a difference of **0.0003**, and the U plane 0.9952 to 0.9946. That is as close to free as this gets, and it is the rendition every photo in the library has - the grid, masonry and list views all request it, as do the shoot and collection banners.
 
@@ -62,7 +57,7 @@ Per-plane at 3840, against a near-lossless 4:4:4 reference, the same shape as §
 | 4:2:0 q26 | 0.9436 | 0.8802 | 0.8953 | 0.9064 | 0.53MB |
 | 4:2:0 q16 | 0.9695 | 0.9054 | 0.9169 | 0.9306 | 1.52MB |
 
-Luma is identical at a matched quantizer and *better* at matched bytes. Chroma is worse either way, and it does not fully recover at any quantizer - 4:2:0 needs q0 and 6MB to pass 4:4:4's combined score at q26 and 1.7MB. Which of those matters is a judgement about where a viewer looks, not something the metric settles, and the setting exists so it does not have to be settled here.
+Luma matches at equal quantizer and improves at equal bytes. Chroma remains worse: 4:2:0 needs q0 and 6MB to exceed 4:4:4's combined score at q26 and 1.7MB. The setting leaves that perceptual trade to the reader; metrics cannot decide where viewers look.
 
 **What 4:2:0 does to a PQ still is not only that loss, and an SSIM over ordinary content never saw the rest.** Chroma is stored once per 2×2 and Y' once per pixel, so a decoder reconstructs each pixel's channel as `c' + (ΔY' − Δc)` in the coding's own codes, Δ being the pixel's departure from its block mean - green's per-pixel swing lands in red at two thirds. On a saturated red that swing is thousands of PQ codes: a channel the grade holds near black sits on the curve's steepest part, and white sparkle over red moves green where red, near its roll-off, barely moves. Measured on DSC03422's hood, red's 99th-percentile Laplacian went 2174 codes to 8630 through a *lossless* 4:2:0 encode and was unchanged through 4:4:4 - hard speckle the frame never held, in the rendition and not in the editor, which never encodes. Three things answer it. The grade holds a colour's lowest channel at a floor rather than at zero (§10.7), which takes the near-black case away entirely. libavif's chroma is converted with libsharpyuv (`SHARP_YUV`, the pinned build's `AVIF_LIBSHARPYUV=SYSTEM`), which chooses each block's chroma so the reconstruction lands closest to the source given the per-pixel Y' - 8646 → 6327 on the headlight - rather than box-averaging. It solves under sRGB's curve whatever the still's transfer (`SHARP_YUV_TRANSFER`): told PQ, libsharpyuv from 0.4 solves in linear light, and over the six fixtures at quantizer 0 that put the p99.9 worst channel 17 to 125 PQ steps off where sRGB's curve holds it to 6 to 107, at five times the time (`examples/aom_quality.rs`). And what neither can carry is measured before the encode: `chroma_leak.slang` predicts the reconstruction error per 2×2 from the coded frame, counts the blocks past `CHROMA_LEAK_CODES` per 64px tile, and a still whose worst tile is past `CHROMA_LEAK_TILE_FRACTION` is written 4:4:4 on its own. Per tile rather than per frame, because the car is a hundredth of a 61MP frame; at the bars set, that frame reads 0.24 at either size, a frame of dense chroma texture whose encode measured no leak reads 0.10, and clean frames read nothing. `hdr_still_full_chroma` on is 4:4:4 for every still; off is this.
 
@@ -79,7 +74,7 @@ AVIF exposes quality and speed separately. `avif_speed` defaults to 8 on libavif
 
 The denoise at 0 stops at the noise fit (`galosh::wanted`), sharpen and defringe at 0 are refused by `image::Strengths`, and dust uses `dust::Settings::wanted`. A job's `cameraMatch` is `none`, `lens`, or `lensAndColour`. The global `match_embedded_jpeg` setting supplies the default, then the library's skip list restricts it. A lens-only fit stops before fitting colour. Its analysis stores the lens with no colour transform; a later full match fits colour through that stored lens. The panel's Encode row includes the grade and encoding costs, while the native stages and their profiling laps remain separate.
 
-The trade is the point and it is not hidden: a rendition built without the camera match does not look like the camera's own JPEG, and one built without the denoise carries its grain. The editor still draws the reader's own document, so a library that has traded a stage away is one where the tab and the stored rendition differ by that stage. The grid tile reads no list of its own - it is the camera's JPEG wherever there is one, and the render it falls back to is cut from the `full` job's frame - and neither does an export, which names its own size and quality already.
+Skipping camera match changes the camera's look; skipping denoise retains grain. The editor draws the reader's document, so it differs from stored renditions by skipped stages. Grid tiles have no skip list: they use the camera JPEG or fall back to the `full` frame. Exports name their own size and quality and use no library skip list.
 
 A composite recipe keeps the source geometry that aligns its frames. That geometry is part of the photograph's construction, not the optional lens match applied to a rendition after the recipe exists; removing it would move the sources apart rather than omit a correction.
 
@@ -89,7 +84,7 @@ The benchmark uses denoise amounts of 20 luminance and 30 colour, with defringe 
 
 **The figures belong to the machine, not to a catalogue, so they are scaled to one sensor before they are kept**: 6000x4000, a common full-frame mirrorless and the size behind the shipped estimates (`scaledToReference`). `readRawHeader` reads the reference frame's area, and `scaledToReference` normalizes the measured time to 24MP. A stage is usually a pass over the frame, so its cost follows the frame's area. Camera match is the roughest fit because its solver uses a fixed number of pairs for every sensor size.
 
-They land in `<data>/render_timings.json`, one file beside the generated renditions. Not a table and not a row on `libraries`: there is one answer here, and it describes the hardware rather than anything a peer would want replicated. Each measurement is merged into what is on disk at the moment it is written rather than into anything read at the start, because a `max` benchmark is minutes and the other rendition's may well land while it runs.
+Measurements live in `<data>/render_timings.json` beside renditions, not a table or `libraries` row: they describe this hardware, not replicated catalogue state. Merge each result into current disk contents at write time; a minutes-long `max` benchmark may overlap another rendition's measurement.
 
 **Only `full` and `max` are ever HDR, and only they take the chroma setting.** The grid stays SDR whatever the library says: a wall of HDR tiles is punishing to look at, and it would put a linear decode and two encoder passes on every photo in an import rather than one AVIF encode. It is always 4:2:0 for a reason of its own - it is 800px among other tiles, and its usual source is the camera's already-subsampled preview, so `sdr_full_chroma` would buy it 0.0003 SSIM for a third again the encode. Neither is offered as a knob, and the two are refused differently because they arrive differently. **HDR is a caller's argument, so an HDR grid tile is a bad request and `processing_service.target` throws `VALIDATION_ERROR` rather than quietly building an SDR one** - a coercion would leave the mistake somewhere nobody reads, and the mistake is not benign: `renditionVariant` gives no HDR grid path, so a request honoured would encode HDR and file it as SDR, which decodes wrong rather than merely costing more. Chroma is a setting the service reads rather than something a caller asks for, so there is no request to reject there - only a policy that the setting covers `full` and `max` and not the grid.
 
@@ -99,13 +94,13 @@ That holds for the render fallback too. A body with no usable JPEG preview build
 
 **An import builds `grid` always, and `full` only when the library renders.** A library serving the camera's JPEG has nothing to build for the photo view - it hands over the RAW's own bytes - so it pays one small encode per photo and no demosaic at all. `max` is built on request and only once, at native resolution when it fits AVIF's limits.
 
-**There is no second file for Firefox.** Serving one means an opt-in second encode per photo - the same graded frame written again as a one-frame AV1 in an MP4, because Firefox applies a PQ transfer to nothing but video and renders an HDR still dark. Firefox is served the same AVIF as everything else and rewraps it into that MP4 itself, in the page (§10.7). One setting, one file, one encode.
+**Firefox needs no second file or encode.** It renders HDR stills dark and applies PQ only to video, so the page rewraps the shared AVIF into a one-frame AV1 MP4 (§10.7).
 
 **Every rendition reports its weight, the stills included.** Reading it in the browser off the Resource Timing entry for the response that had already arrived costs the server nothing and describes what the reader actually paid, but only in Chromium: Firefox leaves `encodedBodySize` at 0 for a cross-origin resource whatever `Timing-Allow-Origin` says, and the app and the API are always separate origins, so the panel reads "unknown" there for every photo. It comes off the same stat that answers `built` - free for a stored rendition - and for the camera's JPEG, which has no file of its own, off lifting it out of the RAW: a header read and a copy, about a millisecond, on a single-photo read.
 
 **The viewer sees a three-step quality ladder**: the camera's JPEG, `full`, and `max`. They are the same picture at different costs, so it treats them as interchangeable and `viewer_rendition_mode` (§13.6) decides which one a photo opens at: pinned to one of the three, or reopened at whatever was chosen last, either across the catalogue (`remember`) or for that photo (`remember_per_photo`, stored on `photos.viewer_rendition` and carried on the summary because that is what `shown_rendition` is resolved against, §18.5). Server-side rather than in the browser because the same catalogue is opened from a phone, a laptop and whatever is plugged into the good monitor, and "where I left off" is worth nothing if it only holds on one of them. All three stay on offer whichever is showing, the step back down to the camera's JPEG included: comparing a render against it is a reason to switch.
 
-Comparing two of them is the reason to have three, so `I` and `O` switch straight to the camera's JPEG and to the render, and the stage holds the frame it is already showing until the next one has decoded rather than dropping to the background between them - a flash on a swap between two files that are both already cached says "loading" where nothing was loaded. The same decode-then-swap covers a genuinely slow one; only a photo *change* clears the stage, because there the previous frame is the wrong picture.
+`I` and `O` switch directly to the camera JPEG and render. Hold the current frame until its replacement decodes, including slow replacements, to avoid flashes between cached renditions. Only a photo *change* clears the stage: the previous frame then depicts the wrong subject.
 
 The incoming frame is **mounted as a second, invisible element over the current one** and that element is then kept rather than replaced. Which the page can only do because the decode is its own: a frame is decoded once, at a size this chose (`DECODE_CAP`), and drawn into the canvas that holds it - where an element given a src decoded the file again at the size it was drawn at, so a 3840px AVIF flashed on the way in while the 1080px camera JPEG - the same swap in the other direction - did not. Firefox's rewrapped video swaps the same way, promoted on `loadeddata` since a `<video>` has no `decode()`; it is a rendition comparison like any other and would otherwise be the one path that still flashes.
 
@@ -125,17 +120,17 @@ Both renditions are versioned by one column, `renditions_built_at`, and a rebuil
 
 **A missing grid tile is rebuilt when the photo is opened.** The queue only visits photos flagged for processing, so a tile deleted under a catalogued photo - a wiped cache, a sweep that went too far - is a hole in the grid that nothing ever fills; reprocessing the photo would fill it at the cost of every other rendition. Opening the photo is when someone is looking, so `GET /api/photos/:id` stats the tile and, if it is gone, renders that one rendition in the background from the source the import used (the photo's `rendition_source`, or the library's). A side effect on a read, deliberately: the file is the cache, and repairing a cache on the read that noticed it is empty is what a cache does. One repair per photo is in flight at a time.
 
-**Reprocessing clears every rendition it does not itself rewrite.** A photo is reprocessed because its pixels changed, so the copies beside it are of the old file and nothing else would ever notice - the max-resolution export in particular would be served forever. The ones the job is about to write are exempt, or the sweep would delete what it just made.
+**Reprocessing clears every rendition it does not rewrite.** Changed pixels invalidate all cached copies, including max-resolution exports that otherwise persist indefinitely. Exempt outputs this job writes so the sweep cannot delete its results.
 
 **A run that owes only the tile sweeps nothing.** `POST /api/photos/rebuild-tiles` sets `needs_tile` alone, and a run that was never going to write a rendition neither stamps `rendition_source` nor sweeps: nothing said the pixels changed, so the viewer's copies are still of the file it has. Sweeping there made regenerating a grid rendition delete the render the photo view was holding, which the next look then paid for again.
 
-Every writer on this path fails on a missing directory rather than creating one, and the failure takes the whole job rather than the one output, so the worker creates the directory for each of its job's outputs before it runs. At the call site instead, each new rendition is a directory somebody has to remember, and the one that was forgotten took the still down with it.
+Writers fail the whole job on a missing directory. The worker therefore creates every output directory before running; relying on callers previously left one missing and failed the still too.
 
 ### 10.2 Concurrency Model
 
 Processing uses **Bun worker threads** for parallelism. The concurrency level is configurable (default: 4 workers).
 
-**The queue is built in the order the grid will show it.** `listPendingProcessing` orders by the library's own `ordering` (`taken_asc` by default, so oldest capture first), using the same clause the gallery reads by, NULL capture dates included. A 50k-frame import otherwise filled in whatever order the rows happened to be inserted, which is the scan's order and therefore the filesystem's - so the first screenful was among the last to get its renditions, and the user watched an empty grid while work was being done on photos three thousand rows down. Both passes follow it, since each iterates the same staged list.
+**Process in grid order.** `listPendingProcessing` uses the gallery's clause, including NULL capture dates, for the library's `ordering` (`taken_asc` by default: oldest first). Filesystem insertion order left the first screenful near the end of a 50k-frame import while photos three thousand rows down rendered. Both passes use the same staged list.
 
 Only applied when the run names a single library: a batch spanning several has no one ordering to follow, and those runs are always an explicit set of ids the user just asked to rebuild. Above one `IN (...)` chunk the order is per chunk rather than global, which affects only sets far larger than a scoped sync ever carries (the watcher falls back to a full sync past 256 paths, §9.8).
 
@@ -157,7 +152,7 @@ Each worker:
 5. On any failure, deletes every output the job names, if present (best-effort unlink), before reporting - so a failed job leaves no partial rendition and a failed reprocess does not leave the prior run's stale ones on disk (both share the id-keyed path). This upholds the §10.2 no-rendition invariant.
 6. Sends back `{ photoId, success: true, source }` or `{ photoId, success: false, error: string }`.
 
-**The decode never enters the JS heap, and never leaves Rust at all.** Steps 2-4 happen inside one `bb_run_job` call: TypeScript sends the job as JSON and gets JSON back, so a 60MP frame is decoded, fitted, graded and encoded without its pixels - or an address to them - crossing the FFI boundary. Nothing is freed by hand. The base is an owned `Vec<u16>` in a local, and the last rendition to read it hands it back before its encode allocates anything - 366MB at 61MP, released across the longest stage of the job (§10.7).
+**Decoded pixels stay in Rust.** Steps 2-4 run inside one `bb_run_job`: TypeScript exchanges JSON, never a 60MP frame or pointer. A local owned `Vec<u16>` needs no manual free; the last rendition releases it before encoding allocates, freeing 366MB at 61MP during the longest stage (§10.7).
 
 **There is one rendering pipeline, and SDR is an output stage of it.** Everything internal is one 16-bit base through one grade; what a rendition's dynamic range reaches is the peak that grade rolls into and the transfer and depth of the buffer that leaves - PQ at 16 bits, or the sRGB primaries and transfer at 8. A second path for SDR - an 8-bit sRGB decode, `fit::apply`, and no tone map at all - is slower and larger both. Measured on a 3840px Sony rendition:
 
@@ -166,7 +161,7 @@ Each worker:
 | whole job | 1805ms | **1722ms** |
 | peak RSS | 376MB | **341MB** |
 
-Memory was the one with a stated reason - a 16-bit decode is twice the samples for an 8-bit encode to discard - and that is true of the decode buffer alone and false of the job, because the linear path already fits *during* the decode (§10.4) where the 8-bit one resized afterwards. Peak RSS is what `processing_concurrency` multiplies, so it was the number that mattered.
+Although a 16-bit decode doubles sample storage for an 8-bit encode, fitting during decode (§10.4) lowers job memory versus the 8-bit path's later resize. Peak RSS, multiplied by `processing_concurrency`, is the relevant measure.
 
 **What the whole change costs and buys, measured end to end.** Medians of three, against the two-pipeline version:
 
@@ -182,7 +177,7 @@ Memory was the one with a stated reason - a 16-bit decode is twice the samples f
 | **grid + full** | 3722 → 3940ms | 567 → **546MB** |
 | HDR at native | 10297 → 12108ms | 1375 → 1377MB |
 
-Memory is at or below the two-pipeline version on five of six rows and 5% over on the other. Time splits by shape, and the shape is the point: a job with more than one output pays for its second one in a dispatch, where the two-pipeline version paid for it in a second decode, a second fit and a second filter - so the 24MP SDR+HDR row absorbs a whole second output while coming in *under* a single HDR one, against the 94% the old arrangement charged for the same pair. A job with one output is 16-27% slower than the pipeline that was specialised for it.
+Memory is no worse on five of six rows, 5% higher on the sixth. Multiple outputs share decode, fit and filtering; the second needs a dispatch. Thus 24MP SDR+HDR beats a single HDR job, versus the prior pair's 94% surcharge. Single-output jobs are 16-27% slower than their specialised paths.
 
 **Where the remaining single-output cost is, and where it is not.** It was the perceptual round trips, and it was the larger half: every filter pass converted a buffer it was not in and converted it back, at two `powf` a sample on the way back, and a `powf` in the loop is also what stops it vectorising. Isolated by running the job with that conversion replaced by an identity, it measured 400ms of 2650 on the 24MP fixture and it scales with the sensor. §10.9 removes it: the base is *coded once*, into normalised PQ, and every stage below the decode is pointwise on what the buffer holds.
 
@@ -190,9 +185,9 @@ What is left is that this pipeline denoises ahead of the warp and sharpens after
 
 **Where the memory is, measured rather than assumed.** Peak RSS at native on a 61MP body read 1730MB before this was looked at, and the guess was the GPU - the dispatch wrote a `u32` per component and read it back through a second buffer of the same size, 732MB each. That guess was wrong twice over. Sampling `VmRSS` through the job showed *no* rise at all across the upload: a `wgpu` buffer lives in device memory, and on this adapter none of it is resident. What the peak actually held was two 366MB CPU buffers alive at once - the cut and the graded frame the AVIF encode was working from - on top of the decode's own transient.
 
-So the cut is handed back as soon as it is on the GPU, which is where nothing reads it again (`job::run`). That took the same case to 1381MB, level with the two-pipeline version's 1375.
+Release the cut immediately after GPU upload (`job::run`), its last read. Peak falls to 1381MB, level with the two-pipeline version's 1375.
 
-**What is left is the decode, and it is unmeasured.** No figures are given for rawler's working set because nobody has taken them. What is known about the shape is that the denoise and the demosaic run in 2048px tiles rather than over the frame, because whole-frame RCD is 3.1GB of planes at 61MP (`decode_rawler.rs`).
+**Rawler's remaining decode working set is unmeasured.** Denoise and demosaic use 2048px tiles; whole-frame RCD would need 3.1GB of planes at 61MP (`decode_rawler.rs`).
 
 For a single picture whose drawn frame, decode or straightened output exceeds 128Mi pixels, the job measures a small whole view for its levels and scene peak, then prepares overlapping windows of the held source. Each window carries the neighbouring pixels needed by denoise, resize, lens gather and sharpen. The grade writes output rows in bands of roughly 16Mi pixels, and libavif writes those bands as one-column AVIF grid cells. The reader uses the same window path at a level too large to prepare whole.
 
@@ -202,7 +197,7 @@ The output is packed to two `u16` components a word regardless, and it is worth 
 
 Read that as bounding *gross* change and nothing more. A mean ΔE76 is the one measure this design has repeatedly caught being blind to the errors that ruin a render - it discounts near-neutral error, cannot see a systematic cast at all, and hides its own tail (`fit.rs`, the `deltaE` section). What it says here is only that the one path did not move the colour by an amount that would show up even to a bad instrument. The reason to believe the rest is that both fixtures were rendered and looked at, at full size and unmatched as well as matched. What it does not bound is that an SDR rendition is a scene-referred render - diffuse white at the BT.2408 anchor, highlights rolled off by BT.2390 - rather than an 8-bit decode with its own auto-brightness. Held against a plain `decodeRaw` the two differ by a whole tone curve, which is why `lossless_render.integration.test.ts` asks the preview rather than the decode.
 
-**Nothing in the product moves samples across the boundary at all now.** There were two that did - the scene-linear frame TypeScript wrote to ffmpeg's stdin, and the HDR fit that read the same pixels - and both moved into Rust. `pixels()` survives for the tests that compare a decode against what was written (§10.4, "Handles, not pixels").
+**Production never moves samples across the boundary.** The TypeScript-to-ffmpeg scene-linear frame and HDR fit moved into Rust. Tests comparing decode and output retain `pixels()` (§10.4, "Handles, not pixels").
 
 **A job is one render with a list of outputs.** `Target.output` names what a rendition is coded as - `pq` at the grade's peak, or `srgb` at diffuse white - rather than carrying a `hdr` boolean for the render to interpret, so the sharing below is what the input describes rather than something the implementation happens to do. The library's `hdr` still says where a rendition is *stored*; `processing_worker` maps the one to the other, which is the only place the two vocabularies meet.
 
@@ -216,7 +211,7 @@ Once per photograph, not once per size (`gpu::ScenePeak`): a job uploads once pe
 
 **A whole frame goes up once per size, not once per rendition.** Two whole outputs of one size differ by two words of a uniform, so `gpu::Uploaded` holds the frame, the matrix, the lattice, the curves and the output pair, and a second target costs a bind group and a dispatch. Banded targets upload each window separately. Measured while the grade was moving onto the GPU and before the base was coded, the shared whole-frame upload took the 24MP two-output job from 3084ms to 2510; the table above is the finished pipeline and its rows are not comparable with those two numbers.
 
-Sharing the scene peak is a **correctness** fix as much as a saving, and it is the same argument the levels already made: it is what every pixel's roll-off is measured against, so two sizes of one photo were compressing their highlights by different amounts. Visible in the grade pin - the 3840px and 800px matched renditions now report the same peak sample where they reported 6585 and 6477.
+Sharing scene peak fixes **correctness** as well as cost: every pixel's roll-off uses it, so different size estimates compressed highlights differently. The 3840px and 800px grade pins now share a peak instead of 6585 and 6477.
 
 **And the renditions themselves share a frame, not just the settings.** `hdr::Cut` is the photo carried to the point where only the display still differs: normalised PQ codes, after the fit-to-size, the warp and the sharpen, and *before* the colour transform. Targets are ordered largest first; the first is cut off the base and every smaller one is a `downscale` of it, so it builds no warp table of its own. What is left per rendition is one dispatch - the colour transform, the roll-off into its peak and the transfer, which the shader does in a single pass - and then the encode.
 
@@ -226,7 +221,7 @@ The shared frame is stored **coded, as `u16` PQ**. §10.9 describes the coding a
 
 `a_rendition_cut_from_a_larger_frame_is_the_picture_it_would_have_been` holds the shared route against the direct one: a rendition cut at 1600 and taken down, against one cut at 800 outright, both graded through the same dispatch. It bounds the mean rather than pinning it, because what it is guarding is that the two routes stay the same picture, not that they stay a particular number of counts apart.
 
-**Cutting a smaller rendition from a larger one is not free, and the reason usually given for it is the wrong one.** "The colour transform is a per-pixel lookup, so it does not depend on resolution" establishes that it is the same *function* at any size. It does not establish that it commutes with a box average - the transform is non-linear, so `mean(f(x))` is not `f(mean(x))`, and grading then downscaling is genuinely not the same picture as downscaling then grading.
+**Downscaling a larger rendition changes the result.** A resolution-independent colour transform need not commute with averaging: it is nonlinear, so `mean(f(x))` differs from `f(mean(x))`. Grade-then-resize and resize-then-grade are different pictures.
 
 The shared route is checked directly against a rendition resized and graded on its own terms.
 Both averages are taken in linear light. Their remaining difference comes from applying a
@@ -241,9 +236,9 @@ picture rather than requiring those operations to commute.
 
 The scan has no photo id to name the file with: the row is inserted after the whole library has been walked, and a file that turns out to be a move never gets one. So it writes the tile under a **freshly minted id, in `grid/` itself**, with the stacking descriptor beside it, and that name is carried in scope - on the `DiskFile`, then the `AddedEntry` or `ModifiedEntry` it becomes - until the insert mints the real one. `ProcessingService.adoptScannedTile` then renames it to the photo's own name **in the same directory**, which is atomic, cannot cross a filesystem, and is the whole of what adopting one costs. It writes the same flag, the same stamp and the same descriptor the tile pass writes, so a tile whose pixels came from the scan is indistinguishable downstream.
 
-A name carried in scope rather than derived twice is what makes that safe. The alternative - keying the staged file by the photo's path - means recomputing the name later from settings that may have moved in between, so it has to encode what it was built with, and it leaves a window in which some unrelated pass can adopt a tile that is no longer the tile anyone asked for.
+Carry the staged name in scope. Deriving it twice from the photo path would need to encode potentially changed settings and could let an unrelated pass adopt the wrong tile.
 
-Nothing needs sweeping on its own terms. What no row claims is dropped by the run that made it - a move, whose photo already has its tile, or a file whose row was never written - and a tile abandoned by a killed run is a file in `grid/` whose name is not a live photo, which is exactly what the orphan sweep already deletes (§10.6).
+The creating run deletes unclaimed tiles: moves already having a tile, or files never inserted. Killed runs leave non-photo names in `grid/`, covered by the existing orphan sweep (§10.6).
 
 **The pending flag is per stage, because everything that reads it wants to know which one.** `needs_tile` and `needs_renditions` each clear as their own pass lands, so a run interrupted between them resumes at the second rather than redoing a tile already on disk; the queue asks for either (`countPendingProcessing` counts photos owing one, since the sync strip counts photos rather than stages); and the detail panel can say which of the two it is waiting on rather than reporting one word for two rather different waits. A failure clears both: the failure is the file, not the stage.
 
@@ -300,7 +295,7 @@ The decoder function:
 7. Returns `{ width, height, data: Buffer }` (raw RGB pixels).
 8. Cleans up in a `finally` so every path (including a decode or copy error) releases resources: `libraw_dcraw_clear_mem` on the mem-image pointer if it was allocated (null-guarded, since an error before step 4 leaves it unset), then `libraw_recycle` and `libraw_close` on the processor.
 
-**Memory-leak audit:** every LibRaw allocation must be paired with its free on all paths, including errors. The three owners are the mem-image (`libraw_dcraw_clear_mem`), the unpacked data (`libraw_recycle`), and the processor (`libraw_close`). The implementing agent should audit the full FFI lifecycle, not just these calls.
+**Memory-leak audit:** pair every LibRaw allocation with its free on all paths, including errors: mem-image (`libraw_dcraw_clear_mem`), unpacked data (`libraw_recycle`), processor (`libraw_close`). Audit the full FFI lifecycle.
 
 **One copy, not two** - and for a while that claim was wrong. The frame is copied out with the masked-border crop applied on the way, rather than copied whole and then cropped out of that, which on a 60MP frame is ~190MB moved twice. But `dcraw_make_mem_image` is *itself* a copy: `dcraw_process` leaves the frame in `imgdata.image` as four `ushort` planes in sensor orientation, and that call allocates a second whole frame to interleave it into. Measured on a 24MP frame it is 153-198ms, with the copy after it another ~80ms, against a ~535ms decode - nearly half the decode spent moving bytes that had already been computed.
 
@@ -310,11 +305,11 @@ Only the scene-linear one, and the reason is the output curve rather than cautio
 
 On the scene-linear path every one of those arguments is a constant set a few lines earlier: `no_auto_bright` pins `t_white` at 0x2000, `bright` is 1, and `gamm` is {1,1}. Solve dcraw's curve for those and the bisection takes g[3] to 1 with g[4] at 0, so the table collapses to `curve[i] = i`. There is therefore no lookup on this path at all - the identity is not an assumption about LibRaw, it is what those constants make the curve. The guard checks all four before taking the direct route and falls back to `dcraw_make_mem_image` otherwise, which is what the 8-bit path always does.
 
-That reasoning is exactly the kind that looks right and renders half a frame wrong, so it is pinned rather than argued: the decode pins in `native/rawshim/src/fixture_tests.rs` decode both ways and require the bytes to match, on both fixtures, at full and half size - the two flip orientations and the two inset cases between them.
+`native/rawshim/src/fixture_tests.rs` pins the reasoning: both decode routes must match byte-for-byte on both fixtures, full and half size, covering both flip orientations and inset cases.
 
 **The fit to the rendition's size happens here too**, in the same pass. A 3840px HDR rendition off a 24MP frame wants 59MB, and building the whole 145MB decode only for the grade to box-average it down meant that buffer coexisting with LibRaw's 194MB working set. Averaging straight out of the decoder's own buffer is the same filter over the same source pixels in the same order, so `hdr::shrink` then finds the frame already at size and declines - the intermediate simply never exists. Measured on the 24MP fixture at 3840, the decode's transient falls from **420MB to 338MB** and what it leaves resident for the rest of the job from 188MB to 106MB, which is the figure that multiplies by `processing_concurrency`.
 
-It is bit-identical, and pinned that way rather than asserted: the reference arm of the differential test applies the same fit as a separate pass afterwards, so the SHA1s only match if fusing it changed nothing. Verified at 3840, 800, 640 and native, including the half-size cases where the two stages compose.
+A differential test pins bit identity: its reference applies the fit separately and SHA1s must match. Verified at 3840, 800, 640 and native, including composed half-size cases.
 
 The fit is only applied to the scene-linear path. The 8-bit one is reduced by a different filter (Lanczos3, against the box average here), so shrinking it here would change the picture rather than just move where the work happens.
 
@@ -330,7 +325,7 @@ The fit is only applied to the scene-linear path. The 8-bit one is reduced by a 
 | 1 | VNG | 2377ms | 7067ms | 0.82% / ΔE 2.4 |
 | 12 | AAHD | 4783ms | 13340ms | 0.87% / ΔE 2.6 |
 
-PPG is both the cheapest and not the worst, so it stays. Two things the table is *not*: a quality ranking, since distance from AHD measures disagreement rather than correctness and there is no ground truth here without a synthetic mosaic; and a reason to care much, since a 61MP frame decodes at half size for any rendition under 4864px (below) and then skips demosaic altogether.
+PPG stays: cheapest, not worst. This is no quality ranking: AHD distance measures disagreement without synthetic-mosaic ground truth. At 61MP, renditions under 4864px halve the decode and bypass demosaic entirely (below).
 
 Note also that quality 0 (linear) is *slower* than AHD, and worse - strictly dominated, which is not what the name suggests.
 
@@ -342,7 +337,7 @@ It is a genuine quality trade, not a free one: dark edges pick up a faint checke
 
 **The one decode takes it.** Passing 0 unconditionally demosaics a 61MP frame in full, only for the grade to box-resize it to 3840 as its first act (§10.8.1) - fifteen sixteenths of the most expensive stage in the pipeline, thrown away. So it asks for the largest edge any of the job's render targets wants, and a `max` target reports 0 and is never halved. Two *jobs* over one photo therefore anchor their grades on decodes of different resolutions, and since the grade's anchor comes from the frame, a `full` and a `max` built separately can land on slightly different tone curves. Measured by grading both to the same output size: a **0.32% difference in mean brightness**, 0.2% RMS. Within one job it cannot happen at all, the levels being read once off the shared decode (§10.3).
 
-The defence is that measurement: 0.32% is well under the ΔE 0.21 this design already accepts for skipping the crop search (§10.8) and far under a just-noticeable difference. If it ever needs to be exact, the fix is to measure the levels resolution-independently rather than to stop halving.
+The measured 0.32% sits below the accepted ΔE 0.21 crop-search trade (§10.8) and a just-noticeable difference. Exactness would require resolution-independent level measurement, not disabling halving.
 
 **There is no 8-bit decode in the job at all** (§10.3). One scene-linear decode serves the camera-match fit and every rendition, whatever their dynamic range.
 
@@ -352,11 +347,11 @@ The wrapper owns the whole decode, because it is one job: as-shot white balance,
 
 #### Commands, not handles
 
-**A rendition job crosses as JSON and comes back as JSON.** `bb_run_job` takes UTF-8 bytes describing the job and writes UTF-8 bytes into a buffer the *caller* allocated. No address this library owns is ever handed over, so there is nothing for the other side to hold between calls, nothing to free, and no lifetime resting on a convention.
+**Rendition jobs exchange JSON.** `bb_run_job` reads UTF-8 and writes UTF-8 into a caller-owned buffer. No library-owned pointer crosses: no inter-call handle, manual free or conventional lifetime.
 
 That last point is why it changed. The previous boundary passed an opaque pointer to a bitmap Rust owned, and each operation took a handle and returned another - which reads as safe and is not, because a raw pointer carries no lifetime. `hdr_source<'a>(image: *const BbImage, ..) -> Option<(Source<'a>, ..)>` had a **free lifetime parameter**: `'a` was constrained by nothing, so the caller picked it and a borrow of the pixels could outlive them by any amount. The compiler accepts a use-after-free written that way; it was held off by review and by runtime null checks, not by the type system.
 
-Ownership says it instead. All the orchestration - two lazy decodes, the camera fit, the shared base, the per-target loop - is `job.rs` rather than the worker's, so a decode is an owned `Frame` in a local, borrowed with real references and dropped when nothing holds it.
+`job.rs` owns orchestration: two lazy decodes, camera fit, shared base and target loop. Each decode is a local owned `Frame`, borrowed through references and dropped when unused.
 
 **Three things ownership manages that a handle API leaves to hand.** There is no `open` list and no `finally`, because a value is dropped when its scope ends - two of the three ways that shape leaks a 366MB frame. There is no `release_pixels` and no `release_source` flag: freeing the decode before the encode allocates is the peak that matters, and `hdr::Decode::Owned` says it to the compiler, where a flag says it to a reader and needs a nulled pointer and a re-check at every accessor to be safe. And `Frame` holds `Vec<u16>` for a 16-bit decode rather than bytes every reader reinterprets, which a boundary handing over one `*mut u8` to be freed as one allocation cannot do.
 
@@ -376,7 +371,7 @@ It is small, because most of what would use it is not about TypeScript. **A test
 
 **There is no exception, and there was nearly one.** The last candidate was `raw_header`'s black-border check, which reads four specific pixels, one per edge: a masked border that was not cropped decodes as black bars, and that shows up in no aggregate at all, because the frame is mostly picture and a bar barely moves a mean. It looked like the one assertion that needed bytes, and a guarded write-to-disk door was built for it. It is not - four triples is a summary like any other, so `pixelsAt` returns them and the door is gone. A point outside the frame comes back null rather than black, so a wrong coordinate cannot pass for a dark pixel.
 
-A lint rule rather than a comment because the failure mode is a plausible-looking one. Reading samples into TypeScript to compute something over them reads as ordinary code, and it is how the colour model ends up living in two places and how a per-pixel loop ends up in the slower of the two languages. What `src/**` can reach is `rawshim_job.ts`: a command in, a result out, and for a download the encoded bytes of a response body.
+Lint blocks plausible-looking TypeScript sample processing that would duplicate colour models and move loops into the slower language. `src/**` reaches only `rawshim_job.ts`: commands, results and encoded download bodies.
 
 Getting there took removing three round trips that each looked reasonable. The embedded preview was extracted into a `Buffer` - 5-14MB, since a 61MP body embeds a full-resolution one - and handed straight back to be decoded. The fit took that preview *and* the whole RAW, 60-120MB, so TypeScript could find one maker-note tag in the first few kilobytes. And a rendition being transcoded was read off disk into JavaScript only to be passed back down; `decodeFile` takes the path instead.
 
@@ -384,7 +379,7 @@ Getting there took removing three round trips that each looked reasonable. The e
 
 `cargo test` runs on synthetic inputs and finishes in 0.04s, which is what makes it worth running on every edit. The tests that decode a real RAW sit behind a `fixtures` feature - `bun run test:native --features fixtures fixture_tests`, ~8s - and that is the pass before calling something done. A cargo feature rather than `#[ignore]`, so the two have names and the slow one cannot be run by accident.
 
-Committed fixtures assert their own presence and point at `git lfs pull`; the one fixture too big to commit - a 61MP frame, needed for the halving cases - prints a SKIPPED line instead. An opt-in suite that silently runs nothing is worse than one that says the checkout is incomplete.
+Missing committed fixtures fail and name `git lfs pull`. The uncommitted 61MP halving fixture prints SKIPPED when absent; the opt-in suite must never silently run nothing.
 
 The grade on a real 3840px photo is pinned as pictures (`snapshot.rs`, `test/fixtures/snapshots/hdr-grade/`): the whole frame downscaled and a 1:1 crop, held to a tolerance rather than to bytes, because the grade runs on a GPU and a hash of GPU output pins the adapter that produced it. The **mean** difference is the bound that says the grade moved - it agrees to a fraction of a count across adapters and moves by hundreds when a matrix row is wrong - where the worst sample is one the last ulp of a steep transfer decides, and is bounded loosely.
 
@@ -427,7 +422,7 @@ A shoot import is three different jobs with three different costs, measured over
 
 B is measured separately, over 50 61MP ARWs on a network mount at concurrency 4 (`examples/import_fuse.rs`), because it is the row that moved: it takes the smallest embedded preview that covers the tile rather than the body's own full-resolution one (below).
 
-**B is forty times the throughput of C**, which is what makes staging worth doing rather than interleaving: on a 2000-frame shoot, doing every tile first fills the whole grid in about ten seconds, where a combined job would take the full eleven minutes that C needs before the last rendition appeared.
+**B has forty times C's throughput.** Tiles-first makes a 2000-frame grid browsable in about ten seconds; interleaved jobs need C's eleven minutes to reach the last tile.
 
 **Opening the RAW is not a time sink, so B and C need not share one.** The suspicion was that a fused pass would be needed to avoid opening each file twice, but extracting the embedded preview - the open plus the thumbnail - was **5ms of B's 124ms** when that was LibRaw's. A RAW reader parses headers lazily and the embedded preview is a few MB, which is as true of rawler's `preview_jpeg`, so B never touches the sensor data C needs. They can be scheduled independently, which is the whole point.
 
@@ -453,7 +448,7 @@ That the *seek* is paid once either way is why this is a fifth rather than a hal
 
 **The DCT is asked to go all the way to the target**, rather than stopping a factor of two short and leaving the reduce something to work with. It is a quality trade, because libjpeg's scaling and a Lanczos3 reduce are different filters: measured against decoding whole and reducing once, an 800px tile moves from deltaE 0.29 mean to 0.63, and its worst pixels from 7 to 24. The error is confined to fine detail where the two filters disagree - foliage, not sky - and at tile size it is invisible even under a 1:1 crop, which is the whole argument for taking it. Worth 105ms per file against 125ms.
 
-The saving is smaller than the pixel count suggests - a quarter the output pixels for a fifth less time - because the entropy decode is proportional to the *file*, not the output. Huffman-decoding every coefficient block happens either way; only the inverse DCT, the chroma upsample and the colour convert get cheaper.
+A quarter of the output pixels saves only a fifth of the time: Huffman decoding still visits every coefficient block. Only inverse DCT, chroma upsampling and colour conversion shrink.
 
 #### Where the time actually goes
 
@@ -470,7 +465,7 @@ It saturates at ~2.4 img/s: 4.5x the single-image rate, and flat past 8. An impo
 
 #### Why not a GPU
 
-Asked twice, because the first answer was framed too narrowly. The work looks like it should suit a GPU - the grade is a per-pixel gather and lookup - and per-image latency is the wrong lens anyway: a batch import has thousands of independent frames, so a device with thousands of weak cores is the right shape in principle.
+Revisited after an overly narrow first answer: per-pixel grading suits GPUs, and thousands of independent import frames suit their width. Per-image latency alone cannot decide.
 
 **Fixed-function AV1 cannot do 4:4:4**, which on its own settles the hardware question. NVIDIA's support matrix gives AV1 as "YUV 420 8-bit and 10-bit" on Ada and Blackwell only; 4:4:4 exists for H.264 and HEVC but not AV1, and neither AMD's VCN 4.0 nor Intel's Arc QSV documents it. Vulkan's `VK_KHR_video_encode_av1` maps to the same silicon, so it inherits the same limit. No hardware *decoder* takes 4:4:4 either.
 
@@ -498,11 +493,11 @@ So the reachable target is the grade (19% of the CPU budget), plus a demosaic th
 | 88 | 511 | 5.67MB | 40.13 | 2731 | 6.82MB | 41.50 |
 | 95 | 602 | 9.66MB | 44.66 | 3422 | 10.15MB | 45.45 |
 
-rav1e scores better at every Q, which means nothing on its own, because it also spends more bits at every Q. Compared at matched *size* - interpolating rav1e onto libaom's 5.67MB - it lands at ~39.9 PSNR against libaom's 40.13, so the rate-distortion curves are the same within measurement error while libaom is **5-6x faster**. libaom stays.
+rav1e's higher scores at every Q also cost more bits. At libaom's 5.67MB, interpolation gives ~39.9 PSNR versus 40.13: equivalent rate-distortion within measurement error, with libaom **5-6x faster**. Keep libaom.
 
 **rav1e is not slow for want of configuration.** The obvious suspects were checked. The `effort` mapping is not inverted - effort 0 is the fastest for both encoders, so libvips' polarity survives the trip through libheif into rav1e's `speed`. And it is not a missing thread count: measured as CPU time over wall time, rav1e uses *more* cores than libaom (3.7-3.9 against 2.2-3.6) and is still 5x slower, so it is doing more work per output bit rather than doing it on fewer cores. There was also nothing left to set: libvips' `heifsave` exposed no threads, tiles or jobs parameter, so how a plugin parallelised was entirely libheif's business - one of the things calling libavif directly bought back.
 
-Neither encoder saturates the machine, which sounds like an opportunity and is not. An import runs a pool and already saturates the CPU at ~2.4 img/s (above), so per-encode threading would add contention rather than throughput. It would only help the one-photo-at-a-time paths, the on-demand `max` rendition and the lossless export, where 2.2 of 12 threads is genuine idle capacity.
+The import pool already saturates CPU at ~2.4 img/s; more encoder threads add contention. They could help single-photo `max` and lossless exports, where only 2.2 of 12 threads are busy.
 
 **SVT-AV1 wrote a 201-byte broken file and reported success.** §10.7 records that it implements AV1 Profile 0 only and converts 4:4:4 down silently; through libheif 1.17.6 it did not even manage that - `vips_heifsave` returned 0, and what landed on disk had no valid stream (`missing mandatory atoms, broken header`). Unusable, and unusable in a way that no error surfaced. libheif's `auto` picks by plugin priority, so that was one deployment's package ordering away from a silently corrupt rendition; naming the encoder guarded it, and linking libavif removed the choice.
 
@@ -534,13 +529,13 @@ Single-threaded against a libvips that spread over the machine, which is why the
 
 **`jpeg-decoder` rather than the faster `zune-jpeg`, because DCT scaling matters more than throughput here.** libjpeg can scale by 1/2, 1/4 or 1/8 during the transform, and a 61MP body embeds a *full-resolution* preview - 9504x6336 - that a grid tile needs at 800px, so decoding it whole spends ~250-540ms producing pixels 99% of which are discarded. `Decoder::scale` is the pure-Rust exposure of that, and `zune-jpeg`, quicker on a whole frame, has no equivalent. Full chroma on the encode, no subsampling, which is where libvips also landed above quality 90 and where every caller here sits.
 
-**One decoder, for everybody.** Two - this one behind the server's fit and the browser's own behind the editor's - is the divergence `image::resize` exists to remove. The page fetches the RAW and prepares it through `edit::fit`, which reads the embedded preview through this module, so nothing on a client decodes a JPEG in JavaScript: the decoder a tab runs is this one, compiled to wasm (§21).
+**One decoder on both hosts.** Separate server/browser decoders would repeat the divergence addressed by `image::resize`. The page fetches the RAW and runs `edit::fit`, reading its preview through this module compiled to wasm, never a JavaScript JPEG decoder (§21).
 
 ### 10.5 Lossless export
 
 `POST /api/photos/:id/lossless` renders one photo at the largest size AVIF can decode into a file kept beside the renditions. It exists because a 3840px rendition is not what you check focus or gradients on, and it is opt-in per photo because it takes real time to build. It stays at native resolution when that fits AVIF's edge and area limits; larger pictures are reduced proportionally before the grade. The file is the cache: a second request finds it already there, and `PhotoDetail.renditions.max.built` is a `stat` rather than a column, so it cannot disagree with the disk.
 
-It follows the library's HDR setting, since it is the same render from the same RAW and it would be odd for "view original" to be the one rendition that disagrees with the rest. Firefox rewraps it as a video like any other HDR rendition (§10.7), at the rendition's size and with no encode involved.
+It follows the library's HDR setting. Firefox rewraps it as video at rendition size, without encoding (§10.7).
 
 **Format.** This was JPEG XL, and the swap to AVIF cost bit depth to buy simplicity. JXL keeps 16 bits where AVIF tops out at 10 here, and at matched quality the files are comparable: 3.42 MB against 2.97 MB on a 24MP frame, 0.34s against 0.48s. What decided it was delivery. No browser decodes JXL without a 1.6 MB wasm module, and the transcode that module needs to hand an `<img>` something it accepts cost more than the entire encode:
 
@@ -556,11 +551,11 @@ The polyfill's cost was almost entirely the PNG it had to produce: a 121 MB 16-b
 
 #### 10.5.1 Export
 
-`POST /api/export` is the other way a photograph leaves, and it is not a rendition. A rendition is a working copy this app decides the shape of and caches on disk; an export is seven questions a reader answered in a dialog and wants once, so nothing is stored - the frame renders into a scratch directory, is read back, and the directory goes.
+`POST /api/export` produces a one-off file from seven dialog choices, unlike an app-defined cached rendition. Render into a scratch directory, read the output, then remove the directory; keep no export file.
 
 **Every setting comes from the request rather than the library**: the size, the perceived quality, whether the edits apply, whether the decode halves, the dynamic range, the container. Only the grade stays the library's, because that is what the photograph *looks like* rather than how it is written.
 
-**One photograph per request, and a selection is the client looping over it.** The bulk bar's Export opens the same dialog over a `PhotoTarget`, which `POST /api/photos/ids` resolves - the one route that hands ids back, because every other bulk action resolves its target privately and acts, where this one has work to do per photograph on the client. What that work is is the *destination*, which is the whole reason the loop is not a zip on the server: only the client knows where a file lands, and the three answers are genuinely different code.
+**One photograph per request; the client loops over selections.** Bulk Export opens the same dialog over a `PhotoTarget`, resolved by `POST /api/photos/ids`. Other bulk routes resolve targets internally; export returns ids because only the client knows each file's destination. A server zip cannot replace these three paths.
 
 | | Where it writes | Picked with |
 |---|---|---|
@@ -568,7 +563,7 @@ The polyfill's cost was almost entirely the PNG it had to produce: a 121 MB 16-b
 | Chromium | A directory handle the page writes through | `showDirectoryPicker` |
 | Firefox, Safari | The downloads folder, a file at a time | Nothing to pick |
 
-**The dialog closes on the click that starts the run, and the run joins a queue.** A selection is one render per photograph, so a modal held over the library is minutes of it being unusable for work the reader has already described in full. What replaces it is where they would look anyway: the sidebar's Exports entry becomes "Exporting N photos" over a bar, and the Exports page lists the run in flight and whatever is behind it above the history it is about to join. The queue runs one at a time - each run is a decode per photograph and two at once only makes both slower - and either row can be taken back: the one in flight stops after the file it is on, one that has not begun is dropped whole.
+**Starting closes the dialog and queues the run.** The library stays usable while the sidebar shows "Exporting N photos" and progress. The Exports page lists active and queued runs above history. Run serially: concurrent decodes slow both. Cancelling an active run stops after its current file; cancelling a queued run drops it entirely.
 
 **A queued run is listed as the rows it is about to become**, through the same row component and from the same joins: `POST /api/exports/queued` answers the ids with the photograph's path, its library and shoot, and the develop settings the file will carry where the run was asked to take them. So a reader checking what is in the queue asks what they ask of the history and gets it in the same shape - a run of one is the photograph, a run of several is a line that opens onto them - with the destination the one field missing, because nothing has written anywhere yet. The picture beside a waiting row is the **grid tile**, which is the photograph as the library draws it and the picture the reader picked it by; a written row keeps the export's own render (§10.5.2). Best effort: a describe that fails costs the run its rows and not its files. The picker is still answered inside the click, since `showDirectoryPicker` needs that transient activation, so the dialog stands until a folder is chosen and a reader who dismissed it keeps the settings they filled in.
 
@@ -618,13 +613,13 @@ The default for newly indexed photos is the library's `rendition_source` (§10.1
 
 An export leaves the app entirely, so the only record of one is a row in `exports`: one per photograph, grouped by the run id the client mints, written by the render and completed by the client (below). `GET /api/exports` is what the Exports page lists, newest run first. `DELETE /api/exports/:id` drops one row and `DELETE /api/exports/runs/:runId` drops a whole run - which is what the page offers over a selection's export, that being one row there. Neither touches a file, the files being the reader's.
 
-**The client says where it went, because the destination is the one thing the server never sees.** The sink answers with where it wrote - a path from the shell, the folder's name and the filename through a directory handle, the filename alone into downloads - and that is what finishes the row. A history that could not be finished is not a failed export: the file is already on the reader's disk, and reporting one would send them to do again what has been done.
+**The client supplies the destination:** shell path, directory-handle folder and filename, or downloads filename. That finishes the row. Failure to record history must not report a failed export: the file is already on disk, and retrying would duplicate it.
 
 **Every column is a copy taken at the time**, including the develop settings the render carried. A row that read the photograph's *current* edits would answer the one question this page exists for wrongly: exporting, moving a slider and exporting again lists two files, and what each was written with is what tells them apart. The `edits` column follows the request's own `includeEdits`, so an export that deliberately left them out records none rather than the ones it ignored.
 
-**No foreign key back to the photograph.** A cascade would forget where a file went the moment its RAW left the catalogue, which is exactly when the exported copy is the one that is left.
+**No photograph foreign key.** Export history must survive removal of its RAW from the catalogue.
 
-**The library and the shoot are read off the photograph, not stored beside the export.** They are facts about where it lives rather than about what was written, so a photograph filed into a shoot afterwards reads under that shoot and its links go somewhere that exists; the listing left-joins them, and a row whose photograph has since left the catalogue says so instead of linking into nothing.
+**Left-join the photograph's current library and shoot.** These describe its location, not exported contents. Later moves update the links; absent photographs are labelled instead of linked.
 
 **`export_history_limit` (1000) is where the history stops**, and the cull takes *whole runs*, oldest first, after each record. Counted in files the cut would land inside whichever run straddles it, and half a run listed as "Exported 40 photos" over the twelve that survived is a worse history than one that stops earlier - so the limit is a floor rather than a ceiling, and the newest run is never culled however large it is. The picture is a column rather than a file, so the row leaving takes its thumbnail with it and the orphan sweep has nothing to find.
 
@@ -643,16 +638,13 @@ Two things close that off:
 - **Removing a library removes its data directory**, `<DATA_DIR>/<library id>` (§6). Re-adding the same folder can never reuse the renditions (new ids), so keeping them is dead weight. The RAW files are not ours and are left alone: the directory is outside every library root, and the Bin is beside the photographs (§12.3). The removal still refuses outright while anything under there looks like an original - not as a trigger for a rescue, but because `rm -rf` is the one call here that cannot be undone and an original under there means the directory is not what it is believed to be.
 - **A scheduled sweep** (`PRUNE_EVERY_DAYS`, default 7, 0 disables) walks each generated directory and deletes any file whose id has no row. The directories and the extension each is supposed to hold both come from the path helpers that write the files, so changing an output format cannot leave the sweep looking in the wrong place. A file whose extension no longer matches goes too, even when its photo is alive: a format change writes the new render beside the old one rather than over it, which the PNG-to-JXL switch made real at ~100 MB per photo ever opened. That rule is also what empties a **retired directory** - one nothing writes to any more, listed by `retiredRenditionDirs()` and swept alongside the live ones, where every file is by definition the wrong extension. `<rendition>-hdr-video` is the one there is: an MP4 per HDR photo for Firefox, which the browser now makes for itself (§10.7). The directory is `rmdir`'d once it comes up empty, and a file that would not go keeps it until a later sweep. Only `renditions/` and `hdr/` are swept, so a stray the user left is untouched (and the Bin is not in the data directory at all). Ids are checked against the whole `photos` table, not one library's, because the id space is global. Soft-deleted rows count as live, since their renditions are what make the Bin browsable (§12.1).
 
-**A merge's own working layers are not renditions, and are owed to no live row at all.**
-`drafts/<layerKey>/` holds an assembly's analysis planes while its page is open, keyed by a session rather
-than by a photo id - there is no row yet for the orphan sweep's "is this id in `live`" test to ask about.
-`PruneService` has a second sweep for exactly that reason: it lists `drafts/*` and removes anything older
-than seven days by mtime, a TTL rather than a live-row check, since a draft's only owner is however long ago
-a reader last had that page open.
+**Merge working layers have no photo row.** `drafts/<layerKey>/` holds session-keyed assembly analysis
+planes while the page is open, so the orphan sweep's `live` check cannot apply. `PruneService` separately
+removes `drafts/*` older than seven days by mtime; draft ownership is a TTL.
 
 ### 10.6.1 One place that deletes
 
-Every removal from disk goes through `src/utils/deletions.ts`, and a `no-restricted-imports` lint rule (`.oxlintrc.json`) bans `rm`/`unlink`/`rmdir` and their sync forms from `node:fs` everywhere else, tests aside. Renditions are cheap to lose and RAWs are not, and the two sit under directory paths that a refactor can make agree by accident, so the check that tells them apart is worth having in exactly one place rather than repeated at each call site.
+All disk removals go through `src/utils/deletions.ts`. `no-restricted-imports` in `.oxlintrc.json` bans `rm`/`unlink`/`rmdir` and sync forms from `node:fs` elsewhere except tests. Central guards prevent path refactors from confusing disposable renditions with irreplaceable RAWs.
 
 Each entry point states what it will not do:
 
@@ -665,4 +657,4 @@ Each entry point states what it will not do:
 | `deleteEmptyBinFolder(library, target)` | Target must be exactly this library's bin (§12.3), and `rmdir` again, so anything at all inside it stops the removal. Runs on the error path of a library create, where what it is about to delete is a directory the app believes it just made. |
 | `unlinkMovedFile(from, movedTo)` | Removes the source half of a move only once the destination exists, so a failed link or copy can never leave the move having consumed the file. |
 
-It runs on an interval rather than at startup: a restart is no evidence anything was orphaned, and in development that would sweep on every reload.
+Sweep on an interval, not startup: restarts imply no orphaning and development reloads would repeat the work.

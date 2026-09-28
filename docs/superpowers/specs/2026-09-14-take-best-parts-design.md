@@ -1,9 +1,7 @@
 # Take best parts: a photograph assembled from a burst
 
-A second composite recipe beside the panorama. A panorama joins frames that point in different
-directions; this joins frames that point at the *same* thing and disagree about what was in it -
-a face that blinked, a car that drove through, a branch that moved. The reader keeps the frame
-they liked and swaps the parts of it they did not.
+A second composite recipe: combine burst frames aimed at the *same* scene, replacing unwanted
+parts of a preferred base frame - a blink, passing car or moving branch - with parts from other frames.
 
 Two use cases decide every choice below:
 
@@ -12,20 +10,15 @@ Two use cases decide every choice below:
 - A landscape shot twice while a car drove past. Take each half from the frame the car was not in,
   so the picture has no car.
 
-A **tile** throughout this document is one of the polygons the reader picks a frame for. Note the
-collision: `composite_tile.rs` tiles a canvas into windows to render it, and a `grid` rendition is called
-a tile as well. Neither is this. Where a sentence could be read either way it says *canvas window*
-or *grid tile*.
+A **tile** here is a polygon assigned a frame. Disambiguate `composite_tile.rs` render windows as
+*canvas windows*, and `grid` renditions as *grid tiles*.
 
 ## 1. What this costs
 
-The render is the panorama's render with the source of `composite_gather`'s `weight` changed, the
-planes the analysis reads are the panorama's own prepared sources gathered onto one canvas, and
-the alignment is the panorama's alignment with the focal held. **Everything between those is
-new.** Nothing in `slang/`, `native/rawshim/src/`, `src/` or `packages/` contains a distance
-transform, a min cut, a boundary trace, a polygon simplification or a band split; §3 and §5.2 are
-new machinery, and treating them as reuse is what would let this skip its pins and its
-design-chapter edits.
+Reuse panorama rendering with a different `composite_gather` `weight`, prepared sources on one
+canvas, and alignment with held focal. **Everything between is new:** `slang/`,
+`native/rawshim/src/`, `src/`, `packages/` contain no distance transform, min cut, boundary trace,
+polygon simplification or band split. §3 and §5.2 need new pins and design-chapter edits.
 
 What genuinely carries over:
 
@@ -129,8 +122,8 @@ they were made. Its popup opens at once, and opening it solves every frame's gro
 the swatches show each frame grown before the reader has chosen. A seed whose popup closes with
 nothing picked is dropped again; a press that closes a popup is not also a seed.
 
-A seed is only its outline. It is the least its pick takes, and the seam solve decides how far past it the tile grows - which
-is what a reader pointing at a face wants, and why nothing draws the square once the growth is in.
+A seed outline is the minimum its pick takes. The seam solve grows beyond it; once solved, draw
+that growth instead of the square.
 
 ### 2.4a Removing a thing
 
@@ -140,10 +133,9 @@ where the tile stands, so what comes back is whatever stood there instead of the
 Everything after the seed - the popup, the swatches, the solve, the settled render, undo, Save - is
 §2.3 to §2.5 unchanged.
 
-The two differ in one place, the shift (§3.7a). A subject tile is read where its subject went in the
-picked frame, which is what replaces a face with that face; a ground tile is never tracked, since
-tracking would find the very thing the reader is trying to be rid of and bring it back. A frame
-that still shows the thing over the seed has no ground to give, and its swatch is refused (§3.7b).
+Only shift differs (§3.7a): subject tiles track the subject into the picked frame; ground tiles
+never track, which would bring the unwanted object back. Refuse swatches whose frame still
+shows that object over the seed (§3.7b).
 
 What a tile asks for is fixed when it is seeded, like its outline, and the recipe carries it as
 `takes` beside `pick`. The list is absent while every tile asks for its subject, so a merge that
@@ -170,11 +162,9 @@ the **intersection** of the frames, so the result is slightly smaller than any i
 
 ### 2.7 Opening a finished assembly again
 
-An assembly is a recipe, and its tiles, picks and base are all on it (§5.1) - so reopening
-one is loading the recipe and rebuilding the layers, not re-running the analysis. **Edit merge** on
-an assembly in the viewer (`photo_detail_page.tsx`) returns to the same page in the same state, and
-Save there **updates the row's recipe in place** and rebuilds the renditions, rather than inserting
-a second photograph.
+Reopen from recipe tiles, picks and base (§5.1), rebuilding layers without analysis. Viewer
+**Edit merge** (`photo_detail_page.tsx`) restores the page; Save **updates the recipe in place**
+and rebuilds renditions, without a second photograph.
 
 The layers are rebuilt from the recipe's own geometry over the frames as §3.0 prepares them. That
 preparation takes no grade, so a frame re-edited since the merge looks the same on this page; its
@@ -194,13 +184,10 @@ few points across. **Press-and-hold** a swatch previews and **release** picks it
 
 ### 3.0 What it runs on
 
-**The planes are the panorama's own prepared sources, gathered onto one canvas.** `composite_tile` already
-prepares a source for a composite of the cameras' pictures with the sharpen and the defringe at
-zero, GALOSH fitting its noise model and correcting nothing, the dust off, and the lens applied
-*from the recipe* at gather time through `composite_gather`'s ratio table. That is exactly the picture
-this wants: a demosaic in the recipe's corrected geometry, in this pipeline's PQ, with every stage
-that would hide or invent a difference switched off - and it is the path the panorama's grid tile
-already renders down, not a new arm of the render.
+**Use panorama sources gathered onto one canvas.** Existing `composite_tile` camera-picture
+preparation sets sharpen/defringe to zero, GALOSH fit-only, dust off; `composite_gather` applies
+the *recipe's* lens ratio table. This yields demosaiced PQ in corrected geometry without stages
+that hide or invent differences, reusing the panorama grid-tile path.
 
 What that means for each stage the render has:
 
@@ -214,26 +201,19 @@ What that means for each stage the render has:
 | grade, tone, defringe, sharpen, dust, chroma leak | **no** | a burst takes one grade and it cancels out of a difference; the rest hide or invent edges |
 | downsample | after the demosaic | to `ANALYSIS_LONG = 3000`, through `base::resize` |
 
-**A lens that has never been fitted is fitted once, per lens, and rides the recipe.** On a library
-that has never rendered these frames there is no stored table; `CompositesService.aligned`'s loop
-fits one photograph per lens, `shared_lenses` hands that answer to every frame on the lens, and the
-recipe carries it. That is how the panorama gets one table across a set rather than a fit per
-frame - which is the seam-doubling defect `shared_lenses` exists to remove - and it is reused here
-unchanged.
+**Fit unmeasured lenses once per lens and store in recipe.** `CompositesService.aligned` fits
+one photograph per lens; `shared_lenses` distributes the table, avoiding per-frame fits and
+doubled seams. Reuse `shared_lenses` unchanged, including libraries with no stored render analysis.
 
 **The planes are the photographs, on every library, whatever it serves.** §3.3's tint floor is
 `galosh`'s noise model, and that model is fitted on a mosaic: a camera's JPEG has none, so a set of
 them carries `NoiseModel::default()` into every plane and the floor stops being a measurement. So `assembly_planes` asks for `From::Original` outright rather than following
 `rendition_source`, and it is the one place on this feature that does.
 
-**That split is deliberate, and it stops at the analysis.** What the analysis reads and what the
-finished photograph is composited from are two questions: the analysis needs the mosaic, and the
-render needs whatever the library promises its reader. A library set to Embedded JPEG therefore
-analyses the RAWs, draws its draft layers from them (§4.3), and then composites the picture
-Save writes from the frames' own JPEGs - `renditions::sourceFor`, the one rule every recipe
-shares. Reading the library's setting into the analysis would be a field nobody can trust; reading
-`From::Original` into the render would be a photograph that opens at a picture its library does not
-serve.
+**Analysis and render sources deliberately differ.** Embedded JPEG libraries analyse RAW mosaics
+and draw RAW draft layers (§4.3), but Save composites camera JPEGs through `renditions::sourceFor`.
+Library settings cannot supply the analysis noise model; forcing `From::Original` into render
+would violate the library's served-picture contract.
 
 **3000 on the long edge is a quarter of a 24MP frame, not a hundredth.** Twelve frames of
 levels at 6MP is 288MB, which is the reason for the scale: memory, not speed. It leaves a
@@ -283,14 +263,10 @@ answers `unaligned`, which the page shows as a warning in its bar: the camera mo
 is parallax no whole-frame fit removes, and each seed's own tracking (§3.7b) is what is left to
 absorb it - a seam near the corners may still cross an edge the frames disagree on.
 
-**A typed distance rather than a number, which is what makes it a constant at all.** The bound is
-so many pixels of a plane the pipeline fixes; the reading arrives in the pixels of a plane §3.1
-*chooses* (`Kind::plane_long` - a burst searches at 808 where a pan wants 1616). Written as bare
-floats the two read alike and compare wrongly: one bound of 0.6 search pixels meant 1.12 analysis
-pixels at one and 2.25 at the other, which is the whole of §3.3's displacement budget rather than the half left over -
-a burst nobody should be assembling passing the very check that exists to refuse it. Typed, the
-comparison does not compile until the reading has been made a `Share` of the plane it was measured
-on and resolved against this one, which is `px.rs`'s whole argument met in a new place.
+**Type the distance.** Bound uses fixed analysis pixels; reading uses chosen search pixels
+(`Kind::plane_long`: burst 808, panorama 1616). Bare 0.6 search pixels meant 1.12 or 2.25 analysis
+pixels, spending §3.3's whole budget instead of half and accepting bad bursts. `px.rs` requires
+conversion through a `Share` of the measured plane before comparison.
 
 **A difference of two medians, not a statistic of one population.** Each of the three words is load
 bearing:
@@ -309,13 +285,10 @@ bearing:
   field already spends its median 1.10 of it (§3.10), and the 1.15 left is what the corners may add.
   The real burst reads **0.72px** of it (§3.10).
 
-**What it catches is a focal the file got wrong, not an assumed one.** An assumed focal is on a 15%
-leash, and the leash is not what the bound backstops: either the frames are far enough apart to see
-their focal, in which case 15% of slack is enough for the fit to walk back to it, or they are not,
-in which case the wrong focal leaves no residual to refuse. Measured both ways on the solve's own
-fixture, at §3.1's worked geometry - 15% out reads under a hundredth of a pixel at either end. A
-*told* focal is held within 2% of what the file said, so a file that is wrong by more than that
-stays wrong: off by half, the same fixture reads 2.46px against the bound.
+**The check catches incorrect file focal, not assumed focal.** A 15% assumed leash either lets
+observable focal recover or leaves no observable residual: §3.1 fixture, 15% error, under a
+hundredth pixel at either end. *Told* focal stays within 2% of file metadata; half-wrong remains
+wrong and reads 2.46px against the bound.
 
 **The solve reports it, not the align's caller**, because the align keeps no matches past its own
 last fit - `Solved::radial_px` is measured in the same pass that writes the per-pair errors, over
@@ -349,11 +322,10 @@ The recipe's **per-source scalar gain is not applied here at all**: `composite_t
 each source against the reference's white divided by that source's gain, which is a multiplication
 of its light for the cost of one divide, so a plane arrives at the analysis already matched.
 
-**What differs is read pair by pair, not off a spread.** For three frames sorted `a <= b <= c`,
-`MAD = min(b-a, c-b)` - the gap between the two that agree, which is sensor noise, so one car in
-three frames measures as zero. §3.7b compares a pick's level with the base's, cell by cell, and a
-median says which frame is odd only where fewer than half disagree anyway. `M` is only what a seam
-laid along a step in the picture is judged by (`assembly_seam::along_an_edge`).
+**Measure pairwise disagreement, not spread.** For sorted `a <= b <= c`,
+`MAD = min(b-a, c-b)` measures the agreeing pair's noise: one car in three reads zero. §3.7b
+compares pick/base per cell. Median identifies an odd frame only when fewer than half disagree;
+`M` only judges seams along picture steps (`assembly_seam::along_an_edge`).
 
 The **tint**'s noise floor (§3.5) is GALOSH's model for the frame, carried into the plane's units:
 the fit is stated in the mosaic's normalisation and the plane in light against PQ's ceiling, the
@@ -422,13 +394,10 @@ shrunk coordinate `s` lands at `SHRINK * s + (SHRINK - 1) / 2`; the block's corn
 up and left of the seam that was measured, and leaves the mask's last block partly in no tile at
 all.
 
-**Shared vertices.** Two neighbours simplified independently both gap and overlap by up to twice the
-tolerance: the gap between two tiles that each picked a non-base source fills with the base - what
-the reader rejected on both sides - and an overlapped pixel goes to whichever tile rasterised last,
-so the pick flips along the seam. The subdivision shares the vertices along every cut boundary,
-which leaves one failure: two arcs simplified apart crossing, as the two sides of a finger thinner
-than the tolerance do. Every arc in a crossing is simplified again at half its tolerance until no two
-edges of the subdivision cross; an arc at zero is its own trace, so the loop ends.
+**Share cut-boundary vertices.** Independent simplification creates gaps/overlaps up to twice
+tolerance: rejected base fills gaps, last rasterised tile wins overlaps. Shared vertices still
+allow crossing arcs, such as thin fingers. Re-simplify every crossing arc at half tolerance until
+none cross; zero tolerance returns the original trace, guaranteeing termination.
 
 Bounded by **`MOST_TILES = 256`** and **`MOST_VERTICES = 8192`**. `photos.recipe` is one replicated
 cell re-parsed by a SQL trigger on every write, capped only by `MAX_CELL_CHARS` of four million;
@@ -440,14 +409,11 @@ A recipe's seams carry, per piece, **an affine over the canvas** (`warp`) and **
 (`exposure`), and the render reads that piece's frame through both: the warp is the offset §3.7b
 tracked its content by, the gain the balance §3.7b measured across its seams.
 
-**Six parameters, not two.** For a canvas point `p`, the gather reads the source as though the point
-were `[a b; c d] p + t`: a translation and an isotropic scale are expressible as a camera that turned
-or breathed, and an anisotropic scale or a shear is expressible as no camera motion at all. So the
-correction lives in `composite_gather.slang`, two lines between the canvas coordinate and the ray,
-with `composition::warped_canvas` as the host's statement of the same and
-`the_gather_places_a_pixel_where_the_recipe_does` holding them together over every pixel of a
-window, three projections and both lens paths - one of its three sources carrying a shear, since a
-recipe of identities would pin the mapping and say nothing about this.
+**Six parameters.** Gather maps canvas `p` through `[a b; c d] p + t`. Translation/isotropic
+scale can model camera turn/breathing; anisotropic scale/shear cannot. Apply in
+`composite_gather.slang` between canvas coordinate and ray, mirrored by `composition::warped_canvas`.
+`the_gather_places_a_pixel_where_the_recipe_does` pins every window pixel, three projections,
+both lens paths, with shear on one of three sources; identity-only recipes would miss this.
 
 A piece's warp is carried across planes by a **conjugation** and not a scaling: under `P = S p` the
 affine becomes `S A S⁻¹` and only the translation is `S t`. Scaling all six would leave a shear
@@ -556,18 +522,14 @@ Measured on the penguin pair, one seed on a head grown over the whole bird and t
 under a fifth of a second. The seed's ring is what the solve walks, so a burst of twelve frames
 opening one seed asks for eleven of those.
 
-The page keeps every answer for the visit, by the tiles' outlines, the base and the pick set.
-Opening a tile asks, in one request, for the picks with that tile on each of its frames, which the
-server solves side by side over one read of the volume, so the swatches arrive together and a hover
-across them draws seams already in hand. A pick set not yet solved is drawn as the
-page's current picks' seams, or failing those the latest solved, never as the unsolved tile - and a
-piece solved over another set of tiles still draws but opens nothing.
+Cache visit answers by tile outlines, base and pick set. Opening a tile requests all frame
+variants together; server solves them from one volume read, so swatches and hover seams arrive
+together. Unsolved picks draw current-pick seams, else latest solved seams, never unsolved tiles.
+Pieces solved for other tile sets still draw but open nothing.
 
-Each expansion's cut is Boykov and Kolmogorov's max flow, whose search trees survive between
-augmentations: a seed's ring takes over a hundred rounds of augmenting paths, and a solver that
-rebuilt its search for each spends nearly all of a solve doing so. An expansion starting from the
-labelling the last one of the same frame started from is not run again: it would end where that one
-did.
+Use Boykov and Kolmogorov max flow, retaining search trees across over a hundred augmentations
+per seed ring. Rebuilding trees dominates solve cost. Skip a frame expansion starting from its
+previous starting labelling: it would return the same answer.
 
 The analysis leaves what this reads as a **volume** beside its layers: the cost, each frame's mean
 log2 light and tint a cell in source order, and which tile owns each cell - none, the analysis having made
@@ -640,13 +602,10 @@ pipeline's own contribution: nothing. Nothing has fitted that lens, so the fallo
 a small turn across it makes a frame-varying step by itself; the run says so, and the figure is an
 upper bound for an uncorrected-lens burst rather than a reading of the camera's metering.
 
-That the recipe cannot fix it is structural rather than bad luck. `composite_align::align` calls
-`composite_solve::gains(&exposures, &[], reference)` with the measured pair ratios **always empty**,
-so a source's gain is the header arithmetic and nothing else - and a burst is shot at one exposure,
-so every gain is exactly 1.0 whatever the light did. §3.7b's per-piece balance is therefore
-load-bearing rather than a refinement, and §5.2's two-band mix earns its place: a single feather
-narrow enough to hide a 1-pixel doubling is not wide enough to hide a 7% step, and those are the two
-things one seam has to do at once.
+`composite_align::align` passes **no measured ratios** to
+`composite_solve::gains(&exposures, &[], reference)`: header-only burst gains stay 1.0 despite
+light changes. Require §3.7b per-piece balance and §5.2 two-band mix: a feather hiding 1-pixel
+doubling cannot also hide a 7% brightness step.
 
 #### What the whole chain needed, which is the part no argument predicted
 
@@ -704,11 +663,9 @@ pick they have seen is handed the file, and the seven-day reap that takes the la
 too. Measured on a hand-held pair at 3840: about 0.3s of lowpass and 0.5s of blend, which is why
 the mask is what a hover and a click show and this is what follows them.
 
-**Why not a browser composite through wasm.** No AVIF decoder in an editor build, which links no C;
-layers would cross as raw samples at ~36MB each. And a masked multi-layer *render* in the page would
-be the second implementation DESIGN 21.1 records this pipeline losing twice. A masked draw of the
-layers is not that: a blurred mask a layer, no bands, no weights, and it does not claim to be - and
-where it differs from the render, the render arrives half a second later and replaces it.
+**No browser composite through wasm:** editor builds link no C/AVIF decoder, requiring ~36MB raw
+samples per layer. A page-side render would duplicate DESIGN 21.1's pipeline failure. Masked
+drawing only blurs masks, without bands or weights; the real render replaces it half a second later.
 
 ### 4.2 What each preview is
 
@@ -733,9 +690,8 @@ what the layers' pixels are a function of - the library's rendition setting and 
 layer is drawn in - and names the layer files. A frame's *edit* does not enter it, because §3.0's
 planes take no grade.
 
-**Save posts the recipe, not a key.** Geometry, tile loops, picks and base are kilobytes. A cache
-evicted while the page is open loses none of the reader's work, a reload depends on no hit, and
-two tabs each post their own complete recipe.
+**Save posts the full recipe**, kilobytes of geometry, loops, picks and base. Cache eviction
+loses no work, reload needs no hit, and each tab posts its own recipe.
 
 The analysis output and the picks live in `sessionStorage`, on `triage_storage.ts`'s pattern -
 prefixed key, validating parse, malformed state discarded - **with a quota failure surfaced**,
@@ -882,17 +838,14 @@ composite and for nothing else.
 
 ### 5.4 A failed merge leaves nothing behind
 
-`CompositesService.mergeNow` inserts its row after the align and before the renditions, and a merge
-that fails in the picture phase leaves a photograph in the library with nothing to look at. That is
-a defect where it is, and it is fixed there so both merges follow one rule.
+`CompositesService.mergeNow` inserts between align and rendition; picture-phase failure leaves
+an empty photograph. Fix that shared failure path for both merge kinds.
 
-The order **stays insert-first**, because the alternative does not work: `photo_edits.photo_id` and
-`renditions.photo_id` both reference `photos.id` under `PRAGMA foreign_keys = ON`, and `build()`
-reads the framing's stamp before the renditions so the copy is not born owing a rebuild. What
-changes is the failure path: the `catch` **deletes the row, its edits, its rendition rows and its
-files** through `deletions.ts`, then reports `failed`. Its own commit, ahead of the rest, with a
-test that runs under **foreign keys on** - the `:memory:` harness leaves them off, which is how an
-insert-last draft passed its test and would have thrown in production.
+**Keep insert-first:** `photo_edits.photo_id` and `renditions.photo_id` reference `photos.id`
+under `PRAGMA foreign_keys = ON`; `build()` needs the framing stamp before renditions to avoid
+immediate rebuild debt. In `catch`, **delete row, edits, rendition rows and files** through
+`deletions.ts`, then report `failed`. Land separately first, testing with **foreign keys on**:
+`:memory:` disables them, letting an insert-last draft pass tests but fail production.
 
 ## 6. Testing
 

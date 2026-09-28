@@ -1,8 +1,7 @@
 # samsung-frame-art
 
-Upload, select and manage art on a Samsung The Frame over the TV's local `com.samsung.art-app`
-channel. Bun only: it relies on Bun's WebSocket and `fetch` accepting the TV's self-signed
-certificate.
+Upload, select and manage Samsung The Frame art over local `com.samsung.art-app`.
+Bun only: WebSocket and `fetch` must accept the TV's self-signed certificate.
 
 ```ts
 import { FrameArt } from 'samsung-frame-art';
@@ -13,8 +12,8 @@ await art.selectImage(contentId);
 art.close();
 ```
 
-The first connection on port 8002 without a token shows a pairing prompt on the TV. `onToken`
-receives the token it issues; pass it back as `token` next time.
+First tokenless connection on port 8002 prompts TV pairing. Save `onToken`'s result;
+pass it as `token` on later connections.
 
 ## Origin
 
@@ -25,9 +24,8 @@ upstream commit `fe95ef1d784cd32f49bf9a07ec479576574eea07`.
 Changes from upstream:
 
 - Art API only: no remote-control keys, app launching or shortcuts.
-- `upload` takes the image's bytes rather than a path or URL, and rejects when the TV does not
-  confirm it rather than returning nothing.
-- Tokens are handed to an `onToken` callback rather than written to a token file.
+- `upload` takes image bytes, not a path/URL; rejects without TV confirmation.
+- `onToken` receives tokens; no token file writes.
 - No cached art-mode state; `inArtMode()` asks the TV.
 
 ## Licence

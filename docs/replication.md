@@ -1,29 +1,24 @@
 # Library replication
 
-Multi-client support for one library: several installs of Bowerbird (a hosted server, a
-macbook, later a desktop or a phone) each holding a **replica** of the same library, working
-fully offline, and converging deterministically when any two of them talk.
+Several Bowerbird installs (hosted server, macbook, later desktop or phone) hold **replicas**
+of one library, work fully offline and converge deterministically through pairwise exchanges.
 
-§14 is the other half, and the half most people will use: a **passive peer**, which is a folder on
-a drive or a share that originals are copied to one way, with no Bowerbird on the other side. It
-shares everything below the catalogue with the peers above - the transfer queue, the hashes, the
-staging - and it is what lets a laptop hold a ceiling's worth of its library and reach the rest.
+§14's **passive peer** is a one-way originals backup folder on a drive or share, with no remote
+Bowerbird. It shares active peers' transfer queue, hashes and staging, letting laptops cap local
+storage while retaining access to the rest. This is likely the common case.
 
-Replication is the protocol name. In product copy, a library syncs between devices and is backed
-up to a folder; a scan reads its files into the catalogue (§9 of DESIGN.md). Code keeps the
-protocol under `replication_*`, while `ScanService` owns the disk scan. A library's jobs in
-Settings are "Scan library" for the disk, "Sync library to other devices" for the network, and
-"Back up originals" for the folder, the last two only once the library has a device or a folder.
+Replication names the protocol (`replication_*`); `ScanService` reads disk into the catalogue
+(§9 of DESIGN.md). Product copy says libraries sync between devices and back up to folders.
+Settings jobs: "Scan library", "Sync library to other devices", "Back up originals"; show the
+last two only with a paired device or folder.
 
 ## 1. Goals and non-goals
 
 Goals:
 
-- A replica is a **true library**, not a cache: import, triage, edit, stack, bin, all of it
-  works with no network at all, generating tiles and renditions locally.
-- Replication is **pairwise and symmetric**: any two replicas of a library can replicate, no
-  master role. In practice every device talks to the server because the server is the reachable
-  one; that is topology, not protocol.
+- A replica is a **true library**: offline import, triage, edit, stack, bin, tiles and renditions.
+- Replication is **pairwise and symmetric**, with no master. Devices usually contact the
+  reachable server; that is topology, not protocol.
 - **Deterministic convergence**: after any sequence of replication sessions that connects the
   peers, all peers replicating a library hold identical replicated state for it (values *and*
   stamps), regardless of pair order, crashes, and interleavings.
@@ -39,15 +34,11 @@ Goals:
 
 Non-goals (v1):
 
-- **Albums.** Albums are cross-library by design (that is what distinguishes them from shoots),
-  which puts them outside per-library replication entirely: `albums`, `album_photos` and
-  `album_banners` stay per-install local state, untouched by this design. Syncing them is a
-  separate future project. One consequence inside this design: a replicated photo hard-delete
-  (a folder removed from the library on another peer) cascades this peer's local album
-  memberships through the existing FK, as a local library-delete already would.
-- Linking two pre-existing independent libraries. A replica is **born from** an existing
-  library (§9), never merged with one. Possibly in scope much later, leaning on a dedup tool;
-  nothing below may *preclude* it, but nothing builds it.
+- **Albums.** Cross-library `albums`, `album_photos` and `album_banners` stay per-install;
+  syncing them is a separate project. Replicated photo hard-deletes (remote folder removal)
+  cascade local album memberships through the existing FK, as local library deletion does.
+- Linking independent libraries. Replicas are **born from** an existing library (§9), never
+  merged with one. Do not preclude a future dedup-based merge; do not build it now.
 - Readonly libraries. Replication requires rw and refuses otherwise.
 - Deleting files on other peers. Replication propagates catalogue-row tombstones and never a
   file deletion: bin is a move and library removal is DB-rows-only, and the two places a RAW is
@@ -55,11 +46,8 @@ Non-goals (v1):
   another. If purge ships later it rides the same tombstone machinery.
 - Deduplicating the same RAW imported independently on two peers. Two imports are two photos; a
   future dedup tool is the answer, not the merge engine.
-- **The phone peer**, in the sense of a build and a UI shaped for one. What made it impossible -
-  full catalogue, near-zero blobs, per-peer renditions, and so a wall of placeholders it could
-  never thumbnail - is answered by rendition fetch-through (§7.9), and a device that holds no
-  RAWs at all is now a setting rather than a special case (§7.10). What is left is a phone
-  client, and that is its own project.
+- **Phone build and UI.** Rendition fetch-through (§7.9) and catalogue-only mode (§7.10)
+  solve full-catalogue browsing without local RAWs. The phone client remains a separate project.
 - Evicting against another *device* on a policy. Between peers the only eviction is the manual
   "remove local copy" action (§7.6), which requires live verification at the moment it deletes.
   A ceiling that gives copies back on its own exists only against a backup folder (§14.5), where
@@ -69,23 +57,19 @@ Non-goals (v1):
 - Multi-user. Every peer is the same person; per-peer identity exists for clocks, blob
   locations, and lifecycle, not authorship.
 
-Accepted risk, named: anything that can reach the server on the trusted network, including a
-buggy peer, can rewrite catalogue state through perfectly legitimate operations. No message from
-a peer deletes a file; the two places an original is unlinked are actions taken here, and each
-reads its own evidence first - a peer's live possession check for §7.6, and both copies' bytes,
-hashed here, for §14.5. Payloads are validated (§11.2), stamps are bounded (§2.2), and the
-server's rolling DB backups (§8.2, DESIGN.md §4.9) are the recovery story for the rest.
+Accepted risk: anything on the trusted network, including a buggy peer, can rewrite catalogue
+state through valid operations. Peer messages never delete files. Local unlink requires live
+peer possession (§7.6) or locally hashing both copies (§14.5). Payload validation (§11.2), stamp
+bounds (§2.2) and rolling DB backups (§8.2, DESIGN.md §4.9) cover the remaining risks.
 
 ## 2. Peers, identity, clocks
 
 ### 2.1 Peer identity
 
-Each install mints a `peer_id` once (16-char id, §2.3) with a user-visible device name
-("Macbook", "Home server"), the host name until the device is given another. App-level, not
-per-library: one machine is one peer however many libraries it replicates. A device names only
-itself: both sides of every handshake state their name, and that is what its peers show, so a
-rename reaches them at the next sync. Re-pairing after a reinstall mints a **fresh** peer_id; the old one is
-forgotten (§6.5), never resumed.
+Each install mints one app-level `peer_id` (16 chars, §2.3) across all libraries. Its visible
+name defaults to hostname ("Macbook", "Home server"); devices name only themselves and exchange
+names each handshake, propagating renames next sync. Reinstall pairing mints a **fresh** peer_id
+and forgets the old one (§6.5), never resumes it.
 
 ### 2.2 Hybrid logical clock
 
@@ -133,11 +117,9 @@ safe: all minted on one machine before replication existed, and a clone copies t
 
 ## 3. What replicates, and in what units
 
-LWW needs a unit: the thing a stamp covers and a conflict clobbers whole. Units are chosen per
-"control": fields a user changes together move together; fields changed independently must not
-clobber each other. **Every column of every table is assigned** either to a replicated unit or
-to the per-peer list; a column missing from both is a design bug (the first draft missed
-seven).
+LWW units follow controls: fields changed together share a stamp; independent fields must not
+clobber one another. **Assign every column** to a replicated unit or per-peer list. Missing
+assignments are design bugs; the first draft missed seven.
 
 ### 3.1 Photos
 
@@ -159,10 +141,8 @@ derivations (§3.3), not replicated.
 A folder rename rewrites member `placement` units (as the scan does today) and only them; it
 never touches `bin` units. The repair pass (§5.5) keeps `shoot_id` coherent with paths.
 
-**Which leaves `deleted_from_path` corrected locally and not replicated, deliberately.** A rename
-has to fix it - it is where a restore puts the photograph back, and left at the old path a
-restore recreates the folder that was renamed away - but the two obvious ways to make that
-correction travel are both worse than the residual, and both have been tried:
+**Correct `deleted_from_path` locally without replicating that correction.** Otherwise restore
+recreates the renamed folder. Both attempted ways to replicate it are worse:
 
 - *Stamp the `bin` unit.* The correction then asserts that the binning was decided now, so a peer
   that restored the photograph while apart loses that restore to a rename which knew nothing
@@ -171,11 +151,9 @@ correction travel are both worse than the residual, and both have been tried:
   for it, so its ordinary path writes null the origin of a binning it never heard of - and the
   restore then puts the RAW in the library root.
 
-So the correction stays local, and the residual is the small one: a peer that has not scanned the
-rename still holds the old origin, and restoring *there* recreates the folder. A tidy-up, against
-silently undoing a person's action or losing the file's way home. Both failures are pinned in
-`converge.test.ts`, and `peers.ts` asks of every seed that no binned photograph is left with
-nowhere to go back to.
+The remaining cost is a stale peer recreating the old folder on restore, preferable to undoing
+an action or losing the restore destination. `converge.test.ts` pins both failures; `peers.ts`
+requires every seed to leave every binned photo a destination.
 
 ### 3.2 Shoots, rules, banners, libraries, settings
 
@@ -194,25 +172,17 @@ Albums (`albums`, `album_photos`, `album_banners`) are not replicated at all (§
 `bin_name` replicates; each peer replays the folder rename locally on merge (§7.7 for what
 happens when the replay cannot run).
 
-**`folder_path` is a unit of its own**, which is the rule in §3 applied literally: only the scan
-writes it, by following a rename on disk (§9.4.1), where the label and the ordering are written by a
-person. It also has to be *settled* when two peers rename onto one folder (§5.6), and a resolution
-that moved the shoot's shared stamp would assert that the label and the ordering had been rewritten
-at that moment too - so a rename of the label still in flight from a third peer would arrive looking
-stale, be skipped, have its coverage claimed, and then be overwritten everywhere from the peer that
-resolved. That is the same failure `bin` is split off `placement` to avoid, one table over, and it is
-silent.
+**Give `folder_path` its own unit (§3).** The scan follows disk renames (§9.4.1); people change labels
+and ordering. Collision resolution (§5.6) must not re-stamp those controls too: a third peer's
+in-flight label rename would look stale, be claimed and silently overwritten everywhere. This is
+the same hazard requiring separate `bin` and `placement` units.
 
 `is_hidden` is split off for the same reason: on one stamp, a folder rename would assert a hidden
 flag decided now and clobber a hide - or an unhide - made on another peer while they were apart.
 
-**It is one row's flag, and the subtree is derived from it** (DESIGN §12.4). That is what keeps the
-split above worth having: the alternative, writing the flag down every descendant, puts a rename and
-a hide back in each other's way even on separate stamps - not by clobbering a stamp but by leaving a
-shoot moved into or out of a hidden subtree carrying the wrong bit, on every peer, with nothing to
-correct it. Derived, the two writes are independent in fact and not merely in bookkeeping: a rename
-moves paths, a hide sets one flag, and whatever order they arrive in, every peer reads the same
-answer off the result.
+**Store one row's flag; derive subtree visibility** (DESIGN §12.4). Copying it to descendants
+leaves wrong bits when shoots move into or out of hidden subtrees, even with separate stamps.
+Derived visibility makes rename and hide independent: arrival order cannot change the answer.
 
 ### 3.3 Stacks
 
@@ -240,23 +210,16 @@ run identically by every peer's repair pass: stacks with intersecting membership
 move under the stack with the highest `created_stamp`, via deterministic derived writes, §5.4),
 stacks left with fewer than two members dissolve.
 
-**`photos.stack_id` stays in the database**, demoted to an ad-hoc materialised view over
-`stack_members`. It is not redundant decoration: the listing hot path's stack-collapse filter
-(`photo_query.ts`) runs on every row an index walk visits, and for the unstacked majority
-it short-circuits on `stack_id IS NULL`, a column read from the row in hand. Replacing it with
-a join makes "is this photo stacked" a b-tree probe per visited row, including every row a deep
-OFFSET skips: hundreds of thousands of probes per block at scale, the exact regression class
-DESIGN.md §4.2 documents. A view cannot substitute: SQLite views are macros, not materialised,
-so a view over the join would run the join per query, and a view cannot be indexed into the
-covering walk.
+**Keep `photos.stack_id` as a materialised derivation of `stack_members`.** The hot listing
+filter (`photo_query.ts`) short-circuits the unstacked majority on `stack_id IS NULL` in the
+row already read. A join adds a b-tree probe per visited row, including deep OFFSET skips:
+hundreds of thousands per block, the regression in DESIGN.md §4.2. SQLite views merely expand
+the join and cannot replace a column in the covering index.
 
-**One writer module owns both.** Every write to `stack_members` goes through a single
-membership writer (its own class/module), which updates `photos.stack_id` in the same
-transaction (removal falls back to the photo's remaining membership, if any). Nothing else,
-not repositories, not merge apply, not repair, touches either the table or the column directly;
-they all call the writer, so the pair cannot drift without a bug inside one small file. Never
-replicated, never diffed. `is_representative` keeps its existing refresh logic (a choice, not a
-copy), recomputed by the repair pass.
+**One membership writer owns both.** Every `stack_members` write updates `photos.stack_id`
+transactionally, falling back to remaining membership on removal. Repositories, merge and repair
+must call that writer; none may mutate table or column directly. The derived column is never
+replicated or diffed. Repair recomputes `is_representative` through its existing choice logic.
 
 ### 3.4 Edits
 
@@ -302,26 +265,18 @@ catalogue, never compacted. "Everything since vector V" is one index range scan.
 rows in the same log. The log is derivable from the stamped tables (rebuildable by full scan);
 it is an index, not a second truth.
 
-**The log is maintained by triggers, not by the code that writes the row.** There is no
-existing single write choke point - all runtime SQL writes do live in repository classes, but
-around forty of those sites are reached by photo id alone and never learn which library they
-touched, so a hand-written log call at each would mean threading a library through every
-signature. A trigger keyed on the stamp column has `NEW.library_id` for free, and makes the two
-impossible to drift: there is no way to move a stamp without the log following. What a write
-site owes is therefore exactly one thing - set your unit's stamp when you write your unit's
-columns - which is small enough to hold in the head at every site.
+**Triggers maintain the log.** Around forty repository write sites know only photo id;
+manual logging would thread library identity through every signature. Stamp-column triggers
+already have `NEW.library_id` and cannot miss a stamp change. Write sites owe one rule:
+stamp the unit whenever writing its columns.
 
-**Nothing is logged for a library that does not replicate**, which the trigger tests rather than
-the caller. The stamp columns are written regardless, since the site that writes them has no
-cheap way to know; the rows behind them are what would cost an import its write amplification,
-and a catalogue nobody syncs should pay none of it.
+**Triggers skip logging nonreplicated libraries.** Write sites still set stamps because they
+cannot cheaply determine participation; omitting log rows avoids replication write amplification
+for catalogues nobody syncs.
 
-Pre-replication rows therefore carry stamps only for units written since this build landed, and
-no log at all. Pairing is what settles both (§9): it walks the library, gives every unit still
-unstamped one genesis stamp, and builds the log from the stamp columns - which is the rebuild
-the log's status as an index promises, run for the first time. Deliberately not a migration:
-stamping every row of every catalogue on upgrade would be a full rewrite of the photos table for
-a feature most catalogues never turn on.
+Pre-replication rows have stamps only on recently written units and no log. Pairing (§9) assigns
+one genesis stamp to unstamped units and builds the log from all stamps. Defer this rebuild
+until pairing; migration would rewrite every catalogue for a feature most never enable.
 
 Two stragglers sit inside the boundary: choosing a stack's representative, which is part of
 `StackMembership` rather than a bare function over `db` shared by two repositories, and any
@@ -337,39 +292,26 @@ exact ties deterministically. The exceptions and mechanics:
 Newer stamp wins: a delete after a write removes the row. Whether a write after a delete brings
 it back depends on what the delete meant.
 
-**A photograph's and a shoot's tombstone is final.** Neither row is ever hard-deleted on its
-own: the single path that removes them is a folder leaving the library (§4.7), which writes that
-folder's rule in the same transaction. So a rating that arrives from a peer which had not heard
-yet is not somebody asking to keep the photograph - it is somebody working in a folder that has
-since left, and bringing the row back would have the repair pass remove it again. If the folder
-is ever let back in, the scan imports its files as **new photographs with new ids**, carrying no
-rating, no verdict and no edits, which is the resurrection a person would recognise and it needs
-nothing from the merge.
+**Photo and shoot tombstones are final.** Their only hard-delete path is folder removal (§4.7),
+which writes the folder rule transactionally. A late rating is work in a departed folder, not a
+request to restore it; repair would remove a resurrected row again. Readmitted folders import
+**new photographs with new ids**, no ratings, verdicts or edits; merge need not resurrect them.
 
-Making them final is also what closes the last convergence hole. A resurrected row arrives
-carrying the *resurrecting* peer's copy of every unit, which may be older than what the peer
-applying it held and destroyed - and the deletion is erased as the row returns (below), so
-nothing is left that can settle the difference. Two peers then disagree about one control of one
-photograph, permanently and silently. With final tombstones the grave stands, travels, and wins
-everywhere.
+Finality also closes a convergence hole: resurrection supplies the sender's possibly older
+copies of units the receiver destroyed. Erasing the grave then removes any way to settle those
+differences. A final tombstone persists, travels and wins everywhere.
 
 **A stack's tombstone is not final**, and stacks are the only rows this applies to: dissolving
 one is a statement about the stack alone, with no folder rule behind it, so a later write to it
 is somebody saying the more recent thing. Exact tie: tombstone wins.
 
-**A row a foreign key takes is tombstoned on a stamp minted where the cascade ran.** SQLite
-performs a cascade itself and tells nobody, so a banner or a membership removed because its
-photograph was is a row that left with no record of leaving, which every other peer reads as one
-this peer has not heard of and sends straight back.
+**Tombstone FK-cascaded rows with locally minted stamps.** SQLite otherwise removes banners
+and memberships without a deletion record; peers interpret absence as unseen state and resend.
 
-The parent's stamp looks like the better choice, and was: every peer running the same fan-out
-would then write byte-identical tombstones and the value would need no agreeing on. It is also
-**undeliverable**, which is fatal. A peer buries only the children it was holding, and a row
-stamped inside another peer's origin can never be sent to anyone already claiming coverage of
-that origin - so a membership created on one peer while a second deleted the photograph ends up
-buried on the peers that saw both and alive on the peer that made it, with nothing left that can
-say so. It takes three peers and a resurrection to reach, which is to say it would have been
-found in use rather than in a test.
+The parent's stamp would yield identical tombstones but can be **undeliverable**. Each peer
+buries only children it holds; another origin's stamp cannot reach peers already covering that
+origin. Concurrent membership creation and photo deletion can therefore leave the membership
+alive on its creator and buried elsewhere forever. Three peers and a resurrection expose it.
 
 Minting locally makes it an ordinary write and it travels like one. Peers do then disagree about
 *when* a child died, each having stamped its own, but those tombstones replicate like any other
@@ -377,18 +319,12 @@ row and the log keeps the newest - so the threshold a later write must beat to b
 back converges too. The cost, accepted deliberately and unchanged: a photograph brought back by
 a later write elsewhere comes back without its memberships, its banner or its edits.
 
-**A row that has come back must stop being logged as deleted.** A resurrection leaves the
-entity's tombstone standing beside the live entries its own columns just wrote, and a log saying
-both things at once streams the tombstone rather than the row - so the peer receiving it deletes
-exactly what it was being handed. The grave is a statement about a row that no longer applies,
-and it goes when the row returns.
+**Resurrection removes the entity tombstone.** Otherwise live-unit entries coexist with a grave,
+the log streams the grave, and the receiver deletes the row being restored.
 
-**Nothing may claim coverage of a change it discarded.** A change whose parent this peer has
-deleted cannot be written, and SQLite refuses the reference rather than inventing one. Such a
-change is left unclaimed: the session holds that origin's vector to just below the stamp it could
-not take, so the change arrives again next time, by which point the deletion has usually reached
-the sender and it stops being sent at all. Advancing over it instead is how a row goes missing
-between two peers that both believe they are in step.
+**Never claim discarded changes.** SQLite refuses references to deleted parents. Cap that
+origin's vector below the unapplied stamp so it retries; usually the deletion reaches the sender
+before then. Advancing past it silently loses rows between peers claiming agreement.
 
 **The one exception is a change no peer could ever take.** A composite row id is joined with a
 slash, so an id carrying one of its own splits into more parts than the key has - and both the
@@ -421,33 +357,23 @@ photograph become one: the survivor is the one **created last**, and the members
 `[a,b,c]` on both. Stacks chained by different photographs collapse together, three at a time if
 that is how they overlap.
 
-**A stack dissolves when a removal leaves it with nothing to be a stack of, whatever did the
-removing** - a person here, or a merge applying somebody else's. One photograph is a photograph.
-Two peers each taking a different member out of a three-member stack are each left holding two,
-so neither dissolves anything alone; the stack ends when they meet, on both, because both then
-hold both removals.
+**Dissolve stacks left below two members by any removal**, local or merged. Two peers removing
+different members from a three-member stack each retain two until sync combines removals;
+both then dissolve it.
 
-**The rule hangs on the removal, and is asked at the close of a session, never inside one.**
-That is the whole of what three earlier attempts got wrong. A page is a slice of the sender's
-log in stamp order, so the removal that empties a stack routinely arrives pages before the
-additions that would keep it whole: a rule that reads the state mid-session dissolves a stack
-whose other members are still coming, then refuses them when they land, while the peer that had
-them all along dissolves nothing - and the two never agree again. At the close, this peer holds
-everything the sender had, so a stack of one is a stack of one. Only stacks a membership has
-actually *left* are considered, which the graves say; a stack that is small because nobody has
-sent its members yet has none.
+**Evaluate removals only at session close.** Three earlier attempts evaluated partial state:
+stamp-ordered pages can deliver removals before additions, dissolving a stack and refusing its
+later members while the sender keeps it. Close sees the complete stream. Consider only stacks
+with membership graves; a small stack still awaiting members has none.
 
 What it writes is an ordinary tombstone under the dissolving peer's own origin - not derived
 from anything - which is what lets it reach the peer whose removal was the other half of the
 story. A derived stamp would carry that peer's origin and be undeliverable to it, which is the
 trap §5.1 describes and which two of those earlier attempts fell into.
 
-Every peer computes the same collapse, but what it writes is stamped **where it ran**, not
-derived from the surviving stack. A stamp carrying another peer's origin cannot be delivered to
-that peer, whose coverage of itself is total, so the peer that collapsed first could never say
-so and the others would keep the stack it dissolved - the same trap as §5.1's cascade, with the
-same answer: an ordinary write travels like one, and peers disagreeing about *when* settle it by
-exchanging tombstones.
+Collapse writes are stamped **where they run**, never from the survivor. Another origin's
+stamp cannot reach that origin, whose self-coverage is total (§5.1). Local writes travel;
+exchanging tombstones reconciles differing collapse times.
 
 #### 5.2.1 Labels named alike
 
@@ -474,13 +400,10 @@ which folds ASCII only, nor a locale-aware one, whose answer would differ betwee
 
 ### 5.3 Edits: sessions, and the one user-facing conflict
 
-Opening the editor begins a **session**: a random 16-char `session_id` on every save until the
-editor closes. The `photo_edits` row carries the current `session_id`, its stamp, and the
-**full lineage chain**: the list of `(session_id, stamp)` hops from the current session back to
-the root, appended on every session open. One hop is not enough: the log carries latest state
-only, so intermediate sessions are routinely never seen by other peers, and a one-hop parent
-would flag a conflict every time a photo is edited in two sessions between replications, i.e.
-constantly, on perfectly linear history.
+An editor open starts a **session** with random 16-char `session_id`, reused until close.
+`photo_edits` stores current `session_id`, stamp and **full lineage chain** of
+`(session_id, stamp)` hops to the root, appended per open. One parent hop would misclassify
+linear multi-session edits as conflicts: the latest-state log routinely skips intermediate sessions.
 
 Merge, given local row L and incoming row I:
 
@@ -512,14 +435,10 @@ candidate applies it as a new session parented on the current row, so nothing vi
 clobbered without appearing in the history. A resolution replicates as that new-session write
 plus conflict-row tombstones; two concurrent resolutions re-conflict, correctly.
 
-**Which peers hold the candidates is not something that converges, and cannot be.** A parked
-candidate carries the stamp of the peer whose edit it is, so it can never be streamed *to* that
-peer, whose coverage of its own origin is total by construction. Each peer that ever holds both
-sides rebuilds them from the same bytes instead; a peer that only ever received the winner has
-nothing to resolve and correctly holds none. What converges is the document everyone renders and
-the resolution when somebody picks one, which is an ordinary edit like any other. The rows do
-replicate where they can - a peer that has heard of neither side gets them - which is why they
-are a replicated entity at all.
+**Candidate holdings cannot converge.** A candidate's original edit stamp cannot stream back
+to its origin, which already claims full self-coverage. Peers seeing both sides reconstruct them;
+peers seeing only the winner have no conflict. Rendered documents and resolutions converge.
+Candidate rows still replicate where deliverable, including to peers knowing neither side.
 
 Accepted asymmetry, by design: a two-hour session loses *provisional rendering* to a one-slider
 tweak made later on another device; nothing is lost, both candidates sit in the conflict entry.
@@ -553,9 +472,8 @@ that matters, the repair *asks* instead of relying on the ordering - `collapseOv
 checks for a grave on the winning stack before moving a membership into it, because a photograph
 somebody took out of a stack must not be put back by machine work (§3.3).
 
-The monotonicity this rests on is pinned in `clock.test.ts`; the asking is pinned in
-`converge.test.ts`. Both exist because this section has been "corrected" back towards the
-original design once already.
+`clock.test.ts` pins monotonicity; `converge.test.ts` pins the grave check. Both guard against
+the already-attempted regression toward the original design.
 
 ### 5.5 Repair pass
 
@@ -641,13 +559,10 @@ their own.
 
 ### 6.1 Version vectors
 
-Each replica keeps **one local coverage vector per library**: for every origin peer_id, the
-highest stamp up to which it has applied *everything* that origin ever wrote in that library.
-Not per-pair; what a replica has is a property of the replica. (Cached copies of remote vectors
-exist only for UI.) Origin is recoverable from the stamp's embedded peer_id, so writes need no
-extra bookkeeping. Vectors, the replication log, HLC persisted state, and pairing records all
-live **inside the catalogue file**, so a backup restore rewinds them atomically with the data
-they describe (§8.2).
+Each replica keeps **one coverage vector per library**, not per pair: each origin peer_id maps
+to the highest stamp through which *all* its writes have applied. Cached remote vectors serve
+UI only. Stamps encode origin without extra bookkeeping. Vectors, log, HLC state and pairing
+records live **inside the catalogue**, rewinding atomically with restored data (§8.2).
 
 ### 6.2 Session
 
@@ -668,13 +583,10 @@ library both replicate.
    close**, atomically with the final page, to the elementwise max of itself and the sender's
    claimed coverage, and never past the sender's own coverage for any origin.
 
-The close-only, capped advance is what makes the vector sound. Advancing per page to a global
-high-water mark over-claims origins the sender itself lacks, and a unit overwritten mid-stream
-can slip behind a page watermark; both silently and permanently lose data between fully live
-peers. Resumability therefore comes from a **session cursor** (page position keyed to the
-sender's snapshot), not from the vector: an interrupted session resumes its snapshot from the
-cursor, and if the snapshot is gone, the next session simply restarts from the unchanged
-durable vector, re-streaming work that idempotent apply makes harmless.
+Close-only capped advancement prevents permanent loss from overclaiming origins the sender
+lacks or skipping units overwritten behind a page watermark. Resume through a **session cursor**
+keyed to the sender's snapshot. If that snapshot expired, restart from the unchanged durable
+vector; idempotent apply makes repeated pages harmless.
 
 Catalogue replication runs automatically whenever a peer is reachable, and on demand. Asset
 transfer never rides along (§7).
@@ -696,11 +608,10 @@ reach the server because the laptop pushes.
 
 ### 6.5 Pairing and peer lifecycle
 
-Pairing is a **record of which devices sync which library**, not an authentication layer (§11.1).
-The joining device asks a peer what it holds (§9.1), picks one, and pairs: its peer_id and device
-name are registered and the library is linked. No secrets are exchanged and none are stored;
-requests carry the peer_id, and what it identifies is which peer's opinions and coverage a row
-belongs to, never whether the caller is allowed to ask.
+Pairing **records which devices sync each library**; it is not authentication (§11.1).
+The joiner lists libraries (§9.1), selects one, registers peer_id/name and links it. No secrets
+are exchanged or stored. Request peer_id identifies ownership of opinions and coverage,
+never caller authority.
 
 - **Peer list**: the server's settings show every paired peer: name, last replicated, holdings
   summary. Rename; **forget** (§8.4: unregister, retract the peer's blob claims, drop it from
@@ -729,10 +640,8 @@ write; the receiver verifies the download against it and discards on mismatch. E
 transfer of that photo verifies against the recorded value, which also catches a holder whose
 copy has rotted since.
 
-The stated trade: the integrity baseline is the bytes as of first share, not as of import, so
-corruption before a photo's first transfer becomes canonical. Import-time integrity is not a
-property Bowerbird has ever claimed; if it grows one later, it is this same column written
-earlier, not new machinery.
+Trade: first-share bytes establish integrity, so earlier corruption becomes canonical.
+Import-time integrity is not claimed; adding it would populate this same column earlier.
 
 The eviction spot-check (§7.6) stays consistent for free: a photo never transferred has no
 second holder, so eviction already refuses it as the sole copy; once transferred, the hash
@@ -750,13 +659,10 @@ CREATE TABLE blob_locations (
 );
 ```
 
-Replicated (per-row LWW, tombstone on retraction). It answers **where to fetch from** and
-drives the awaiting-originals counts in the UI. It is deliberately **not sufficient** for
-"safe to evict": replicated rows are stale by construction, and two peers each trusting the
-other's row can destroy the last two copies concurrently. Any eviction, v1's manual one
-included, requires a live confirmation at evict time from a peer that verifies possession of
-the bytes then (§7.6). The doc states this now so the table is never later trusted for a job it
-cannot do.
+Replicate locations with per-row LWW and retraction tombstones. They identify **fetch sources**
+and awaiting-originals counts, never **eviction safety**: stale mutual claims could let two peers
+delete the last copies concurrently. Every eviction, including v1 manual eviction, needs live
+verified possession from another peer (§7.6).
 
 Ordering: a peer records its own location row only **after** the blob is verified and renamed
 into the tree, never before. The scan reconciles the self-row: asserts it where a verified blob
@@ -778,18 +684,14 @@ survives app restart and laptop sleep; per-item progress, pause, resume; ranged 
 
 ### 7.4 Materialisation
 
-The catalogue is the tree spec; each peer materialises it for the blobs it holds, **plus every
-shoot folder regardless of blob possession**. Folders are cheap, they keep the replica's tree
-browsable, and without them the scan's mirroring would read an absent folder as the user
-deleting the shoot and tombstone it back to every peer.
+The catalogue specifies the tree. Materialise held blobs **and every shoot folder**, even
+without blobs. Otherwise scans interpret missing folders as user-deleted shoots and propagate
+tombstones. Cheap folders also keep offline trees browsable.
 
-**The queue is durable and written in the same transaction as the page apply.** Each entry is
-one pending disk action derived from a merged unit (move from→to, bin transition, folder
-create/rename). This is the mechanism that keeps the scan honest, because an unfinished
-materialisation is otherwise indistinguishable from deliberate user file-moves *in the opposite
-direction*: the scan (disk is truth) would read catalogue-ahead-of-disk as "the user moved
-these back", re-stamp the reversal, and replicate it, silently undoing a folder rename
-library-wide or un-binning half a binned batch because some peer crashed mid-drain. Hence:
+**Write the durable materialisation queue transactionally with page apply.** Each merged unit
+adds its pending move, bin transition or folder create/rename. Without this queue, unfinished
+disk work resembles a user reversal: scans would re-stamp and replicate it, undoing renames or
+un-binning partial batches after a crash. Therefore:
 
 - The scan lease spans apply **and** drain (§6.3); a scan acquiring the lease **drains the
   pending queue first** (idempotent: entries already satisfied on disk are skipped) before it
@@ -801,10 +703,9 @@ library-wide or un-binning half a binned batch because some peer crashed mid-dra
   merged mid-queue retargets the entry), with `mkdir -p` as needed.
 - A file the editor holds open (EBUSY on Windows) retries; the entry stays queued.
 
-Materialisation moves files with the extracted move primitives (the halves of today's
-bin/restore/shoot-move that touch disk), **without re-stamping the already-merged rows**. The
-existing service methods keep their move+write welding for local user actions; materialisation
-is the same disk half driven by remote state.
+Materialisation uses extracted disk primitives from bin/restore/shoot-move, **without
+re-stamping merged rows**. Local actions retain move-plus-write services; remote state drives
+only their disk half.
 
 ### 7.5 On-demand fetch on open
 
@@ -822,10 +723,9 @@ confirmation from a listening peer that verifies possession at that moment (exis
 spot-check of `content_hash`), deletes the local file, tombstones the local location row. If no
 peer confirms, it refuses. Policy eviction later reuses exactly this rule.
 
-The refusal is per photograph, not per batch, so a partial answer is the normal one and the UI
-reports both halves of it. The route takes a `PhotoTarget` as the other bulk routes do (§12.3):
-the bar names positions in a filtered collection, and a selection of a hundred thousand is one
-small request rather than the client reading every id back to send them.
+Refuse per photograph; report both successes and failures. Like other bulk routes (§12.3), use
+`PhotoTarget` positions in a filtered collection, keeping hundred-thousand-photo selections one
+small request rather than round-tripping every id.
 
 ### 7.7 Disk collision and portability rules
 
@@ -865,38 +765,25 @@ the staleness rule, the URL versioning, the startup sweep - then reads a fetched
 one. The grid tile is the exception: the holder builds it at import and rebuilds it from its
 queue, and serves only what that has made.
 
-A device asked for a copy it cannot build and has not got passes the request on, and keeps what
-comes back, so a replica of a replica shows pictures whose original is two devices away. Each
-request names every device it has passed through (`X-Bowerbird-Via`), and none of them is asked
-again, so a chain ends at a device with the original or at one with nobody left to ask. For the
-same reason a passed-on request is never joined onto another fetch in flight: one started by this
-device's own reader may be waiting on the very device that is asking.
+Devices unable to build or serve a copy forward and cache it, allowing multi-hop originals.
+`X-Bowerbird-Via` records visited devices; never revisit them. Forwarded requests must not join
+in-flight fetches, which may themselves await the requesting device.
 
-Freshness is one predicate applied on both sides. The holder refuses a copy its own edits have
-moved past, because the caller cannot rebuild and would cache a stale picture as current; the
-caller checks what the sender reports it rendered (`X-Rendition-Built-From`) against the edit
-stamp *it* holds, which may be newer than anything the holder has replicated. When no peer can
-answer and a stale copy is already cached, the stale picture is kept: on a device that cannot
-rebuild it beats a hole, and the next request asks again. With nothing cached, a holder's copy
-from before that edit is taken for the same reason, recorded at what it was built from so it still
-reads as owed.
+Both sides use one freshness predicate. Holders reject copies behind their edits; callers check
+`X-Rendition-Built-From` against their own potentially newer edit stamp. If no peer can supply
+current pixels, retain a cached stale picture and retry next request. With no cache, accept an
+older holder copy but record its actual build stamp so it remains owed.
 
 A reader's rebuild on a device that cannot build asks with `force=1`, which the holder renders
 again past its own copy, and which a device passing the request on passes on past its cached one.
 A fetched copy that replaces one already on disk is announced to clients as a build is, so their
 URLs for it move; a first fetch is not, being on its way to whoever asked.
 
-**What a render was built from is a stamp, not a time.** A build happens on whichever peer holds
-the original and an edit on whichever peer made it - a catalogue-only peer never builds anything
-at all - so "is this stale" asked of two wall clocks is asked of two machines' clocks. A peer a
-minute slow hides its own edit for good: nothing re-queues it, every holder serves the old
-picture as current, and the person who made the edit watches it fail to appear. A minute fast
-does the reverse, refusing a correct render to every peer until something else moves. Both are
-silent, and both sit inside the hour of skew §2.2 deliberately absorbs, so the clock the protocol
-hardened is precisely the one this must not use. `built_from` holds the `photo_edits` stamp each
-stored variant rendered, keyed by `renditionVariant` - `grid`, `full`, `full-hdr`, `max`,
-`max-hdr` - so a fetched copy answers for itself; `renditions_built_at` and `tile_built_at` are
-the version a client builds its image URLs from, and answer nothing about staleness.
+**Freshness uses edit stamps, never wall-clock build times.** Edits and renders may occur on
+different peers. A minute-slow clock can permanently hide an edit; a minute-fast one rejects
+correct renders. Both fit within §2.2's tolerated hour. `built_from` stores each variant's
+rendered `photo_edits` stamp under `renditionVariant` - `grid`, `full`, `full-hdr`, `max`,
+`max-hdr`. `renditions_built_at` and `tile_built_at` version image URLs only, never freshness.
 
 `linkLibrary` backfills only the two variants a build time is evidence for: `grid` from
 `tile_built_at`, and the range the library builds from `renditions_built_at`. A `max`, or the
@@ -923,9 +810,7 @@ same setting on a laptop that wants the library without the terabyte. Every pict
 shows comes from a peer, the camera JPEG and a panorama's included, until an original is fetched
 here by hand: from then on that photo is built here, as on a device that keeps its originals.
 
-**Local, and deliberately not a replicated unit.** It is a statement about one device's disk, so
-a laptop that wants the catalogue only must not have that answer overwritten by the desktop's.
-Nothing about it converges, and nothing should.
+**Keep this setting local.** One device's storage policy must not overwrite another's.
 
 **The refusal that counts is the receiving peer's**, taken before a byte is staged: an incoming
 push and a bulk fetch are both refused where the setting is off. The handshake carries each
@@ -936,11 +821,8 @@ as wanting originals, which is what every peer did before the setting existed.
 Turning it off also cancels what is still queued to arrive, or the queue goes on delivering
 exactly what was just turned off.
 
-Three things it deliberately does not do. It does not delete: turning it off keeps every
-original already here, and §7.6 is what gives the disk back. It does not stop **this** device
-sending its own originals out, which is about somebody else's disk. And it does not block the
-§7.5 single fetch - a device that browses everything and edits the occasional photograph is the
-whole point, so asking for one by hand still works.
+Turning it off retains existing originals (§7.6 frees them), allows outgoing transfers and
+still permits §7.5 manual single fetches for occasional editing.
 
 ## 8. Failure modes and hygiene
 
@@ -953,39 +835,29 @@ lands in a state the next session, drain, or scan resolves without minting wrong
 
 ### 8.2 Backup restore on a replicated peer
 
-DESIGN.md §4.9's backups now cover a catalogue that other peers hold newer opinions of, and an
-un-designed restore is defeated by replication within minutes: the next automatic session
-streams back everything since the backup with newer stamps, quietly re-applying exactly what
-the user restored to escape; or, had vectors lived outside the catalogue, the restored peer's
-vector would over-claim and the gap would never be re-fetched: permanent silent divergence.
+Replication changes DESIGN.md §4.9 restore semantics: automatic catch-up would silently reapply
+the writes being undone. External vectors would instead overclaim restored state, preventing
+refetch forever and causing silent divergence.
 
 So: vectors, log, HLC state, and pairing live inside the catalogue (§6.1), rewound atomically by
 restore. That is the half that keeps convergence - a vector living outside the catalogue would
 over-claim after a rewind and the gap would never be re-fetched.
 
-The other half is that **a restore of a replicated library keeps what was restored**. Every
-replicated row is re-stamped on one fresh stamp, which makes the restore itself the newest write,
-so it is what the peers take. Somebody restoring a backup is undoing something, and a restore
-quietly undone by the first session ten minutes later is the one outcome that makes backups
-worthless.
+**Restore preserves restored values.** Re-stamp every replicated row with one fresh stamp so
+the restore becomes the newest write, rather than being undone by sync ten minutes later.
 
-The stamp is taken **above the pre-restore clock**, read from the catalogue this one replaces
-rather than from the snapshot's own log: stamps from the week being rolled back are already out on
-other peers, and a clock that only knew what the backup knew would mint below them and lose. It
-also means a rewound clock can never re-mint a stamp already used for a different write, which is
-what idempotence rests on.
+Mint **above the pre-restore clock** from the replaced catalogue, not the snapshot log.
+Otherwise peers' intervening stamps win, and a rewound clock might reuse a stamp for another
+write, violating idempotence.
 
 **Re-stamping is not deleting.** Rows the peers hold and the backup does not - photographs
 imported since - arrive on the next session and are kept. The restore is a statement about the
 values it holds, not a claim that nothing has happened since; rolling a catalogue back a week
 should not discard a card imported on Tuesday.
 
-**All of it happens before the swap, which is what makes the rest of this section short.** The
-snapshot is vacuumed to a staged file beside the catalogue; that file is migrated forward and
-re-stamped there, while it is still nothing; only then is anything renamed. So a backup older
-than this build, a clock the mint guard refuses (§2.2), and a disk with nothing left are ordinary
-failures of a restore that has changed not one byte - the operator is told, and running it again
-is a complete remedy.
+**Prepare everything before swap.** Vacuum the snapshot into a sibling staged file, migrate
+and re-stamp there, then rename. Old-backup migration, mint-guard refusal (§2.2) or disk-full
+failure leaves the live catalogue unchanged; report and retry normally.
 
 Done the other way round, each of those is instead a failure reported over a catalogue that is in
 fact restored, and leaves a window in which the restored rows sit at stamps the peers have already
@@ -1063,47 +935,32 @@ starts importing.
 
 ### 9.1 The flow
 
-**The addresses traded are *web* addresses.** The deployment publishes one port and it is the web
-one - in the dev compose the API is bound to loopback inside the container and reachable only
-through the web server's proxy - so a peer recorded at this server's own address would be
-recorded at a port nothing exposes. Every peer-to-peer call therefore goes to the address a
-browser reaches, and is proxied to the API behind it. The production image serves the built client
-from the bun server for the same reason: one published address that answers both, or the address
-the reader is told to type shows nothing.
+**Exchange web addresses.** Deployment exposes one web port; dev compose's loopback API is
+reachable only through its proxy. Peer calls use the browser address, not the hidden API port.
+Production similarly serves the client from bun so one published address answers both.
 
 On the joining device: **"Connect to another Bowerbird"** is three steps. The address; the list of what
 that device offers; then the folder, which the picker can create, and whether to keep originals
 (§7.10). A replica that keeps them queues a fetch of every original the device it joined holds as
 soon as the catalogue has landed.
 
-**Nothing is presented and nothing is exchanged to earn the pairing** - the network is the
-boundary and no part of this is a security boundary (§11.1). Asking a peer what it holds is a
-read that registers nothing on either side, so a reader who stops at the list has left no trace;
-the pairing happens with the add, at the end, together with the clone.
+**Pairing exchanges no credentials** (§11.1); trust comes from the network. Listing libraries
+registers nothing on either side. Pair only on final add, together with cloning.
 
-Ordering is what keeps a failure cheap: the local half - already-present library, empty folder,
-writable root - is checked *before* the remote is asked to pair, so the usual refusal costs the
-other device nothing. The one case that cannot be ordered away is a local failure after the
-remote has recorded us, and that is rolled back by unpairing (§8.4) rather than left as a peer
-whose vector bounds tombstone collection forever on behalf of a device that never arrives (§8.3).
-The retraction is sent broadly rather than only where the pairing is known to have landed,
-because the case worth covering is exactly the one this side cannot tell apart: a reply that
-never arrived over a pairing that did.
+Validate local library absence, empty folder and writable root *before* remote pairing.
+If local work later fails, unpair (§8.4) so a nonexistent replica cannot block tombstone GC
+(§8.3). Retract broadly, including uncertain pairings: a lost reply may hide a successful add.
 
-An add is **serialised per library, across the network call**. Two of the same library would
-otherwise both pass the existence check and both pair - the peer id is the whole device's, so the
-second is an upsert of the first - and the loser's rollback would retract the winner's pairing,
-leaving a replica whose every later session is refused. Nothing local can be waiting on that
-lock, because until the transaction commits there is no library here to wait on.
+**Serialise add per library across the network call.** Concurrent adds share the device peer id;
+the loser could otherwise roll back the winner's upserted pairing. No existing local library
+can await this lock before commit.
 
 **The local folder must be new or empty**, checked on the server rather than in the dialog.
 Anything already there is imported as this library's own, which then replicates to every other
 peer as photographs that appeared on their disks.
 
-Browsing also compares the two peers' wall clocks and, when they differ by minutes, says so:
-a notification only, blocking nothing, so the user can go fix NTP before the skew ever grows
-into the session guard's refusal (§2.2). Clocks that drift tend to have been drifting long
-before this; it is the cheapest moment to catch it.
+Browsing warns, without blocking, when wall clocks differ by minutes. This gives users time
+to fix NTP before skew reaches the session refusal (§2.2).
 
 **Pairing requires the server reachable, so the replica must exist before the trip.** A
 standalone library created on the road can never become a replica (§1). Settings puts "Add
@@ -1244,9 +1101,8 @@ Milestones 2–3 are testable entirely server↔server; the macbook story lands 
 
 ## 14. Passive peers: backing originals up to a folder
 
-A drive, a NAS share, a directory somewhere else on this machine. One way, no catalogue, nobody
-running Bowerbird on the other side - and with it, the thing a laptop actually wants: every
-original safe somewhere else, and only the recent ones taking up the laptop's disk.
+One-way originals backup to a drive, NAS share or separate local directory, without a remote
+catalogue or Bowerbird. Keep every original elsewhere and only recently needed copies locally.
 
 ### 14.1 A peer is either active or passive
 
@@ -1254,23 +1110,17 @@ original safe somewhere else, and only the recent ones taking up the laptop's di
 catalogue, answers for its own disk, and dials or is dialled. A **passive** peer is a directory,
 and its `address` is that directory's path.
 
-Every query that walks peers to do catalogue work is active-only - `reachablePeers`, `pairedPeers`,
-`assertPaired` - because a folder has no session to open, no vector to compare and no request to
-make. What it does share is everything below the catalogue: **the transfer queue, the staging, the
-content hashes and the materialisation are one implementation for both kinds**. `PassivePeers`
-answers the blob protocol (`GET /<photo>/stage`, `PUT` it, `POST /<photo>/commit`,
-`GET /<photo>/original`, `GET /<photo>/hash`) against the mount, `Peers` routes each request to
-whichever transport the peer id belongs to, and `TransferService` never learns which it is talking
-to. A second copy of that loop is the thing worth refusing here: it would be free to verify a
-little less carefully than the first, on the path where a wrong answer deletes an original.
+Catalogue queries are active-only: `reachablePeers`, `pairedPeers`, `assertPaired`. Folders have
+no sessions or vectors. **Both kinds share transfer queue, staging, hashes and materialisation.**
+`PassivePeers` implements the blob protocol (`GET /<photo>/stage`, `PUT`, `POST /<photo>/commit`,
+`GET /<photo>/original`, `GET /<photo>/hash`) on the mount. `Peers` selects transport;
+`TransferService` remains unaware. Never duplicate verification on a path whose result permits
+original deletion.
 
-The folder carries **a marker**, `.bowerbird-backup.json`, naming the library it is the backup of.
-Read before anything is written into it, and for one reason: an unmounted share is an empty
-directory that reads as a backup with nothing in it yet, so without the marker the first pass after
-a reboot would write the whole library onto the machine's own disk and report success. A folder
-whose marker names another library is refused, which is also what stops two libraries mirroring
-into one tree. A backup carried to another machine keeps its marker, so re-pairing it there adopts
-the peer id it already had rather than minting a second one and re-sending everything.
+Read **`.bowerbird-backup.json` before any write**. Its library identity distinguishes a mounted
+backup from an empty mountpoint that would otherwise receive the whole library on local disk.
+Reject other-library markers, preventing shared mirror trees. Moving a backup between machines
+retains its peer id through the marker, avoiding duplicate identity and retransfers.
 
 A backup folder may not be inside its library, or hold it. The scan walks everything under the
 root, so a mirror there is imported as a second copy of every photograph - which is then backed up
@@ -1281,14 +1131,12 @@ in turn.
 `backup_locations` is `blob_locations`' opposite number and a **local** table: photo, peer, the
 path the copy was last written to, its hash, its size, and when this device last saw it.
 
-Not the replicated table, deliberately. A location row is a fact a peer asserts about itself, and a
-directory asserts nothing; every row here is this device's own reading of a mount only it can see.
-Replicated, it would tell another device that a peer it cannot reach holds the photograph, offer a
-fetch nobody can serve, and count towards a sole-holder check that peer can never retract (§8.4).
+Keep these readings local: a directory asserts nothing and other devices may not reach the
+mount. Replicating them would advertise impossible fetches and unretractable claims to
+sole-holder checks (§8.4).
 
-`rel_path` is where the copy actually is rather than where the catalogue now says the photograph
-belongs. The two disagree from the moment a photo is binned or a shoot renamed until a pass replays
-the move, and finding the file again is what needs the old one.
+`rel_path` records the actual backup location, which can lag bin or shoot moves until replay.
+Finding that copy requires its old path, not the catalogue's new one.
 
 ### 14.3 A pass: follow, copy, cull
 
@@ -1315,17 +1163,13 @@ copy on the drive, which is what a backup is for; a file somebody takes off the 
 forgotten from `backup_locations` and copied again by the next pass. The only deletions on the
 mount are part-copied files in its staging directory that no queued transfer is waiting to finish.
 
-**Pairing a folder asks it what it already holds.** A copy sitting at a photograph's path counts
-once its bytes hash to what the catalogue records for that photograph - never off the name alone,
-which would record a backup of whatever somebody happened to leave there and let the cull read it
-as permission to delete the only other copy. The same read is what makes unpairing reversible: the
-photographs a ceiling has already given back have no local bytes and are owed nothing, so
-re-pairing the drive is the only thing that can find them, and it does.
+**Pairing discovers existing copies by hash, never name alone.** Only bytes matching the
+catalogue count as a backup eligible to permit eviction. This also makes unpairing reversible:
+offloaded photos have no local copy or pending transfer, so re-pairing must rediscover them.
 
-**Stopping a backup offers to fetch those photographs back first.** With that chosen, every
-original only the folder holds is pulled onto this device under the pass's own exclusion, so a cull
-cannot give one back mid-fetch, and the folder is forgotten only once none is left there alone. One
-that does not come back keeps the folder paired and says how many.
+**Stopping offers to restore offloaded originals first.** Fetch under the pass exclusion to
+prevent simultaneous cull. Forget the folder only after every sole backup copy returns; failures
+keep it paired and report the remaining count.
 
 Nothing overwrites, either. A name already taken by something that is not this photograph is
 skipped and reported, as §7.7 has it.
@@ -1336,17 +1180,12 @@ skipped and reported, as §7.7 has it.
 what is on this disk; `open` fetches it back from the folder first when it is not, and records the
 access; `openAll` does the same for a composite's frames.
 
-Everything that decodes, exports, measures or hands over a RAW goes through it - the rendition
-build, the image routes, the embedded JPEG, the download, the quality page - and gets a path back.
-That is the point: the decoders, the render pipeline and the routes were written against a path and
-still are, and the one thing that knows a photograph's bytes might be on a drive is this class.
-A fetch is a whole-file copy over whatever the mount is, and the queue takes pulls before pushes so
-that opening one photograph does not wait out a backup pass of ten thousand.
+Every RAW consumer - renditions, image routes, embedded JPEG, downloads and quality page -
+gets its path through this class. Decoders and renderers remain path-based; only it knows about
+offloading. Whole-file pulls precede pushes so an open need not wait behind ten thousand backups.
 
-**The fetch is at the top of a flow, not inside it.** The prepare route, the export and the
-composite service ask for every file the work is about to open before they start, so the renderers
-below them still take a path and decode it. A merge opens each frame several times over, and `open`
-on a file that is already here is a stat.
+**Fetch before starting a flow.** Prepare, export and composite services acquire all needed
+files first; renderers below take paths. Repeated merge `open` calls on local files cost a stat.
 
 **A folder that is not there is `UNAVAILABLE`, not `NOT_FOUND`.** The file exists, the answer
 changes when the drive does, and what the reader is told is which folder to connect.
@@ -1357,32 +1196,25 @@ stat into an hour.
 
 ### 14.5 The cull, and the one deletion
 
-Per library, `replication_libraries.local_budget_bytes`, null for no ceiling. Over it, local copies
-are given back **least recently wanted first**: `photos.last_accessed_at`, which `Originals` writes
-on every open, and which the viewer's own route writes when it serves a `full` or a `max` - looking
-at a photograph is wanting it. A photograph nothing has ever opened falls back to when it was
-added, so a first cull gives back the oldest imports rather than treating a whole library as
-equally cold. A photograph fetched back is, by the same rule, the most recently wanted thing in the
-library, so the next cull takes something else.
+`replication_libraries.local_budget_bytes` caps each library; null disables it. Evict **least
+recently wanted first** by `photos.last_accessed_at`, updated by `Originals` opens and viewer
+`full`/`max` serves. Unopened photos use import time, evicting oldest first. A fetched photo
+becomes newest, so the next cull chooses another.
 
 Each copy goes through the same eviction the manual action does (§7.6), and there the two kinds of
 peer part: a device is **asked**, because only it can say what it holds at that moment and its yes
 is a promise it keeps by refusing to evict its own copy at the same time; a folder is **read**,
 because it promises nothing.
 
-So `deleteBackedUpOriginal` (`utils/deletions.ts`, the only module allowed to remove anything)
-hashes both files itself, at the moment of the unlink, and refuses unless all three agree: the
-backup's bytes, this device's bytes, and the hash the catalogue recorded. Reading the local copy as
-well as the backup's is the half that is easy to argue away and the one that matters most - a copy
-that has rotted here does not hash to the recorded value, and deleting it because "the backup has a
-good copy" is only correct if the backup's copy is of *this* file, which the recorded hash is the
-whole of the evidence for. Two passes over two files per photograph, on an action that runs when a
-disk is full and never in a hot path.
+`deleteBackedUpOriginal` in the sole deletion module, `utils/deletions.ts`, hashes both files
+immediately before unlink. Require agreement among backup bytes, local bytes and recorded hash.
+Never omit the local read: a good backup is evidence only if it is this file's copy, and local
+rot must refuse deletion. Two passes over two files are acceptable for disk-full eviction,
+outside hot paths.
 
-What is left behind is `is_missing` with a `backup_locations` row, which is `is_offloaded` on the
-wire: a snowflake on the tile, the state line in the detail panel, and a count in the backup panel.
-Everything still works - the renditions are here, the photograph sorts, rates, culls, shows and
-opens in the editor - and anything that needs the RAW fetches it, slowly, once.
+Leave `is_missing` plus `backup_locations`, exposed as `is_offloaded`: tile snowflake, detail
+status and backup count. Local renditions preserve viewing, sorting, rating and culling;
+editing or other RAW consumers fetch it once.
 
 ### 14.6 What is not built here
 

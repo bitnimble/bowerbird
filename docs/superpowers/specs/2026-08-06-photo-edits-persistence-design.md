@@ -13,14 +13,12 @@ note under §10.2 for what that last part is really for.
 What is left is the interactive crop tool (the render side is built; nothing draws a handle yet),
 XMP import as an endpoint - `editsFromXmp` exists and nothing calls it - and batch edits.
 
-Read §0.4 before anything else - it says what phase 0 became, which is more than it was scoped as,
-and why the crate extraction §10 designs is no longer the way to get what §10 wanted.
+Read §0.4 first: phase 0 exceeded scope and superseded §10's crate extraction.
 
 Build order, revised: ~~phase 0~~ → ~~§2-§6 (persistence and undo)~~ → ~~§7/§8 (requeue and grid
 tiles)~~ → ~~§10 (crate extraction)~~.
 
-**What §7 and §8 became, in the tree.** Both were smaller than written, because the render rework
-had already done their hard halves:
+**What §7 and §8 became.** The render rework had already done their hard halves:
 
 - A job carries `exposure` as a *gain* (`2^EV`), converted once in `processing_service` on the way
   in - the uniform is a multiplier and the document is stops, and converting in two places is how
@@ -43,14 +41,11 @@ had already done their hard halves:
 SDR/HDR merge means an HDR tile is now an output-stage argument rather than a pipeline. Add it
 when someone wants it.
 
-Everything from §0 to §0.3 is kept as the record of how phase 0 was argued and priced. It is
-written in the present tense about a tree that no longer exists; §0.4 is the correction.
+§0–§0.3 record phase 0's rationale and costs in historical present tense; §0.4 corrects them.
 
-The three probes it cites - `filter_domain_delta`, `sdr_vs_hdr`, `denoise_before_warp` - were
-deleted with phase 0 rather than carried. Each asked something this now answers, and each was
-written against the pipeline that had two of everything: there is no CPU grade to compare
-against, no separate SDR path to price, and the filters no longer convert a domain at all.
-Their numbers are quoted below and their code is at `ef8dade`.
+Phase 0 deleted `filter_domain_delta`, `sdr_vs_hdr`, `denoise_before_warp`: their questions are
+answered, with no CPU grade, separate SDR path or filter domain conversions left to compare.
+Numbers remain below; code is at `ef8dade`.
 
 ## 0. Review outcome, 2026-08-06
 
@@ -94,24 +89,20 @@ fixture, medians of three:
 `encode_pq` 24ms. So the HDR-only stages are ~130ms of a 1.7s job - 7% - and everything expensive
 is shared.
 
-Two intuitions the measurement refuses. `image::finish` is not cheaper on 8-bit samples: 667ms on
-u8 against 648ms on u16. `job.rs`'s reason for the 8-bit SDR decode is *memory*, not speed, and
-that claim stands. And the SDR path has no speed advantage to trade away at all.
+`image::finish` costs 667ms on u8 versus 648ms on u16. `job.rs`'s 8-bit SDR rationale is
+*memory*, not speed; SDR offers no speed advantage.
 
-**So the gains attributed to SDR are not SDR's**; they belong to the embedded-JPEG source - DESIGN
-§10.4's stage B at 124ms against a render's ~1.5s, a 12x gap that is `rendition_source` and has
-nothing to do with dynamic range. Which prices finding 2's fix exactly: forcing an edited photo to
-render costs **124ms to ~1.7s**, and taking the HDR path while there is free.
+**The speed advantage belongs to embedded JPEG**, DESIGN §10.4 stage B: 124ms versus ~1.5s,
+a 12x `rendition_source` gap unrelated to dynamic range. Finding 2's fix costs **124ms to ~1.7s**
+per edited photo; choosing HDR adds no cost.
 
 (An earlier run of this benchmark reported HDR at 4.9x SDR. That was a benchmark error - a
 `preset: 0`, which is libavif's *slowest* speed and where 10-bit encoding dominates everything -
 not a property of the pipeline.)
 
-**Decided: (b).** `prepare` and the job are reconciled onto one frame definition first, as its own
-phase, before any crate is extracted. The alternatives were (a) forcing edited photos onto the
-scene-linear HDR path regardless of library settings, and (c) sharing the edit stage alone and
-leaving the grade duplicated; (b) was chosen to remove the duplication in one go rather than build
-on top of it.
+**Decided: (b).** Reconcile `prepare` and job frame definitions before crate extraction. Rejected
+(a) forcing edited photos onto scene-linear HDR regardless of library settings, and (c) sharing
+only edits while retaining duplicate grades. (b) removes duplication first.
 
 Re-reading the two paths directly narrows the work considerably from what the review implied - see
 §0.1.
@@ -147,10 +138,9 @@ Three of the four divergences the review named are not divergences.
   `pq(sample * reference_white_nits / levels.white)` - a plain exposure normalisation into PQ,
   with no grade in it - filters that, and inverts back to scene-linear.
 
-Same functions on both sides (`image::measurements` + `image::finish_with`, which is what
-`image::finish` wraps), different input. And `measurements` derives sigma *from the data*, so the
-denoise radius and the sharpen strength are computed against two different pictures. The editor
-and the export are filtering differently, which is the DESIGN §21.1 failure class exactly.
+Same functions (`image::measurements` + `image::finish_with`, wrapped by `image::finish`),
+different inputs. Data-derived `measurements` therefore changes denoise radius and sharpen
+strength between editor and export: DESIGN §21.1's failure class.
 
 **Which side moves is already settled in the tree.** `hdr.rs:582-587` argues the post-grade
 position on the merits: a difference against a blur "taken in linear light follows absolute
@@ -180,19 +170,14 @@ fixtures, all four strengths at 1.0, 1600px long edge:
 | **after an ideal 1D curve in I** | **1.076** | **1.288** |
 | after ideal per-level I+Ct+Cp | 1.015 | 1.240 |
 
-**Visible.** The mean pixel sits at or above the visibility threshold and a third to a half of the
-frame is over it. This is not a rounding difference between two orders; the editor misrepresents
-what the export contains.
+**Visible.** Mean reaches the visibility threshold; a third to half of pixels exceed it.
+The editor/export difference exceeds rounding.
 
-**Not recoverable.** The two correction rows are *upper bounds*, not attempts: each subtracts the
-exact per-level mean computed from the answer itself, so nothing shippable can beat them. An ideal
-1D curve in I removes 0.4% of the error on one fixture and none at all on the other. An ideal
-per-level correction of all three channels removes 4-6%, and on the Canon it *raises* the share of
-pixels over threshold (42.7% to 43.7%) while lowering the mean - the signature of fitting a
-structure that is not indexed by level. Which it is not: the divergence is the two filters making
-different noise-versus-structure decisions per neighbourhood, so it is per-pixel and depends on
-local context. No curve applied afterwards can address it, by construction. **Phase 0 has to
-actually unify the domain; there is no cheap offset.**
+**Not recoverable.** Correction rows are *upper bounds*: exact per-level means from the answer.
+Ideal 1D I correction removes 0.4% error on one fixture, none on the other. Three-channel
+correction removes 4-6%; Canon pixels above threshold rise from 42.7% to 43.7% despite lower mean.
+Filters make different local noise/structure decisions, not level-indexed errors. A later curve
+cannot fix them. **Phase 0 must unify the domain.**
 
 **And linear is the worst of the three**, which settles the one open argument against §10.9. A
 Richardson-Lucy deconvolution inverts a point spread, and the point spread here is the resample's,
@@ -201,10 +186,9 @@ there. The measurement refuses it: L vs G is mean 2.03 (Sony) and 3.99 (Canon), 
 further from graded PQ than the editor's normalised PQ is, with a p95 of 15.9 on the Canon. So
 graded PQ is the target and the physics argument loses on the numbers.
 
-Caveats worth carrying: two frames, one strength setting, and a 1600px long edge rather than a
-rendition's native size - so this establishes the *shape* of the answer rather than a constant.
-The probe takes a path and a long edge as arguments, and separating the denoise's contribution
-from the sharpen's is a matter of zeroing strengths.
+Caveats: two frames, one strength, 1600px rather than native size; conclusions describe error
+shape, not a constant. Probe accepts path and long edge; zero strengths to separate denoise
+from sharpen.
 
 **One route considered and rejected: making the filter a per-tick GPU stage.** raw-edit-gpu.md §5
 rates `finish` "Yes, guided filters + Richardson-Lucy are classic image kernels" and "**Yes**,
@@ -248,17 +232,14 @@ display-referred slot ahead of it.
   **645ms to 15ms at 9.9MP** and deleted the client's whole `finish` port - the guided filters, the
   deconvolution, the plane algebra.
 
-**§0.2's framing was too strong.** "Visibly misrepresenting the export" does not survive next to
-`88d84eb`. The two measurements agree once read carefully: §0.2's p50 is 0.70 and 0.83 ΔE ITP, so
-the *median* pixel is under threshold, and the mean is carried by a tail `88d84eb` also saw and
-named. A real divergence worth removing; not one a reader would point at.
+**§0.2 overstated visibility.** Its p50 of 0.70 and 0.83 ΔE ITP puts the median below threshold;
+the tail raises the mean, consistent with `88d84eb`. Read beside `88d84eb`: worth fixing,
+but not necessarily noticeable.
 
-**So phase 0 should move the job, not the editor.** As first written it moved the editor to the
-post-grade order, which undoes a deliberate 43x per-tick win and re-adds a port that was
-explicitly deleted. §10.9's requirement is a *perceptual* domain, and `88d84eb` makes the point
-directly - "the filter never needed the *grade's* output, it needed a perceptual domain".
-Normalised PQ is one. So: move `encode_still`'s `finish` to pre-grade normalised PQ and delete the
-post-transfer call. No per-tick cost, no GPU `finish`, the editor untouched and authoritative.
+**Move the job, not the editor.** Post-grade editor filtering would undo a 43x per-tick win and
+restore a deleted port. §10.9 requires a *perceptual* domain, as `88d84eb` establishes; normalised
+PQ qualifies. Move `encode_still`'s `finish` there before grade, delete the post-transfer call.
+Keep the editor authoritative, with no GPU `finish` or added tick cost.
 
 The costs to accept: every existing HDR rendition changes and wants rebuilding, and the filter
 constants want re-checking in the new domain - though §10.9 line 2037 already concedes they were
@@ -292,10 +273,8 @@ that mattered.
 are that arm and `lib.rs::fit_profile_for`. `fit.rs` itself stays: it still owns the geometry fit
 and `n76`, both of which `hdr_fit` depends on.
 
-**What it needs is small**, because the grade is already parameterised by the thing that differs.
-`grade_owned` rolls off to `peak_nits` and normalises by it, so an SDR render is the same call with
-the peak at SDR white, followed by the sRGB OETF and an 8-bit pack instead of `tone::encode_pq`.
-One new output stage, not a new path.
+`grade_owned` already rolls off to and normalises by `peak_nits`. SDR uses SDR white as peak,
+then sRGB OETF and 8-bit packing instead of `tone::encode_pq`: one output stage.
 
 **What it also buys:** a photo that needs both an SDR and an HDR rendition currently fits twice, at
 431ms each. Unified, it fits once.
@@ -318,12 +297,10 @@ the SDR path was going to keep it regardless.
 
 ### 0.2.3 Measured: the denoise belongs before the geometric warp
 
-The argument: noise is generated at the sensor and so is spatially uniform in sensor space; the
-lens warp resamples non-uniformly by radius, which breaks that; and `image::finish` then measures
-**one global median** (`measure_noise`) and applies one sigma everywhere - an estimator for a
-uniform field, applied to one the warp has made non-uniform. Both current paths denoise after the
-warp: the job fuses it into `grade_owned` and filters after `encode_pq`, and the editor
-materialises it in `edit::prepare` and then runs `filter_once`.
+Sensor-space noise is uniform; lens warp resamples non-uniformly by radius. `image::finish`
+then applies **one global median** (`measure_noise`) sigma to a non-uniform field. Both paths
+currently denoise after warp: job fuses it into `grade_owned` then filters after `encode_pq`;
+editor materialises it in `edit::prepare` then runs `filter_once`.
 
 `denoise_before_warp` (deleted with phase 0; at `ef8dade`) tests it on a synthetic flat field carrying
 spatially uniform noise, because on a real frame the radial profile is mostly *scene* - a subject
@@ -344,12 +321,9 @@ it compounds that** to 0.59, because one global sigma over-denoises the radii wh
 has already suppressed noise. **Denoising first adds no further non-uniformity** (0.75, the warp's
 own) and removes more noise overall, 12.0 against 18.5 in the centre.
 
-So the denoise moves ahead of the warp in the unified pipeline. Two things to keep honest about
-it. The picture difference on a real frame is modest - A against B is mean ΔE ITP 0.360 and p50
-0.189, under the visibility threshold for most pixels, with a p95 of 1.34 - so this is a
-correctness fix to the estimator rather than a visible transformation. And B does not make noise
-uniform; it stops the denoise making it worse. Genuinely uniform noise after a warp would need a
-spatially varying sigma, which is a larger change than this and not proposed.
+Move denoise before warp. Real-frame difference is modest: mean ΔE ITP 0.360, p50 0.189,
+p95 1.34, mostly below visibility. This corrects the estimator without making post-warp noise
+uniform; that would require spatially varying sigma, not proposed here.
 
 **This agrees with the arrangement DESIGN §10.9 already argues for.** The SDR path denoises before
 the fit and the warp, and §10.9's case for that is the fit's, not the noise's - so the two
@@ -571,18 +545,14 @@ CREATE TABLE IF NOT EXISTS photo_edit_history (
 aliases only `INTEGER PRIMARY KEY` - so every read would be an index descent plus a rowid-tree
 descent. These tables are small rows reached only by the whole key, which is the shape it is for.
 
-**Why two tables**, given the 1:1 cardinality. Not the overflow-page argument an earlier draft
-gave, which was wrong: SQLite keeps a minimum local payload of ~489 bytes in the leaf cell and
-decodes columns in order, so a `doc` sitting before `deltas` in one row would rarely follow the
-chain anyway. The real reasons are leaf-page density - many small `photo_edits` rows per page
-against ~1.4KB of local payload each if merged - and not rewriting a 36KB record when only the doc
-moved.
+**Two tables despite 1:1:** denser `photo_edits` leaf pages versus ~1.4KB merged local payload,
+and no 36KB rewrite when only doc changes. Earlier overflow-page rationale was wrong: SQLite's
+~489-byte minimum local payload and ordered column decoding mean `doc` before `deltas` rarely
+follows overflow anyway.
 
-**Both tables are written under one `db.transaction`.** Nothing detects a desync between them:
-undo blindly assigns `deltas[cursor-1].from` rather than checking the doc equals `to`, so a crash
-or a `busy_timeout` expiry between the two writes leaves a doc the history cannot explain and a
-value the user was looking at permanently unreachable. The repo already uses this idiom
-(`shoots_repository.ts:89`, `albums_repository.ts:72`).
+**Write both tables in one `db.transaction`.** Undo assigns `deltas[cursor-1].from` without
+checking doc against `to`. A crash or `busy_timeout` between writes would desynchronise history
+and permanently lose a displayed state. Follow `shoots_repository.ts:89`, `albums_repository.ts:72`.
 
 **And the invariant that makes the history true: every writer of `photo_edits.doc` goes through
 commit.** XMP import, paste-settings, a future "reset all" - a direct doc write is the one bug
@@ -616,13 +586,10 @@ too, which was 31 of a claimed 60 bytes and which nothing in §5 or §6 ever rea
 Note the cap below is 1000, not 500, so the true worst case is twice the first column. The
 row-per-delta alternative would have been ~10 GB for the same content, a third of it UUIDs.
 
-**The ceiling this shape has, named:** a commit is a read-modify-write of the whole blob, so it
-is O(history) per slider release rather than O(1). At 500 deltas that is a 30KB parse and a 30KB
-write, which is nothing. It stops being nothing somewhere in the tens of thousands. So the
-history is capped - `MAX_EDIT_HISTORY`, oldest dropped from the front once the cap is reached -
-which bounds both the blob and the per-commit cost with one `slice`. Start it at 1000. If a
-photo ever genuinely needs unbounded history, that is the point to go back to rows per delta,
-keyed by an INTEGER surrogate rather than the UUID.
+**Ceiling:** whole-blob commits are O(history), not O(1): 30KB parse plus 30KB write at 500 deltas,
+costly at tens of thousands. Cap `MAX_EDIT_HISTORY` at 1000, dropping oldest via `slice` to bound
+storage and commit cost. If unbounded history becomes necessary, use rows per delta with an
+INTEGER surrogate key rather than UUID.
 
 ## 4. The edit document
 
@@ -666,10 +633,9 @@ export const EditDocSchema = z.object({
 export type EditDoc = z.infer<typeof EditDocSchema>;
 ```
 
-`.loose()` or an explicit `.catchall`, not zod's stripping default: a doc written by a newer build
-and round-tripped through an older one would otherwise come back with its unknown fields silently
-deleted - data loss with nothing raised. And `migrate(raw: unknown): unknown` runs before the
-parse, not inside it; the schema has no way to express a version chain.
+Use `.loose()` or explicit `.catchall`: zod's default strips newer fields when older builds
+round-trip documents, silently losing data. Run `migrate(raw: unknown): unknown` before parsing;
+the schema cannot express a version chain.
 
 **What v1 actually implements: `exposure`, and nothing else.** The other fields exist in the doc
 at their neutral defaults so the format does not change under the first real slider, but the
@@ -694,11 +660,8 @@ uniform is **not**. `writeUniform({ exposure: 2 ** ev })` (`tick_pipeline.ts:523
 
 Three properties, all load-bearing:
 
-**Ranges are Camera Raw's ranges.** Not because we are cloning Lightroom, but because XMP import
-is a stated requirement and the choice of units is what decides whether `crsToDoc()` is a table
-of field names or a table of magic constants. `crs:Exposure2012` is already EV;
-`crs:Contrast2012` is already -100..100. Normalising to -1..1 would buy nothing and put a fudge
-factor on every line of the importer.
+**Use Camera Raw ranges** for direct XMP mapping through `crsToDoc()`: `crs:Exposure2012` is EV,
+`crs:Contrast2012` is -100..100. Normalising to -1..1 adds conversion constants without benefit.
 
 **A JSON blob, not columns.** A mature edit model is a hundred-odd parameters and gains a few
 every release; a column per slider is a migration per slider, and `photos` is already wide.
@@ -737,10 +700,8 @@ Per photo, over the one array.
   untouched.
 - **Redo.** Merge `deltas[cursor].to`, increment the cursor.
 
-The cursor arithmetic was walked through the awkward sequences in review and holds: the cap cannot
-desync it, because commit slices to `cursor` *before* capping and sets `cursor = deltas.length`
-after, so the cursor is always at the end post-commit and neither undo nor redo resizes the array.
-Truncating on undo instead would be one line shorter and would lose redo.
+Reviewed cursor arithmetic: commit slices at `cursor` before capping, then sets
+`cursor = deltas.length`; undo/redo never resize. Truncating on undo would lose redo.
 
 **A corrupt history must not take the editor down.** Nothing renders a picture from `deltas`, so
 an unparseable array or a `cursor` outside `0..deltas.length` degrades to an empty history with
@@ -777,14 +738,10 @@ and §2 writes no row until the first edit.
 derives the delta by diffing against what it already has, which keeps the delta's shape a server
 concern.
 
-**`rev` is what makes any of that safe**, and an earlier draft's claim that a lost response is
-harmless to retry was true only of the doc. Without it: two tabs open at the same state, A commits
-an exposure change, B commits a contrast change from its stale doc - the server diffs B's whole
-doc against A's stored one and produces *both* `contrast 0 -> 20` **and** `exposure 1 -> 0`. A's
-edit is gone and the history now records an exposure change nobody made, so undo walks back
-through a fiction. The same hole bites one tab alone: undo and redo mutate the doc server-side, so
-any autosave-on-close that PUTs the pre-undo doc re-applies the undone edit and truncates the redo
-tail. A mismatched `rev` is a 409, and the client refetches.
+**Require `rev`.** Otherwise tab A's exposure edit followed by tab B's stale contrast doc records
+both `contrast 0 -> 20` and unintended `exposure 1 -> 0`, losing A's edit and inventing history.
+One tab can do this too: autosaving a pre-undo doc reapplies the edit and drops redo. Mismatched
+`rev` returns 409; client refetches. Lost-response retries were harmless only to doc content.
 
 `undo`/`redo` carry `rev` for the same reason plus one of their own: without it a retried request
 undoes twice.
@@ -837,14 +794,10 @@ Today `toStages` builds the tile from `'embedded'` - the camera's JPEG, ~125ms a
 a render - and that split is what fills a 2000-frame shoot's grid in a minute instead of eleven.
 That stays. What changes is that a library which renders no longer *stops* at the JPEG tile.
 
-**The render job already takes a `grid` target.** `job::Rendition` is `grid | full | max` and one
-job can carry several, sharing one decode, one fit, one filter and one cut - the tile is a
-`Cut::downscale` and an AVIF encode on pixels already decoded. Measured on the 61MP body, a
-grid+full job is 3940ms against 4139ms for the full alone, so the tile is *free* to within noise.
-What is left for this section is the *queueing*: `toStages` still stops at the embedded JPEG for a
-library that renders, and that is the decision to change. The same change covers both cases the
-user asked for, because they are one case: after an edit save, and on first import wherever the
-library renders automatically.
+**Render jobs already accept `grid`.** `job::Rendition` is `grid | full | max`; targets share
+decode, fit, filter and cut. A tile adds `Cut::downscale` and AVIF encoding. At 61MP, grid+full
+takes 3940ms versus 4139ms full-only: free within noise. Change `toStages` queueing beyond
+embedded JPEG for render libraries, covering both edit saves and automatic first-import renders.
 
 This composes with §10 rather than fighting it: the edit passes run once over the shared base,
 and both the `grid` and `full` targets downscale from the frame that comes back. One GPU round
@@ -948,15 +901,11 @@ The caller provides the device or adapter, and on the client a region - the rect
 frame on screen, which is zoom and pan and which a rendition has no use for. The crate does
 everything from the prepared frame through the graded result. Then each host takes its own exit.
 
-**Both exits belong inside the crate.** This is the one correction to the obvious split. It is
-tempting to have the crate stop at a finished buffer and let each host do what it likes with it,
-but the client cannot afford that: `render()` is `measurePeak` plus `draw`, and `draw` runs the
-colour transform as a single fragment shader *straight to the canvas*. The buffer-producing
-`encode` path is not in the tick at all - it exists for `readFrame` and the parity harness.
-raw-edit-gpu.md §0 measured what materialising that intermediate costs: **5.2ms of a 15ms tick**,
-and removing it is one of the four corrections that note records. So the crate exposes
-`draw_to_surface` for wasm and `encode_to_buffer` for native, sharing every pass before the last.
-Both are thin; the alternative gives back a third of the tick.
+**Both exits belong inside the crate.** `render()` calls `measurePeak` then `draw`, whose
+`draw` fragment shader transforms colour directly to canvas. Buffer-producing `encode` serves
+`readFrame` and parity tests, not ticks. Materialising it costs **5.2ms of a 15ms tick**
+(raw-edit-gpu.md §0). Expose `draw_to_surface` for wasm, `encode_to_buffer` for native; share
+all earlier passes and avoid losing a third of the tick.
 
 **It has to be a new crate, not a mode of rawshim.** rawshim links LibRaw, lensfun and libavif
 through build.rs bindgen, and none of that compiles to wasm. So `native/tick/` depends on wgpu,
@@ -1065,15 +1014,10 @@ been rewritten twice: `writeUniform`, the lookup and texture construction, the d
 the constants (`SDR_WHITE_NITS`, `PEAK_BINS`, `PEAK_SAMPLES`, `PEAK_CANDIDATES`, `SUPERSAMPLE`),
 the pyramid build, the peak passes, `chooseCandidates`, and both exits.
 
-**`TICK_LAYOUT` and `tickOffsets()` go**, but `tests/tick_uniform.test.ts` must not, and an
-earlier draft of this section was wrong to say otherwise. The claim was that a `#[repr(C)]` struct
-written by `bytemuck` is "checked by the compiler". It is not: `bytemuck` proves the *Rust* struct
-is `Pod` and nothing more. `struct Tick` in `wgsl/tick.wgsl` remains a separate declaration in a
-separate language, with WGSL's uniform-address-space alignment that the Rust struct still
-hand-mirrors. Swapping two fields in the WGSL still leaves a green build and the wrong rectangle
-drawn - exactly the bug `shaders.ts:44-48` records. The Rust host is one copy instead of two,
-which is a real gain; the pin against the shader stays, as a build script that parses the `.wgsl`
-or as `const` offset assertions.
+**Remove `TICK_LAYOUT` and `tickOffsets()`, retain `tests/tick_uniform.test.ts`'s claim.**
+`#[repr(C)]` plus `bytemuck` proves only Rust `Pod`; `bytemuck` cannot check `struct Tick` in
+`wgsl/tick.wgsl` and WGSL uniform alignment. Swapped shader fields compile but draw the wrong
+rectangle (`shaders.ts:44-48`). Keep a shader-layout pin via `.wgsl` parsing or `const` offsets.
 
 ### 10.1.1 Things the port must preserve, because they fail silently
 

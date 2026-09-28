@@ -3,23 +3,19 @@
 Date: 2026-08-03  
 Reviewed: 2026-08-03 (claims re-checked against live GitHub/API, Tauri docs, and this repo)
 
-> **Status: §2 and §4.4 are current; §3 and §4.1–§4.2, §5 and §6 describe the shell as it was
-> before there was one, and the editor that has since been replaced.** Written while the
-> editor was wasm in the page and Bowerbird had no `src-tauri` at all. Both changed: the
-> shell exists, it registers a `bowerbird://` scheme and answers `invoke`, and the editor
-> decodes natively and grades per tick on the GPU through WGSL in the page.
+> **Status: §2 and §4.4 are current; §3 and §4.1–§4.2, §5 and §6 are historical.** Written
+> for a wasm editor before `src-tauri` existed. The shell now registers `bowerbird://` and
+> answers `invoke`; the editor decodes natively and grades each tick through page-side WGSL.
 >
-> So §4.1's premise is gone rather than resolved, §4.2's `SharedArrayBuffer` went with the
-> wasm build (nothing needs cross-origin isolation now), and §5's "grade in the native Rust
-> backend, pushed down one custom-protocol response into a `<video>`" is a decision that was
-> considered and **not** taken - `docs/raw-edit-gpu.md` §0 and §6.2 record why, and it is the
-> current architecture. §6's smoke tests are for that unbuilt editor.
+> §4.1's premise no longer applies; §4.2's `SharedArrayBuffer` and cross-origin isolation
+> are unnecessary. §5's native Rust streaming into `<video>` was considered and **not**
+> taken; `docs/raw-edit-gpu.md` §0 and §6.2 explain the current architecture. §6 tests that
+> unbuilt editor.
 >
-> **The question this doc was written to answer is settled: Linux runs CEF.** `src-tauri/Cargo.toml`
+> **Linux runs CEF.** `src-tauri/Cargo.toml`
 > takes `tauri` from the `feat/cef` branch with `default-features = false, features = ["cef"]`
-> on `target_os = "linux"`, so WebKitGTK is not reachable from a Linux build at all. What
-> stands is §2 on what the branch is and §4.4 on how the switch works; read both as a record
-> of what shipped rather than of an option being weighed.
+> on `target_os = "linux"`; Linux cannot reach WebKitGTK. §2 describes the branch, §4.4 the
+> shipped switch, not an option still under consideration.
 
 Whether Bowerbird’s desktop shell should be **Tauri with a bundled Chromium
 (CEF)** rather than Electron or stock Tauri (system webview). Product constraint:
@@ -31,14 +27,11 @@ backend; NAS traffic is proxied through that Rust layer.
 Tauri + CEF is what Linux ships. Nothing in the codebase was a hard blocker, and
 §4.4 is now the build rather than a proposal.
 
-The two checks this doc first called load-bearing (Chromium feature parity for
-the HDR editor, cross-origin isolation for `SharedArrayBuffer`) were load-bearing
-only while the shell graded in wasm, and it no longer does. The second is gone
-outright: nothing holds a `SharedArrayBuffer` any more, so cross-origin isolation
-is not needed anywhere. The first came back sharper than this doc expected -
-§4.1's answer was to grade in Rust, and what shipped grades in WGSL in the page,
-so **Chromium feature parity is the whole reason Linux takes CEF**: WebKitGTK is
-built with `ENABLE_WEBGPU` off and cannot run the tick at all.
+The original checks were HDR Chromium parity and cross-origin isolation for
+`SharedArrayBuffer`. Nothing now holds a `SharedArrayBuffer`, so isolation is
+unnecessary. §4.1 proposed Rust grading; the shipped editor grades in page-side
+WGSL. **Chromium parity is why Linux takes CEF**: WebKitGTK builds with
+`ENABLE_WEBGPU` off and cannot run the tick.
 See `docs/raw-edit-gpu.md` §0 and §6.2.
 
 Stock Tauri (WebView2 / WKWebView / WebKitGTK) is the wrong default: Linux
@@ -124,13 +117,10 @@ A desktop shell would:
 
 ### 4.1 The editor stops being a wasm problem
 
-The three editor routes (`track` / `still` / `rewrap`, `DESIGN.md` §21.2) exist
-because two constraints stack: the browser client has to run on whatever engine
-the user brought, **and** the editor generates graded frames in the page, so each
-engine's in-page frame types become the wall. The shell has neither constraint.
-CEF means one pinned Chromium, so there is no engine to branch on; native grading
-means the page builds no frames, so there is no capability wall to hit. Either
-alone would retire the routes for the shell.
+The three editor routes (`track` / `still` / `rewrap`, `DESIGN.md` §21.2) handle
+arbitrary browser engines and their in-page graded-frame limits. The proposed
+shell avoids both: CEF pins Chromium; native grading builds no page-side frames.
+Either would retire the shell's routes.
 
 `hdr::prepare` and `hdr::grade_prepared` (`native/rawshim/src/hdr.rs:267`, `:342`)
 carry no `cfg(target_arch)` and are already the functions the server's renditions
@@ -148,16 +138,13 @@ Deleted outright, not mitigated:
   host-archive trap), plus the `+simd128` landmine sitting on `fit::blur`.
 - `SharedArrayBuffer`, and with it §4.2 entirely.
 
-**One stream, one element, no per-tick URL.** The webview gets a single static
-URL at editor open, pointed at a live stream the backend pushes graded frames
-into. The element's `src` never changes. CEF's resource handler is shaped for
-exactly that: a `response_length` of -1 marks the body open-ended and CEF keeps
-reading until the handler stops, and `Read` may return zero bytes now and fire a
-callback when the next frame exists
+**One stream, one element, no per-tick URL.** Open a static live-stream URL;
+the backend pushes graded frames, the element's `src` stays fixed. CEF's
+`response_length` of -1 keeps reading until the handler stops; `Read` can return
+zero bytes and invoke a callback when the next frame arrives
 ([`cef_resource_handler.h`](https://github.com/chromiumembedded/cef/blob/master/include/cef_resource_handler.h)).
 
-That removes both costs that make today's still route expensive, and both were
-artifacts of the blob-per-tick hand-off rather than of serving pixels at all:
+This removes both blob-per-tick costs:
 
 - **The decode cache.** `cc::ImageDecodeCache` is keyed by URL, which is why a
   six-second drag adds ~500MB that no page-side lever returns (§21.2,
@@ -166,19 +153,15 @@ artifacts of the blob-per-tick hand-off rather than of serving pixels at all:
   limits the drag on either route; swapping a fresh blob into an element each
   tick is". No swap, so that ceiling goes with it.
 
-**The risk moves to latency.** A media pipeline buffers to smooth jitter, and a
-slider wants the newest frame now, so the drag has to hold at the live edge
-instead of accumulating delay. That is what to measure on the pin, and it
-replaces the memory question rather than relabelling it. The stage element is not
-new work: the rewrap route already hands a `<video>` its frames
+**Measure latency on the pin.** Media buffering smooths jitter, but sliders
+need the newest frame immediately: hold the live edge without accumulating delay.
+Reuse the rewrap route's `<video>` stage
 (`raw_edit_presenter.ts:244`).
 
-**The cost is two transports, not two grades.** The browser client keeps the wasm
-editor unless browser-side editing is dropped, so shell and web client would
-reach the same `hdr::` core through different plumbing (IPC versus a worker and a
-`MessagePort`). That is the tolerable half of the divergence §21.1 warns about:
-the picture stays one implementation and only the transport forks. Dropping
-browser-side editing collapses it to one, and that is a product call.
+**Two transports, one grade.** Unless browser editing is dropped, shell and web
+reach the same `hdr::` core through IPC versus a worker and `MessagePort`.
+Only transport diverges (§21.1); dropping browser editing would unify it, a
+product decision.
 
 ### 4.2 SharedArrayBuffer / COOP / COEP
 
@@ -219,13 +202,10 @@ responses — confirm the CEF pin still hits that path (§6).
 }
 ```
 
-CEF embeds Chromium, so the usual Chrome COOP/COEP → `crossOriginIsolated` →
-SAB path should apply once headers stick on the document; that is an inference,
-not a CEF-specific smoke result — verify on the pin. Stock WKWebView /
-custom-scheme apps have historically had cases where COOP/COEP were set but
-isolation still failed (scheme / secure-context / scheme-handler quirks); that
-is a different failure class from Chromium, and not a reason to skip the CEF
-check.
+CEF should support Chrome's COOP/COEP → `crossOriginIsolated` → SAB path once
+document headers stick. This is inference, not a CEF smoke result: verify the pin.
+WKWebView/custom-scheme isolation has failed despite headers (scheme,
+secure-context, scheme-handler quirks); those distinct failures do not waive CEF checks.
 
 NAS proxying through Rust keeps API/image responses same-origin (or under our
 control for CORP), which is what `require-corp` wants.
@@ -263,9 +243,8 @@ follows it:
   wry one, so `tauri::Builder::default()` resolves to `Builder<Cef>` on a
   cef-only build.
 
-So a per-target dependency table is the whole switch, and it is what
-`src-tauri/Cargo.toml` carries. Both sides name the branch by `rev` rather than
-`branch`, because the branch is not on crates.io and its tip moves:
+`src-tauri/Cargo.toml` switches through per-target dependencies. Both pin `rev`,
+not `branch`: the branch is absent from crates.io and its tip moves.
 
 ```toml
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -280,11 +259,10 @@ One consequence in app code: with `wry` off there is no default runtime, so ever
 is `tauri::Cef` on Linux and `tauri::Wry` elsewhere, and the handlers take
 `AppHandle<crate::Runtime>`.
 
-`default-features = false` is load-bearing. Nothing emits a `compile_error!` when
-both features are on: `build.rs` would report `cef` (so the build takes the CEF
-manifest and rpath) while `Builder::default()` still resolves to `Builder<Wry>`,
-because `#[default_runtime(crate::Wry, wry)]` keeps defaulting the generic to
-`Wry` whenever the `wry` feature is present. A silently mismatched build.
+Require `default-features = false`. With both features, no `compile_error!` fires:
+`build.rs` reports `cef` for manifest/rpath, but `Builder::default()` resolves to
+`Builder<Wry>` because `#[default_runtime(crate::Wry, wry)]` selects `Wry` whenever
+`wry` is present. The build silently mismatches.
 
 **As a product decision: it forks the editor, and that is the real cost.** The
 §4.1 design needs an open-ended response the backend pushes into, and only CEF
@@ -307,10 +285,9 @@ That leaves two coherent positions and no halfway:
   picking between WebView2 (Chromium, so `track`) and WKWebView (so `still`).
   Windows and macOS bundles stay small.
 
-The trap is taking the native editor *and* the mixed build, which puts two grade
-transports in one product: a pushed stream on Linux and the wasm routes
-everywhere else, with the wasm module shipped in two of three bundles anyway. The
-per-engine branching §4.1 deletes would come straight back, one layer up.
+Combining native editor and mixed build restores §4.1's engine branching one
+layer up: Linux streams, other platforms use wasm routes, and two of three
+bundles still ship wasm.
 
 ## 5. Decisions already made
 

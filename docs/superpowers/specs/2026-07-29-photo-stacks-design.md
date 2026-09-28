@@ -31,11 +31,9 @@ CREATE TABLE stacks (
 CREATE INDEX idx_stacks_library ON stacks(library_id);
 ```
 
-`origin` is load-bearing rather than informational. Detection re-runs over
-already-stacked photos so that changing the similarity threshold re-forms
-stacks (§4.3); without `origin` that pass would dissolve a manual stack whose
-members are not similar; two lenses on the same subject, which is precisely
-the case manual stacking exists for.
+`origin` protects manual stacks when threshold changes re-form automatic stacks
+(§4.3). Otherwise detection could dissolve intentional groups, such as dissimilar
+views of one subject through two lenses; preserve their `origin`.
 
 Added to `photos`:
 
@@ -87,10 +85,9 @@ It must survive, for the same scene:
 - a different white balance or colour profile
 - moderately different zoom / framing / direction
 
-A 64-bit hash cannot do this, and the spike (§9) measured how badly: dHash and
-DCT pHash both score the labelled pairs *below* hand-verified different-scene
-pairs, so no threshold exists that keeps one without the other. What works is a
-larger, deliberately blurry descriptor:
+A 64-bit hash fails: dHash and DCT pHash score labelled pairs *below* verified
+different-scene pairs (§9), leaving no separating threshold. Use a larger,
+deliberately blurry descriptor:
 
 | part | size | what it buys |
 |---|---|---|
@@ -101,10 +98,9 @@ larger, deliberately blurry descriptor:
 Aspect is **squashed**, not fitted: a crop or a second body gives one scene two
 aspect ratios, and that must not read as a difference.
 
-Every grid is built twice: over the whole frame, and over its **central 78%**.
-Stepping closer to a subject is a crop plus a resample, and nothing else in the
-descriptor sees it, because a dolly scales every cell at once, which the trimmed
-mean reads as most cells disagreeing.
+Build every grid twice: whole frame and **central 78%**. This handles stepping
+closer, a crop plus resample that otherwise scales every cell and defeats the
+trimmed mean.
 
 The crop is centred, and measurably has to be: sliding it off centre lifts the
 different-scene pairs far more than the same-scene ones (§9).
@@ -123,10 +119,9 @@ cropping neither, so that pairing is skipped. At each pairing:
    standing in.
 3. `similarity = 0.7·luma + 0.3·chroma`, clamped to `[0, 1]`.
 
-The highest-scoring pairing wins. The three ratios span 0.78× to 1.28×, so a
-frame stacks with one shot from roughly a quarter closer or further; beyond that
-it falls out, which is what happened to the boat range's widest pair. A second
-centred crop was measured and bought nothing a single one did not (§9).
+Highest pairing wins. Ratios span 0.78× to 1.28×, roughly a quarter closer or
+further; beyond that, pairs fail, including the boat range's widest pair. A second
+centred crop added no benefit (§9).
 
 Searching the alignment coarsely and then evaluating once, rather than
 evaluating all 25 offsets at full size, is 19× faster for 0.014 of margin
@@ -150,16 +145,12 @@ The contract:
 
 ### 4.1 When
 
-After a sync finishes its processing stage, per library, when `auto_stack` is on
-**and that sync added or changed photos**. No separate "scan now" control: a
-manual sync is already the way to ask the library to re-look at itself, and a
-second button for the same thing is a second thing to explain.
+After per-library sync processing, when `auto_stack` is on **and photos were
+added or changed**. Manual sync already requests a rescan; no separate control.
 
-The added-or-changed condition is not an optimisation, it is what makes the
-watcher survivable. `watch_enabled` defaults on with a 2s debounce, so saving a
-file in a library triggers a scoped sync; without the condition each one would
-re-sort and re-clique the whole collection. The sync already counts
-`photos_added` and `photos_modified`, so the condition is those being non-zero.
+Require non-zero `photos_added` or `photos_modified`: `watch_enabled` defaults
+on with a 2s debounce, so every file save otherwise re-sorts and re-cliques the
+whole collection through a scoped sync.
 
 ### 4.2 Candidates
 
@@ -170,14 +161,9 @@ Photos in the library where:
 - the descriptor is not NULL, and
 - the photo is not deleted or missing.
 
-**There is no backfill.** The descriptor is written when a photo's grid tile is
-built, so a photo imported before this feature has none and is never a candidate;
-a library that already exists therefore stacks nothing until it imports something
-new. This is a deliberate choice to not spend a pass over every existing photo
-for a feature whose value is in what arrives next. The escape hatch costs
-nothing extra: because the descriptor rides along with tile building, the
-existing `POST /photos/rebuild-tiles` backfills a library as a side effect for
-anyone who wants their history stacked.
+**No automatic backfill.** Existing photos lack descriptors until their grid tiles
+are rebuilt, so only new imports initially stack. Avoid a full-library pass;
+`POST /photos/rebuild-tiles` provides an opt-in historical backfill through tile building.
 
 Deliberately **no camera or lens gate**. Shooting one subject with two bodies or
 two lenses to compare them later is a case stacking should serve, not exclude.
@@ -198,17 +184,13 @@ both hold:
 Otherwise the stack closes and a new one starts at that photo. Groups of two or
 more become stacks.
 
-The clique requirement is what bounds a stack, and it removes the need for any
-separate guard against chaining: a scene that drifts frame by frame reaches a
-point where the newest photo no longer matches the one the stack started from,
-and the stack ends there on its own. Measured on the labelled folder, the
-largest stack produced is six frames (§9).
+The clique requirement bounds chaining: gradual scene drift eventually fails
+against the first frame and closes the stack. The labelled folder's largest
+stack was six frames (§9).
 
-The whole loop lives in Rust behind one entry point taking the descriptors,
-their timestamps, the threshold and the window, and returning a group index per
-photo. TypeScript reads the rows, calls it once, and writes the stacks. A
-comparison is ~15µs of descriptor maths rather than a popcount, which is not
-something to run a million of across the FFI boundary one call at a time.
+One Rust entry point takes descriptors, timestamps, threshold and window;
+returns a group index per photo. TypeScript reads rows, calls once, writes stacks.
+At ~15µs per comparison, avoid a million individual FFI calls.
 
 The pass rewrites every `auto` stack in the library from scratch. Raising the
 threshold splits stacks, lowering it merges them, and the way to apply a
@@ -262,11 +244,9 @@ Two properties fall out of partitioning `scoped` rather than `photos`:
 
 ### 5.1.1 Positions, and where a stack becomes its members
 
-The virtual grid (§18.3.2) selects by **position**, not by id: a selection is
-runs of positions in the listing, and `PhotosService.resolve` turns those runs
-into ids server-side via `photos_repository.idsAt`, which numbers rows with
-`ROW_NUMBER() OVER (ORDER BY …)`. Two consequences, and they are the whole of
-how stacks meet bulk actions:
+The virtual grid (§18.3.2) selects **position** runs. `PhotosService.resolve`
+maps them to ids via `photos_repository.idsAt` and `ROW_NUMBER() OVER (ORDER BY …)`.
+Two requirements for bulk actions:
 
 - **`idsAt` must number the same collapsed listing the grid was built from.** It
   gets the identical CTE, or position 400 means one photo to the client and a
@@ -310,18 +290,13 @@ the row that tile sits in**. The tile stays where it is and takes a dark overlay
 with a down chevron, which is also how the stack closes: click it again. No
 chevrons flanking the members.
 
-The members live alone in that band, never sharing a row with photos outside the
-stack, so no tile ever changes which neighbours it sits beside. The grid below is
-displaced downwards by the band's height and otherwise untouched. A band needing
-more than one row is simply more rows in the same band.
+Band rows contain only members, preserving every tile's neighbours. Displace
+the grid below by the band's height; add rows when needed.
 
-`visibleRows` (`web/src/ui/virtual_rows.ts`, shared with the Shoots page) takes
-**one** `rowHeight` for the whole list, so band rows are ordinary tile rows at
-the same cell geometry, marked by their background rather than their size. That
-is what keeps the scroll a multiplication: an expansion changes how many rows
-there are and what sits in them, never how tall a row is. Anything that gave a
-band its own height would put the scroll height back into the DOM, which the
-virtual grid exists to avoid.
+`visibleRows` (`web/src/ui/virtual_rows.ts`, shared with Shoots) takes **one**
+`rowHeight`. Keep ordinary cell geometry for bands, distinguish by background.
+Expansion changes row count and content, never height; scroll stays arithmetic
+without DOM measurement.
 
 **Any number of stacks may be open at once.** Expansions are a list of
 `(position, member count)` sorted by position; `rowCount` is the base rows plus
@@ -350,23 +325,15 @@ selection is positions and ids never reach the client for anything but the windo
 on screen. The stack becomes its members server-side in `resolve` (§5.1.1), so
 every bulk action still applies to the whole stack.
 
-**A band's members have no position of their own.** The listing is collapsed, so
-the server numbers one row per stack and members are not in that numbering at
-all; a member selection cannot be a `SelectionRanges` run. Members are instead
-selected **by id**, in a set held beside the position ranges. This stays inside
-the rule the virtual grid enforces rather than bending it: what must never happen
-is an id standing in for an *unloaded* position, and a band's members are loaded,
-on screen, and few.
+**Band members have no listing position**, so cannot use `SelectionRanges` runs.
+Select them **by id** in a separate set. This respects the grid invariant: ids
+must never substitute for *unloaded* positions; band members are few and loaded.
 
-The two selections are separate, and the bulk bar acts on whichever is non-empty.
-Selecting inside a band does not carry a collection-wide position selection into
-it, which is also the behaviour to want: "everything in this library" and "these
-three frames of this burst" are different intentions.
+Selections are separate; the bulk bar acts on the non-empty one. Selecting band
+members clears collection-wide position selection: distinct user intentions.
 
-The bulk bar therefore counts *entries*, where a stack counts as one, and says
-so: "3 selected (7 photos)" needs a photo count the client does not have for
-unloaded positions, so the count shown is of entries and the actions are honest
-about covering whole stacks.
+Count *entries*, one per stack, and label accordingly. "3 selected (7 photos)"
+requires unavailable counts for unloaded positions; actions still cover whole stacks.
 
 **Bulk bar actions.**
 
@@ -426,10 +393,9 @@ All four are `manual` operations per §4.4.
 
 ## 8. The Rust pixel boundary
 
-A prerequisite to this work, and the reason the descriptor is not computed in
-TypeScript. Today nothing in production reads RGB out of Rust, `pixels()`,
-`imageFromRgb()` and `hdrGradedSamples().data` are consumed only by integration
-tests, as is `raw_decoder.decodeRaw` / `DecodedImage`.
+Prerequisite: keep descriptor computation outside TypeScript. Only integration
+tests consume Rust RGB through `pixels()`, `imageFromRgb()`,
+`hdrGradedSamples().data`, or `raw_decoder.decodeRaw` / `DecodedImage`.
 
 - Delete `decodeRaw` and `DecodedImage` (dead in production).
 - Move `pixels`, `imageFromRgb` and `hdrGradedSamples` into
@@ -468,12 +434,9 @@ they would expect:
 
 **Result.** 231 consecutive frames extracted, 78 labelled positive pairs.
 
-The unlabelled remainder could not be assumed negative: it is one long session
-at a handful of viewpoints, so most in-window pairs there are genuine stacks
-nobody wrote down, the six highest-scoring "false positives" were all, on
-inspection, the same scene twice. Negatives were therefore hand-verified by
-contact sheet, and roughly 60 pairs were inspected across the score range to
-find where "same scene" stops.
+Unlabelled did not mean negative: most in-window pairs shared viewpoints, and
+all six highest-scoring "false positives" proved same-scene. Verify negatives by
+contact sheet; roughly 60 inspected pairs located the same-scene boundary.
 
 | descriptor | worst labelled pair | best verified negative | margin |
 |---|---|---|---|
@@ -513,11 +476,9 @@ from seven distances, checked by eye and correct. The threshold slope is smooth
 either side, so there is no cliff for the setting to fall off. 0.78 is the
 default because it is where the plaza group completes; 0.80 drops its last frame.
 
-**The scale search was added after inspecting the near-misses.** Every arguable
-rejection just under the threshold was a change of *distance*, the photographer
-stepping closer or pulling wider; none was an exposure, motion, subject or colour
-miss. Adding the crops lifted exactly those pairs and left the verified negatives
-untouched:
+**Near-misses motivated scale search.** Every arguable rejection was a *distance*
+change, not exposure, motion, subject or colour. Crops lifted those pairs and
+left verified negatives unchanged:
 
 | pair | no crops | with crops |
 |---|---|---|

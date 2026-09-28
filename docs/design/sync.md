@@ -18,9 +18,9 @@ DNG (`.dng`), case-insensitive.
 default, because beside a folder of RAWs they are usually the camera's own copies of frames the
 library already holds and importing both makes every frame two rows.
 
-The sync scanner matches files by extension. All other files are silently ignored. The extension set is the *scan filter*; the actual decoder/metadata reader is chosen later by header sniff (§10, §11), so a further format is added by registering a reader plus extending this set. The same table carries the media type the original is served under (§13.5).
+The scanner filters by extension, silently ignoring other files. Header sniffing later selects the decoder/metadata reader (§10, §11). Add formats by registering a reader and extending this table, which also defines original media types (§13.5).
 
-The table is the *only* gate, because everything asking "is this one of ours" goes through it: the full walk, the watcher (both the event it acts on and the scoped sync's paths), and `findOriginalsAnywhere`, which is what carries a stray original out of a data directory before that directory is deleted (§8.1). A format added here is therefore both ingested and protected from that sweep, in one edit; one added to only half of them would be imported and then deleted with the renditions.
+This is the *only* format gate: full walks, watcher events, scoped sync paths and `findOriginalsAnywhere` all use it. The latter rescues stray originals before deleting a data directory (§8.1). Adding a format here both imports and protects it; separate gates risk deleting imported originals with renditions.
 
 **Three questions, not one**, because the callers are not asking the same thing:
 
@@ -97,7 +97,7 @@ hosts.
 
 ## 9. Sync Algorithm
 
-The sync algorithm is the most complex component. It is a stateless comparison between the database (prior state) and the filesystem (current state).
+Sync compares database prior state with current filesystem state, statelessly.
 
 ### 9.1 Phase 1: Scan
 
@@ -109,9 +109,9 @@ For each library:
    - The library's bin, `<root>/<bin_name>` and everything under it (§12.3), so soft-deleted files are never re-imported. Anchored at the root, unlike the rules above it: that is the only place a bin is ever made, and matching the name at every depth would take a folder of the user's own called `Bin` out of the library in silence.
    - Any directory carrying an `excluded` rule (§4.7), and therefore everything beneath it.
 
-   These four questions live together in `src/utils/scope.ts`, and the **watcher asks them too** (§9.8). It had its own copy of the first two rules, which is two lists to keep in agreement about what the library contains; with the last two added the cost of them drifting is a folder the user excluded still waking a sync on every change, and scoped syncs queued for paths the scan will then ignore.
+   These four questions live in `src/utils/scope.ts`, shared with the **watcher** (§9.8). Shared rules prevent excluded folders waking syncs and scoped paths being queued only to be ignored.
 
-   They split in two, and the split is not cosmetic. Four of them read the path alone and answer the same whether what sits there is a file or a folder, since each is about a *segment*: that is `isPathAllowed`. Only `include_subfolders` needs to know which it is looking at, because a root-only library keeps the files in its root and discards the folders beside them - the same string answers differently depending on what it names. The scan always knows what it is looking at, so `isDirInScope` is the two halves together. A watcher event names a path and not what kind of thing is at it, so the watcher asks `isPathAllowed` and settles the remaining question for files alone; a stray folder path costs nothing downstream, because the scoped sync tests it with `isDirInScope` before reading it.
+   Four segment-based rules use only the path: `isPathAllowed`. Only `include_subfolders` needs file/folder identity, since root-only libraries keep root files but exclude adjacent folders. The scan knows the kind and combines both in `isDirInScope`. Watcher events name paths without kinds, so use `isPathAllowed` and resolve the remaining question for files; scoped sync checks stray folders with `isDirInScope` before reading them.
 3. Filter to the extensions this library takes (§7): the RAWs always, and the finished pictures where `include_non_raw` is set. This yields the set of **present** file paths.
 4. Query the database for all non-deleted photo records in this library (each carries its stored `date_updated` = last-seen mtime and `file_size`).
 5. **Stat quick-check (avoid opening unchanged files).** For each present file, `stat` it (cheap; no open). If a DB record exists at that path **and** its stored `date_updated` and `file_size` both match the current mtime and size, the file is **unchanged**: reuse its stored hash and do **not** open it. Only files that are new, or whose mtime/size differ, are opened to extract metadata (§11) and compute the **file hash** (§9.2). Call this opened subset **changed**. A no-op sync therefore opens no RAW at all. (Like rsync's default quick-check, this misses a content change that preserves *both* mtime and size, which is rare in practice; a forced full re-hash is the escape hatch if ever needed.)
@@ -133,11 +133,10 @@ For each entry in changed:
 
 Unchanged files (present but not in `changed`) produce no diff entry, so they are never opened and never re-hashed.
 
-The catalogue's side is **one entry per input** rather than per photograph, which is what carries a
-change on disk to everything composed from that file: a file two records name is diffed once
-against each, and both are marked. For almost every record that is the one file it is.
+The catalogue contributes **one entry per input**: a file shared by two records is diffed
+against each, marking both. Most records have one input.
 
-The REAPPEARED case matters: a file that went missing and returns **at its original path with the same content** is neither modified nor moved, so without this it would stay flagged `is_missing = 1` forever. (Reappearance at a *different* path is handled by move detection.)
+REAPPEARED clears `is_missing = 1` when identical content returns **at its original path** without modification or movement. Move detection handles a different path.
 
 #### 9.1.1 The bin channel
 
@@ -145,9 +144,9 @@ The scan runs **twice**, over two channels: the walk above against the non-delet
 
 > **A path claimed by a binned row is not the live channel's business.**
 
-A bin folder outside the walk says that sentence by where it sits; the table has to say it instead, because a photograph can be binned **in place** (§12.1) - flagged, with its file still sitting in the live tree. The binned rows are therefore read on every run and their paths partitioned out of the live half *before* the diff, not after: with the live rows alone every binned file looks new, and 100k binned RAWs would decode 100k RAW headers nightly.
+Binning **in place** (§12.1) leaves flagged files in the live tree. Every run therefore reads binned rows and excludes their paths from the live channel *before* diffing; otherwise 100k binned RAWs look new and decode 100k headers nightly.
 
-What the second channel buys is that `is_missing` becomes reachable on a binned row. Without it, a photograph whose RAW was deleted out of the Bin by hand sits there for ever with an original that 404s.
+The bin channel sets `is_missing` when a binned RAW is deleted by hand, instead of leaving an apparently available original that 404s.
 
 - **A crossing** is a pair whose halves land in different channels: a removal in one and an addition in the other, which is a file hand-binned or hand-restored. The channel tags give the direction, so there is no position to test - and position could not answer it anyway, an in-place binned row being `is_deleted = 1` with its file outside the bin. Crossings stay out of `moves`, which `detectShootRelocations` reads: a binned file's movement is not evidence about a live shoot folder.
 - **An unclaimed file under the bin is imported already-binned**, with where it would restore to read off the mirrored layout. A path test runs before the hash one: a file copied into the bin and the original deleted has its own mtime, and so its own hash.
@@ -156,9 +155,9 @@ What the second channel buys is that `is_missing` becomes reachable on a binned 
 - **A missing bin root is a skip, not a throw**, and not an empty walk either: the run remakes the folder, records its new identity and leaves every binned row alone. Not for a read-only library, which keeps the bin it had from before the flag and whose photographer may have deleted that folder deliberately - remaking it would be a write under a root the app may not write to.
 - **Only a candidate that still might be the bin is excluded from the live walk.** Exclusion is unconditional while the identity is ambiguous, because any of those folders may be the bin. It is *not* applied to one already shown not to be - a folder that inherited the freed inode and holds none of the bin's files - because dropping a real shoot from the live walk marks its photographs missing, which is the same harm as following it reached more quietly.
 
-The two conditions on rewriting `bin_name` are worth stating exactly, because getting the second wrong is what makes the first useless. The recorded path must fail to `stat`, or resolve to a **different** `dev:ino` - not merely be absent, since a case-only rename on a case-insensitive filesystem still resolves, to the same inode, and is handled by exclusion alone. And the candidate must **hold a file some binned row claims**, tested by looking for that file *inside the candidate*: asking whether the library has anything in its bin is true of every library that has ever binned anything, and lets the recycled inode straight through.
+Rewriting `bin_name` requires both: the recorded path fails to `stat` or resolves to a **different** `dev:ino`, and the candidate **contains a file claimed by a binned row**. Test inside the candidate, not merely whether the library has binned rows, which admits recycled inodes. A case-only rename on a case-insensitive filesystem resolves to the same inode and needs exclusion only.
 
-So how often the bin is reconciled depends on the nightly full sync (`full_sync_at`) and on the watcher's 256-path fallback. A large hand-managed change self-corrects promptly; three files dropped in by hand stay under the threshold and wait for a full run. The Settings copy for `full_sync_at` names the bin among what the nightly run reconciles, so turning it off is an informed choice.
+Bin reconciliation uses nightly full sync (`full_sync_at`) and the watcher's 256-path fallback. Large manual changes reconcile promptly; three hand-added files wait for a full run. Settings for `full_sync_at` explicitly names bin reconciliation before allowing it to be disabled.
 
 Result per library:
 ```typescript
@@ -183,7 +182,7 @@ The file hash is a SHA-1 digest of the following metadata properties, concatenat
 6. File size in bytes
 7. Orientation/rotation (EXIF orientation 1 to 8, or `0` if not present; rows written before the decoder changed hold LibRaw's `flip` code instead, §11.1)
 
-**mtime is included** so an in-place pixel edit that preserves dimensions/size/orientation is still detected as MODIFIED and re-processed (without it, such an edit is invisible). Note the tradeoff: an import/restore that resets mtime without changing content will spuriously mark untouched photos MODIFIED and re-process them. A pure backup *read* (this server as rsync source) does not change mtime, so ordinary cloud backups do not trigger this.
+**mtime detects in-place edits** preserving dimensions/size/orientation as MODIFIED. Imports/restores resetting mtime also re-process unchanged content. Backup *reads* (this server as rsync source) preserve mtime and do not trigger this.
 
 **Critical rule:** Under no circumstances should the hash computation read past the file header/metadata. Every supported format keeps its metadata at the front of the file - an ARW is a TIFF, a CR3 puts its EXIF in a `CMT2` box near the head of `moov` - so reading resolution and orientation is safe. The implementation must not decode pixel data.
 
@@ -216,7 +215,7 @@ If a file at path A has been **modified** (hash changed from H1 to H2), and ther
 - The correct interpretation: update the existing photo record at path A with the new hash H2, and create a new photo record for the file at path B (which has hash H1).
 - Do **not** move the existing record to path B.
 
-To implement this: before processing moves, iterate over modified entries and check if their old hash appears in the added map. If so, keep that entry in the added map so it becomes a new photo (do not treat the modified file's old hash as a move source), and leave the modified entry as-is (the existing record gets updated with the new hash).
+Before move detection, check modified entries against the added map by old hash. Keep matches as additions, never move sources, and retain the modification so the existing record gets its new hash.
 
 5. The final move list:
 ```typescript
@@ -253,9 +252,9 @@ Process in this order within a database transaction:
 4. **Reappearances:** Clear `is_missing = 0` for each reappeared photo. No other change (content and path are unchanged).
 5. **Removals:** Set `is_missing = 1` for each removed photo. Do not delete files or records. Count only photos that transition `is_missing` from `0` to `1` toward `photos_removed`; a record already at `is_missing = 1` reappears in the removed list every scan (so delayed move-matching in §9.3 can still pair it), but it is not a new removal and must not be re-counted. This keeps `photos_removed` a per-sync delta consistent with `photos_added`/`photos_moved`/`photos_modified`.
 
-**A run with no rows commits as it scans, in batches of 1000 files or two seconds, whichever comes first.** The time bound is what a small library depends on: the scan builds each photo's grid tile while the RAW is open (§10.4), so a batch of a thousand is minutes of work, and an import smaller than one batch would show an empty library for the whole run. A first import is hours of opening and hashing, and one closing transaction makes all of it contingent on reaching the end: kill the server at hour three and three hours of decodes are gone, with the next run starting from nothing. Applying a *partial* scan is normally unsafe for the reason §9.10 gives (absence from a half-built `present` set reads as a removal), but that reasoning needs rows to be absent from. When `dbPhotos` is empty (a library's first sync, and a scoped sync whose paths are all new) the diff can only be additions: no removal can be derived, so no move can pair either. Each batch is then true on its own, whatever the scan goes on to find, and a killed import resumes at the batch it reached rather than at zero; the rows it wrote carry the mtime and size that make §9.1's quick-check skip them, so the resumed scan does not re-open them either.
+**A run with no rows commits in batches of 1000 files or two seconds, whichever comes first.** Building grid tiles while RAWs are open (§10.4) makes a thousand files minutes of work; the time bound keeps smaller libraries visible. A single closing transaction would discard three hours of decodes if killed at hour three. Partial scans normally risk false removals from an incomplete `present` set (§9.10), but empty `dbPhotos` (first sync or all-new scoped paths) permits only additions, with no removals or moves. Each batch is independently valid; restart resumes from committed rows whose mtime and size let §9.1 skip reopening them.
 
-Only that case qualifies. Against a populated library an addition can still turn out to be the far half of a move, so its inserts stay in the closing transaction where move detection can still claim them. Shoot membership is safe to resolve early for the same reason a batch is: a shoot relocation (§9.4.1) takes existing photos to move, and a run with no rows has none.
+Only empty-row runs qualify. In populated libraries, additions may be move targets and stay in the closing transaction. Empty-row runs can resolve shoot membership early because shoot relocation (§9.4.1) requires existing photos.
 
 ### 9.4.1 Shoot reconciliation
 
@@ -266,7 +265,7 @@ Two steps wrap the apply phase, and both exist because **the folders on disk are
 1. **The inode.** A shoot records its folder's `ino` and `birthtimeMs` (§4.3), and the scan already walks every directory, so it can key them by `dev:ino` as it goes (the same key `scanFiles` uses to collapse hardlink pairs). A shoot whose `folder_path` is gone, whose recorded identity turns up at another path, **is** that folder: not an inference, so no time window, no all-or-nothing photo test, and no need for the folder to hold any photos. It resolves a rename made while the server was down just as well as one made while it was running, which no watcher event can do.
 2. **The photos** (`detectShootRelocations`, `scan_relocations.ts`). If every file that was under `A/` is now under `B/`, each keeping its position within the folder, then `A` became `B`. Deliberately all-or-nothing: a partial match means files were also added, removed or reshuffled, so the folder's identity is genuinely ambiguous and a wrong guess silently adopts someone else's folder. `folderStillOnDisk` separates a folder that moved from photos merely reorganised inside one that did not - sorting a shoot's frames into a new `Selects/` subfolder moves every one of them keeping each filename, which is indistinguishable from a rename by the paths alone.
 
-The second is not redundant once the first exists: a move to **another filesystem** (a copy under the covers) mints a new inode, and so does a restore from backup, where every inode in the library is new at once. The inode answers precisely, the photos answer approximately, and the cheap precise one is asked first.
+Moves to **another filesystem** and backup restores mint new inodes, requiring photo evidence. Try cheap, precise inode identity before approximate photo matching.
 
 Either way the whole subtree follows by prefix, and descendant shoots come with it. A relocated shoot also answers every photo move beneath it at once - the paths shift by a prefix and membership does not change - so those moves drop out of the per-photo loop and the folder becomes two `UPDATE`s rather than one per frame.
 
@@ -278,13 +277,13 @@ Either way the whole subtree follows by prefix, and descendant shoots come with 
 - Shoots whose folder no longer exists **and which hold no photos** are deleted. Both halves are required: a folder that is gone but still has rows is a library whose files went missing, not a shoot to discard.
 - Existing shoots are matched by `folder_path` **only, never by name**, so a shoot the user has renamed is not seen as absent and recreated as a duplicate beside itself.
 
-Folders that hold no photos of their own are **not** made into shoots, even when their descendants are. A pass-through folder is structure rather than a set of photographs, and the Shoots page draws the hierarchy from the shoots' own `folder_path`s (§18.3.4), so nothing is lost by leaving it out - and a shoot record that exists only to be a spacer is one more thing to name, count, delete and explain.
+Folders with no photos of their own **do not** become shoots, even with descendant shoots. The Shoots page derives hierarchy from `folder_path`s (§18.3.4), so pass-through folders need no records.
 
 ### 9.5 Phase 4: Trigger Processing
 
 After all changes are applied, call `ProcessingService.processUnprocessed()` to begin background generation for every photo owing either stage (`needs_tile` or `needs_renditions`) with `is_missing = 0`.
 
-**A scoped run passes the photos it reconciled; a full run passes none, meaning the whole library.** The watcher fires on one changed file, and draining everything the library still owes off the back of that is not what the change asked for, quite apart from making the strip report that one file as a thousand outstanding renditions. So a scoped sync hands over the ids it inserted or modified (moves and reappearances changed no pixels, so they owe nothing), and the status counts against that same set.
+**Scoped runs pass reconciled photos; full runs pass none, meaning the whole library.** Scoped sync passes inserted or modified ids and counts status against that set. Moves and reappearances change no pixels and owe nothing; one watcher event must not drain or report the whole backlog.
 
 That leaves the backlog to the two triggers that are *about* the whole library: a manual `POST /sync` and the daily reconcile (§9.8). This is deliberate, and it is what picks up work a killed process left half-done; nothing runs at startup (§9.6).
 
@@ -310,19 +309,19 @@ interface SyncStatus {
 }
 ```
 
-This is updated as the sync progresses and is exposed via the API for client polling.
+Updated during sync; exposed through the polling API.
 
-**The scan is `processing` and the rendition backlog is `rendition`.** The walk is not only a walk - it opens, hashes, reads metadata and builds each photograph's grid tile (§10.4) - so naming it after the cheapest thing it does undersold it to the one client that reads this. The second phase is named for what it builds.
+**Scan is `processing`; rendition backlog is `rendition`.** Scan includes opening, hashing, metadata and grid-tile building (§10.4).
 
-**Both phases of a run report progress, not just the second one.** `photosProcessed` against what was queued covers rendition building; `photosScanned` against `photosToScan` covers the scan, which on a first import is the longer of the two: minutes of opening and hashing every file, during which a status that only carried zeros left the client with a phase name and nothing else. The counters are updated from the loop that opens and hashes, which is where a scan's whole cost is (the `stat` pass before it opens nothing), and `photosToScan` is only known once that pass has collapsed hardlink pairs, so a run reads 0/0 for the walk and the stats, then counts through the files. Both settle on the number of files found, so the client renders one bar per phase off the same pair of numbers.
+**Both phases report progress.** Renditions report `photosProcessed` against queued work; scan reports `photosScanned` against `photosToScan`, updated by the opening/hashing loop. The earlier `stat` pass opens nothing and collapses hardlink pairs before `photosToScan` is known: progress is 0/0 during walk/stats, then counts files. Both counters finish at files found, giving one bar per phase.
 
 **The rate a first scan reports is what its last committed batch managed**, `photosPerSecond`, measured across the batch (§9.4) rather than sampled between two of a client's polls: the workers land in bursts, and a figure taken between two polls a second apart swings by a factor of several, which is a figure nobody can read an ETA off. The clock starts at the first progress report rather than at the top of the run, so the `stat` pass - which opens nothing - does not drag the first batch's figure down. It is null in every other phase, which have no batches to time; the client counts its own polls there, over a five-second window.
 
 No generation guard on those writes, unlike the ones after the scan: the sync lease is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
 
-**A process with no status in memory reads the outstanding work off the database.** The status object does not survive a restart, but the work does: `needs_tile` / `needs_renditions` are columns, so a library the last process had half-imported comes back owing exactly what it owed. Reporting a flat `idle` with zeros there is a lie the client cannot see past; the strip would show nothing to do while thousands of renditions were missing. `getScanStatus` therefore falls back to `countPendingProcessing` and reports it as `photosProcessing` against `idle`: work waiting, not work running.
+**Without in-memory status, read pending work from the database.** `needs_tile` / `needs_renditions` survive restarts. An empty `idle` would hide pending work. `getScanStatus` falls back to `countPendingProcessing`, reporting `photosProcessing` with `idle`: waiting work, not running work.
 
-**Nothing starts it.** Startup wires the watcher, the daily reconcile and the prune, and triggers no sync (`src/index.ts`); reading the status does not either. A restart mid-import resumes when the user asks, when the watcher sees a file change, or at `SYNC_FULL_AT`, and the status is what tells them there is something to ask for. Automatic resume would mean a server that comes back up saturating its cores on a job the user may have killed it to stop.
+**Startup does not sync.** `src/index.ts` wires watcher, daily reconcile and prune; status reads start nothing. Interrupted imports resume on user request, file changes or `SYNC_FULL_AT`. Pending status exposes the work without automatically restarting a CPU-heavy job the user may have killed deliberately.
 
 `last_synced_at` is the other half of this, and the durable one: it is a column, so it survives the restart the status does not, and says how stale the catalogue is (§4.1).
 
@@ -335,7 +334,7 @@ Sync is locked **per library**, so two different libraries can sync concurrently
 - **Stale-lease recovery:** a lease is reclaimable 30s after its last refresh. A run refreshes from the work rather than from a timer - the walk, both scan loops and each insert batch - because the scan and apply are synchronous and a `setInterval` is starved precisely when the lease matters.
 - The lease is released in a `finally`, scoped to its own owner so a late release cannot delete a successor's lock. The apply re-reads the owner as the first statement of a `BEGIN IMMEDIATE` transaction and rolls back on a mismatch: it is the one stretch no refresh point can reach.
 
-Liveness deliberately does not depend on a PID. `process.kill(pid, 0)` asks in the *asking* process's PID namespace, which is not the one the number was minted in: two containers over one volume would either refuse to sync for ever (B finds its own init at A's PID 1) or both sync at once (A's PID 37 does not exist in B). A timestamp means the same thing everywhere.
+Liveness cannot use `process.kill(pid, 0)`: it queries the caller's PID namespace. Two containers sharing a volume could block forever (B sees its init at A's PID 1) or both sync (A's PID 37 is absent in B). Timestamps avoid namespace ambiguity.
 
 The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the `sync_locks` row is the cross-process source of truth for "is this library syncing". A row present at startup means "stale within 30 seconds", not "syncing", so startup deletes nothing.
 
@@ -362,7 +361,7 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the `sy
 
 `@parcel/watcher` takes 204 watches and 35 MB on that same tree, settles in 55 ms, and names both halves of every move - same level, into a subfolder, out to the root - including the rename of a folder holding no photographs, which §9.4.1's photo evidence structurally cannot see. Its `ignore` list takes the data directory, the bin (§12.3) and the excluded folders, so none of those subtrees is walked at all rather than filtered afterwards, and the per-event check applies the scan's own rules (§9.1) so the two cannot disagree about what the library contains. The bin earns its place there twice over: it is one known path, and it only grows, mirroring the whole folder tree as photographs are binned.
 
-**An event the library does not contain schedules nothing.** Arming the debounce for every batch handed over and deciding relevance afterwards, per path, lets a batch where nothing survived that filter run the timer down to a sync with an empty path set - which is a *full* one, because an empty scope is how a dirty re-run asks for the whole tree. A batch that records nothing arms no timer, which answers the class rather than each path that raised it. (The sync lock is the standing example of what that would catch: a file at the library root would have every sync's own lock wake the watcher that started the next one, for ever. It is a row, §9.7, and writes nothing under the root at all.)
+**Out-of-scope events schedule nothing.** Arm debounce only when a batch records relevant paths. An empty path set means a *full* dirty re-run; filtering after arming would accidentally scan everything. A root lock file would perpetually trigger this; the sync lock is a row (§9.7), writing nothing under the root.
 
 **Nor does a file the library will never hold.** A text file, a sidecar, a JPEG export saved beside the raws is in scope by *path* - `isPathAllowed` is about folders - so handing it to a scoped sync like a candidate photograph spends a whole sync run (a mutex, a lease, a transaction, a settled announcement) concluding it was never one. The watcher settles it instead, with one `stat`, asked only of paths whose extension is not one of ours (§7) so a bulk import stats nothing extra. A folder always passes, because an empty one's rename reports no other event at all and dropping it would lose the shoot relocation (§9.4.1); so does a path that is already gone, which is a deletion and could have been either.
 
@@ -396,7 +395,7 @@ What a stop means depends on which phase it lands in, and neither leaves anythin
   - The stop is still a stop: the processing that follows a partial commit is handed the same aborted generation, so it queues nothing and the photos land owing their renditions. `last_synced_at` is stamped, which says when a sync last ran rather than that the catalogue is complete.
 - **During processing**, the pool retires each worker as its current job lands instead of killing it mid-encode, which would leave a half-written rendition. What is already on disk stays - a tile is valid whether or not the rest of the run finished - and the photos it never reached keep their `needs_tile` / `needs_renditions` flags, so the next sync picks them up. The status settles to idle through the same tail that a completed run does.
 
-**The pool is asked whether to stop, rather than handed a signal.** A batch is keyed by library and outlives the sync that started it: a later sync of the same library coalesces into the running batch (§10.2) and whatever it passed is dropped by that dedup. Given a fixed `AbortSignal`, the batch would go on watching a generation that has already finished, and a stop aimed at the current one would reach nothing; the button would do exactly nothing, silently, and only when two syncs happened to overlap. `ScanService` therefore passes a predicate that reads whichever generation is current at the moment it is asked.
+**The pool gets a stop predicate, not a fixed signal.** Library-keyed batches outlive their initiating sync; later syncs coalesce and drop their arguments (§10.2). A fixed `AbortSignal` would watch an obsolete generation and ignore current stops. `ScanService` passes a predicate reading the current generation when asked.
 
 Deleting a library aborts its run for the same reason: its rows are cascade-gone, so there is nothing left to finish.
 
@@ -451,7 +450,7 @@ Body and lens come from the metadata block: `make`/`model`, and `lens.lens_name`
 
 **The arithmetic this replaced is worth recording, because the failure it caused looked plausible.** LibRaw emitted a frame already trimmed to its own margins and stated the camera's crop separately, so only the part of that crop falling outside the emitted window was ours to remove - and subtracting it from the raw frame instead double-applied it on every body where the margin was already the crop origin, which is every Canon. An EOS R8 lost a further 168 columns and 108 rows, and because the excess came off two sides rather than four the result was not a smaller picture but a differently framed one: 5811x3879 where the camera's own JPEG is 6000x4000, shifted up and left. It also cost the JPEG match (§10.5), which models an overall rescale but has no term for a translation: acceptance across 27 EOS R8 frames was 15/27 before and 27/27 after, median deltaE 4.11 to 1.89, against 27/27 and 1.35 for a Sony set of the same size. Three Sony geometries were over-cropped by 8-32 columns on the right edge by the same arithmetic, which is why it was not a Canon special case. With one stated crop and nothing already applied to it there is no second window to measure against, and the whole class is gone; the frame moved by a couple of dozen pixels of border in the process, LibRaw having emitted 4024x6024 and 3999x5999 where the manufacturer says 4000x6000 on both.
 
-The header struct crossing the FFI is `#[repr(C)]` and ours rather than an upstream C layout, and its size is checked at the first call, so a field that moves is a mismatch rather than plausible garbage - which is what six tables of hardcoded offsets into five C structs would risk. `raw_header.integration.test.ts` pins the known-correct values for the checked-in fixture.
+The FFI header is our `#[repr(C)]` struct, size-checked on first call. Layout changes fail rather than producing plausible garbage from six offset tables over five C structs. `raw_header.integration.test.ts` pins fixture values.
 
 ### 11.2 Hash Computation (`hash.ts`)
 
@@ -485,7 +484,7 @@ When a user requests deletion of one or more photos:
 
 For each photo:
 
-1. **Keep the renditions.** They are *not* removed. The Bin is a view the user browses to find something to restore, and it is useless if every frame in it is a grey placeholder. The two AVIFs are roughly 1% of the size of the RAW the Bin is already retaining, so deleting them saves almost nothing and costs the feature. They are removed only when a photo is permanently purged.
+1. **Keep renditions until permanent purge.** The Bin needs viewable frames for restore; its two AVIFs cost roughly 1% of the retained RAW.
 
 2. **Move the RAW into the Bin, if this library has one:**
    - Determine the bin path, where `<bin>` is the library's `bin_name` (§12.3): `<library_root>/<bin>/<folder the photo was in>/<original_filename>`. A photo at `A/B/c.arw` bins to `<bin>/A/B/c.arw`; one in the root bins to `<bin>/c.arw`.
@@ -512,7 +511,7 @@ For each photo:
 
 The first arm cannot merely skip the move: `moveIntoDir` would claim the name the file already holds, hit `EEXIST`, walk its suffix loop to `a_1.arw` and then unlink the source - the file is not duplicated, it is silently renamed under the photographer. It keeps the existence check, though: "no move" is not "no validation", and a row whose file has gone would otherwise go live with `is_missing` cleared and every original 404ing behind renditions that still look fine. The third arm exists because the row would otherwise go live with its RAW still in the bin, and the bin channel would re-bin it on the next sync - a restore repeatable for ever, with `deleted_from_path` replaced by a guess each time. **An undo by batch tests every row's position before restoring any of them**: a half-landed undo is worse than none.
 
-**An undo names the bin, not its photographs.** Delete also stamps every row it takes with a `deleted_batch` the *client* generates, and the undo posts that batch back (`PhotoTargetSchema`, §14). The ids never travel: a bin of a million would be a 36MB response and a 36MB request to reverse it, and the selection those photos came from resolves to different ones the moment they leave the collection (§18.3.3). Client-generated so the undo survives an answer that never arrives - the delete may outlive the socket, and it is exactly then that being able to reverse it matters.
+**Undo names a deletion batch.** Delete stamps rows with client-generated `deleted_batch`; undo posts it back (`PhotoTargetSchema`, §14). Returning ids for a million photos would cost 36MB each way, and the original selection changes when photos leave (§18.3.3). Client generation preserves undo if delete outlives the socket and its response is lost.
 
 **Everything that is not per-file is done per batch.** Both `delete` and `restore` read their rows in one query rather than a detail payload each, resolve the library and take `libraryMutex` once, create each Bin directory once, and commit a chunk of flags at a time. Per photo - which is what these were - it was a join plus a second query for album membership neither reads, a mutex acquire, and its own transaction: **2.231ms per photo before a byte moved on disk**, or 34 minutes to bin a million. Batched, and now measured *including* the renames, it is **0.14ms per photo**.
 
@@ -527,9 +526,9 @@ The chunk is what bounds the exposure a per-photo commit would bound: the files 
 
 **One bin per library, at `<library_root>/<bin_name>/`, laid out inside itself like the library around it.** A photo binned from `A/B/c.arw` goes to `<bin_name>/A/B/c.arw`; one binned from the root goes to `<bin_name>/c.arw`. `bin_name` is `Bin` unless the library was created with another (§4.1), and every bin path comes from `getBinPath` (§6) rather than being spelled anywhere else.
 
-The mirror is what makes one bin possible. Flat, a bin is a heap in which `IMG_0001.ARW` from three shoots are three files distinguished only by the numeric suffix the collision handling adds - fine for the catalogue, which knows, and useless to anyone reading the folder. Mirrored, the bin is browsable on its own terms: where a file came from is written in the path, so it can be recovered by hand if the catalogue is ever lost. Bins inside each shoot folder bought the same legibility, but scattered: one library's deleted photographs in as many places as it has folders, each needing its own skip rule, and none of it visible in one place.
+Mirrored paths make one bin browsable and manually recoverable without the catalogue. A flat bin would distinguish three shoots' `IMG_0001.ARW` files only by collision suffixes; per-shoot bins would scatter deleted files and require separate skip rules.
 
-**Never under the data directory.** A Bin holds originals, and the data directory is the one tree the system deletes wholesale (§6, §10.6); a bin inside it would mean removing a library, or clearing `DATA_DIR` by hand, silently destroying every photograph the user had binned. The bin therefore sits beside the photographs it came from, where the only thing that can remove it is the user.
+**Never under the data directory.** It is deleted wholesale (§6, §10.6); library removal or clearing `DATA_DIR` must not destroy binned originals. The bin sits beside originals and only the user removes it.
 
 The scanner skips `<root>/<bin_name>` and everything under it, so soft-deleted files are never re-imported. That is a rule about the root, not about the name: see §9.1.
 
@@ -547,7 +546,7 @@ Removing a folder from the library (§4.7) takes the deleted rows with the live 
 
 ### 12.4 Hiding
 
-**Hiding is not a soft delete.** Binning says a photograph is on its way out: the file moves into the bin, the row is `is_deleted`, and the Bin is a place you go to look at it. Hiding says the opposite - keep everything, stop showing it to me. Nothing on disk moves, no rendition is dropped, no edit is touched, and the row is otherwise an ordinary live photograph; all that changes is what a listing answers with. The case is the corner of a library that is real and finished with: the scans, the test frames, the client job that shipped two years ago.
+**Hiding preserves live photographs.** Binning moves files to the bin and sets `is_deleted`; hiding changes listings only, preserving files, renditions and edits. Use it for retained but finished work: scans, test frames or a client job shipped two years ago.
 
 **It is a default, not a scope.** `is_hidden` is stated in the two halves of `conditions` separately (§8.2): unasked, the exclusion sits with the scope clauses and intersects, because it is where every listing starts; asked for, it is an ordinary chip and honours `match`. So Hidden is one more tick in the filter panel's triage set (§18.3.1) and behaves like the ones beside it - ticked with Picks under `match=any` it is a grid holding the put-away *and* the picks, not the hidden picks. The chip has only the one form: hiding is the default the other ticks are read against, so there is nothing to ask for by unticking it.
 
@@ -561,13 +560,13 @@ So a shoot answers two questions. `is_hidden` is whether it is out of sight, whi
 
 **A hidden shoot is not served unless it is asked for**, and that is where the filtering belongs: `ShootsService.list` excludes by default, so no consumer has to remember a filter that nothing would fail without - a sidebar, a "move to shoot" menu and a tree all get the shoots a reader is working with. `ShootsRepository.listByLibrary` still answers with everything, because the catalogue's own questions need it: which shoot encloses a folder, and which shoots an adopted folder's photographs fall under, are facts about the tree rather than about what somebody is looking at. The folder listing takes the same flag and drops a hidden shoot's folders with it (`foldersOutside`), the tree being read off the disk where nothing records that a folder has been put away.
 
-**Resolving one by id is a different question and never hides.** `GET /api/shoots/:id` answers for any shoot, because a reader can be standing on a hidden one - its own page names it, and so does a photograph reached through the Hidden chip - and a request that already names the shoot is not a request that could be surprised by it.
+**Lookup by id never hides.** `GET /api/shoots/:id` serves any shoot, including hidden shoots reached through their page or a photograph under the Hidden chip.
 
-**The one listing a hidden shoot does not empty is its own.** `listByShoot` and every other shoot-scoped read exempt that shoot (`ownShoot`): the reader asked this shoot what it holds, and a folder full of pictures reporting itself empty is a dead end rather than a hiding. A photograph's own flag still applies there, as it does everywhere.
+**Shoot-scoped reads exempt their own shoot.** `listByShoot` and peers use `ownShoot` so a hidden shoot's page still shows its contents. Individual photograph hiding still applies.
 
 **The exemption names one shoot; it is not a switch.** `hiddenIs` takes the exempt shoot as SQL - a bound `?`, or an outer column where the query has one - rather than a boolean that drops the shoot arm. A boolean exempts every *other* hidden shoot at the same time, and a stack straddling a hidden shoot and a visible one then counts and shows the hidden half on the visible shoot's page. Same reason the band has to be told which shoot it was opened in: `StacksRepository.memberIds` takes a `shoot_id`, threaded from the client the way `album_id` already is (§19.5.3), because the band and the tile's `stack_size` are two queries over one question and hiding is a third way for them to disagree. Stack triage seeds its pool from that same read, so it carries the shoot too.
 
-**The Bin ignores hiding entirely**, for the same reason and a sharper one: a photograph binned while hidden would otherwise be in no listing at all - out of the live ones by its flag, and out of the Bin by the same clause. A photograph with no listing that holds it is the one outcome §12 exists to prevent, so `is_deleted = 1` says nothing either way rather than intersecting with it.
+**The Bin ignores hiding.** Otherwise hidden, binned photos would appear nowhere. `is_deleted = 1` therefore applies no hiding clause (§12).
 
 **Hidden photographs are skipped by work, and passed over rather than un-queued.** `PENDING_PROCESSING` (§10.2) and the stacking candidate set (§19.4.2) both exclude them, so nothing renders or measures a frame nobody is looking at. Their `renditions` rows keep `needs_build = 1`, so unhiding brings the work back with no second pass to find what was skipped. **The scan is the exception, and on purpose:** a hidden photograph is a live row whose file is still on disk, so file moves, renames, deletions and the bin channel all reach it exactly as they reach anything else. A hidden row that stopped tracking its own file would be a row pointing at nothing the moment the photographer tidied a folder.
 

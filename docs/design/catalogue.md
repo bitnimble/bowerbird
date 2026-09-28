@@ -8,11 +8,16 @@ section the index in `DESIGN.md` maps §N to.
 
 ## 4. Database Schema
 
-All `datetime` columns are stored as TEXT in ISO 8601 format with a `Z` suffix (e.g. `2024-06-15T04:30:00.000Z`), so lexicographic (byte) comparison equals chronological order and the `date_added`/`date_taken` ordering indexes (§4.2) sort correctly. `date_added` is a true instant, normalized to UTC from the server's offset (which shifts across DST). `date_taken` is not an instant: EXIF records a naive wall clock, so §11.1 stores that wall clock re-encoded as UTC and the client formats it back in UTC (`captureDateTime`), leaving a capture time reading as the camera wrote it on any machine in any zone.
+Store `datetime` as ISO 8601 TEXT with `Z` suffix (e.g. `2024-06-15T04:30:00.000Z`)
+so byte and chronological order agree in `date_added`/`date_taken` indexes (§4.2).
+`date_added` is a UTC-normalized instant, including server DST changes. `date_taken`
+preserves EXIF's naive wall clock encoded as UTC (§11.1); UTC formatting
+(`captureDateTime`) displays the camera's time unchanged in every zone.
 
 All entity IDs are stored as TEXT (§3).
 
-Foreign keys are enforced. Enforcement is a decision each connection makes rather than a property of the file, so `connection.ts` runs `PRAGMA foreign_keys = ON` on every one. The schema is acyclic (no table pair references each other) so migrations can be created in dependency order.
+`connection.ts` sets `PRAGMA foreign_keys = ON` on every connection; enforcement is
+connection-local. The acyclic schema permits migrations in dependency order.
 
 ### 4.1 `libraries` table
 
@@ -46,7 +51,10 @@ CREATE TABLE libraries (
 - `read_only`, whether the app may write under `root_path` at all: an archive volume, a NAS export mounted read-only, or a collection the photographer would rather no software rearranged. Almost nothing the catalogue knows was ever about the files, so what this actually turns off is short - binning moves nothing (§12.1), and a shoot has to be a folder that already exists (§4.3). `read_only = 0` with a NULL `bin_name` never persists: clearing the flag needs a `bin_name` in the same request, and makes the folder. Detected, not guessed: `access(dir, W_OK)`, reported per listing by `GET /api/browse`, and a create that says the root is writable when it is not is refused with `READ_ONLY` rather than silently upgraded.
 - `bin_dev` / `bin_ino` / `bin_birthtime`, the bin folder's identity, recorded when the folder is made. A photographer renaming `<root>/Bin` to `<root>/Rubbish` has done to the bin what §9.4.1 already handles for a shoot, and it is answered the same way. Deliberately not on the `Library` API type: they would leak into every response.
 
-**`bin_name` is not create-only.** `PATCH` with one **renames the folder**, which is what the rule against renaming existed to avoid having to do: changing the setting alone would strand every already-binned RAW in a folder the scan then walks back in, and changing it together with the folder strands nothing. The `rename` runs first and outside the transaction, because a crash between it and the commit leaves disk at the new name with stale columns - which is exactly the state the bin channel repairs by identity (§9.1); committing first would leave the mirror image, and the repair would revert the name just set.
+**Changing `bin_name` through `PATCH` renames the folder.** A setting-only change
+would re-import stranded binned RAWs. Run `rename` before and outside the transaction:
+a crash leaves stale columns repairable by bin identity (§9.1). Committing first
+would instead let repair revert the requested name.
 
 ### 4.2 `photos` table
 
@@ -127,34 +135,26 @@ CREATE INDEX idx_photos_is_hidden ON photos(library_id, is_hidden) WHERE is_hidd
 
 #### 4.2.1 A photograph is a recipe over files, not a file
 
-`photos.recipe` says how a row's pixels are arrived at, as a discriminated union (`schemas/recipes.ts`).
-There is `file`, which names the one path a camera wrote, and two ways to compose other rows: `panorama`,
-which joins frames pointing in different directions into one wider picture, and `assembly`, which joins
-frames pointing at the *same* thing and takes each part of the result from whichever frame the reader liked
-- a face that blinked in one, a car that drove through another. **The path is in here rather than in a
-column beside it**, and that is the point of the shape: a row is not one file, it is a recipe over a list of
-them, so every caller that wants a path is handed a list and has to say what it does with one.
-`originalPathOf` is the only way to a row's own bytes and answers null for anything that is not exactly one
-file; `soleInputOf` is the same answer without a library to join it onto.
+`photos.recipe` is a discriminated union (`schemas/recipes.ts`): `file` names one
+camera-written path; `panorama` combines different viewing directions into a wider
+picture; `assembly` combines takes of the same scene using chosen parts, such as
+unblinking faces or unobstructed ground. **Paths belong inside recipes**, forcing
+callers to handle a list of inputs. `originalPathOf` returns a path to own bytes only for
+exactly one file, otherwise null; `soleInputOf` gives the same answer without joining
+the library path.
 
-A recipe this build cannot read - a peer on a later one composing in a way this does not know, or a third
-composite kind neither of these is - is its own kind, `unreadable`, rather than a fall back to `file`: what
-is true of such a row is that its picture cannot be built here, and reading it as a file would send every
-caller to a path that resolves and holds nothing.
+Unknown recipes, including newer peers' kinds, become `unreadable`, never `file`:
+this build cannot produce their picture, and a fabricated file path would hold nothing.
 
-`photo_inputs` is that list unpacked, one row per file a recipe names, **maintained by triggers**
-(`photoInputTriggers`) for the reason `replication_log` is - a recipe is written from an import, a rename, a
-bin move and a merge, and an index the writer has to remember is one that drifts. It answers in both
-directions: the folder ranges and path lookups a scan does, and the reverse edge that matters more, which is
-that a file changing on disk makes every row composed from it stale. The scan reads it as `photos JOIN
-photo_inputs`, so a file two rows name is diffed once per row and the change reaches both. Derived, and so
-replicated by nothing.
+`photo_inputs` unpacks one row per recipe file. **Triggers maintain it**
+(`photoInputTriggers`), like `replication_log`, across imports, renames, bin moves and
+merges. It supports folder/path queries and reverse invalidation: `photos JOIN
+photo_inputs` diffs shared files against each dependent photo. Derived, never replicated.
 
-`photo_sources` is the other half of that graph, written by the same triggers: one row per *photograph* a
-recipe composes, which is what a `panorama` or an `assembly` names. It answers which rows a listing must
-hide because a composite stands for them, and the reverse - which composite a photograph is a frame of.
-Only `composed_id` is a foreign key: replication carries rows in stamp order rather than dependency order,
-so a composite can reach a peer before its frames do, and requiring them to exist would reject it outright.
+The same triggers fill `photo_sources`, one row per *photograph* composed by
+`panorama` or `assembly`. It identifies hidden source rows and their composites.
+Only `composed_id` has a foreign key: stamp-ordered replication may deliver composites
+before their frames.
 
 **A kind this build does not recognise is never read as a shape it does recognise, and that has to hold for
 replication too.** Whether a row's own bytes might be missing (`isComposite`, `apply.ts`'s `composed()`) and
@@ -235,7 +235,9 @@ CREATE INDEX idx_album_photos_photo ON album_photos(photo_id);
 
 ### 4.6 Banner tables
 
-Both shoots and albums can designate a banner photo. A `banner_photo_id` column *on the shoots table* would create a `photos` ↔ `shoots` FK cycle (photos reference their shoot, the shoot references its banner photo). Instead, each banner association lives in its own join table that references the owner and the photo. This keeps full FK integrity on both sides while leaving the FK graph acyclic (nothing points back into `shoots` from `photos`' direction).
+Shoot and album banners use join tables. A `banner_photo_id` on shoots would create
+a `photos` ↔ `shoots` FK cycle; separate associations preserve full FK integrity
+without a reverse edge into `shoots` from `photos`.
 
 ```sql
 CREATE TABLE shoot_banners (
@@ -269,7 +271,8 @@ CREATE TABLE folder_rules (
 );
 ```
 
-The exceptions to what the two library settings (§4.1) say in general. Both are the user overruling a default about one folder, so they are one table with one primary key rather than two lists that could disagree about the same path.
+Per-folder exceptions to library defaults (§4.1), sharing one table/key so rules
+cannot disagree about a path.
 
 - **`excluded`**, the folder is not scanned, so nothing inside it is in the catalogue. Subtree-wide by construction: a folder that is never walked has no children to consider. This is the folder of rejects triaged years before the library existed, and the rest of the tree that is not photographs.
 - **`plain`**, the folder is scanned normally and its photos are in the library, but mirroring will not make it a shoot. Per-folder and **not** inherited: declaring `A` plain leaves `A/B` free to be a shoot, since "this folder is not a set of photographs" says nothing about what is filed beneath it.
@@ -293,37 +296,70 @@ A row present at startup means "stale within the lease", not "syncing": a crashe
 
 ### 4.9 Backups and restore
 
-The catalogue is the only copy of everything about the photographs that is not in the photographs: ratings, notes, verdicts, album membership, shoot assignments and stacks. A rescan brings back the files and none of that, so the database is backed up on a schedule of its own (`backup_every_days`, `backup_keep`, §15); daily, seven kept, both editable and `0` days turning it off. The margin gets thinner as edit state moves into the catalogue with no sidecar file on disk to fall back on, which is what this was built ahead of.
+The catalogue uniquely holds ratings, notes, verdicts, memberships, assignments,
+stacks and sidecar-free edits; rescanning recovers none of them. Backups have their
+own schedule (`backup_every_days`, `backup_keep`, §15): daily, seven retained, both
+editable; `0` days disables.
 
 **`VACUUM INTO`, not a file copy.** It reads a consistent snapshot inside a read transaction, so nothing has to be paused around it, and it writes one self-contained file; no `-wal` to be restored alongside it and no way to restore half a pair. The path is bound rather than interpolated.
 
-**Atomic by construction.** `VACUUM INTO` refuses an existing destination, so each run writes a dot-prefixed working file and renames it into place only once it has been verified. Rename is atomic: nothing that has ever appeared under a real backup name is a partial file, and a partial backup that looks whole is worse than no backup at all. Whatever goes wrong, a refusal, a full disk partway through, a dead thread, the caller removes the working file, which is the size of the catalogue and which nothing else would ever come looking for. A kill leaves no chance to run that cleanup, so each run also sweeps working files left by earlier ones before it starts; rotation cannot see them, being dot-prefixed, and nothing else names them. Only ones an hour old or more, though: the process that owns a working file is holding it open and writing to it, and a live `VACUUM INTO` does not pause for an hour, so sweeping on sight would delete a *concurrent* run's output from under it - which two servers on one catalogue, or an overlapping restart, will do to each other.
+**Atomic promotion.** `VACUUM INTO` refuses existing destinations. Write a dot-prefixed
+working file, verify, then atomically rename; real backup names never expose partials.
+The caller removes failed working files, including disk/thread failures. Each run also
+sweeps abandoned dot-files invisible to rotation, but only after an hour: live
+`VACUUM INTO` does not pause that long, and immediate cleanup could delete concurrent
+server/restart output.
 
-**On a thread of its own** (`backup_worker.ts`). The driver is synchronous and the main thread owns all DB writes (§10.2), so vacuuming from the server's connection would hold the event loop for the whole copy; seconds, on a large catalogue, of a server that answers nothing. The worker opens its own read-only connection; a read transaction blocks no writer. A run still in flight when the next is due is skipped rather than stacked.
+**Dedicated thread** (`backup_worker.ts`): synchronous vacuum on the main DB-writing
+thread (§10.2) would block requests for seconds. A separate read-only connection's
+transaction blocks no writer. Skip due runs while one remains in flight.
 
-Two ways a thread can fail to answer, and both have to be handled, because either leaves the promise unsettled, the in-flight flag latched, and every later run returning at that guard - a schedule that has silently stopped while still looking exactly like one that works. A thread that **exits** without reporting is caught by its `close` event. A thread that is **alive but wedged** - inside `VACUUM INTO` or `statfs` on a hung mount, which `/config` can be - emits no event at all, so there is also a deadline. Six hours: not a performance bound, since a snapshot of a huge catalogue is allowed to take as long as it takes, but a ceiling on how long a wedge can pass for work.
+Handle both silent worker failures so promises settle and schedules unlatch: unexpected
+exit via `close`, and a live wedge via a six-hour deadline. `VACUUM INTO` or `statfs`
+can hang on mounts such as `/config`; the deadline bounds hangs, not normal performance.
 
-Also on the "looks healthy" theme: a `readdir` that fails for any reason other than the directory not existing is raised rather than read as "no backups". Swallowing it would have the restore tool report an empty list during the one event this feature exists for. It is raised where the listing is actually needed, though - a restore given an explicit *path* never consults the directory, so a copy rescued from elsewhere is not refused because the backup directory happens to be unreadable.
+Raise `readdir` errors except nonexistent directories; never report unreadable backups
+as absent. Explicit-path restore needs no listing and remains usable when the backup
+directory is unreadable.
 
-**Verified before it counts.** The snapshot is reopened for `PRAGMA quick_check`, which is the only thing standing between a backup that was never readable and finding that out at restore time. The `user_version` comparison beside it is an invariant assertion rather than a check that can fail in practice - the expected value comes from the connection that just produced the file - and is kept because `VACUUM INTO` preserving `user_version` is the property the restore-side refusal rests on, so a SQLite that stopped doing it should be loud here rather than at a restore.
+**Verify before promotion:** reopen for `PRAGMA quick_check` and compare
+`user_version` with the producing connection. `VACUUM INTO` preserving `user_version`
+underpins restore version checks; fail at backup time if that invariant changes.
 
-Free space is checked against the *backup* directory, which can be a different volume from the database's and in the shipped container is. It is checked against **the larger of the main file and its `-wal`**, half again. Committed work sits in the WAL until a checkpoint moves it, and a long-lived reader - which this backup is - stops checkpoints advancing: measured, a 220KB main file beside a 56MB WAL vacuumed to 46MB, 200x what the main file alone suggested, so sizing on `stat(dbPath).size` was a guard that passes and then fills the disk. Their *sum* is the other error - a checkpoint-starved WAL is mostly rewrites of pages already in the main file, so 15.7MB beside 15.7MB still vacuums to 15.7MB, and demanding 47MB would refuse backups that had room.
+Check free space on the *backup volume*: **max(main file, `-wal`) × one and a half**.
+Long readers prevent checkpoint progress; a 220KB main plus 56MB WAL vacuumed to
+46MB, 200x `stat(dbPath).size`. Summing also overestimates rewritten pages:
+15.7MB plus 15.7MB vacuumed to 15.7MB, so demanding 47MB would reject usable space.
 
 **The WAL it inflates is bounded by `journal_size_limit`, not by a checkpoint.** A checkpoint rewinds the WAL to be overwritten from the start rather than shrinking it, so the file keeps the high-water mark of the worst burst the database has ever seen, for the life of that database. Under ordinary load that mark is just the autocheckpoint threshold: measured, 40MB written in small commits holds the WAL at 4.0MB, however long it goes on. What overshoots it is a long-lived *reader*, which pins the snapshot a checkpoint would have to move past; and this backup's read transaction is exactly one. With a reader held open across that same 40MB the WAL grows to somewhere between 49MB and 470MB and stays there, because every version of every page touched has to be kept while somebody may still read the old one. The spread is the point: the multiplier is set by commit *shape*, not by bytes written - measured 1.2x at 64KiB values per commit, 2.7x at 8KiB, 11.8x at 1KiB - so no single number characterises it and the bound cannot be reasoned about from write volume.
 
 So `connection.ts` sets `journal_size_limit` to 16MB, four times the autocheckpoint threshold: clear of anything normal operation reaches, low enough to reclaim a blowup like that. The alternative, a periodic `wal_checkpoint(TRUNCATE)` when the server looks idle, needs idle detection to be safe, because TRUNCATE waits out every reader and takes the write lock. The limit needs none: it is applied at the next WAL reset, so the space comes back once writing resumes and wraps, with nothing blocking.
 
-**Due by the age of the newest snapshot, not by a timer's own interval.** The orphan sweep can wait for its interval to come round, because a restart is not evidence that anything was orphaned. A backup cannot: a timer alone means a laptop shut each night, or a server restarted more often than the interval, reaches its first backup never. So an hourly check asks whether one is *due* - by the newest snapshot's age against `backup_every_days` - which also keeps a development reload from taking one every time.
+**Check newest snapshot age hourly against `backup_every_days`.** Timer-only
+scheduling can miss every backup on frequently restarted servers or nightly-shutdown
+laptops; age checks also avoid backing up on every development reload.
 
-A snapshot is dated by **the stamp in its own name**, read from the *end* of that name, not by its mtime. Anchoring matters: matching the stamp's shape anywhere takes the leftmost hit, so a catalogue whose own filename carries a stamp-shaped run - `<db>.pre-restore-<stamp>`, which this section's own restore writes, and a plausible thing to point `DB_PATH` at - would date every one of its snapshots to that fixed instant, leaving the schedule overdue on every check. The name is what this app wrote down when it took the snapshot, and it survives being copied, unzipped, downloaded or rsync'd without `-t` - every one of which rewrites mtimes, and every one of which is how a backup reaches the machine that has to restore it. Dating by mtime made `latest` hand back the *oldest* snapshot in a directory carried off a dead machine, which is the disaster-recovery path itself.
+Date snapshots by the **stamp at the end of their name**, not mtime. Unanchored
+matching could reuse a date in `<db>.pre-restore-<stamp>` when used as `DB_PATH`,
+making every backup overdue. Name stamps survive copying, unzipping, downloading and
+rsync without `-t`; modified mtimes made `latest` select the oldest rescued snapshot.
 
-A snapshot dated in the *future* is **ignored** for that question, rather than trusted or treated as due. Both alternatives are wrong and the second is worse. A clock that was ahead - a VM before NTP settles, a fileserver whose clock leads this one's - writes a snapshot whose name *and* mtime are both ahead, since both come from that clock. Trusted, it stalls backups for the length of the skew. Read as due, it stays newest by name for ever, so every hourly check finds itself due again: measured, a week of daily history rotated away in eight hourly ticks, every run logging a successful backup. Ignoring it does neither, because the snapshot taken now is datable and answers the question next time. For the same reason `latest` picks by date rather than by name, or `bun run restore latest` would hand back the oldest catalogue in the directory and report success.
+**Ignore future-dated snapshots when scheduling.** Clock skew affects names and mtimes:
+trusting it stalls backups; treating it as due triggers every hourly check. Measured:
+a week of daily history vanished in eight ticks, all reporting success. Ignore it so
+a current snapshot governs the next check. `latest` also selects by valid date rather
+than name, keeping `bun run restore latest` from reporting success with the oldest copy.
 
 That the check is hourly and fixed is not a detail: `setInterval` clamps a delay past its signed 32-bit range to 1ms, so scheduling on the interval directly would fire continuously from 25 days up. `backup_every_days: 30` would then rotate a week of history down to a few seconds of it, which is the exact opposite of what setting it asks for. Reading the interval instead of sleeping it removes the failure mode rather than bounding it. (`ScheduledPrune` still schedules on the interval directly and so still has the wrap; there the consequence is only wasted I/O, and it has no record of its last run to date itself against.)
 
-**Beside the database, in `backups/`.** Deliberately *not* under `DATA_DIR`, which is where everything else this app generates lives: that directory is disposable by design (§6) - removing a library takes its subtree, and a user is free to delete the lot by hand to reclaim space, both of which must cost only renders. A backup is the one generated file for which that is false, so it belongs beside the thing it is a copy of. In the container that is the difference between the `/config` volume and the `/data` one.
+**Keep backups beside the database in `backups/`**, never disposable `DATA_DIR`
+(§6). Library removal or manual data cleanup must cost only renders. Containers
+therefore keep backups on `/config`, not `/data`.
 
-Rotation keeps the newest `backup_keep` and deletes the rest. Names carry an ISO stamp, so the directory sorts chronologically and dating a snapshot needs no `stat` at all, and they are built from the database's **whole filename** matched against the stamp's shape - not from its stem against a prefix. Both halves are load-bearing for catalogues sharing a directory: on a stem, `photos.db` and `photos.sqlite` collide on one name outright; on a prefix, `photos.db` claims `photos-archive.db`'s snapshots, and since a letter sorts after a digit those are the *newest*, so rotation would delete every snapshot of the catalogue it was protecting and keep only the neighbour's.
+Keep newest `backup_keep`, delete the rest. ISO-stamped names need no `stat` for
+dating. Match the **whole database filename plus stamp shape**: stems collide for
+`photos.db` and `photos.sqlite`; prefixes let `photos.db` claim `photos-archive.db`
+backups, which sort newer and could displace all its own history.
 
 Three things rotation will not do, each of them a way to end up with no history at all:
 
@@ -332,9 +368,12 @@ Three things rotation will not do, each of them a way to end up with no history 
 - **Make a bogus date immortal.** Deletion is ordered oldest-first by *claimed age*, with an unreadable or future date counting as oldest rather than newest. Ordering by name instead leaves a future-stamped snapshot at the end of the list for ever, so rotation never reaches it while it still counts against `keep`: measured, seven of them collapse `backup_keep: 7` to "one snapshot, at most one interval old", with every run reporting a successful backup and a rotation.
 **A catalogue that has gone missing is refused at startup, not worked around in rotation** (`connection.ts`). "Missing" counts an *empty database* as none: SQLite reads a zero-byte file as one, and the placeholder a killed restore leaves behind to hold its lock is a valid 4096-byte one, so neither `existsSync` nor a size test sees the hazard - the next start builds the schema into it and calls it a catalogue. Unreadable or locked counts as present, since something that cannot be opened is not something to refuse over. Opening creates, which is right for a first run and dangerous for every run after it: anything leaving `DB_PATH` absent - a volume that failed to mount, a restore killed between its renames, a path edited by one character - otherwise produces a silent empty replacement that the app is perfectly happy with. Everything downstream of that is invisible: the user sees an empty library and re-adds their folder, a rescan writes into the replacement, and the rolling backup starts snapshotting *it*, rotating the real catalogue's history away within `backup_keep` runs. So a missing catalogue with snapshots sitting beside it is a refusal to start, naming `bun run restore latest`.
 
-This one is worth stating as a lesson rather than a rule. It was first caught *in rotation*, and so was first patched there - refusing to rotate on a snapshot with no libraries and smaller than the history it would displace. That guard was defeated by the very next thing a user does, which is re-add their library: one library, guard off, history gone. It also could not tell an empty catalogue from a small real one, both vacuuming to exactly 225280 bytes. Fixing it where it was noticed instead of where it was caused cost two rounds and a `libraries` count plumbed from the worker through the outcome type into rotation, all of which the startup check deleted.
+Rotation cannot detect this safely: re-adding a library defeats emptiness guards,
+and empty/small real catalogues both vacuum to 225280 bytes. A `libraries` count
+cannot replace the startup check; that attempted downstream fix cost two rounds.
 
-Rotation runs after the snapshot is safely in place and its failure is never the backup's: a snapshot that exists must not be reported as a failed backup because some *older* file would not delete. That goes to the log as its own line.
+Rotate after promotion. Log rotation failures separately; failure to delete an older
+file does not make the completed snapshot a failed backup.
 
 **Restore is offline** (`scripts/restore-backup.ts`, `bun run restore`), because the running server holds the file it replaces:
 
@@ -343,11 +382,13 @@ bun run restore                # list what there is
 bun run restore latest         # or a name exactly as that listing prints it
 ```
 
-`scripts/restore-backup.ts` is copied into the runtime image for this reason alone. Left out, the only supported deployment is the one deployment that cannot restore its own backups - and the backups are on a named volume inside that image's world, so the discovery happens during the outage that needs them.
+Include `scripts/restore-backup.ts` in the runtime image so the supported container
+deployment can restore backups on its named volume during an outage.
 
 #### Restoring by hand, and the one trap in it
 
-A snapshot is a plain self-contained SQLite file, so stopping the server and copying one into place obviously works, and people will do it that way. It does work - **as long as the sidecars go too**:
+A stopped server can be restored by copying a self-contained SQLite snapshot,
+**provided old sidecars are removed too**:
 
 ```bash
 docker compose stop bowerbird
@@ -356,13 +397,20 @@ cp backups/bowerbird.db-<stamp>.db bowerbird.db
 docker compose start bowerbird
 ```
 
-Deleting only the `.db` restores the wrong catalogue. Measured, with a killed server's 12KB `-wal` left beside a deleted 225KB catalogue: after copying the snapshot in, the server reads back **both** the snapshot's contents and the dead server's. The WAL header carries a magic number, a page size, a checkpoint sequence, two salts and two checksums - and **nothing identifying a database** - so SQLite cannot tell that WAL belongs to a different file and simply replays it over whatever it is found beside. Read-only opens replay it too, so nothing about how it is opened avoids this. The result opens, passes `quick_check`, is the right size, and is a mix of two catalogues.
+Replacing only `.db` can mix catalogues. A killed server's 12KB `-wal` beside a
+replaced 225KB catalogue replayed old contents into the snapshot. WAL headers contain
+magic, page size, checkpoint sequence, two salts and two checksums, but **no database
+identity**. Even read-only opens replay it; mixed results open at the expected size
+and pass `quick_check`.
 
 **This is now caught rather than silent.** SQLite offers no way to bind a WAL to a database, but the *pairing* is checkable: `VACUUM INTO` writes a rollback-journal file - every snapshot this app takes has read-version 1 in its header, where a live catalogue has 2 - and a database that has never been in WAL mode has never legitimately had a `-wal`. So a rollback-mode header beside a non-empty `-wal` means the two came from different databases, which is exactly the shape of this mistake. `createDatabase` refuses to start on it and names the two files to delete. It cannot false-positive: SQLite removes the `-wal` when a database leaves WAL mode, so the combination never arises legitimately.
 
-The refusal is a backstop, not a licence - it catches this particular pairing, not every way a hand-rolled restore can go wrong, and the tool remains the path that handles the sidecars for you.
+This refusal catches only that pairing; use the restore tool for complete sidecar handling.
 
-**Why not mark the snapshot instead**, giving it a distinct schema - renamed tables, an `application_id` - and recognising it after opening? Because the marker does not survive the thing it is meant to detect. Replay is at the *page* level and page 1 is the schema page, so the stale WAL overwrites the snapshot's schema along with everything else. Measured, with a marked snapshot copied in beside a 3.3MB stale WAL: the tables come back as the *old* catalogue's, 401 rows, marker gone, indistinguishable from an ordinary healthy catalogue. Anything written inside the file is destroyed by the event, so the check has to happen before SQLite opens the file at all - which is what confines it to reading bytes off disk. Auto-healing on detection is worse again: it would mean deleting a WAL whose contents belong to some other catalogue and may still be wanted, which is the move this whole section exists to prevent.
+**Schema markers cannot detect replay.** Renamed tables or `application_id` on page
+1 are overwritten by stale WAL pages. Measured beside a 3.3MB WAL: 401 old rows,
+old schema, marker gone, apparently healthy. Inspect bytes before SQLite opens.
+Do not auto-delete a detected WAL: another catalogue's contents may still be wanted.
 
 The check leans on `VACUUM INTO` emitting a rollback-journal file, which is observed rather than a documented guarantee. It fails *open* if that ever changes - no false refusals, just no protection - and the test asserting the refusal would go red, so it would not pass unnoticed.
 
@@ -370,9 +418,14 @@ What the tool does that a copy does not, worth knowing before choosing: it parks
 
 In the container the file is owned by uid 1000; a `cp` run as root on the host leaves a catalogue the server cannot write.
 
-A bare name is resolved against the backup directory rather than the shell's working directory, since following the tool's own output would otherwise fail with "no such backup" - and **only** there. It is deliberately not offered to the filesystem as a fallback: `photos.db-<stamp>.db` typed while standing in the backup directory would then resolve against the cwd and restore a *different* catalogue's snapshot over this one, which nothing downstream can catch, the file being intact and at a schema this build understands. A path (anything containing a separator) is still taken as a path, which is how a copy kept elsewhere is restored.
+Resolve bare names **only** against this catalogue's backup directory. Cwd fallback
+for `photos.db-<stamp>.db` could restore another catalogue's valid snapshot undetectably.
+Anything containing a separator is an explicit path, permitting copies kept elsewhere.
 
-The snapshot is put back with **`VACUUM INTO`, not a file copy** - the same reasoning as the backup side, and here it is load-bearing rather than tidy. A copy takes the main file alone, and a catalogue's committed work can be almost all of it in the `-wal`: measured, a 4KB main file beside a 1.8MB WAL holding all 300 rows, where the copy did not contain even the table. Both sources this is ever pointed at normally have a WAL beside them - a catalogue parked by an earlier restore, which keeps its sidecars by design, and a copy rescued from another machine - so copying would have made "undo the restore" and "restore from elsewhere" silently restore nothing.
+Restore through **`VACUUM INTO`**, not main-file copy, to include committed `-wal`
+work. Measured: a 4KB main beside a 1.8MB WAL held none of its 300 rows or even the
+table without the WAL. Parked catalogues and rescued copies may both need their WALs;
+copying alone could silently lose all restored work.
 
 It refuses a backup that is not there, one whose path is the catalogue itself, and the three below - and there is one thing it will not delete:
 
@@ -392,11 +445,18 @@ It refuses a backup that is not there, one whose path is the catalogue itself, a
 
   `movedAside` is reported only when the catalogue itself was parked. A lone `-wal` moved out of the way is not something to point anyone at as "the catalogue that was there" - the path would hold no such file.
 
-The snapshot is staged beside the catalogue and renamed in, rather than written over it: writing is not atomic, so a full disk partway through would otherwise leave a truncated file where the catalogue used to be, after the real one had already been moved away. **If any step after the first rename fails, the moves are put back**, because the alternative is a path with no catalogue at all and a real one parked under a name nothing has been told. The startup refusal above is the backstop for that state rather than the fix for it: better still not to create it. And if a move back *also* fails, the error says so and names where the files actually are, since "the restore was undone" when it was not is worse than the original failure.
+Stage beside the catalogue, then rename atomically; never overwrite with a potentially
+truncated write. **Undo moves after any post-first-rename failure.** If rollback also
+fails, report actual file locations rather than claiming recovery. Startup refusal is
+the final backstop for a missing catalogue.
 
-Also swept here: a `<db>.restoring-<stamp>` left by a restore killed between its vacuum and its rename, which is catalogue-sized and which nothing else names - the same litter the backup side already sweeps for itself, and on the same age rule, so a second restore started by an impatient user does not delete the first's staging file out from under it.
+Sweep abandoned `<db>.restoring-<stamp>` files under the same age rule as backup
+working files, preserving concurrent restores' staging files.
 
-A **symlinked `DB_PATH` is resolved first** - a chain of them, up to a bounded number of hops, since unwrapping only the first link writes the restored catalogue into the middle of the chain and leaves the real one live and orphaned - by `lstat` rather than by asking whether the path exists. A symlink there is a deliberate placement - the catalogue on the big volume, the link on the small one - and writing the restored file at the link's own path silently relocates the catalogue and orphans the real one where nothing will look again. Testing existence instead follows the link, so a **dangling** one reads as "no catalogue here" and gets exactly that treatment - and dangling is not the rare case, it is the volume that failed to mount and the catalogue somebody deleted, which are two of the three reasons anyone is here.
+**Resolve symlinked `DB_PATH` first**, following bounded chains with `lstat`, including
+**dangling** links. Replacing a link or only its first hop silently relocates the
+catalogue and orphans its intended target. Dangling links are common after mount
+failure or manual deletion; existence tests would miss them.
 
 The refusals are ordered so the backup is validated **before** the in-use probe, because that probe opens the catalogue read-write and so may checkpoint a stale `-wal` into it. Harmless in itself, and no data is lost either way, but a restore refused for a bad backup should not have touched the live catalogue at all.
 
@@ -435,7 +495,8 @@ A library's free-form tags, in the order the reader arranged them, and which pho
 
 ## 5. Schemas (Zod)
 
-All Zod schemas live under `src/schemas/`. They define the shape of request bodies, response bodies, and the domain entities themselves. They are imported by both API handlers (for request validation) and services (for return type safety).
+`src/schemas/` defines Zod request, response and domain shapes, shared by API
+validation and service return types.
 
 ### 5.1 `common.ts`
 
@@ -666,7 +727,9 @@ export const AlbumSchema = z.object({
 
 ## 6. Library Data Directory
 
-Generated files live **outside every library root**, under `DATA_DIR` (§15), one subdirectory per library keyed by its id. Nothing the app generates is written among the photographs, which is what lets a library be read-only (`docs/superpowers/specs/2026-08-06-readonly-library-design.md` §3) and what makes bulk storage a mount rather than a per-library setting.
+Generated files live **outside all library roots**, under `DATA_DIR` (§15) keyed
+by library id. This permits read-only libraries
+(`docs/superpowers/specs/2026-08-06-readonly-library-design.md` §3) and one bulk-storage mount.
 
 **Everything under it is disposable, and nothing under it is an original.** Removing a library removes its whole subtree (§10.6), and a user is free to delete it by hand to reclaim the space; both must cost only renders. That is why the Bin lives at the library root rather than in here (§12.3), why a `root_path` inside `DATA_DIR` (and a `DATA_DIR` inside a root) is refused in both directions at creation *and* at startup - `DATA_DIR` is an environment variable, so a catalogue that was valid yesterday can be started against one that now swallows a root - and why the removal itself refuses to run while any RAW is still inside.
 
@@ -713,4 +776,6 @@ function getBinPath(library: Library, relFolder = ''): string | null {
 
 The data directory needs no rule of its own: it is not under the root. A `<root>/.bowerbird` left by the layout that predates this is skipped by the hidden-directory rule and by nothing else, and is abandoned rather than swept - the sweep can no longer reach it.
 
-This leaves four rules that together answer "is this path part of this library": hidden directories, the library's bin (§12.3), its `include_subfolders` setting (§4.1) and its `excluded` folders (§4.7). They live together in `isInScope` (§9.1) rather than being restated by each caller, because the scan and the watcher answering it differently is not a visible failure - it is a folder that quietly still wakes syncs, or a sync queued for paths the scan will discard.
+Four shared `isInScope` rules (§9.1) govern scan and watcher: hidden directories,
+bin (§12.3), `include_subfolders` (§4.1) and `excluded` folders (§4.7). Duplicated
+rules would silently queue syncs for excluded paths.

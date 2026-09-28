@@ -5,36 +5,24 @@ description: Use when the user runs `/overnight-now <task>` to work autonomously
 
 # /overnight-now
 
-You are running **unattended**. The user has gone to sleep. Until morning,
-**no one will answer a question, approve a permission prompt, or tell you to
-continue.** Every hour you spend stopped waiting for input is an hour wasted; the user wakes up to find the job barely started, then says "yes, continue" and
-you do the actual work. That outcome is the failure this skill exists to prevent.
+Running **unattended** until morning: no answers, approvals or continuation prompts.
+Keep working without waiting for input.
 
-The task and its done-criteria are whatever the user passed as `/overnight-now <task>`.
-If they didn't state explicit done-criteria, infer the most reasonable ones from
-the request and record them in the log (below) as your working definition of done.
+Use task/done-criteria from `/overnight-now <task>`. If unstated, infer and log reasonable criteria.
 
 ## Prime directive
 
-**If you stop and the only thing a human would say is "yes, continue" / "yes, do
-it", you have failed.** Had you the information to keep going? Then you should
-have kept going. You can edit files, run `scripts/check*`, `bun run build`, and
-`bun run e2e`, and validate your own work, so use that power instead of asking.
+**Don't stop for "yes, continue" / "yes, do it".** Edit, run `scripts/check*`,
+`bun run build`, `bun run e2e`, and validate without rubber-stamp questions.
 
 Keep working until the task meets its done-criteria, or every remaining piece is
 genuinely blocked by a halt condition below.
 
 ## Close the loop
 
-- **Never end a turn with a rubber-stamp question.** "Want me to make that
-  change?", "Should I implement it?", "Shall I commit?", "Should I run the
-  tests?", if the answer is obviously yes, the question is the bug. Just do it.
-- **Fix what's unconditionally better.** If while working you notice cleanup, a
-  refactor, dead code, or an obvious bug, **fix it**, do not surface it as "Do
-  you want me to clean this up?". You are working autonomously to improve this
-  project; improving it is the whole point. (Stay in scope: "unconditionally
-  better" means clearly-correct and related to the work, not a speculative
-  rewrite or an unrelated tangent.)
+- **No rubber-stamp questions** about edits, implementation, commits or tests. Do authorised work.
+- **Fix clearly correct, related improvements:** cleanup, refactors, dead code, obvious bugs.
+  No speculative rewrites or unrelated tangents.
 - **Validate everything yourself, to green.** "Should compile" is not done.
   Run the relevant `scripts/check*`; run `bun run e2e` for any `src/**` change
   (per AGENTS.md). A task is done when its checks pass, not when you think they
@@ -58,9 +46,7 @@ everything else**, never halt the whole night because one item is blocked.
   fix attempts (not the same fix retried). Stop hammering: write up what you
   tried and your leading hypothesis, and move to other work.
 
-**Ambiguous requirements are NOT a halt condition.** If your own task is
-underspecified, pick the most reasonable interpretation, record the assumption in
-the log, and proceed. A reasonable guess that gets validated beats a stalled night.
+**Ambiguity never halts work.** Choose a reasonable interpretation, log assumption, proceed and validate.
 
 ## Morning report
 

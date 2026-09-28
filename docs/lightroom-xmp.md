@@ -17,15 +17,11 @@ One function plus a Zod schema and its tests. That is the entire deliverable.
 function parseXmp(xml: string): XmpSettings | null;
 ```
 
-Null means the input was not usable XMP at all (§9.4). It does not throw: this
-sits on a library-scan path where one unreadable file must not fail the scan, the
-same reason `exif_zone.ts` returns null rather than throwing.
+Null means unusable XMP (§9.4). Never throw: one unreadable sidecar must not fail library scan,
+matching `exif_zone.ts`.
 
-It does not touch the filesystem, LibRaw, or the database: callers hand it a string
-and get a struct. Mapping `XmpSettings` onto Bowerbird's own edit parameters is a
-separate piece of work and is **not** specified here; the two models are
-deliberately decoupled, because this one is dictated by an external format and ours
-is not.
+No filesystem, LibRaw or database access. Mapping `XmpSettings` to Bowerbird edits is separate,
+**out-of-scope** work; external format must not dictate internal edit model.
 
 ### 1.1 The boundary, and why it is here
 
@@ -33,12 +29,8 @@ is not.
 libraries, shoots, photos, albums, stacks and settings. A sidecar has nowhere to
 land today.
 
-That is the reason for the split, not an accident of it. A pure
-`string -> XmpSettings` function has no dependency on storage that doesn't exist,
-so it can be written, tested and finished now, against fixture strings alone. The
-alternative, waiting for the edit model, would either block this work or invent a
-storage shape to import into, and an external format is the worst possible thing to
-let dictate our own.
+Pure `string -> XmpSettings` can be completed against fixture strings without waiting for,
+or inventing, edit storage.
 
 **This deliverable owns:** XML/RDF parsing (§3), process-version gating (§4),
 parameter extraction with types, ranges and defaults (§5 to §8, §11), clamping and
@@ -63,10 +55,8 @@ is the struct.
   geometry, `alreadyApplied`, `legacy`
 - The edit model itself, and storing any of this
 
-Where a section below mentions one of those, it is naming what the struct must
-carry so the later work is possible, not assigning the behaviour here. The test for
-whether something belongs in this deliverable: **it can be asserted against an
-input string and nothing else.**
+References to later work specify data to retain, not behaviour to implement here.
+In-scope claims must be **assertable from an input string alone**.
 
 ### 1.2 Result shape
 
@@ -98,19 +88,14 @@ interface XmpSettings {
 }
 ```
 
-Every block is **non-optional and fully populated with defaults**, always, even
-when `hasSettings` is false. Absence of a tag is expressed as that tag's default,
-not as a missing block. `look` and `legacyTone` are the two exceptions, because
-"no look" and "no look data" are genuinely different from any default.
+Blocks are **required and default-populated**, even with `hasSettings` false. Missing tags
+use defaults; only `look` and `legacyTone` permit absent blocks.
 
-`legacyTone`, `unsupported` and `issues` are the fields most likely to be dropped
-as unnecessary. They are not. Each exists because a specific class of file would
-otherwise import wrong and say nothing about it.
+Keep `legacyTone`, `unsupported` and `issues`: each prevents silent import loss.
 
 ### 1.3 Field naming
 
-The tables below give **XMP tag names**, not struct field names. The mapping is a
-rule, not a table, so it cannot drift:
+Tables use **XMP tag names**. Derive struct fields by rule:
 
 > Field name is the lowerCamelCase of the tag's local name, with every occurrence
 > of `PV2012` or `2012` deleted, wherever in the name it appears.
@@ -149,11 +134,8 @@ it replaces:
 
 ### 1.4 Zod
 
-The Zod schema is the source of truth; the TypeScript types are `z.infer` of it.
-It is **not** a validation gate on input: §9 requires clamping and degradation, not
-rejection, so all coercion happens before the schema sees anything. The schema's
-job is to make the struct's shape unforgeable at the boundary and to give the later
-deliverable something to build against.
+Zod schema defines result shape; TypeScript uses `z.infer`. Coerce before validation:
+§9 requires clamping/degradation, not input rejection.
 
 It describes an internal struct, so it is camelCase and lives beside the parser,
 not in `src/schemas/` (which holds snake_case wire DTOs).
@@ -178,10 +160,8 @@ Only (1) matters for the first caller. (2) is cheap to add later and needs a new
 field on the header read, not a new parser, which is the point of taking a string
 rather than a path.
 
-One trap for that caller, recorded here so it isn't rediscovered: `IMG_1234.CR2`
-and `IMG_1234.JPG` in one folder both map to `IMG_1234.xmp`. The sidecar belongs to
-the raw, and it usually says so itself in `photoshop:SidecarForExtension` (§11),
-which is a more reliable answer than guessing.
+`IMG_1234.CR2` and `IMG_1234.JPG` both map to `IMG_1234.xmp`. Sidecar belongs to RAW;
+check `photoshop:SidecarForExtension` (§11) rather than guessing.
 
 ---
 
@@ -240,12 +220,8 @@ than the root.
 Compare URIs exactly, except that a missing or extra trailing `/` must not change
 the answer; some writers emit the crs URI without it.
 
-**No off-the-shelf XML parser does this for you.** The available option strips
-prefixes and keeps local names, which silently merges `crs:Contrast` with
-`tiff:Contrast`. Expect to walk the parsed tree accumulating `xmlns:*` declarations
-and rewriting each property to its URI-qualified name. This is the load-bearing
-rule of §3 and the one most likely to be skipped because a shortcut appears to
-work.
+Available XML parser strips prefixes, silently merging `crs:Contrast` with `tiff:Contrast`.
+Walk tree with inherited `xmlns:*` declarations; rewrite properties to URI-qualified names.
 
 Throughout this document, `crs:X` means "the property `X` in the crs URI", never
 "a property whose prefix is literally `crs`".
@@ -265,10 +241,8 @@ either of two forms, and both are valid:
 </rdf:Description>
 ```
 
-Lightroom writes scalars as attributes and structured values as elements, but other
-writers make different choices for the same data, and both forms turn up in real
-libraries. A parser that handles only the attribute form works on most files and
-fails on a meaningful minority. **Handle both, for every scalar.**
+Lightroom uses attributes for scalars, elements for structures; other writers differ.
+**Handle both forms for every scalar.**
 
 This is also why this must not be done with regex or string scanning.
 
@@ -292,10 +266,7 @@ Three RDF container types, all of which appear:
 
 Normalise all three to a JS array, preserving order for `Seq`.
 
-**The one-element trap:** a container holding a single `rdf:li` is returned by
-typical XML parsers as an object, not a one-element array. A one-keyword file then
-takes a different code path from a two-keyword file. Force array-ness explicitly
-rather than discovering this from a bug report.
+Force arrays even for one `rdf:li`; typical parsers otherwise return a scalar object.
 
 ### 3.5 Structures
 
@@ -351,10 +322,7 @@ into `NaN` and `crs:CameraProfile="2"` into a number.
 
 ## 4. Versions
 
-Two version tags. They look alike, they are both present, and they answer different
-questions. **Confusing them is the single most damaging mistake available in this
-format**, because the failure is silent and affects the most common file in any
-library.
+Two independent tags: rendering generation and writer build. Confusing them silently loses settings.
 
 ### 4.1 `crs:ProcessVersion`, the rendering generation
 
@@ -369,13 +337,9 @@ Determines which parameter set is authoritative.
 | `"11.0"` | 5 | Current set |
 | `"15.4"` and later | 6 | Current set |
 
-**The `*2012` parameter set begins at `6.6`, not at `11.0`.** Generation 3 is where
-`crs:Exposure2012` and friends were introduced, and it is by a wide margin the most
-common value in the wild: every file written between 2012 and the generation-5
-switch carries `6.6` or `6.7` alongside a full set of `*2012` tags. A gate placed
-at `11.0` classifies all of them as legacy and discards their tones. Generations 4,
-5 and 6 refine the rendering but do not rename the parameters, which is why one
-threshold covers all four.
+**`*2012` begins at `6.6`, not `11.0`.** Generation 3 introduced `crs:Exposure2012`;
+files from 2012 through generation-5 switch carry `6.6` or `6.7`. Gating at `11.0` discards
+their tones. Generations 4, 5 and 6 refine rendering without renaming parameters.
 
 **The gate is `>= 6.6`.** Parse as a dotted numeric version and compare
 componentwise, never lexicographically: `"15.4"` must sort above `"6.6"`, and a
@@ -418,10 +382,8 @@ Read the legacy tonal tags into `legacyTone`, set `legacy: true`, and **leave
 and 3; `crs:Brightness` and `crs:FillLight` have no current equivalent, and
 pretending otherwise produces a worse result than declining to.
 
-Deriving approximate current values from the legacy ones is a later decision for
-the layer that maps onto our edit params, which can weigh a bad approximation
-against no tones at all. It is not the parser's call, and `tone` must not be
-back-filled here, or that layer loses the ability to tell the two apart.
+Leave legacy approximation to edit mapping. Never back-fill `tone`; consumers must distinguish
+legacy data from current tones.
 
 | Tag | Type | Range | Default |
 |---|---|---|---|
@@ -472,12 +434,9 @@ never reject**, see §9.
 | `crs:IncrementalTemperature` | int | −100..+100 | 0 |
 | `crs:IncrementalTint` | int | −100..+100 | 0 |
 
-Temperature and Tint are the only two parameters whose default is null rather than
-a number. `crs:WhiteBalance = "As Shot"` means they may be absent, and the correct
-value is then the camera's own recorded neutral, which this layer cannot see (§1:
-no LibRaw). Null means "use as-shot"; the mapping layer resolves it. Substituting a
-fixed number here would silently white-balance every as-shot import identically and
-wrongly.
+Temperature/Tint default to null. With `crs:WhiteBalance = "As Shot"`, missing values mean
+camera-recorded neutral, unavailable here (§1). Mapping resolves null; fixed defaults would
+incorrectly give all as-shot imports identical white balance.
 
 Keep whatever is present regardless of the `crs:WhiteBalance` value, and null only
 on genuine absence. A named preset with the pair omitted is not an error.
@@ -541,11 +500,8 @@ separated by a comma and optional whitespace. **Parse each to `{x, y}` numbers**
 carry it as `{x, y}[]`, not as raw strings. Points are ordered by ascending x; a
 well-formed curve has at least two, the first at x=0 and the last at x=255.
 
-Numeric parsing is what makes the identity check possible: the identity curve is
-the two points `(0,0)` and `(255,255)`, and a file may write it explicitly rather
-than omitting the tag. A string comparison against `"0, 0"` misses the equally
-legal `"0,0"`, so compare numerically. Both spellings and an absent tag mean the
-same thing, and all three must produce the same struct.
+Identity is `(0,0)`, `(255,255)`. Compare numerically: `"0, 0"`, `"0,0"` and an absent
+tag must produce identical structs.
 
 A malformed point drops that point and records an issue; a curve left with fewer
 than two points falls back to identity.
@@ -606,11 +562,8 @@ a user toggling the conversion back expects their HSL values intact.
 | `crs:ColorNoiseReductionDetail` | int | 0..100 | 50 |
 | `crs:ColorNoiseReductionSmoothness` | int | 0..100 | 50 |
 
-**This block has the most non-zero defaults in the format, and getting them wrong
-fails silently.** `crs:ColorNoiseReduction` defaulting to 25 rather than 0 is the
-one that bites: a file with no detail block at all still means 25 units of colour
-noise reduction, and rendering it as 0 gives visibly speckled output with no error
-anywhere.
+Non-zero defaults matter: absent detail still means `crs:ColorNoiseReduction` 25, not 0.
+Using zero silently produces speckled output.
 
 **`crs:Sharpness`'s default is writer-dependent, and this is the one place §4.2's
 `crs:Version` is load-bearing.** It was raised from 25 to 40 at build `10.3`. So:
@@ -624,9 +577,7 @@ caller knows it is handling a rendered file, that is theirs to override.
 
 ### 5.7 Colour grading and split toning
 
-**These are one block sharing one storage, not two competing blocks.** Colour
-grading did not get a full set of new tags: it added midtone and global controls
-and reused the existing split-toning tags for shadows and highlights.
+One block: colour grading adds midtone/global controls and reuses split-toning shadow/highlight tags.
 
 | Tag | Type | Range | Default | Role |
 |---|---|---|---|---|
@@ -739,10 +690,8 @@ the legacy files §4.3 covers.
 
 ## 6. Geometry: crop, rotation, keystone
 
-**The section most likely to be implemented wrong, with errors that are visual
-rather than exceptional.** The parser's job is to carry these values faithfully and
-losslessly; the transform itself is downstream (§1.1), and §12.2 says which part of
-the verification can be closed here and which cannot.
+Carry geometry values losslessly; downstream applies transforms (§1.1).
+§12.2 separates parser verification from visual verification.
 
 ### 6.1 Orientation
 
@@ -846,14 +795,9 @@ and discarded rather than carried, and its name goes in `unsupported` like anyth
 else we decline, so "we saw it and chose to drop it" stays distinguishable from
 "we never looked".
 
-The consequence that matters: when `crs:PerspectiveUpright` is non-zero, the
-geometry was determined by an algorithm we cannot reproduce, and the manual sliders
-alone do not describe the result. Carry the mode value itself, so a consumer can
-tell "no automatic correction" from "an automatic correction we did not reproduce".
-Those two must not collapse into the same struct, or the difference is
-unrecoverable downstream and the result is a subtly wrong image with no indication
-anything was lost. What to do about it, warn, refuse, or render anyway, is the
-caller's (§1.1).
+Non-zero `crs:PerspectiveUpright` means unreproduced automatic geometry; manual sliders are
+insufficient. Preserve mode so consumers distinguish absent correction from lost correction
+and choose whether to warn, refuse or render (§1.1).
 
 ### 6.4 Composition order
 
@@ -970,11 +914,8 @@ well-formed and simply cannot be used here, like §6.2's non-zero `crs:CropUnits
 When False or absent, the file may hold only metadata: a rating, some keywords, no
 edit.
 
-**Populate every block with its defaults regardless** (§1.2). The parser has no way
-to express "no edit" other than this flag, and making a dozen blocks nullable to
-encode one bit would push the check into every consumer instead of one. What the
-flag means, and whether an all-defaults struct should be applied to a photo, is the
-caller's (§1.1).
+**Default-populate every block** (§1.2). Flag alone expresses "no edit"; caller decides
+whether to apply defaults (§1.1). Don't encode this bit as nullable blocks.
 
 `crs:AlreadyApplied`, a boolean meaning **the pixel data has already been rendered
 with these settings**. It appears on files written out of the editor. When True the
@@ -988,11 +929,8 @@ produced.
 Return null, only for: input that is not well-formed XML, or well-formed XML with
 no `rdf:RDF` element. Everything below that degrades per §9.1.
 
-Well-formedness needs an explicit check. Typical XML parsers are lenient by default
-and will happily return a partial tree for truncated input, which then reads as a
-file with almost every tag absent, which §9.1 turns into a confident set of
-defaults. That is the worst available outcome: a corrupt file importing silently as
-a neutral edit.
+Explicitly check XML well-formedness. Lenient partial trees turn truncated files into
+apparently absent tags and silently import corruption as neutral edits.
 
 ---
 
@@ -1033,15 +971,10 @@ carrying it is misread rather than partially read. It belongs in `unsupported` l
 the rest, but it is the one entry whose presence should make a consumer distrust
 the tone block rather than just note a missing feature.
 
-The names earn their place twice. They let a caller say *this photo's edit included
-four local adjustments that were not imported*, a correctness disclosure that
-cannot be made from an empty result. And aggregated across a library they say which
-tag to support next, which is better evidence than guessing.
+Names disclose lost edits, such as four local adjustments, and show which tags deserve support next.
 
-**The values do not.** The sidecar stays on disk next to the raw, so when masks are
-supported the answer is to re-read it. Carrying payloads we can't interpret buys a
-re-parse we can do anyway, at the cost of a blob whose schema Adobe controls and we
-don't, and it would have to be carried through every layer above this one.
+Discard opaque payloads; re-read the sidecar when support arrives. Carrying Adobe-controlled
+blobs through every layer adds storage without interpretation.
 
 Some of these hold machine-generated content that can't be reproduced from its
 parameters even once the feature is supported, which is a further reason not to
@@ -1108,10 +1041,8 @@ That corpus answers three questions no table can:
 - What values really appear, including out-of-range ones
 - Which properties co-occur, which is how the version gating in §4 gets validated
 
-**This is a research task, not part of the deliverable.** It needs real files;
-§1.1's deliverable needs only strings. Its output is fixture strings and confirmed
-numbers, which the deliverable then consumes. Keeping them separate is what lets
-the parser be finished before the corpus exists.
+Corpus research is separate from §1.1's parser deliverable. It supplies fixture strings and
+confirmed values; parser need not wait for the corpus.
 
 **If a `[V]` value cannot be confirmed, ship the tabulated one and leave the marker
 in place**, except in `legacyTone` (§4.3) where an unconfirmed non-zero default is
@@ -1220,8 +1151,5 @@ Unsupported:
   matching the output is not, and no amount of parser work changes that. Anywhere
   the two are confused, the parser gets blamed for a rendering gap.
 
-One consequence of §1.1 worth stating outright: **this work does not need the edit
-model to exist, and must not wait for it or presuppose its shape.** If implementing
-this seems to require an edits table, a photo id, or a storage call, the boundary
-has been crossed. The function takes a string and returns a struct; its tests are
-strings and structs. Nothing else.
+**Do not wait for or assume an edit model.** Edits tables, photo IDs and storage calls cross
+§1.1's boundary. Function and tests need only strings and structs.

@@ -2,22 +2,17 @@
 
 Against `docs/superpowers/specs/2026-09-12-viewport-scale-prepare-design.md`.
 
-Two parts. **Part A is backend prepare at one level**, which is what makes a panorama open in the
-editor at all. **Part B is the level ladder and the windowing** that turns one level into a
-viewport-scale pyramid, written up here because the review that produced Part A's scope is what
-makes Part B's cost knowable.
+**Part A: backend prepare at one level**, enough to open a panorama. **Part B: level ladder and
+windowing**, extending that level to a viewport-scale pyramid. The scope review estimates its cost.
 
-**Part A has landed.** It is kept below as the record of what it was and why, with the two places
-it ended up differing from this plan marked in §2.1 and §4.1. Part B is what is left.
+**Part A has landed.** This record marks its two deviations in §2.1 and §4.1. Part B remains.
 
 ## 0. Why the split, and what decided it
 
-The design's §5 and §6 describe a window of a canvas, fetched per viewport, cut into tiles, with
-the level chosen per tick. Reviewing that against the code turned up eleven places where
-**windowing** - not backend prepare - is the expensive and risky part.
+Design §5 and §6 fetch canvas windows per viewport, cut tiles, choose levels per tick. Code
+review found eleven costly, risky **windowing** constraints, independent of backend prepare.
 
-This is the review as it stood, and what the split was decided on; §8 says what each of these
-eleven turned out to cost and which of them are still open.
+This review determined the split; §8 records actual costs and remaining work for the eleven.
 
 1. **`base::Gather::window` hardcodes `scale: (1.0, 1.0)`** (`base.rs:1748`, and its doc says why:
    "a tile is read at the frame's own resolution"). The only other reduction is `view::Scale`,
@@ -59,25 +54,19 @@ eleven turned out to cost and which of them are still open.
     `displaySize(canvas, framingEdits(recipe))` (`photos_repository.ts:1492`), so a naive header
     frames the picture twice.
 
-**Every one of those is a windowing problem. None of them is a backend-prepare problem.** Prepare
-the whole canvas at one level and the frame the module holds *is* the photograph: the draw is the
-path it already takes (`window: None`), the pyramid is `base::pyramid_of` over it, the peak is
-measured once over the whole picture, `as_shot` and the levels and the match all come from a
-prepare that by definition covers the reference, there are no seams because there is one window,
-and the region keeps meaning exactly what it means today.
+**Whole-canvas backend prepare avoids all eleven.** The held frame *is* the photograph: existing
+draw (`window: None`), `base::pyramid_of`, one whole-picture peak, `as_shot`, levels and match
+from a prepare covering the reference. One window means no seams and unchanged region semantics.
 
 So Part A is the whole of the deliverable and about a quarter of the surface.
 
 Part B then adds the rungs above it, for a composite: a window of a finer level, fetched when the
 reader zooms past what they hold.
 
-**Which is also why the gate is narrower than the design's.** The design flips the default to
-backend prepare. It stays narrow while a *single file* has no levels: a 61MP one prepared at 4096
-is visibly softer at 100% than the full-sensor open the editor does today, so flipping would make
-the desktop app and the shell worse at the one thing they are best at. So the backend arm is taken
-only where the frontend one *cannot* run - a composite, a canvas over the area ceiling, or a device
-that cannot hold one - and the full flip waits on the gather merge (§8), which is what gives a
-single photograph a ladder of its own.
+**Keep the gate narrower than the design until single files have levels.** A 61MP file prepared
+at 4096 is softer at 100% than today's full-sensor open. Use backend only when frontend cannot
+run: composite, canvas over the area ceiling, or insufficient device capacity. Default backend
+waits for the gather merge (§8) and single-photo ladders.
 
 ## 1. Part A: Rust
 
@@ -86,9 +75,8 @@ single photograph a ladder of its own.
 Landed: `composition.rs`, committed as `feat(recipe): a single photograph is a recipe of one, and a
 canvas has levels`, with the round-trip, placement and level tests.
 
-`placement` is not read by Part A - nothing chooses a gather yet, because Part A does not merge the
-orchestrations. It is Part B's, and it is committed because the arithmetic it pins (a one-source
-recipe *is* the photograph) is what Part B's whole argument rests on.
+`placement` belongs to Part B; Part A neither chooses gathers nor merges orchestrations. It
+landed early to pin Part B's premise: a one-source recipe *is* the photograph.
 
 ### 1.2 The composite's own analysis, and its sharpen
 
@@ -116,10 +104,9 @@ camera's own JPEG.
 
 ### 1.3 One measure, not three
 
-`union_levels` (`composite_job.rs:451`) and `union_match` (`:486`) each call `stacked_sources`
-independently, and `union_match` decodes an embedded preview per source on top (`:492`). For 26
-frames that is three passes over the set where one would do. Hoisted to one `stacked_sources`
-whose result both read, which is also what makes the first open of a merged panorama affordable.
+`union_levels` (`composite_job.rs:451`) and `union_match` (`:486`) separately call `stacked_sources`;
+`union_match` also decodes each embedded preview (`:492`). For 26 frames, three set passes instead
+of one. Hoist one `stacked_sources` result for both to make first panorama opens affordable.
 
 ### 1.4 The prepare entry point
 
@@ -132,10 +119,9 @@ whose result both read, which is also what makes the first open of a merged pano
 pub fn prepared_bytes(recipe: &Recipe, sources: &[SourceFile<'_>], request: &CompositeRequest) -> Result<Framed, String>
 ```
 
-`Framed` is the wire form: the `Prepared` numbers as a serialisable struct plus the `u16` samples.
-`Prepared` itself cannot serialise - it derives nothing, `samples` would put the pixels in the
-header, and `reference_nits` is `pub(crate)` (`tile.rs:102-123`) - so `Framed` is a new struct
-naming the fields a client needs, and a test holds the two together.
+`Framed` carries serialisable `Prepared` metadata plus `u16` samples. `Prepared` derives no
+serialization, includes `samples` unsuitable for a header, and keeps `reference_nits`
+`pub(crate)` (`tile.rs:102-123`). Test-pin `Framed`'s client fields against it.
 
 The sharpen the composite wants runs here rather than at `Cut::from_base`, because a client gets
 no cut: `sharpen_into` over the coded canvas, with `deconvolve_split(capture_sigma, sensor_long,
@@ -168,10 +154,9 @@ pub unsafe extern "C" fn bb_prepare_picture(
 
 ### 1.6 The composite's analysis reaches disk
 
-`processing_worker.ts:133-137` returns from the panorama branch above the only
-`writePhotoAnalysis` call (`:142`), and `toCompositeCommand` reads analysis per *source* (`:123`)
-and never the composite's own. So no panorama has ever had an analysis row, and §1.2's numbers
-would be computed and dropped.
+The panorama branch returns at `processing_worker.ts:133-137` before `writePhotoAnalysis`
+(`:142`); `toCompositeCommand` reads only source analysis (`:123`). No panorama has an analysis
+row; without read/write plumbing, §1.2's measurements are dropped.
 
 - The panorama branch reads `readPhotoAnalysis(job.dataPath, job.photoId)` into the command and
   writes what comes back, as the rendition branch does.
@@ -217,14 +202,12 @@ Everything that moves the prepared samples, which is more than the filters:
 | a hash of the recipe | a re-align is a different picture |
 | a hash of each source's analysis blob | the lens the gather uses and the spots the dust corrects come out of it, and an open before the analysis was written prepared without either |
 
-The last two are what a settings change or a first-open measure would otherwise serve stale from a
-URL cache. `tileRevision()` (`raw_edit_presenter.ts:771`) is the same hash one layer up and
-becomes a shared function rather than a second spelling.
+The last two prevent stale URL-cache responses after settings changes or first-open measures.
+Share `tileRevision()` (`raw_edit_presenter.ts:771`), which computes this hash one layer up.
 
 ### 2.3 It runs off the API thread
 
-A prepare is seconds of `bun:ffi`, and `ImageApi` is on the API thread. It goes through a worker,
-and three things about the existing one have to change:
+Prepare takes seconds in `bun:ffi`; run it off `ImageApi`'s API thread. Three worker changes:
 
 - `ensureOutputDirs` moves below the kind check, since a prepare job has no targets
   (`processing_worker.ts:32,132`).
@@ -285,14 +268,12 @@ the device is mobile (`matchMedia('(pointer: coarse)')`, or `navigator.deviceMem
 defined). A tab and the shell are treated alike, because Part A's one level would make both softer
 than they are today (§0).
 
-**The recipe rather than a canvas, which this planned as a size, and the reason is not size at
-all**: the local arm downloads the photograph's own bytes, and a recipe over several others has
-none. A six-view pan of 1280x800 frames composes about five megapixels, nowhere near the ceiling,
-and had nothing to download - the end-to-end run is what said so.
+**Gate on recipe, not planned canvas size:** local prepare downloads the photograph's bytes;
+composites have none. E2e exposed a six-view 1280x800 pan, about five megapixels, below the
+ceiling with nothing to download.
 
-**And the presenter fetches the recipe itself rather than the page handing one down.** The page's
-copy arrives from a parallel effect, so a first open read `null` and answered "an ordinary
-photograph"; awaited alongside the document the open already waits for, it cannot.
+**The presenter fetches the recipe itself.** The page's parallel effect let first opens read
+`null` as an ordinary photograph. Awaiting the recipe alongside the document removes that race.
 
 `matchMedia` is only a React hook today (`device.ts:26-28`); the presenter needs a plain function
 beside it. `navigator.deviceMemory` needs a `declare global`, not being in `lib.dom.d.ts`. The
@@ -362,14 +343,12 @@ already does.
 - `raw_edit_presenter`: a backend open reaches `holdPicture` and never `downloadedRaw`; a
   frontend open still does the reverse; a grade slider on a backend open ticks without a fetch.
 
-`bun run test:bench` after the sharpen moves, since a stage's cost is a thing this repo promises
-about. Expected to move: nothing for a single file, because Part A does not touch that path; the
-panorama rows are not in the budget today.
+Run `bun run test:bench` after moving sharpen. Single-file cost should stay fixed: Part A does
+not touch that path. Panorama rows are absent from today's budget.
 
-Playwright, once, at the end: `web/e2e/editor/panorama.spec.ts`, its own library root. Open a
-panorama in the editor and assert a frame arrived on the GPU the way `grades on the GPU` does -
-the adapter's name and the stage's dimensions, and no pixel, because "that a frame *arrived*, not
-what it looks like" is the rule (CLAUDE.md).
+Run Playwright once at the end: `web/e2e/editor/panorama.spec.ts`, own library root. Open a panorama,
+assert adapter name and stage dimensions as `grades on the GPU` does. Assert arrival, not pixels
+(CLAUDE.md).
 
 ## 6. Part A: the fixture panorama
 
@@ -418,9 +397,8 @@ Beyond the suites §5 names, three things hold the two hosts together:
 
 ## 8. Part B: the level ladder
 
-Landed for a composite, which is the recipe kind that has levels at all. A reader opens on the
-coarsest whole level and, past what that resolves, is served the window of a finer one - down to
-level 0, the canvas's own pixels.
+Landed for composites, the only recipe with levels. Open at coarsest whole level; zoom fetches
+finer windows down to level 0, the canvas's own pixels.
 
 What it took, against §0's findings:
 

@@ -1,9 +1,8 @@
 # Ratio Corrected Demosaicing (RCD), functional specification
 
-A complete description of the RCD Bayer demosaicing algorithm (Luis Sanz Rodríguez, release 2.3),
-written so it can be implemented from scratch. Everything here is stated as mathematics; nothing
-about how any existing implementation is organised is normative. Performance-only concerns are in
-`rcd-optimisation-notes.md` and may be ignored entirely without changing the result.
+RCD Bayer demosaicing (Luis Sanz Rodríguez, release 2.3), specified mathematically for independent
+implementation. Existing code organisation is not normative. Performance-only choices:
+`rcd-optimisation-notes.md`.
 
 ---
 
@@ -95,7 +94,7 @@ The reverse scaling by `whitelevel` is applied to all three output planes at the
 
 ## 3. The directional energy statistic
 
-This is the part of RCD that is not shared with its ancestors, so it is worth stating carefully.
+RCD's distinctive direction statistic follows.
 
 ### 3.1 The kernel
 
@@ -138,12 +137,9 @@ Consequences, all of which are the point of the design:
 - Each half of the kernel additionally annihilates a linear ramp: `Σ offset·weight = 0` holds over
   the even offsets (`0·6 + 2·(−3) + (−2)·(−3) = 0`) and trivially over the odd offsets by symmetry.
 
-Lateral chromatic aberration displaces one channel relative to the other; over a small window its
-effect on a locally smooth region is precisely a per-channel offset and slope. The statistic is
-blind to all of that, and responds only to genuine structure, which is what a direction decision
-should depend on. A naive alternative such as "sum of absolute differences between neighbours"
-responds strongly to the channel-to-channel step and will happily pick a direction because of the
-lens, not the scene.
+Local lateral chromatic aberration acts as per-channel offset/slope, both rejected by this
+statistic. Neighbour absolute differences instead respond to channel steps, biasing direction
+by lens effects rather than scene structure.
 
 The response can equally be read as `3 ×` (second difference of the centre channel at spacing 2)
 minus (second difference of the other channel), i.e. a colour-difference high-pass evaluated
@@ -175,9 +171,7 @@ where `s_d` is the step vector for `d`. Concretely:
 - `E_P(r,c)` sums squared main-diagonal responses centred at `(r−1,c−1)`, `(r,c)`, `(r+1,c+1)`.
 - `E_Q(r,c)` sums squared anti-diagonal responses centred at `(r−1,c+1)`, `(r,c)`, `(r+1,c−1)`.
 
-The `ε²` floor exists so the ratio in §3.4 is defined on a perfectly flat patch, where every
-response is exactly zero. With both energies at the floor the ratio evaluates to exactly 0.5, i.e.
-"no preference", which is the correct answer there.
+`ε²` keeps §3.4 defined on flat patches: both floored energies yield 0.5, no preference.
 
 The support of `E_V` and `E_H` is 9 samples along the direction (offsets −4 … +4); likewise for the
 diagonals along their axis.
@@ -240,11 +234,8 @@ and then selects **whichever of the central value and the neighbourhood mean is 
 t* = if |0.5 − t(r,c)| < |0.5 − t̄(r,c)|  then  t̄(r,c)  else  t(r,c)
 ```
 
-Read plainly: distance from 0.5 is decisiveness, and the rule keeps the more decisive of the two
-opinions. Where the local statistic is ambivalent but the surrounding four agree on a direction, the
-neighbourhood carries the decision; where the centre is confident it is never diluted. This is what
-keeps thin, consistently-oriented structure from being averaged into mush by a locally weak
-statistic, and it is applied identically in stages C, E and F.
+Distance from 0.5 measures decisiveness. Use neighbourhood agreement when stronger; never dilute
+a confident centre. This preserves thin directional structure, identically in stages C, E and F.
 
 `t*` should be clamped to `[0, 1]` before use. It cannot leave that range given exact arithmetic on
 well-formed fields, but it can if the field has been zero-filled outside its valid region (§10), and
@@ -271,10 +262,8 @@ A single 3×3 convolution applied directly to the mosaic, with the binomial kern
 - At a **green** site: centre green (4/16) plus four green corners (4/16), two edge neighbours red
   (4/16) and two blue (4/16) → `L = ¼·R + ½·G + ¼·B`.
 
-The same fixed achromatic combination at *every* phase. That is the whole trick: convolving the raw
-mosaic with this one kernel yields a single-plane image with no residual CFA modulation and no
-red-versus-blue bias, obtained without demosaicing anything. It is softer than the input but
-essentially artefact-free, which is what makes it safe to divide by.
+Every phase yields the same achromatic combination without demosaicing: softer than input,
+free of residual CFA modulation and red/blue bias, suitable for division.
 
 Only the values at red and blue sites are ever read (§5), so it need only be evaluated there.
 
@@ -312,9 +301,8 @@ empirically tuned; treat them as fixed constants of the algorithm.
 
 ### 5.2 Ratio-corrected directional estimates
 
-This is the "ratio corrected" step. For each of the four cardinal directions, take the adjacent
-green *sample* and rescale it by the ratio of the low-pass value at the centre to the mean of the
-low-pass values at the centre and at the same-colour site two pixels away in that direction:
+Per cardinal direction, rescale adjacent green sample by centre low-pass divided by the mean
+of centre and same-colour low-pass two pixels away:
 
 ```
 e_N = M(−1,0) · ( 2·L(0,0) ) / ( L(0,0) + L(−2,0) + ε )
@@ -340,11 +328,9 @@ Hamilton–Adams:  e = G(0,+1) + ( M(0,0) − M(0,+2) ) / 2
 RCD:             e = G(0,+1) · ( 1 + (L(0,0) − L(0,+2)) / (L(0,0) + L(0,+2)) )
 ```
 
-Two changes at once: the additive correction becomes multiplicative, and the quantity driving the
-correction moves from the raw same-colour samples to the smooth achromatic image. The first bounds
-the excursion, the correction factor is confined to `(0, 2)` for non-negative inputs, so the
-estimate can never change sign or run away, and the second removes the chroma noise and the CFA
-modulation that make the raw difference erratic on edges.
+Multiplicative correction bounds the factor to `(0, 2)` for non-negative inputs, preventing
+sign changes or runaway estimates. Smooth achromatic inputs remove chroma noise and CFA
+modulation that destabilise raw differences at edges.
 
 The `ε` sits in the denominator only. Some implementations instead use `(2·L(0,0) + ε)` in the
 numerator, which is the exact algebraic expansion of the ratio form; the difference is one part in
@@ -416,10 +402,8 @@ e_Q = ( g_NE·d_SW + g_SW·d_NE ) / ( g_NE + g_SW )
 C₀(r,c) = G(r,c) + (1 − t*)·e_P + t*·e_Q
 ```
 
-Note this half of the algorithm is a **difference** method, not a ratio method: the ratio treatment
-is applied to luminance (green) only, where overshoot is visible as a fringe. Chroma is
-reconstructed as the interpolated colour difference added back to the reconstructed green, which is
-the standard construction and is what keeps chroma locked to luminance detail.
+Only green uses ratio correction to limit fringes. Chroma adds interpolated colour differences
+to reconstructed green, retaining alignment with luminance detail.
 
 Optionally clamp to `[0, 1]`, as in §5.3.
 
@@ -427,12 +411,9 @@ Optionally clamp to `[0, 1]`, as in §5.3.
 
 ## 7. Stage F, red and blue at green sites
 
-Evaluated at every green site, for both `C₀ ∈ {red, blue}` in turn. At a green site one of red/blue
-was sampled directly at the two vertical neighbours and the other at the two horizontal neighbours;
-the other four of those eight values were filled in by stage E. Because of that, **stage F must not
-start until stage E has finished**. The formula below is phase-agnostic, the same expression serves
-both channels and both green phases, precisely because E has already made every red/blue site carry
-both chroma channels.
+Evaluate both `C₀ ∈ {red, blue}` at every green site. Vertical neighbours supply one sampled
+chroma, horizontal neighbours the other; stage E supplies the other four of eight values.
+**Finish E before F.** With both channels at every red/blue site, one formula serves both green phases.
 
 ### 7.1 Cardinal gradients
 
@@ -569,10 +550,8 @@ biases the direction decision exactly where there is least evidence.
 | Stage outputs (§5.3, §6.2, §7.2) | clamp to `[0, 1]` | optional, see notes |
 | Final output (§8) | clamp below | 0 |
 
-There is no other division anywhere. Every denominator in the algorithm is either a sum of two
-gradients (each ≥ `ε`, so ≥ `2ε`), a sum of two floored energies (≥ `2ε²`), or the low-pass sum
-(≥ `ε` given non-negative input). None can reach zero, so no branch on a zero denominator is needed
-and none should be added; a conditional there is dead code that only obscures the invariant.
+All denominators are positive: two gradients (each ≥ `ε`, sum ≥ `2ε`), two floored energies
+(≥ `2ε²`), or low-pass sum (≥ `ε` with non-negative input). Never add zero-denominator branches.
 
 ---
 
@@ -591,9 +570,7 @@ D ─┘      └──────→ ┘
 - E requires C and D.
 - F requires E (§7) and C, and re-reads A.
 
-Within a stage every output pixel is independent of every other output pixel of that stage, so each
-stage is a pure map over its site set, trivially parallel, and safe to express as one dispatch per
-stage. No stage writes a location another pixel of the same stage reads.
+Each stage is a parallel map: no output writes another pixel's input. One dispatch per stage is safe.
 
 ---
 

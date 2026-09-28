@@ -8,7 +8,7 @@ section the index in `DESIGN.md` maps §N to.
 
 ## 8. Services
 
-**Deletion never touches folders on disk.** Deleting any entity (library, shoot, album) removes only DB records; it never deletes or moves files or directories. Photo files stay exactly where they are on disk. (The one *deletion* operation that *does* move a file is soft-deleting a *photo*, §12, which relocates the RAW into a Bin; shoot photo add/remove/rename also move files, §8.5, but those are not deletions.) This keeps deletes cheap and non-destructive, and means a re-sync after a mistaken delete re-imports the photos rather than losing them. The two places an original does leave this disk are neither of them a delete: removing a local copy a device holds (docs/replication.md §7.6) and the ceiling that does the same against a backup folder (§14.5), both of which prove another copy exists at the moment they unlink.
+**Entity deletion never touches folders on disk.** Deleting libraries, shoots or albums removes DB records only; re-sync can re-import photos after mistakes. Exceptions involving movement: photo soft-delete moves RAWs to Bin (§12), and shoot photo add/remove/rename move files (§8.5). Originals leave disk only through local-copy removal (docs/replication.md §7.6) or backup-folder ceilings (§14.5), both proving another copy exists when unlinking.
 
 ### 8.1 Libraries Service (`libraries_service.ts`)
 
@@ -45,7 +45,7 @@ section the index in `DESIGN.md` maps §N to.
 
 **Constructor dependencies:** `PhotoScanRepository`, `PhotoPathsRepository`, `PhotoMetadataRepository`, `PhotoProcessingRepository`, `LibrariesRepository`, `AlbumsRepository`, `ShootsRepository`, `ProcessingService` (`ShootsRepository` is needed to reconcile `shoot_id` from a file's path against known shoot `folder_path`s, §9.4).
 
-This service handles the full scan algorithm. See §9 for the detailed algorithm.
+Full scan algorithm: §9.
 
 **Methods:**
 
@@ -163,9 +163,9 @@ All endpoints return JSON. Error responses use a standard envelope:
 | `POST` | `/api/photos/models` | Every body/lens pairing a collection holds, for the filter panel's two lists (§18.3.1) |
 | `POST` | `/api/photos/days` | Every day a collection holds photographs on, and how many, for the calendar's density dots (§18.3.1) |
 
-**Every bulk route takes the same two body shapes** (`PhotoTargetSchema`): `{ photo_ids: string[] }`, capped at a thousand, or `{ selection }`; a collection, the filters it was viewed under, and runs of positions in it (§18.3.3). The second exists because a client holds only a window of a large collection and can never have the ids for the rest: the server reads them off the same filtered, collection-ordered listing the grid was built from, so acting on a hundred thousand photos is one small request. A selection states no ordering; the collection owns that (§18.3.1), and a client naming one could describe an order the selection was never made in.
+**Bulk routes share two body shapes** (`PhotoTargetSchema`): `{ photo_ids: string[] }`, capped at a thousand, or `{ selection }`, naming collection, filters and position runs (§18.3.3). Clients hold only a window; the server resolves the rest from the grid's filtered, collection-ordered listing, allowing a hundred thousand photos in one small request. Selection carries no ordering: the collection owns it (§18.3.1).
 
-**The whole selection resolves in one pass**, numbering the rows once (`ROW_NUMBER() OVER (ORDER BY …)`, bounded by the last run's end) and reading every run out of that numbering. The obvious shape - one `LIMIT/OFFSET` query per run - is quadratic in disguise: a run costs the same whatever its length, but each query re-sorts the collection, so five hundred scattered picks meant five hundred sorts. Measured at a million photos: **433 seconds for five hundred single-photo runs, against 0.28 seconds** for the same request resolved in one pass. `ranges` is capped at ten thousand entries, which bounds the body; it is this that bounds the work.
+**Resolve selections in one pass** using `ROW_NUMBER() OVER (ORDER BY …)`, bounded by the last run's end. Per-run `LIMIT/OFFSET` repeatedly sorts the collection: at a million photos, five hundred single-photo runs cost **433 seconds versus 0.28 seconds** in one pass. The ten-thousand-entry `ranges` cap bounds request size; one-pass resolution bounds work.
 
 Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 - `offset` (int, default 0)
@@ -187,9 +187,9 @@ Query parameters for listing (`PhotoListQuerySchema`, §5.3):
 
 The same schema serves the library, shoot and album listings, so a filter behaves identically wherever the user is.
 
-`rated` is a "has any rating" test rather than an equality one, because the question during a cull is "what have I not judged yet".
+`rated` tests any rating, supporting culling's "not yet judged" filter.
 
-`match` selects how `rated`, `triage`, `is_missing` and `is_hidden` combine. `all` intersects them; `any` unions them, which is what a "show me anything still needing attention" filter means; as an intersection, "picks and unrated and missing" is almost always empty. It applies only to those four: scope (soft-delete, `no_shoot`, `q`, the date range, the two model lists, the labels) always intersects, so narrowing by filename, date or body still narrows a union.
+`match` combines `rated`, `triage`, `is_missing` and `is_hidden`: `all` intersects, `any` unions. Scope always intersects: soft-delete, `no_shoot`, `q`, dates, model lists and labels still narrow a union.
 
 The model lists union within themselves and intersect across: two bodies is either of them, a body and a lens is that lens on that body. They filter on the `camera_model` / `lens_model` columns the import read off the RAW header (§11.1), so a photograph the camera told nothing about is in neither list and matches neither filter.
 
@@ -243,23 +243,23 @@ All boolean query params are parsed with `z.stringbool()`, so `?is_missing=false
 
 **Dynamic range is not in the URL.** The library decides it, so a client naming `full-hdr` would be guessing at a file that may never have been built; the route resolves it from `rendition_hdr` instead, and `PhotoDetail.renditions` tells the client what it is looking at.
 
-**One download route rather than four**, because the menu offering them is one list and only the bytes differ: the RAW streams from disk, the camera's JPEG is lifted out of it, and `full` / `max` come from the stored AVIF. Nothing here is stored - extraction is a header read plus a copy, a download is occasional, and a JPEG per rendition on disk would cost more than either does.
+**One download route serves all forms:** RAW streams from disk, camera JPEG is extracted, `full` / `max` use stored AVIF. Download derivatives are not cached; occasional header reads/copies cost less than storing JPEGs per rendition.
 
-**The rendered forms are transcoded to JPEG only where the library is SDR.** JPEG cannot carry PQ, so transcoding an HDR rendition would hand back an SDR tone-map of the picture that was on screen and name it the same render - the one thing a download of what you are looking at must not do. An HDR library's `full` / `max` therefore stream the AVIF itself, which is the format the viewer displayed and the only one here that carries HDR (§10.1). `full` and `max` must already be built: building one is the viewer's own request (`POST /api/photos/:id/renditions/:r`), and a download that silently took minutes would look like a hung browser, so the client builds first and then navigates.
+**Transcode rendered downloads to JPEG only for SDR libraries.** JPEG cannot carry PQ; HDR `full` / `max` stream the displayed AVIF unchanged (§10.1). `full` and `max` must already exist: the client requests builds through `POST /api/photos/:id/renditions/:r` before navigating, avoiding downloads that appear hung for minutes.
 
-**A share is the one place an HDR rendition is transcoded anyway, and a gain map is why it can be.** A share sheet hands the file to an application nobody here chose, so what goes over is a JPEG: eight-bit and ordinary for everything, with the range in a gain map beside it for the readers of either spelling (§10.5.1). The base is not a second render of the photograph - it is the rendition itself read back as a finished picture and rolled into diffuse white through the same BT.2390 roll-off an SDR rendition takes (`ProcessingService.renderSdrRoll`), which is a dispatch over pixels already decoded rather than the decode, the fit and the demosaic a render pays. Which rendition is in the URL because only the client knows which one is on screen, and nothing is stored: the roll goes to a scratch directory and the JPEG is made again for the next share, so the response is `Cache-Control: no-store`.
+**Shares transcode HDR to gain-map JPEG** for unknown receiving apps: ordinary eight-bit base plus range in both supported gain-map spellings (§10.5.1). `ProcessingService.renderSdrRoll` reads the finished rendition and applies SDR's BT.2390 diffuse-white roll-off, dispatching decoded pixels without another decode, fit or demosaic. The client names the displayed rendition in the URL. Scratch output is regenerated per share and served `Cache-Control: no-store`.
 
 The RAW download goes through the same file path as the renditions rather than being buffered, so a client can seek inside a 25MB original (`Accept-Ranges`, 206 partial content).
 
-**Caching.** Renditions are rebuilt in place under a stable URL, so every image response carries an `ETag` (file size + mtime) and `Cache-Control: no-cache`. Without a validator the browser caches heuristically with nothing to revalidate against, and keeps showing the pre-rebuild picture; `no-cache` still caches, it just always asks first, which is a 304 in the common case. `If-None-Match` is answered directly.
+**Caching.** Stable URLs serve rebuilt renditions, so responses carry `ETag` (size + mtime) and `Cache-Control: no-cache`. `no-cache` permits caching but requires revalidation, usually 304; answer `If-None-Match` directly to prevent stale heuristic caching.
 
-The camera's JPEG has no file of its own to stat, being lifted out of the RAW per request, so its validator comes off the RAW - the file those bytes are part of, which is stated exactly when they change. Answered ahead of the extraction, so a 304 costs neither the transfer nor the read. **This is the route where the validator does the most work**, because it is the one a reader steps back and forth across: an element that unmounts drops the decoded copy, and until this carried an ETag every remount whose copy had fallen out of the browser's in-memory cache pulled several megabytes again for bytes that had not changed.
+The extracted camera JPEG uses the RAW's validator, checked before extraction so 304 avoids both read and transfer. This matters especially when stepping back and forth: unmounts discard decoded copies, and uncached remounts would otherwise transfer several unchanged megabytes.
 
-That covers everything that *asks*, which is every fresh page load. But an `<img>` whose `src` attribute has not changed never asks at all, so a rebuild is invisible to the copy already decoded in a live page; and a fresh element with the same `src` is handed that copy without revalidating, so remounting does not ask either. Every *built* image URL therefore carries a version (§18.6): the stamp of whatever produces its bytes - `tile_built_at` for the grid, `renditions_built_at` for the viewer's two. Stamped by whatever wrote the file and delivered on the row, so it is right from the first render, identical in every client, stable across reloads, and moves only when its own file did. Two URLs, two cache entries; the ETag then keeps each of them honest.
+A live `<img>` with unchanged `src` never asks; a remounted element may reuse the same `src` decoded copy without validation. Built URLs therefore include producer stamps (§18.6): `tile_built_at` for grid, `renditions_built_at` for viewer renditions. Written with the file and returned on rows, stamps agree across clients/reloads and change only with their file. Distinct URLs get distinct cache entries, each validated by ETag.
 
 **The camera's JPEG is not versioned**, which is what makes it the exception: nothing builds it, so nothing can rewrite it under a URL a live page is already holding, and the case a version exists for cannot arise. A RAW replaced on disk is caught by the ETag the next time something mounts the URL, rather than at once - an `<img>` already holding the old bytes goes on holding them until it is remounted or the page reloaded, which is what the RAW download route has always accepted too.
 
-**A stamped URL stays `no-cache` rather than becoming `immutable`**, though the stamp reads like exactly the promise `immutable` describes. It is not one: the stamp moves when a rendition is *rebuilt*, and says nothing about it being *deleted*. Generated files are outside every library root and disposable by design (§3) - the pruner takes them, and so does a user clearing `data/` - and what heals that is the viewer asking for the frame, getting a 404 and building it back (§10.2). Cached for a year on the strength of a stamp, the client shows the copy it already has, never asks, and the file stays gone. A conditional request per remount is what that self-healing costs.
+**Stamped URLs remain `no-cache`, not `immutable`.** A stamp records rebuilds, not deletions; `immutable` would hide missing disposable files (§3). Pruning or clearing `data/` is repaired when the viewer gets 404 and rebuilds (§10.2). Conditional requests on remount preserve that repair path; year-long caching would not.
 
 These endpoints:
 - Resolve the file path from the photo record and library configuration.
@@ -301,7 +301,7 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
 | `POST` | `/api/updates/apply` | Download the payload for this platform, check it, unpack it, and exit for the desktop app to hand itself to the updater (§23.3). Answers `202` first: the reply is the last thing this server does on the old version |
 | `GET` | `/api/browse` | Directories inside `?path=`, or the home directory when it is omitted, for the folder picker that adds a library. Absolute paths, and unfenced: a library root can be on any mount, and `POST /api/libraries` already accepts any absolute path. The per-library form (§13.1) is fenced, because there a folder outside the root is wrong rather than merely unhelpful. Carries a `writable` boolean for the folder being listed - one per listing, not per child - so the dialog can tick and lock "don't change anything in this folder" for a root the server cannot write in (§4.1). |
 
-Two scopes, not three: the `libraries` row holds what belongs to one catalogue (the rendition source and HDR, §10.2), and `settings` holds everything app-wide - the viewer's `viewer_rendition_mode` and the rendition `remember` remembers, alongside the server's own tuning (§15). A key/value table rather than a column per setting because they are read one at a time and never queried across, and adding one should not need a migration; values are stored as text, and the default's type says what to read one back as. A value the build no longer understands reads as its default rather than failing the request: a bad row must not stop the viewer opening or the server booting.
+Two scopes: `libraries` holds catalogue-specific rendition source/HDR (§10.2); `settings` holds app-wide `viewer_rendition_mode`, the rendition `remember` retains, and server tuning (§15). Individually read settings use a key/value table, avoiding migrations for additions. Values are text, decoded by default type; unsupported values fall back to defaults so bad rows cannot prevent viewing or startup.
 
 ### 13.7 Export
 
@@ -345,7 +345,8 @@ A photo's detail carries `label_ids`, in its library's label order.
 
 ### 14.2 API Layer Error Handling
 
-Each API handler wraps service calls in try/catch. Zod validation errors are caught and returned as `VALIDATION_ERROR` with the Zod error details. Service-thrown errors use a custom `AppError` class with a `code` property that maps to the table above.
+Handlers catch service errors. Zod errors return `VALIDATION_ERROR` with details;
+service `AppError` instances map their `code` through the table above.
 
 ```typescript
 class AppError extends Error {
@@ -363,7 +364,9 @@ Every line goes through `src/logger.ts`, and oxlint's `no-console` keeps it that
 2026-07-29T04:52:43.294Z INFO  [sync] scan done library=963e5039 files=42 rows=42 opened=0 unreadable=0 ms=3
 ```
 
-Structured tail rather than a sentence: the counts are what an import is judged by, and `grep library=<id>` then follows one library through a log several are writing to. An `Error` passed as a field renders as its message, plus its stack on the following line at `error` level, so a failure is still traceable to the call that raised it. `warn` and `error` go to stderr, everything else to stdout.
+Structured fields expose import counts and support `grep library=<id>`. An `Error`
+field prints its message and, at `error` level, its stack on the next line.
+`warn` and `error` use stderr; other levels use stdout.
 
 The `log_level` setting picks the floor, applied at startup and again on edit; `LOG_LEVEL` overrides it (§15):
 
@@ -390,10 +393,9 @@ catalogue can be opened.
 | `DB_PATH` | `./bowerbird.db` | SQLite database file path |
 | `DATA_DIR` | `./data` | Where every generated file lives, one subdirectory per library (§6). Resolved absolute at load, created and tested for writability at startup |
 
-Five more are **not configuration and not for anybody to set**: they are how whatever
-started this server tells it where it is (§23.3, §10.4). Every one of them is written by
-the desktop shell, the Dockerfile or the container's entrypoint, and a deployment that sets
-them by hand is telling the server something untrue about itself.
+Five **launcher-owned variables, not user configuration**, identify the server's
+environment (§23.3, §10.4). Only the desktop shell, Dockerfile or container entrypoint
+sets them; manual values misrepresent the installation.
 
 | Variable | Set by | Description |
 |---|---|---|
@@ -411,16 +413,11 @@ Three more are genuinely optional. The first replaces the lens database the bina
 | `BOWERBIRD_UPDATE_REPO` | `bitnimble/bowerbird` | The GitHub repository to check. What a fork sets |
 | `BOWERBIRD_UPDATE_URL` | built from the above | The releases endpoint outright, for somewhere that is not github.com. Wins over the repository, and must report an `assets` list per release - there is no github.com URL guessed behind it (§23.5) |
 
-Either one set empty turns checking off, for a deployment that must make no outbound
-request at all - rather than leaving it to fail once an hour. "No endpoint" and "no
-repository to ask" are the same statement, so neither needs a flag of its own.
+Either update variable set empty disables checks entirely, including outbound requests;
+no additional disable flag is needed.
 
-Everything else is a **setting**, stored in the `settings` table (§13.6) and
-edited from the app's Settings page. Deployment config that can only be changed
-by editing a compose file and restarting is config the person looking at the
-photos cannot change, and every one of these is a knob you turn *because of what
-you just saw on screen* - a library that came out dark, an import that is too
-slow, a rendition that lost its shadows.
+Everything else is a **setting** in `settings` (§13.6), editable from the app
+without changing deployment files or restarting.
 
 Nothing here needs a restart. `src/schemas/settings.ts` holds the defaults and
 the bounds; the reasoning behind each number lives beside it there.
@@ -481,7 +478,7 @@ Services and API handlers whose dependencies can be mocked are unit-tested with 
 
 **Service mocks:** API handler tests mock the service layer to test request validation, response formatting, and HTTP status codes.
 
-**Exceptions covered by integration tests instead (§16.3):** `ScanService`, the image-streaming API, and repository DB behaviour are *not* unit-tested; `ScanService` and the repositories exercise real SQL (mocking a repository well enough to test the scan algorithm would test the mock, not the SQL), and image streaming depends on `Bun.file`. These run against a real in-memory catalogue and the `rawshim` FFI in the container integration suite, which is the authoritative coverage for scan/diff/apply, the move/rename/delete races, the scan generation token, inode dedup, and image responses.
+**Integration-only coverage (§16.3):** `ScanService`, image streaming and repository DB behaviour. `ScanService` and repositories need real SQL; streaming needs `Bun.file`. The container suite uses an in-memory catalogue and `rawshim` FFI to cover scan/diff/apply, move/rename/delete races, generation tokens, inode dedup and image responses.
 
 ### 16.2 Key Test Cases
 
@@ -615,7 +612,7 @@ These live in `test/integration/*.integration.test.ts` and cover the sync engine
 
 ## 17. Implementation Order
 
-The following order respects dependency chains — each step depends on the steps above it.
+Implement in dependency order:
 
 1. **Project scaffolding**: `package.json`, `tsconfig.json`, directory structure.
 2. **Database**: `connection.ts` (opens the catalogue and sets `PRAGMA foreign_keys = ON`), `db/schema/` (declares every table, including `shoot_banners`/`album_banners`, and its indexes), `migrate.ts` (applies what `drizzle-kit` generated from them).

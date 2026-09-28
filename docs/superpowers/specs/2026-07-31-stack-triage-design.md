@@ -2,14 +2,11 @@
 
 Date: 2026-07-31
 
-A **stack** (§19) is several takes of one scene. Picking the keepers means
-comparing every take against every other, which is N² judgements and reads as
-work rather than as photography.
+A **stack** (§19) contains several takes of one scene. Comparing every take
+against every other requires N² judgements.
 
-**Stack triage** replaces that with a run of binary questions. Two photos at a
-time, one question (which of these is better), and the session ends with a subset
-of the stack the photographer is happy with. That subset may be one photo,
-several, all of them, or none.
+**Stack triage** asks which of two photos is better, then returns the keep set:
+one, several, all or none.
 
 Terms, used exactly and only this way throughout:
 
@@ -34,15 +31,9 @@ Terms, used exactly and only this way throughout:
   with any past round reachable to be judged again.
 - Verdicts write through the existing `triage` field.
 
-Writing through `triage` rather than adding a stack-scoped keep flag is what
-makes the result mean something outside this screen: the rejects land in the same
-filter the gallery already hides, and the keepers in the same one it already
-shows, so a session's outcome is immediately actionable with the bulk tools that
-exist. The cost is real and is accepted deliberately: **a session overwrites
-verdicts the photographer made in the viewer**, because a photo carries one
-triage value and the tournament is entitled to it. §5 leans on this in the other
-direction, letting an already-rejected member compete again, and the two are the
-same decision seen from either end.
+Writing `triage` reuses gallery filters and bulk tools. Accepted cost: **sessions
+overwrite viewer verdicts**, since each photo has one triage value. Conversely,
+already-rejected members may compete again (§5).
 
 Out of scope: entering from a grid band, synchronised zoom in split mode,
 comparing across stacks.
@@ -63,23 +54,15 @@ interface Session {
 }
 ```
 
-A pair's key is its two ids **sorted lexicographically and joined with `|`**,
-which no UUID contains. Stated because two implementers would otherwise pick
-different joiners, and a session stored by one and read by the other would find
-no pair it had already judged.
+A pair key is two ids **sorted lexicographically and joined with `|`**, absent
+from UUIDs. Consistent encoding preserves judged pairs across session readers.
 
-**Every judged pair goes into `seen`, decisive ones included**, even though a
-decisive pair can never recur on its own (the loser has left the pool). Recording
-them costs one insert and buys two things worth more than that: "a pair is never
-offered twice" becomes a local property of `nextRound` instead of resting on the
-separate fact that a removed photo never returns, and "this photo has been
-judged" becomes derivable as *appears in some pair of `seen`*, which §2.6 needs
-and would otherwise be a second set to carry.
+**Record every judged pair in `seen`, including decisive ones.** This makes
+non-repetition local to `nextRound` via `seen` and lets §2.6 derive whether a photo was
+judged from its appearance in `seen`, without another set.
 
-`stopped` is in `Session` rather than in the store because undo restores a
-`Session` and nothing else (§2.7). Ending early is a change to the tournament, so
-it has to be inside the value that undo swaps, or Keep the rest is the one action
-that cannot be taken back.
+Keep `stopped` in `Session`: undo restores only that value (§2.7), including
+Keep the rest.
 
 ### 2.2 Choosing the round
 
@@ -94,23 +77,14 @@ That is the whole rule. The index order is stated exactly because a second
 reading exists (nearest-neighbour, `(0,1), (1,2), (2,3)`), and the two produce
 different sessions.
 
-**The winner stays on the stage, and the queue order is what puts it there.** A
-decisive verdict moves the winner to the **front** of the pool (§2.3), so the
-next round is `(0,1)`: the winner against the first photo it has not met. When it
-has met everyone still in the pool, every `(0,k)` is in `seen` and the scan walks
-on to `(1,2)`, a pair that cannot contain it, and it is no longer at the front
-after the next verdict. Holding the winner over is the point: replacing both
-photos every round makes the photographer re-learn two images each time, where
-keeping one narrows the question to "is the new one better than the one I just
-chose".
+**Queue order holds the winner on stage.** A decisive verdict moves it to the
+**front** (§2.3); `(0,1)` tests it against the first unseen challenger. Once all
+`(0,k)` pairs are in `seen`, scan proceeds to `(1,2)` and the next verdict moves
+it off the front. Holding one photo avoids relearning both after every verdict.
 
-An earlier draft carried a `champion` field to express this, with a branch in
-`nextRound`, an invariant tying it to the pool, and an argument about when a
-stale one is cleared. Moving the winner to the front produces the identical
-schedule with none of that: the hold-over, the exhaustion fall-through, and the
-draw case all fall out of one scan over one list. What §3.1 needs is not "does
-this round have a champion" but "is slot A the same photo it was", which is
-`round.a === previousRound.a` and is the question it was really asking.
+An earlier `champion` field required a `nextRound` branch, pool invariant and
+stale clearing. Front-loading gives the same hold-over, exhaustion and draw
+schedule with one list. §3.1 needs only `round.a === previousRound.a`.
 
 ### 2.3 Verdicts
 
@@ -138,22 +112,14 @@ Every round either removes a photo from the pool or adds a pair to `seen`. Both
 are monotone and bounded, so the session terminates; and `nextRound` only ever
 returns a pair not in `seen`, so no round repeats.
 
-**A session that ends by exhaustion returns a keep set that is a clique of mutual
-draws.** It ends when no unseen pair is left among the survivors, so every pair of
-them was judged; and any decisive judgement would have removed one of them, so
-every one of those judgements was a draw. No photo is kept without having been
-held up against every other photo that was kept, which is the property the whole
-flow exists to deliver. It is the same guarantee an exhaustive comparison of every
-pair would give, and it never costs more than one: the ceiling is the N(N−1)/2
-rounds exhaustive comparison *is*, reached only if the photographer draws
-everything. What the tournament buys is that a decisive verdict retires a photo
-and, with it, every remaining round that photo would have appeared in, which is
-why a decisive run reaches the same guarantee in N−1 (§2.5).
+**Exhaustion returns a clique of mutual draws.** Every survivor pair was judged;
+a decisive verdict would have removed one. This matches exhaustive comparison's
+guarantee within its N(N−1)/2 ceiling, reached only by all draws. Eliminations
+remove every remaining round involving the loser, reducing decisive runs to
+N−1 (§2.5).
 
-The guarantee is scoped to exhaustion on purpose. **Keep the rest forfeits it**,
-knowingly: pressing it with `p` and `q` drawn and `r` never shown keeps all three,
-and `r` has been compared with nothing. That is the trade the button exists to
-offer, and §2.6 makes sure `r` is not *claimed* as a considered keeper.
+**Keep the rest forfeits this guarantee:** after `p` and `q` draw, it also keeps
+unseen `r`. §2.6 keeps `r` without claiming `r` was considered.
 
 A worked case, because this is the one that looks like a gap and is not. `p` and
 `q` draw early; `r` then beats everything else, leaving the pool as `[r, p, q]`
@@ -176,11 +142,9 @@ pretend they do.
 The worst case is real, so there is an escape rather than a cleverness: **Keep
 the rest** ends the session immediately with every survivor kept.
 
-The alternative was to treat draws as transitive, so that `p`≈`q` and `q`≈`r`
-would skip `p` against `r`. Rejected, because it is not true: two photos can each
-be worth keeping beside a third and still be separable from each other. Taking it
-would also cost the §2.4 guarantee silently, on every session, where Keep the
-rest costs it only when the photographer chooses to spend it.
+Reject transitive draws: `p`≈`q` and `q`≈`r` do not justify skipping `p` against
+`r`. Each may coexist with a third yet differ from the other. That would silently
+forfeit §2.4 in every session; Keep the rest does so only by choice.
 
 ### 2.6 What is written, and when
 
@@ -195,12 +159,9 @@ during the session.
   `PATCH`ed to `triage: 'picked'`.** A survivor in no pair has never been on
   screen, and is left exactly as it was.
 
-That last clause is the counterpart of the second. Without it, a pool of
-`[p, q, r, t]` where the photographer answers *A better* then `Neither` ends with
-one survivor, `t`, written `picked` having never been displayed: the same
-unearned claim the win rule refuses to make, arriving by another door. It is also
-what makes Keep the rest honest: it keeps everything, and claims only what was
-looked at.
+Without that clause, *A better* then `Neither` over `[p, q, r, t]` would mark
+unseen survivor `t` as `picked`. Keep the rest preserves all survivors but
+claims consideration only for those shown.
 
 Writes go through `PhotosPresenter.setTriage`, which updates the grid row and any
 open band member in place, so the gallery behind the viewer stays correct.
@@ -212,20 +173,15 @@ what every restore targets. Undo therefore needs to record only *which* photos a
 action wrote, never what it overwrote, which is what makes §2.7's `changed` a
 list of ids.
 
-The baseline is captured at open and **never re-read from the member rows**,
-because a rehydrate re-fetches those rows and they carry this session's own
-rejections. Reading them again would make `rejected` the restore target for every
-photo the session had already eliminated, so an undo after a refresh would put a
-photo back in the pool and mark it rejected in the same breath.
+Capture baseline at open; **never re-read member rows**. Rehydrated rows include
+session rejections; recapturing would make `rejected` the undo target, returning
+a photo to the pool while leaving it rejected.
 
-**Writes are serialised, session-wide.** `api.updatePhoto` is a bare `fetch` and
-nothing orders two writes to the same row, so a fast verdict followed by an undo
-can land the restore first and the rejection second, leaving the server on
-`rejected` while the session believes the photo is in the pool. One promise
-chain, `this.writes = this.writes.then(…)`, the shape `refresh()` already uses, gives total ordering, which is stronger than per-photo ordering and needs no
-stale-response detection: the second request is not sent until the first
-resolves, so there is no stale response to detect. A session issues one or two
-writes per human decision, so there is nothing to gain from parallelism.
+**Serialise writes session-wide.** Bare `api.updatePhoto` / `fetch` can land undo
+before rejection, leaving the server `rejected` after the pool restores it.
+Use `this.writes = this.writes.then(…)`, as `refresh()` does: send only after the
+previous request resolves. Total ordering needs no stale-response detection;
+one or two writes per decision gain nothing from parallelism.
 
 **A failed write is reported, not compensated.** `PhotosPresenter.patch` catches,
 toasts and resolves, so a caller cannot tell a rejection that landed from one
@@ -234,13 +190,9 @@ the server never took. `setTriage` therefore reports success, and the page keeps
 a list of photos whose writes failed, shown in the bottom bar and again on the
 summary as *n could not be saved · Retry*.
 
-It does **not** rewind. Both failure directions are already safe: a failed
-`rejected` leaves the photo untriaged, which destroys nothing, and a failed
-restore is self-healing, since the photo either survives to be written `picked`
-or is eliminated again. Rewinding would discard every verdict after the failed
-round to compensate for a write that under-applied, and the compensating write
-would travel the same failing path; a rewind that can itself fail and rewind
-again, with nothing to terminate it.
+Do **not** rewind. Failed `rejected` destroys nothing; failed restore heals when
+the photo is later `picked` or eliminated again. Compensation would discard
+subsequent verdicts and reuse the failing write path, risking endless rewinds.
 
 **The closing writes are not fire-and-forget either.** The stored session
 survives until every one of them has landed (§5), and the summary reports the
@@ -286,13 +238,10 @@ same baseline (§2.6).
    to its baseline value;
 3. **truncate `history` to length `i`.**
 
-Step 3 is not bookkeeping. Without it the abandoned branch stays reachable:
-rewind to round 0 of a four-round session, judge it differently, then press undo
-twice, and the second undo restores entry 2's session, a pool from the branch
-that was thrown away, with photos missing from it that no write ever rejected.
-Completed would also keep listing rounds that no longer happened. Truncating is
-safe precisely because step 2 has already restored everything those entries
-wrote.
+Step 3 removes abandoned history. Otherwise, rewind to round 0 of four rounds,
+judge differently, undo twice: entry 2 restores the discarded pool, including
+unrejected missing photos, and Completed lists abandoned rounds. Step 2 makes
+truncation safe by restoring their writes first.
 
 Deduplicating in step 2 is what makes the order not matter: one write per photo,
 to a value that does not depend on which entry mentioned it.
@@ -300,19 +249,14 @@ to a value that does not depend on which entry mentioned it.
 - **Undo** (`Ctrl/Cmd+Z`, or `Backspace`) is rewinding to the last entry.
 - **The queue** (below) is rewinding to any entry.
 
-Snapshotting rather than inverting: `Session` is a small immutable value, so the
-snapshot is cheaper to hold than an inverse operation is to get right, and one
-assignment restores `alive`, `seen` and `stopped` together with no way for them
-to disagree.
+Snapshot immutable `Session`; one assignment restores `alive`, `seen` and
+`stopped` consistently, without inverse operations.
 
-**Ending the session is part of the action that ended it.** `changed` is *every*
-photo the action wrote, so when a verdict empties the pair set, the closing
-`picked` writes join that verdict's entry, and undo reverses both and re-opens
-the round. Keep the rest pushes its own entry, it flips `stopped`, which is a
-change to `Session`, and its closing writes join that entry the same way. One
-rule, both endings. A separate entry for a natural end would restore a session
-for which `nextRound` is still null, so undo would land back on the summary it
-was pressed from.
+**Closing belongs to the ending action.** Include closing `picked` writes in
+that verdict's `changed`, so undo reverses them and reopens the round. Keep the
+rest similarly records `stopped`, `Session` and closing writes in its entry for `Session` undo.
+A separate natural-end entry would restore `nextRound` null and return undo to
+the same summary.
 
 The ids are appended to `changed` **when each write is issued**, not when it
 lands. Undo pressed on the summary while a closing `picked` is still in flight
@@ -352,27 +296,20 @@ list is the pure functions run forward on a copy rather than a second
 implementation of the schedule. It excludes the round on screen, which is not
 still to come.
 
-It is also the assumption that makes the list *stable in one direction*. Under
-all-draw it is every pair still unseen among the pool, so **under any verdict
-Upcoming only shrinks**: a draw removes the round just judged, a decisive verdict
-removes every round the loser appeared in, and `Neither` removes both photos'
-rounds. Assuming instead that the winner keeps winning would make it grow
-whenever the winner lost, which reads as a plan that cannot be trusted. A rewind
-restores the earlier, larger list, which is the whole point of a rewind and not a
-counterexample to the claim.
+**Upcoming only shrinks under verdicts:** draw removes the judged pair, decisive
+verdict removes the loser's rounds, `Neither` removes both photos' rounds.
+Assuming repeated wins would instead grow the list when the winner lost. Rewind
+deliberately restores the earlier, larger list.
 
 The simulation stops at twenty rounds and the list says how many more there are.
 A stack is seven frames in practice (§19.4.3), but a manual stack has no bound,
 and C(n,2) at a thousand members is half a million rounds nobody will scroll.
 
-The overflow count is `remainingPairs(session) − shown`, and never a second,
-uncapped simulation. Under all-draw the run consumes exactly one unseen-among-the-
-pool pair per round, so the full list length *is* `remainingPairs`, which is
-also the `k` the bottom bar shows (§4), and is computed as
-`C(n,2) − |{pair ∈ seen : both ids are in the pool}|`, one pass over `seen`.
-Not `C(n,2) − |seen|`, which understates it once eliminations have left pairs in
-`seen` naming photos that are gone; and not a scan of every pair of the pool,
-which is the half-million-element loop the cap exists to avoid, one bar down.
+Overflow is `remainingPairs(session) − shown`, without uncapped simulation.
+All-draw consumes each unseen pool pair once, so `remainingPairs` also supplies
+bottom-bar `k` (§4): `C(n,2) − |{pair ∈ seen : both ids are in the pool}|`, one
+pass over `seen`. `C(n,2) − |seen|` wrongly counts eliminated photos' pairs in `seen`;
+scanning every pool pair defeats the half-million-element cap.
 
 ## 3. Layout
 
@@ -464,11 +401,8 @@ The gutter appears in one bound of each and not the other, because it is only
 spent along the axis the photos are laid out on: two photos in a row share the
 width between them and each has the full height to itself.
 
-The clamp is inside the expression, not on the result, and that placement is
-load-bearing. `S = s²` squares away a negative sign, so a box narrower than the
-gutter would otherwise produce a positive area and render two small photos inside
-a container of negative width, which looks like a layout rather than like
-nothing.
+Clamp inside the expression: `S = s²` would turn negative available width into
+positive area, drawing photos even when the box is narrower than the gutter.
 
 Every constraint is a linear upper bound on `s`, so the smaller bound is the
 maximum rather than merely a size that fits. The larger `s` wins, and each photo
@@ -491,13 +425,9 @@ resize, in the one place allowed to measure, and every render reads a number.
 They are also the input that can legitimately be zero, during first paint or an
 orientation change, which is what the clamp above protects against.
 
-The alternative considered and rejected was two `flex: 1` children, letting
-`object-fit: contain` size them. It is three lines of CSS, needs no measurement
-at all, and for the equal-aspect pairs that are the norm in a stack it gives
-equal area exactly. It was rejected because it does not *choose an arrangement*,
-which is the requirement: it hands the transposed pair a 1.27× bias where the
-formula gives 1.00, and it cannot switch to a column for the panorama pair that
-needs one.
+Rejected alternative: two `flex: 1` children with `object-fit: contain`. Three
+CSS lines, no measurement, equal area for equal aspects, but no arrangement
+choice: transposed-pair bias 1.27× versus 1.00, and no panorama column switch.
 
 Given `W` and `H`, this is a pure function of four numbers and one constant. The
 portrait-beside-landscape case needs no branch of its own.
@@ -567,10 +497,8 @@ The `A` · `↔` · `B` switch is a labelled group whose pressed state is announ
 and each new round is announced to a live region. The screen replaces its entire
 content on a keystroke, which is otherwise a silent change.
 
-**The session ends on a summary.** It is a screen rather than a return to the
-viewer because the outcome is the thing the photographer came for and it is
-otherwise invisible: the rejects have left the gallery's default filter, so
-returning straight to the grid shows a stack that silently lost members.
+**End on a summary.** Returning directly to the viewer hides the outcome:
+default gallery filtering silently removes rejected members.
 
 It replaces the stage, keeping the header, and holds up to three labelled rows of
 thumbnails: **Kept**, **Rejected**, and **Not saved** when any write failed, with
@@ -610,34 +538,22 @@ store from a **member row's own `library_id`**, against `LibrariesStore` and
 `AppSettingsStore` directly, by the rule §18.5 states: the library's
 `rendition_source`, with the settings' viewer-rendition mode on top.
 
-It cannot reuse `PhotosStore`'s answer, and the reason is worth stating because
-the names are inviting. `showing`, `preferredRendition`, `defaultRendition` and
-`isAlwaysBuilt` are every one of them a function of `openPhoto`, which is
-`photoFor(open?.id)`. Nothing clears `open` when the viewer unmounts, so from a
-viewer entry all four answer for the **entry photo**, including, under
-`remember_per_photo`, that one photo's remembered choice; which is precisely the
-inheritance this paragraph exists to prevent. And on a refresh or a deep link into
-the triage route there is no open photo at all, so `defaultRendition`'s library
-lookup misses and returns `'embedded'`: the camera JPEG, in a `render` library,
-for the one screen in the app whose purpose is pixel-peeping, with the session
-silently changing rendition across a reload.
+Do not reuse `PhotosStore`: `showing`, `preferredRendition`, `defaultRendition`
+and `isAlwaysBuilt` depend on `openPhoto` / `photoFor(open?.id)`. Viewer unmount
+leaves `open`, so entry inherits that photo's `remember_per_photo` choice.
+Refresh/deep-link has no open photo; `defaultRendition` then returns `'embedded'`
+even in a `render` library, silently switching rendition across reload.
 
 ## 5. Entering, leaving, and surviving a refresh
 
 The viewer's `DetailNav` gains a **Triage Stack** button beside the Rendition
 menu, rendered when the photo has `stack_id != null`.
 
-On `stack_id` alone, deliberately, and **not** on the grid tile's
-`stack_id != null && stack_size > 1`. `stack_size` is a property of a collapsed
-listing row, not of a photo: `toDetail` and the band-member listing both hardcode
-it to 1, and in a scoped listing it counts only the members that survived the
-filter. Every route into the viewer from a stack is therefore a `stack_size` of 1; a band member opened from an expanded stack, or a deep link, so the tile's
-condition would hide the button on every path that can actually reach this
-screen, and in an album would disagree with the unscoped member list the session
-runs over. A stack has two or more members by construction, and any that drops
-below two is dissolved, so `stack_id != null` is the honest test; the
-"fewer than two usable members" page below covers a stack whose members have been
-binned underneath it.
+Use `stack_id` alone, **not** tile predicate `stack_id != null && stack_size > 1`.
+`stack_size` describes a filtered listing row; `toDetail` and band-member lists
+set `stack_size` to 1, hiding the button from viewer/deep-link entries. Album counts also
+disagree with the session's unscoped members. Stacks below two dissolve, so
+`stack_id != null` suffices; the "fewer than two usable members" page handles binning.
 
 It navigates to `/stacks/:stackId/triage`. **Leaving is an explicit route to the
 entry photo**, recorded in the session, falling back to its library. Not
@@ -688,14 +604,10 @@ error would be silent and refresh-survival would simply stop working with no
 signal. Beyond 50 the oldest entries drop, so the Completed list is finite and
 undo has a floor.
 
-On open the stored session is rehydrated and then **validated against the
-freshly-fetched members, by pruning `alive` only**. An id that is no longer a live
-member is dropped from the pool, and nothing else changes. `seen` is deliberately
-left alone: a pair naming a dead photo can never be offered again, since both
-its members must be in the pool for `nextRound` to reach it, so pruning it buys
-nothing, and §2.6 derives *this photo was on screen* from appearing in some pair
-of `seen`, so dropping a survivor's only judged pair would silently demote a
-considered keeper out of the closing `picked` write.
+On open, rehydrate and **prune only `alive` against freshly fetched members**.
+Leave `seen`: `nextRound` cannot offer pairs containing absent members, while
+§2.6 uses it to identify considered keepers. Removing a survivor's only judged
+pair would incorrectly suppress its closing `picked` write.
 
 Re-deriving `alive` from the member list instead of pruning would return every
 eliminated photo to the pool. Its round would at least not be re-offered, since a
@@ -771,12 +683,9 @@ ignore it and are unaffected. `patch`'s error toast is suppressed for triage
 writes made from a session, which reports failures itself and in one place
 (§2.6); without that, one failed verdict raises both a toast and a bar.
 
-**`PhotosPresenter` serialises writes and coalesces `refresh()`.** Both belong
-here rather than in the triage presenter, and both fix the class rather than the
-instance: the write ordering hazard is `api.updatePhoto` racing itself for *any*
-caller, and the refresh pile-up already happens when the grid holds a cull key on
-the Active filter. A triage presenter fixing them locally would leave the viewer
-and the grid racing exactly as they do now.
+**`PhotosPresenter` serialises writes and coalesces `refresh()`.** Fix all callers:
+`api.updatePhoto` races itself, and holding a grid cull key on Active already
+piles up refreshes. A local triage fix would leave viewer/grid races intact.
 
 ## 7. Files
 

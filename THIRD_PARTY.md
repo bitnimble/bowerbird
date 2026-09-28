@@ -1,7 +1,6 @@
 # Third-party notices
 
-Bowerbird itself is MIT (`LICENSE`). This file covers what is linked into the shipped
-binaries under something else, which is the only place a licence other than MIT reaches a user.
+Bowerbird is MIT (`LICENSE`). This file covers other licences in shipped binaries.
 
 ## `lensdb` is LGPL-3, and statically linked
 
@@ -60,14 +59,11 @@ not be visible in them:
 - **libavif** 1.4.2 - BSD-2-Clause. Every rendition and the gain map beside it.
 - **libjxl** 0.11.1 - BSD-3-Clause. The JXL arm of an export.
 
-**The desktop app ships all of it.** `build:native` builds `rawshim` with its default features,
-which include `renditions`, and `scripts/build-sidecar.ts` copies that library into the app's
-resources for the bundled server to open. That is not incidental: a replica generates its own
-tiles and renditions with no network at all, so it needs the build the server has.
+Desktop ships all these libraries. `build:native` includes default `rawshim` features,
+including `renditions`; `scripts/build-sidecar.ts` bundles it for the server. Replicas need
+the same build to generate tiles/renditions offline.
 
-**Android does not, and nor does a browser.** The Android shell links `rawshim` with
-`default-features = false` and the wasm build passes `--no-default-features`; neither links any C,
-and neither links `lensdb`, so the paragraph above about LGPL-3 reaches neither of them. The RAW
-decoder is rawler, the demosaic and the grade are WGSL, and the JPEG codec either side is Rust.
-The `src-tauri` shell binary itself depends on `rawshim` not at all - it starts the bundled
-server, which is what opens the library above.
+Android links `rawshim` with `default-features = false`; wasm uses `--no-default-features`.
+Neither links C or `lensdb`, so the `lensdb` LGPL-3 discussion excludes them. They use rawler
+for RAW, WGSL demosaic/grade and Rust JPEG codecs. `src-tauri` itself does not link `rawshim`;
+it starts the bundled server that loads it.

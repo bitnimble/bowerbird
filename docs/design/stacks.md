@@ -8,21 +8,16 @@ section the index in `DESIGN.md` maps §N to.
 
 ## 19. Photo Stacks
 
-A **stack** groups photographs of one shot: a burst, or several takes of a
-scene. It is one entity in the catalogue, shown as one tile, expandable to its
-members. A stack is **library-wide** and transcends the shoots and albums its
-members sit in, which since shoots mirror folders (§4.1) is the ordinary case
-rather than an unusual one: any stack whose photos are in two folders is a stack
-across two shoots.
+A **stack** groups one shot's burst or takes into one catalogue entity and tile,
+expandable to its members. Stacks are **library-wide**, crossing shoots and albums;
+since shoots mirror folders (§4.1), photos in two folders span two shoots.
 
 ### 19.1 Why not a perceptual hash
 
-The obvious answer is a 64-bit perceptual hash, and it does not work. Measured
-against a labelled folder of 231 frames, dHash scores the worst true pair at
-0.531 while a hand-verified *different-scene* pair scores 0.641; DCT pHash is
-0.406 against 0.594. Both have a **negative** margin - the different scenes
-outscore the same ones - so no threshold separates them. They are not merely
-weak here; they are unusable.
+64-bit perceptual hashes fail on a labelled 231-frame folder: dHash's worst true
+pair scores 0.531 while a verified *different-scene* pair scores 0.641; DCT pHash
+scores 0.406 against 0.594. Both margins are **negative**; no threshold separates
+same-scene from different-scene pairs.
 
 What a descriptor has to survive, for two frames of one scene, is a different
 exposure, a shift or small rotation, people walking through, a different white
@@ -39,11 +34,9 @@ CREATE TABLE stacks (
 );
 ```
 
-The `origin` column is load-bearing rather than informational. Detection re-runs
-over already-stacked photos so that changing the threshold re-forms stacks
-(§19.4.3), and without it that pass would dissolve a manual stack whose members
-are not alike - two lenses on one subject, which is the case manual stacking
-exists for.
+`origin` protects manual stacks from detection re-runs (§19.4.3). Threshold
+changes may reform auto stacks, but must preserve deliberately dissimilar manual
+members, such as two lenses on one subject.
 
 On `photos`: `stack_id`, `descriptor` (a BLOB, §19.3), and `stack_state`, which
 is the three answers to "is this photo in a stack?"
@@ -66,10 +59,9 @@ every frame is deliberate.
 
 ### 19.3 The descriptor (`native/rawshim/src/stacks.rs`)
 
-Rust computes it, Rust compares it, and TypeScript only ever stores the blob and
-hands it back. A comparison is arithmetic over a couple of thousand cells, and a
-library-sized pass makes hundreds of thousands of them, so handing that across
-the FFI boundary one call at a time would cost more than the work.
+Rust computes and compares descriptors; TypeScript stores and returns blobs.
+Library passes make hundreds of thousands of comparisons over a couple of thousand
+cells each; per-comparison FFI calls would cost more than the arithmetic.
 
 Two views of the frame - the whole thing, and its **central 78%** - each holding
 a rank-normalized luma grid at 20x20, two grey-world chroma grids at 20x20, and
@@ -107,23 +99,17 @@ because more freedom to slide the window is more chance of a coincidental match.
 Vertical is worse than horizontal, since frames of a landscape share sky along
 the top and ground along the bottom.
 
-The descriptor is written when a photo's **grid tile** lands, read back from the
-tile rather than computed inside the render, so every photo is described from
-the picture the grid actually shows however its tile was produced. Two libraries
-are then comparable even when one serves the camera's JPEG and the other a
-demosaiced render.
+Descriptors are read from completed **grid tiles**, describing exactly what the
+grid shows. Libraries remain comparable across camera-JPEG and demosaiced tiles.
 
 ### 19.4 Detection (`stacks_service.ts`)
 
 #### 19.4.1 When
 
-After a sync **and the processing it queued** have both settled, and only when
-that sync added or changed photos. It waits for processing rather than for the
-scan because what it needs is the derived files: photos imported a moment ago
-have nothing to compare yet. The added-or-changed condition is not an
-optimisation - watching is on by default with a fifteen-second debounce, so a
-save starts a scoped sync, and without it a library would re-clique its whole
-collection every quarter of a minute while somebody worked in it.
+After sync **and its queued processing** settle, and only if photos were added or
+changed. Processing must finish to supply descriptors. With watching enabled by
+default and a fifteen-second debounce, the change condition prevents whole-library
+re-cliquing every quarter of a minute during editing.
 
 There is no separate "scan now" control: a manual sync is already how you ask a
 library to re-look at itself.
@@ -135,12 +121,9 @@ Photos whose `stack_state` is `none` or `stacked`, which are not members of a
 gate**: shooting one subject with two bodies to compare them later is a case
 stacking should serve.
 
-A photo imported before this feature has no descriptor and is never a candidate,
-so an existing library stacks nothing until it imports something new. There is
-no backfill pass, because the value is in what arrives next rather than in a
-walk over everything that already landed - and rebuilding a library's tiles
-already backfills it as a side effect, since the descriptor rides along with the
-tile.
+Photos lacking descriptors are not candidates, so existing libraries stack only
+new imports until tiles are rebuilt. No separate backfill: rebuilding tiles
+already generates descriptors.
 
 #### 19.4.3 The rule
 
@@ -158,17 +141,12 @@ the ordinary way to arrive at frames seconds apart that were never one burst.
 Photos in no shoot are grouped together, the library root being a folder like any
 other. A stack a *person* made may still span shoots: that is them saying so.
 
-The clique requirement is what bounds a stack, and it removes the need for any
-separate guard against chaining: a scene that drifts frame by frame reaches a
-point where the newest photo no longer matches the one the stack started from,
-and the stack ends there on its own. On the labelled folder the largest stack
-produced is seven.
+The clique requirement bounds chaining: scene drift eventually stops matching
+the first frame, ending the stack. Largest stack in the labelled folder: seven.
 
-The pass rewrites every `auto` stack in the library from scratch, which is what
-makes the similarity setting mean something after it changes: raise it and stacks
-split, lower it and they merge. Photos leaving an auto stack during that rewrite
-go back to `none` rather than `unstacked` - this is detection changing its own
-mind, not a person rejecting the grouping.
+Each pass rebuilds every `auto` stack: higher similarity splits, lower similarity
+merges. Departing members return to `none`, not `unstacked`; detection changing
+its result is not a human rejection.
 
 Cost is `n * s` where s is the size of the stack being built, never `n^2`, and
 not a function of the window at all. Measured at 23k comparisons per second per
@@ -185,33 +163,23 @@ rather than at the API, so a later caller cannot route around it.
 
 #### 19.5.1 Collapsing
 
-Collapsing happens in SQL, so a stack costs one row of a page and one unit of
-`total`. One helper builds the predicate, used by the listing, by `idsAt` and by
-`positionsAt` - written twice, a position would mean one photograph to the client
-and another here. That one helper is also what makes an uncollapsed listing a flag
-rather than a second query path (§19.5.4).
+SQL collapse makes a stack one page row and one unit of `total`. Listings,
+`idsAt` and `positionsAt` share one predicate, ensuring consistent positions and
+making uncollapsed listings a flag rather than another query path (§19.5.4).
 
-**`total` is counted with that same predicate**, as `SUM(CASE WHEN <it> THEN 1 END)`
-over the scope on the one pass that `COUNT(*)` gives `photo_total`. `total` is by
-definition how many rows the listing returns, so counting it any other way is that rule
-written twice - and the two ways do not stay equal, because the helper both collapses a
-stack *onto* a key and removes a panorama's frames outright (§19.4), where no count over
-keys can express a row that is not there. The grid believes the count over the rows: one
-too many reserves a slot nothing arrives for, and the tile never fills.
+**Count `total` with the same predicate**, using `SUM(CASE WHEN <it> THEN 1 END)`
+in the pass whose `COUNT(*)` yields `photo_total`. `total` must equal returned
+rows: the predicate both collapses stacks and excludes panorama frames (§19.4),
+which key counts cannot express. Overcounting reserves permanently empty tiles.
 
-A listing answers with `photo_total` beside `total`: the same scan's `COUNT(*)`,
-so a reader is told how many photographs the collection holds while the grid is
-still numbered by its entries. The count in the controls is the former - a stack
-of eight is eight photographs to whoever took them - and every position, every
-selection run and every row of the rail is the latter.
+Listings return `photo_total` beside `total`, using the same scan's `COUNT(*)`.
+Controls count photographs (a stack of eight is eight); positions, selection
+runs and rail rows count entries.
 
-**It is a filter, not a window function, and that is the whole of why listings
-are still fast.** A window has to see every scoped row before `LIMIT` can take a
-hundred of them, so it sorts the collection for every block a scroll fetches:
-measured at 179ms a page on 200k photos against 0.9ms for the same listing
-without stacks, and paid by every library whether or not it has a single stack.
-As a filter the ordering index is walked and stops at the page, and the same
-listing costs 4.2ms.
+**Use a filter, not a window function.** A window sorts every scoped row before
+`LIMIT`, costing 179ms per page on 200k photos versus 0.9ms without stacks,
+even in unstacked libraries. The filter walks the ordering index only to the page:
+4.2ms for the same listing.
 
 The filter has two arms:
 
@@ -245,10 +213,9 @@ stored as NULL and `NULL = 'rejected'` is NULL, which SQLite sorts *before* 0 -
 so the oldest untriaged frame would outrank the newest keeper on nothing but its
 NULL.
 
-One consequence to know rather than discover: the collapsed row sorts on its
-representative's date, so rejecting the newest member moves the stack's tile back
-to the second-newest's place in the grid. For a burst that is a few positions;
-for a stack spanning days it is a jump, on the keypress that caused it.
+Collapsed rows sort by representative date. Rejecting the newest member moves
+the tile to the second-newest's position: a few places for bursts, a jump for
+stacks spanning days.
 
 The promotion arm carries the **same scope and filters as the outer query**,
 which is what keeps the properties the window gave for free. An album is strict,
@@ -262,10 +229,8 @@ a full scan (it always was), and `positionsAt` numbers rows without a bound
 because it cannot know where its keys are, at ~158ms on 200k photos. It runs on a
 refresh with bands open, not on every block.
 
-**Selecting a stack means selecting every photograph in it**, and `idsAt` is
-where that happens: a collapsed row stands for its stack, so expanding the chosen
-rows to their members is one join in one place, and no client holds a member id
-to do it with.
+**Selecting a stack selects every member.** `idsAt` expands collapsed rows with
+one join; clients need no member ids.
 
 #### 19.5.2 Scope rules
 
@@ -311,12 +276,9 @@ band's own reads as two bugs at once - the band and the viewer disagreeing about
 which frame is second, and Next from the band's first member leaving the stack
 entirely, because in the collection's order that member is the stack's last.
 
-**Required, and with no default**, which is the part that keeps it true. A default
-is a sort the route picks for a caller that did not think about it, and a caller
-that did not think about it is exactly how the two came apart - stack triage seeds
-its tournament from this same listing and was reached, months later, by someone
-adding a parameter every other caller passed. Required, the compiler names them
-all; defaulted, they go on working and quietly disagree.
+**Ordering is required, with no default.** The compiler must identify every caller,
+including stack triage's tournament seeding; defaults silently let band, viewer
+and triage ordering disagree.
 
 Two spellings in it are load-bearing and look wrong, so they are commented where
 they sit. The group predicate must be the indexed *expression* `(date_taken IS
@@ -334,11 +296,8 @@ end of a library answers with the beginning of it.
 
 #### 19.5.4 Expand all stacks
 
-**Expand all stacks** is a setting on the grid's control row, beside the filters
-and the sort. It is not "open every band": there is no stack in the grid to open.
-The *listing itself* is uncollapsed, so every frame of every stack is a row of the
-collection, in one stream, and the view looks like a library that never had a
-stack in it.
+**Expand all stacks**, beside filters and sort, uncollapses the *listing*. Every
+frame becomes an ordinary collection row in one stream; it does not open bands.
 
 It is `representativeFilter` left off - the same absence the viewer's two
 endpoints are (§19.5.3) - which is why an expanded listing costs less than a
@@ -351,10 +310,9 @@ the same statement about what a row now is:
 - `idsAt` loses the arm that expands a chosen row to its stack. Picking one frame
   of a burst out of an expanded grid and binning it must bin that frame.
 
-The flag therefore travels with the filters, in the query string and in the
-`filters` of a selection or a position lookup alike. It is part of what identifies
-the listing, and a question asked without it is a question about a different one:
-position 400 would mean one photograph to the client and another here (§19.5.1).
+The flag identifies the listing and travels in query strings and selection/position
+`filters`. Omitting it makes position 400 refer to different photos on client and
+server (§19.5.1).
 
 For the same reason nothing in the grid *renders* from it. The rows in hand
 already say what they are, so a click on a tile reads `stack_size`, not the
@@ -396,13 +354,9 @@ Four deliberate limits:
   from under them, and `resetRows` puts the scroll to zero unless something puts
   it back.
 
-**The flag is not set until both answers are in hand.** It is what every other
-request reads too, so flipping it first meant a sync poll fetching blocks of one
-listing into a grid numbered by the other; the two reads state the listing they
-are about instead. Setting it, resetting the rows and putting the selection and
-the scroll back are then one action, and `resetRows` inside it abandons whatever
-the old listing had in flight - so there is no window in which the grid is
-half-way between the two.
+**Set the flag only after both answers arrive.** Reads explicitly name their target
+listing so concurrent sync polls cannot mix numbering. One action sets the flag,
+resets rows, restores selection/scroll, and uses `resetRows` to abandon old requests.
 
 Staleness is checked against the **listing** - the collection, its filters, its
 sort and the flag - and deliberately not against the generation counter, which a
@@ -443,7 +397,7 @@ from their tiles by another band and keep a ring of their own, where the colour 
 what pairs them. Masonry is the same rule per **line**, decided where the lines are
 replayed rather than in the store.
 
-Four details, each of which was wrong first:
+Four geometry constraints:
 
 - The gap is a **mask over the ring** rather than a redrawn edge, so the ring keeps
   its exact geometry. Where it is cut depends on what the corner there is: a fillet
@@ -476,10 +430,8 @@ its own offset and width (`fusedTileBoxes`), which is at most one tile per line 
 the same exception, for the same reason, as a masonry block reporting its height
 (§18.3.2). Until it lands the band is drawn whole for a frame.
 
-The members live alone in that band and never share a row with photos outside
-the stack, so no tile ever changes which neighbours it sits beside: the grid
-below is displaced downwards and otherwise untouched. Band rows are ordinary tile
-rows at the same cell geometry, marked by their background rather than their size.
+Members occupy their own band rows with ordinary cell geometry and a distinct
+background. The grid below shifts downward without changing neighbours.
 
 **A member is the tile the collection would have drawn**: the same size, in the same
 column, so its edges line up with the rows above and below. A band's outline is at the
@@ -510,10 +462,8 @@ The 3:2 therefore belongs to the photograph rather than the cell, and `gridRowHe
 says so: a cell is the 3:2 picture plus its inset, or every frame in the collection
 would carry a hairline bar.
 
-One scroll correction covers the bands, not two. Opening or closing one above the
-reader, and re-placing every band at once, are both "keep the reader's row where it
-was", and how far that row moved describes all of it - including a band at or below it,
-which moves it not at all.
+One scroll correction preserves the reader's row through band opens, closes or
+repositioning. Measure that row's displacement; bands at or below it contribute zero.
 
 The member fills its column and states the grid's **3:2** itself, which is what
 gives it the grid's height - the ratio rather than the row, because `.grid--grid
@@ -547,9 +497,8 @@ wrap from the same flex bases the container packs from; nothing is measured. A
 band flushed after the block's *last* line takes the `::after` that eats that
 line's free space with it, so that line is given an end of its own.
 
-A block's height is measured rather than computed, so the scroll learns the band
-is there without being told, and the scroll correction opening one usually needs
-is not owed at all.
+Measured block height accounts for masonry bands automatically, requiring no
+usual opening scroll correction.
 
 Any number of stacks may be open. Expansions are a list of `(position, member
 count)` sorted by position; `rowCount` is the base rows plus each band's
@@ -609,14 +558,9 @@ ranges. This stays inside the rule the virtual grid enforces rather than bending
 it - what must never happen is an id standing in for an *unloaded* row, and a
 band's members are loaded, on screen, and few.
 
-**The two halves are one selection.** They were separate, with the bulk bar acting
-on whichever was live, on the grounds that "everything in this library" and "these
-three frames of this burst" are different intentions - but a stack opened out is
-part of the collection being worked through, and picking a frame out of it *and* a
-frame beside it is an ordinary thing to want. So a wire selection carries
-`members` alongside `ranges` (§18.3.3), the count is the sum of the two, and every
-action reaches both. Each photo is acted on once: a run naming a stack's row
-resolves to every member of it, so the server takes the union.
+**Band and grid selections are one.** Wire selections carry `members` beside
+`ranges` (§18.3.3), count both and apply every action to both. The server unions
+resolved ids so selecting a stack row and its members acts on each photo once.
 
 A member behaves as a tile does (§18.3.1): its frame opens it in the viewer, its
 tick box picks it out, cmd-click adds it to what is already chosen, and with a
@@ -652,11 +596,8 @@ request reaches it without the page.
 
 ## 20. Stack Triage
 
-A stack (§19) is several takes of one scene, and picking the keepers means
-comparing every take against every other: N² judgements, which reads as work
-rather than as photography. **Stack triage** replaces that with a run of binary
-questions. Two photos, one question, until the pool is a set of photographs
-nothing has beaten.
+Choosing keepers from a stack (§19) can require N² comparisons. **Stack triage**
+presents binary comparisons until the surviving pool contains unbeaten photos.
 
 Terms, used exactly and only this way: a **round** is one pair put to the
 photographer; the **pool** is the photos still in contention; **decisive** means
@@ -693,16 +634,12 @@ to carry.
 calls A and B is a side of the screen, which §20.4 draws and the presenter maps
 back to a slot.
 
-**The winner to the front is what holds it over.** The next round is then `(0,1)`:
-the winner against the first photo it has not met. When it has met everyone left,
-every `(0,k)` is judged and the scan walks on to a pair that cannot contain it, so
-the stand-down needs no branch. An earlier draft carried a `champion` field to
-express this, with a branch, an invariant tying it to the pool, and an argument
-about when a stale one is cleared; the queue order produces the identical schedule
-with none of that.
+**Front placement holds the winner over.** Next round `(0,1)` pairs it with the
+first unmet photo. Once every `(0,k)` is judged, scanning skips it automatically.
+Queue order needs no separate `champion` field, branch or invariant.
 
-The drawn pair to the back is what spreads the work: without it the same two
-photos sit at the front and every later round pairs one of them with someone new.
+Moving draws to the back spreads comparisons instead of repeatedly involving
+the same front pair.
 
 **Neither may empty the pool.** A stack where every frame is soft has no keeper.
 
@@ -721,8 +658,7 @@ session where Keep the rest spends it only on request.
 
 ### 20.2 What is written
 
-Elimination is the only final verdict, so it is the only one written during the
-session.
+Only elimination is final and written during the session.
 
 - A loser is `PATCH`ed to `triage: 'rejected'` as the verdict lands; `Neither`
   writes both.
@@ -732,11 +668,9 @@ session.
   can leave, and `Neither` can leave by emptying the pool around it; and is left
   exactly as it was, rather than claimed as a considered keeper.
 
-Every value a session writes is `rejected`, `picked`, or the photo's triage when
-the session opened. That baseline is captured once, stored, and is what every undo
-restores against, so an entry records only *which* photos it wrote. It is never
-re-read from the member rows, which after a reload carry the session's own
-rejections.
+Writes are `rejected`, `picked`, or opening triage. Capture and persist that
+baseline once for undo; entries record only affected photos. Never reread baseline
+from member rows, which carry session rejections after reload.
 
 Writes go through `PhotosPresenter.setTriage`, which returns whether the write
 landed and takes `quiet` to suppress its toast for a caller that reports failures
@@ -756,12 +690,10 @@ Every action pushes `{ session (as it was before), showing, choice, changed }`.
 `choice` is stored because Completed has to show it and it is otherwise only
 recoverable by diffing against the following entry, which the newest one lacks.
 
-**Rewinding to entry `i`** restores that session and slot, re-writes every id in
-`changed` from `i` onward; deduplicated, so one write per photo, to a value that
-does not depend on which entry named it, and **truncates the history to `i`**.
-Truncating is not bookkeeping: without it the abandoned branch stays reachable, and
-a later undo restores a pool with photos missing from it that no write ever
-rejected. Undo is a rewind to the last entry; the queue is a rewind to any.
+**Rewind to `i`** restores its session and slot, restores each id in `changed`
+from `i` onward once, and **truncates history to `i`**. Without truncation, a later
+undo could restore abandoned pools missing unrejected photos. Undo targets the
+last entry; the queue can target any.
 
 Ending the session belongs to the action that ended it, so the closing `picked`
 writes join that entry rather than making one of their own: a separate entry would
@@ -888,12 +820,9 @@ end groups claim equal width, so the middle's centre is the bar's rather than ha
 their difference off it; and Both and Neither sit in flanks of equal width, so the
 picks' centre is the middle's rather than all four buttons'.
 
-Equal *claims*, not equal sizes. An end whose buttons need more than its share
-keeps them and wraps, which is what a phone does with this bar - three rows, and
-the centring correctly lost, because at that width there is no line to share. The
-alternative considered and rejected was laying the verdict row over the whole bar,
-absolutely positioned, so it is centred on the bar whatever the ends do: exact at
-every width that fits, and on a phone it comes down on top of them.
+Equal width *claims* still let oversized end groups wrap: phones use three rows
+without centring. Absolute positioning was rejected because centred verdicts would
+overlap those groups on narrow screens.
 
 **The bar is one line, and that is what decides where the counter lives.** Spelled
 out in the header, *n left (out of N) · up to k rounds* is wide enough that the
@@ -932,10 +861,8 @@ browsing, and a presentation toggle is not. For the same reason the handler
 ignores keys from inside a popup, where `Space` on a queue row would otherwise
 cast a verdict rather than select the round under it.
 
-The verdict bar is disabled until both frames of *this* round have decoded, and
-what counts as decoded is cleared per round - kept, a round returned to by undo or
-through the queue would read as ready before the stage had painted anything for
-it.
+Disable verdicts until both frames of *this* round decode. Clear readiness each
+round so undo/queue navigation cannot enable verdicts before painting.
 
 **Prefetch** is the first ten survivors, and it only fetches. The frames are
 mounted clipped to nothing, and a clipped element is never painted and so never
@@ -987,16 +914,12 @@ none for that reason - which is what a reload caught between the closing writes
 and the drop leaves behind - and opening the stack then begins a new tournament,
 against the members' verdicts as they now stand.
 
-`seen` is stored as an **array**: `JSON.stringify` renders a `Set` as `{}`, which
-would return every session to a blank draw history and break §20.1's guarantee
-where nothing would notice. History is capped at 50 entries, since each snapshots
-a whole session.
+Store `seen` as an **array**: `JSON.stringify` turns a `Set` into `{}`, losing
+draw history and §20.1's guarantee. Cap history at 50 whole-session snapshots.
 
-On open the stored session is **pruned, never re-derived**: an id that is no longer
-a live member is dropped from the pool, and `seen` is deliberately left alone,
-because a pair naming a departed photo can never be offered again and dropping it
-would demote a considered keeper out of the closing write. Re-deriving the pool
-would return every eliminated photo to contention having already lost.
+On open, **prune, never re-derive**: drop departed members from the pool, retain
+`seen`. Departed pairs cannot recur, and removing them could omit considered
+keepers from closing writes. Re-deriving would restore eliminated photos.
 
 ### 20.7 Tests
 

@@ -3,21 +3,16 @@
 The normative document for `slang/lslcd.slang` and `native/rawshim/src/lslcd.rs`. Where a comment in
 either disagrees with this file, the code is wrong.
 
-**Section 2 is derived here, not taken from a paper, and the distinction is worth being exact
-about.** The framework - a periodic CFA read as a baseband luma plus chroma modulated onto the
-pattern's own carriers - is Dubois's, stated for Bayer in *Frequency-domain methods for demosaicking
-of Bayer-sampled color images* (IEEE SPL, 2005) and for arbitrary periodic patterns in his 2009
-chapter *Color filter array sampling of color images*. Rafinazari and Dubois published the X-Trans
-case as *Demosaicking algorithm for the Fujifilm X-Trans color filter array* (ICIP 2014, pp.
-660-663); **that paper was not available to whoever wrote this file, and nothing here should be read
-as reproducing it.** What §2 asserts stands on its own derivation, which anyone can check: the
-coefficients are computed from the mask, the reconstruction inverts exactly, and the same algebra
-run on a Bayer period returns the published Bayer result.
+**Section 2 is independently derived.** Dubois's framework decomposes periodic CFA data into
+baseband luma and chroma on pattern carriers: *Frequency-domain methods for demosaicking
+of Bayer-sampled color images* (IEEE SPL, 2005), generalised in *Color filter array sampling
+of color images* (2009). Rafinazari and Dubois's X-Trans paper, *Demosaicking algorithm for the
+Fujifilm X-Trans color filter array* (ICIP 2014, pp. 660-663), **was unavailable to this author;
+this file does not reproduce it.** Check §2 from mask coefficients, exact inversion and recovery
+of the published Bayer result.
 
-Nor is this the least-squares design of Leung, Jeon and Dubois (*Least-squares luma-chroma
-demultiplexing algorithm for Bayer demosaicking*, IEEE TIP 20(7), 2011), whose filters are fitted to
-the second-order statistics of a set of photographs. §3.3 fits to a model of the chroma spectrum
-instead, for the reason given there.
+Leung, Jeon and Dubois's *Least-squares luma-chroma demultiplexing algorithm for Bayer demosaicking*
+(IEEE TIP 20(7), 2011) fits filters to photograph statistics. §3.3 instead fits a chroma-spectrum model.
 
 ## 1. Scope
 
@@ -93,13 +88,10 @@ one of them is annihilated by a separable filter whose one-dimensional prototype
 and at `π`** - each carrier has at least one axis whose index is 2, 3 or 4 - which is why §3 is two
 one-dimensional passes and not a 2D kernel.
 
-**That holds for every phase of the pattern, which is what lets the filter be designed once.**
-Bodies write different phases of the same 6x6 and name theirs in metadata, so the mask this runs on
-is not fixed. A phase is a translation, and translating a mask rotates the phase of each Fourier
-coefficient without moving it, so the carrier positions are the same set for all of them; a
-reflection sends `k` to `-k`, and `{0,2,3,4}` is closed under negation modulo 6. Neither can put a
-carrier where the prototype does not have a null. `the_carriers_survive_every_phase` holds the
-claim to the arithmetic rather than to this paragraph.
+**One filter serves every pattern phase.** Bodies identify their 6x6 phase in metadata.
+Translation rotates Fourier coefficients without moving carriers; reflection maps `k` to `-k`,
+and `{0,2,3,4}` is closed under negation modulo 6. Prototype nulls therefore cover every phase,
+verified by `the_carriers_survive_every_phase`.
 
 Bayer's carriers are `(1,1)` for `C1` and `(1,0)`, `(0,1)` for `C2`, all at `π`, so the same
 prototype serves with only the `π` null load-bearing.
@@ -115,10 +107,8 @@ cross terms all land away from baseband and are rejected by the same filter: `L�
 carriers because `w1` has no DC, `C1·w1²` contributes `K1·C1` at baseband and the rest at carrier
 sums, and `C2·w1·w2` has no baseband term because the two masks are orthogonal.
 
-**Luma is recovered by subtraction, not by lowpassing, and that is the whole point.** A lowpass
-estimate of luma would throw away exactly the detail the sensor spends most of its photosites
-collecting. Subtracting the chroma estimate leaves luma at full bandwidth, and any chroma the filter
-failed to capture stays in luma as detail rather than becoming a colour error.
+Recover luma by subtracting estimated chroma, preserving full bandwidth. Uncaptured chroma
+remains luma detail rather than colour error; lowpassing luma would discard sensor detail.
 
 ### 2.6 What this cannot decompose
 
@@ -138,10 +128,8 @@ Separable, the same symmetric one-dimensional prototype `h` on each axis, odd le
 
 `M = 8`. That is the radius the margin in §5 comes from.
 
-Not smaller: with four constraints spent on §3.2, `M = 6` leaves three degrees of freedom, and they do
-not stretch to both halves of §3.3 - suppressing the stopband to 6% pushed the droop at the top of
-the chroma band to 8%, and relaxing one merely moved the error to the other. `M = 8` holds both
-under 6%, at four more taps on each of two separable passes.
+Four §3.2 constraints leave `M = 6` only three degrees of freedom: limiting stopband response
+to 6% caused 8% chroma-band droop. `M = 8` holds both below 6%, costing four more taps per separable pass.
 
 ### 3.2 Constraints
 
@@ -168,17 +156,12 @@ against the ideal chroma response
 `π/3` is where the passband has to stop: chroma modulated onto the `2π/3` carrier occupies a band
 around it, and anything wider aliases the carrier into the estimate.
 
-**The weight is not cosmetic, and the two errors are not worth the same.** Ripple below the passband
-edge tilts chroma across its own band, which reads as a slight shift in saturation on very fine
-coloured detail. What leaks through the stopband is a carrier surviving demodulation, which reads as
-a colour that is not in the scene, laid out on the pattern's own 6x6 period. Weighting them equally
-spends the filter's freedom on the one nobody sees.
+Passband ripple slightly shifts fine-detail saturation; stopband leakage creates false colour
+on the 6x6 pattern. Higher stopband weight prioritises the more visible error.
 
-**The target is a model of the chroma spectrum, not a training set**, and that is the one place this
-is knowingly weaker than the least-squares design it is named after. Fitting to measured statistics
-needs a set of photographs this repository cannot carry or reproduce, and a filter fitted to
-eight-bit sRGB snapshots is not obviously the filter for a linear HDR mosaic. Swapping the target
-for measured statistics changes `design` and nothing else.
+Target uses a chroma-spectrum model, weaker than measured training statistics but reproducible
+without an unavailable photo set. Eight-bit sRGB statistics may not suit linear HDR mosaics.
+Substituting measured statistics changes only `design`.
 
 Minimising `J` subject to §3.2 is one linear system in `M+1` coefficients and four multipliers,
 solved by `fit::gaussian`. `R_ij = ∫ φ_i φ_j`, `p_i = ∫ φ_i D`, `φ₀ = 1`, `φ_i = 2cos(iω)`,
@@ -208,21 +191,17 @@ every photosite in it carries the wrong colour, and `w1` and `w2` are read by po
 
 ## 6. Clamping
 
-None, in either direction. A value above white is still meaningful to the grade, and clipping it
-inside the demosaic discards a highlight the reconstruction downstream still had a use for; a value
-below black is read noise straddling the black level, and a floor there keeps the upper half of it
-and lifts every dark channel - the reason `rcd-algorithm-spec.md` §14 gives. Both ends are settled
-by `assemble.slang`'s gamut step, where all three channels exist at once.
+No clamping. Above-white values retain recoverable highlights; flooring below-black read noise
+lifts dark channels (`rcd-algorithm-spec.md` §14). `assemble.slang`'s gamut step handles both
+ends with all three channels available.
 
 ## 7. What is deliberately not here
 
-**The adaptive variant.** Rafinazari and Dubois report both a fixed and a direction-adaptive scheme,
-the second estimating chroma along each axis separately and blending by local energy. This is the
-first. The cost is visible where fine detail is strongly coloured, and the structure to add it is a
-second filter bank and a blend field, not a different decomposition.
+**Adaptive variant omitted.** Rafinazari and Dubois also estimate chroma per axis and blend by
+local energy. This fixed scheme loses strongly coloured fine detail; adaptation would need
+a second filter bank and blend field, retaining the decomposition.
 
-**Where RCD's machinery would be borrowed from, if it is.** The two demosaics are less far apart
-than they look, and the map is worth having written down before anyone tries to merge them.
+**Potential RCD reuse:**
 
 - RCD's low-pass (§4 of its own specification) is this filter's Bayer case exactly. "The one kernel
   that yields the same achromatic combination at every Bayer phase" is "a kernel whose response is

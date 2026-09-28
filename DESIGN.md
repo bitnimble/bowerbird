@@ -2,7 +2,8 @@
 
 ## 1. Overview
 
-Bowerbird is a high-performance RAW photo management and cataloguing backend designed to run on a server or NAS where photos are stored on local spinning disks. It exposes a REST API that a thin client (desktop, mobile, or web) can consume over the network. The web client that ships in this repo is one such consumer; it is a separate app with its own build and dev server, and is described in §18.
+Bowerbird catalogues RAW photos on a server or NAS with local spinning disks. Desktop, mobile
+and web clients use its REST API. This repo's web client has a separate build/dev server (§18).
 
 **Stage 1 scope:**
 
@@ -34,12 +35,24 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 
 ### System Dependencies
 
-- **No RAW decoder to install.** `rawler` is a vendored Rust submodule (`native/vendor/dnglab`) compiled into `rawshim`, so a checkout needs `git submodule update --init` and nothing from a package manager. The C that is left is libavif and libjxl, and only a `renditions` build links those.
-- **No lens database to install either.** `native/lensdb` is the geometry the fit checks before searching for its own curve (§10.8), and it is Rust with the ~3.6MB of lensfun XML compiled into it, so it travels inside `librawshim` and asks nothing of the machine. It is the one copyleft thing in the tree (`THIRD_PARTY.md`).
-- **libavif and libjxl**, which write every AVIF this app produces and every JXL an export offers, and read the AVIFs a download asks for as JPEG, in process (`avif.rs`, §10.7). Both are pinned and built rather than installed, with the libraries underneath them - aom, dav1d, sharpyuv, highway, brotli, lcms2 - by `bun run get:codecs` through vcpkg at one commit, and linked statically, so every build encodes with the same aom and a reader's machine supplies none of them (§23.7); a build that finds no tree refuses naming the command, and the distributions' libavif cannot read a gain map at all. ffmpeg's own avif muxer writes no `colr` box and so cannot tag a still as HDR at all, which is the whole reason this library rather than that muxer.
-- **ffmpeg and `avifenc`**, at development time only. Nothing the server serves goes through either: ffprobe is how an integration test reads an encode back with a decoder that is not ours (§10.7), and `scripts/demo-assets.ts` drives both to build the HDR demo page's committed assets. They are installed in the Dockerfile's `dev` stage - what `docker-compose.dev.yml` runs the integration tests in - and not in the image that ships.
-- **A Vulkan driver**, at runtime, and this one is not negotiable - see §2.1. `apt install mesa-vulkan-drivers` covers AMD and Intel; NVIDIA wants its proprietary driver; a machine with no GPU wants SwiftShader (§2.1). Without any of them nothing renders, and every refusal names what to install.
-  - In a container this is two more things, both in `docker-compose.yml`: `devices: /dev/dri:/dev/dri` and a `group_add` for the host's `render` group. Missing either is **not** an error at startup - the image's SwiftShader answers instead, and every render crawls - so the entrypoint prints a `gpu:` line at startup naming the adapter it found, which is the only way to tell a misconfigured container from a machine that genuinely has no card.
+- **RAW decoder bundled.** `rawler`, vendored submodule `native/vendor/dnglab`, compiles into
+  `rawshim`. Run `git submodule update --init`; no decoder package needed. Only `renditions`
+  builds link C codecs libavif/libjxl.
+- **Lens database bundled.** `native/lensdb` supplies geometry before curve fitting (§10.8),
+  compiling ~3.6MB lensfun XML into `librawshim`. Copyleft notices: `THIRD_PARTY.md`.
+- **libavif and libjxl** encode AVIF/JXL and decode AVIF for JPEG downloads (`avif.rs`, §10.7).
+  `bun run get:codecs` builds them plus aom, dav1d, sharpyuv, highway, brotli and lcms2 at one
+  vcpkg commit, statically linked for consistent output (§23.7). Missing tree fails naming the
+  getter. Distribution libavif lacks gain-map support; ffmpeg's AVIF muxer omits `colr`,
+  preventing HDR still tagging.
+- **ffmpeg and `avifenc`: development only.** ffprobe independently checks encodes (§10.7);
+  `scripts/demo-assets.ts` builds committed HDR demo assets. Installed only in Docker's `dev`
+  stage for `docker-compose.dev.yml`, never the shipping image or serving path.
+- **Vulkan driver required** (§2.1). AMD/Intel: `apt install mesa-vulkan-drivers`; NVIDIA:
+  proprietary driver; no GPU: SwiftShader. Missing driver fails with installation guidance.
+  - Containers need `devices: /dev/dri:/dev/dri` and `group_add` for host `render` group
+    (`docker-compose.yml`). Missing either silently selects slow SwiftShader; inspect startup
+    `gpu:` adapter line to distinguish misconfiguration from absent hardware.
 
 ### NPM Dependencies
 
@@ -49,27 +62,41 @@ Bowerbird is a high-performance RAW photo management and cataloguing backend des
 | `zod` | Schema validation (v4) |
 | `@parcel/watcher` | Filesystem watching (§9.8); native, with prebuilt bindings for every platform this runs on |
 
-There is no image-processing package. Everything that touches pixels is in `native/rawshim` (§10.4), which compiles our rawler fork and `lensdb` in, links libavif and libjxl for a `renditions` build, and does the rest in Rust and Slang.
+Pixel processing lives in `native/rawshim` (§10.4): compiled rawler fork and `lensdb`,
+libavif/libjxl for `renditions`, Rust and Slang elsewhere. No image-processing package.
 
 Testing uses Bun's built-in `bun test` runner, so there is no test-framework dependency.
 
-Entity IDs are eight lowercase alphanumerics (`[a-z0-9]{8}`, ~41 bits), drawn from the runtime built-in `crypto.getRandomValues`, no third-party ID package. Short because an ID is carried in every URL. Single-case because an ID is also a rendition's filename, and macOS and Windows fold two IDs differing only in case into one file - which no primary key would catch, because the rows really are distinct. At those odds a library will not see a collision, but the ID is a primary key, so one is caught at the INSERT rather than assumed away: every creator draws through `withNewId` (`db/constraints.ts`), which redraws up to five times on `SQLITE_CONSTRAINT_PRIMARYKEY` and lets every other constraint failure through untouched. A creator that must commit to an ID before the insert - a library, whose data directory and bin are made under it - draws through `unusedId` instead.
+Entity IDs: eight lowercase alphanumerics (`[a-z0-9]{8}`, ~41 bits), generated by
+`crypto.getRandomValues`. Short for URLs; single-case for rendition filenames on case-folding
+macOS/Windows filesystems. `withNewId` (`db/constraints.ts`) retries up to five times on
+`SQLITE_CONSTRAINT_PRIMARYKEY`, propagating other constraints. Creators needing an ID before
+INSERT, such as libraries creating data/bin directories, use `unusedId`.
 
-RAW decoding is **one reader**: `rawler`, vendored as a fork at `native/vendor/dnglab`. It reads every format the product imports and it is the only thing that reads them, so there is no per-format dispatch to describe: a single `get_decoder` call rather than a header sniff choosing between readers. What the fork buys over upstream is a region decode (`raw_image_region`), which is what makes a loupe tile cost a partial unpack rather than a whole frame.
+RAW decoding uses only `rawler` (`native/vendor/dnglab`), through one `get_decoder` call.
+Fork's `raw_image_region` makes loupe tiles partial unpacks instead of full-frame decodes.
 
 No other third-party dependencies should be added without explicit approval.
 
 ### 2.1 Vulkan is required, full stop
 
-**There is no non-Vulkan host, and no stage between the mosaic and the picture has a CPU twin.** The conditioning, GALOSH, RCD, the coding, the defringe, the lens gather and the grade are all shaders, and the editor runs those same shaders in a browser through WebGPU. So a CPU arm beside one of them is not a fallback: it is a second implementation of a picture, which is exactly what §21.1 records this pipeline losing the camera match to, twice, silently.
+**Vulkan required; no CPU twin for any mosaic-to-picture stage.** Conditioning, GALOSH, RCD,
+coding, defringe, lens gather and grade are shaders, shared with browser WebGPU. Duplicating
+picture arithmetic risks silent camera-match drift (§21.1).
 
-What that rules out is the `if let Some(gpu) … else` that computes the same thing differently. A host with no adapter fails, loudly, naming what it needs.
+No `if let Some(gpu) … else` alternative arithmetic. Missing adapter fails naming requirements.
 
-**This is not a hardware requirement.** `gpu::device` asks for a software adapter where there is no hardware one, so a machine with no GPU runs on a CPU Vulkan driver - slowly, and correctly. What is refused is a host with no Vulkan *at all*, which is an install rather than a class of machine. That driver has to be **SwiftShader** (`bun run get:swiftshader`, taken through `VK_ADD_DRIVER_FILES`), and `gpu::device` refuses anything else: mesa's lavapipe binds at most 128MiB of storage buffer, the least Vulkan allows, and a 24MP frame is 144MB.
+Hardware optional: `gpu::device` falls back to **SwiftShader** (`bun run get:swiftshader`,
+`VK_ADD_DRIVER_FILES`). Other software adapters are refused: lavapipe's 128MiB storage-buffer
+limit cannot hold a 144MB 24MP frame.
 
-The rule reaches past the arms that shadow a shader, to any host loop that walks a picture's pixels: the fit's resamplers, the histogram walk, the descriptor's grids and the illuminant search are all kernels, so that a stage measured on one machine measures the same on the next.
+Ban extends to every host pixel loop. Fit resamplers, histograms, descriptor grids and
+illuminant search use kernels for consistent measurements across machines.
 
-CPU code is still right where it is the **only** implementation: the solvers the fits are built on (`fit.rs`, `hdr_fit.rs`, `tca.rs` - least squares in f64, golden section, the flood fill the dust search grows blobs with), the tables the host fills for a shader to read, and `decode_rawler::conditioned` - which is the expression the conditioning kernel's table is built from rather than a second way to condition a frame, and `the_kernel_conditions_every_sample_at_its_own_position` holds the kernel to it. The rule is about arithmetic over pixels, not about arithmetic.
+CPU-only algorithms remain valid: fit solvers (`fit.rs`, `hdr_fit.rs`, `tca.rs`: f64 least
+squares, golden section), dust blob flood fill, shader input tables, `decode_rawler::conditioned`.
+The latter builds conditioning tables, never a second frame path;
+`the_kernel_conditions_every_sample_at_its_own_position` pins kernel agreement.
 
 ---
 
@@ -173,7 +200,11 @@ bowerbird/
 
 ### Dependency Injection Pattern
 
-Everything takes what it uses as constructor parameters, and nothing takes an aggregate that reaches further. A service names the repositories it reads, an API class names the services it serves, and where a repository reads a peer it takes that peer - so `index.ts` is the one place the graph is assembled, and a unit test builds only the part it exercises. Photos are several services rather than one (§8.2): `photos_api` takes the read, mutation and rendition services, `shoots_api` and `albums_api` take `PhotoReadService` alongside their own service for their photo-listing endpoints (§13.3, §13.4), and `image_api` takes the read and rendition services (§13.5). The API owning the sync endpoints takes `ScanService` alongside `LibrariesService` (§13.1).
+Constructors name only direct dependencies, never aggregates: services take repositories, APIs
+take services, repositories take peers they read. `index.ts` assembles the graph; tests build
+only relevant parts. Photo services are split (§8.2): `photos_api` takes read/mutation/rendition;
+`shoots_api` and `albums_api` add `PhotoReadService` for listings (§13.3, §13.4); `image_api`
+takes read/rendition (§13.5). Sync API takes `ScanService` and `LibrariesService` (§13.1).
 
 ```typescript
 // Example wiring in index.ts
@@ -190,7 +221,8 @@ const photosApi = new PhotosApi(photoReadService, photoMutationService, photoRen
 
 ## The chapters
 
-The rest of the spec is in `docs/design/`, one chapter per domain, numbered with this file as one document: `DESIGN §10.7` anywhere in the repo is §10.7 of the chapter that holds §10. Open the chapter a change reaches, and no more.
+`docs/design/` chapters share this file's numbering: `DESIGN §10.7` means §10.7 in the chapter
+holding §10. Open only chapters relevant to the change.
 
 - [`catalogue.md`](docs/design/catalogue.md) - **§4 Database schema**, **§5 Schemas (Zod)**, **§6 Library data directory**. Every table and index; a photograph as a recipe over files (§4.2.1); shoots, albums, banners, folder rules, the sync lease row; backups and restore (§4.9); the request and response shapes; where generated files live and how a path resolves.
 - [`sync.md`](docs/design/sync.md) - **§7 Supported file formats**, **§9 Sync algorithm**, **§11 Metadata extraction**, **§12 Deletion**. Which RAW and finished-picture formats a library imports, off the one extension table everything reads (§7); the scan and the bin channel (§9.1), the file hash, move detection, apply and shoot reconciliation, status, the lock, the watcher and the daily backstop (§9.8), stopping a sync; the header parse (§11); soft-delete, restore and the bin folder (§12), and hiding, which is none of those (§12.4).

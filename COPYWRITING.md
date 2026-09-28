@@ -1,8 +1,7 @@
 # Copywriting
 
-This guide sets how Bowerbird's copy reads. `CLAUDE.md` covers where the words go
-(`foo.strings.ts`, whole sentences, 1 message stated once). Here, "copy" is all the text a
-reader sees, and a "string" is 1 piece of it.
+This guide governs visible text ("copy"); a "string" is 1 piece.
+`CLAUDE.md` governs placement (`foo.strings.ts`, whole sentences, 1 message stated once).
 
 ## The 5 rules
 
@@ -54,15 +53,8 @@ and units go on the field as its min, max, and suffix, and stay out of the label
 
 ### The sublabel is the default that has to be argued for
 
-Writing copy makes it tempting to explain, and the explanation lands under the control as a
-sublabel: what the field is for, what happens if you tick it, what we do with it afterwards.
-Each line reads as helpful on its own. A screen of them reads as a form that does not trust
-the reader, and the words that matter, the label and the button, are buried among words that
-do not.
-
-**So a sublabel starts out unjustified.** Write the label, then ask what a reader would get
-wrong with no sublabel at all. Nothing? Then there is no sublabel. These all shipped in a
-review and all came out again:
+**Sublabels need a reason.** Write the label first. Add a sublabel only to prevent a specific
+misunderstanding; explanations under every control bury labels and actions. Examples to cut:
 
 | Cut | Why it went |
 |---|---|
@@ -70,10 +62,8 @@ review and all came out again:
 | **Strip identifying EXIF data** / "We remove your name and where the photo was taken, and keep the camera settings." | The label says it. The sentence restates it at three times the length. |
 | **Include current photo in report** / "The photo, its renders, and what we measured about it." | Nobody ticking this wants the manifest. |
 
-**A sublabel earns its place when the reader cannot see the consequence**, and then it names
-that consequence and stops: a control that deletes something, costs money, or sends data
-somewhere they would not expect. One line, on the one control that needs it; if two controls
-on a screen both have one, at least one of them is explaining itself for nothing.
+Use one line for an otherwise hidden consequence: deletion, cost, or unexpected data transfer.
+If two controls on a screen have sublabels, at least one is unnecessary.
 
 ## Buttons and actions
 
@@ -92,12 +82,10 @@ on a screen both have one, at least one of them is explaining itself for nothing
 - **1 phrase, sentence case, no full stop.** A heading is never 2 fragments.
 - **Name the feature plainly and objectively.** Say what it is, and leave out what the reader
   might want it for. "Dust removal" is the name. "Clean up your sensor" guesses at an intent.
-- **Describe a feature with a present-tense verb and no subject.** In a feature list, the
-  feature is the implied subject, so start with what it does: "Groups similar photos into 1
-  thumbnail", "Imports around 50 photos a second", "Makes triage faster". Writing
-  "Bowerbird" at the start of every item repeats it for no gain. Avoid the imperative
-  ("Group similar photos into 1 thumbnail"), which tells the reader to do the job the
-  feature does. No full stop.
+- **Describe features with a present-tense verb, no subject or full stop.** "Groups similar
+  photos into 1 thumbnail", "Imports around 50 photos a second", "Makes triage faster".
+  Don't repeat "Bowerbird" or use an imperative ("Group similar photos into 1 thumbnail")
+  that assigns the feature's work to the reader.
 - **Ask a question only when it's the real question.** "Delete 3 photos?" asks for a decision.
   Help questions use the reader's first person: "How do I undo an edit?"
 
@@ -160,9 +148,7 @@ These read as written by a machine or a marketer. None of them appear in copy.
   catalogue." Avoid "Bowerbird saves edits to the catalogue, never to the RAW."
 - **"Not just X, but Y."** State Y.
 - **Stacked fragments.** "Every photo. One place." "Fast. Private. Yours." Write 1 sentence.
-- **Caption fragments.** A noun, a comma, then a participle: "Similar photos, grouped into 1
-  thumbnail", "Your camera's colours, matched for you", "Spots from sensor dust, found and
-  removed". Each is a passive with its verb taken out, and a run of them reads as a template.
+- **Caption fragments.** Noun, comma, participle: "Similar photos, grouped into 1 thumbnail".
   Lead with the verb: "Groups similar photos into 1 thumbnail".
 - **Question, then answer.** "Shot a burst? Keep the sharpest frame." "No signal? No problem."
   Write the statement.
@@ -210,11 +196,10 @@ These read as written by a machine or a marketer. None of them appear in copy.
   either. End the sentence or use a comma. Ranges in prose are "0 to 5". A shortcut sheet can
   show "0–5".
 - **Colons only before a list or an example**, never to join 2 halves of a sentence.
-- **Full stops** go on sentences, steps, errors, and toasts. Headings, buttons, labels, list
-  fragments, and 1-clause tooltips take none. Decide by what the string is, and ignore where
-  it sits. Alt text such as "The grid on a phone" and a feature description such as "Groups
-  similar photos into 1 thumbnail" are fragments and take none. Body text such as "Open a
-  stack, and its photos appear in a row below." is a sentence and takes one.
+- **Full stops** end sentences, steps, errors and toasts. None on headings, buttons, labels,
+  list fragments or 1-clause tooltips. Judge grammar, not placement: "The grid on a phone"
+  and "Groups similar photos into 1 thumbnail" are fragments; "Open a stack, and its photos
+  appear in a row below." is a sentence.
 - **Strings shown side by side share 1 shape.** A row of cards, a list, or a set of tabs is
   all sentences or all fragments. 5 sentences and 3 fragments in 1 grid read as 2 authors.
 - **Straight apostrophes and quotes**, as nearly every string in `web/src` already has them.
@@ -231,14 +216,9 @@ These read as written by a machine or a marketer. None of them appear in copy.
 
 ## Glossary
 
-Each concept gets 1 word. When a string uses any word in the "Avoid" column for the concept on
-its row, change it to the term.
-
-A term written with a capital is a named feature, and keeps its capital everywhere, mid-sentence
-included: "Deleted photos move to the Bin." It gets one because the lower-case word reads as
-something generic. A generic bin, the verb "pick", a light, and a stack being triaged all
-exist in ordinary sentences, and the capital marks the Bowerbird thing. Every other term is
-lower case except at the start of a string.
+Use 1 term per concept; replace its "Avoid" synonyms. Capitalised terms name features and
+keep capitals mid-sentence: "Deleted photos move to the Bin." Generic uses (bin, pick, light,
+stack) stay lower case, as do other terms except at the start of a string.
 
 ### The library
 

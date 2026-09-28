@@ -1,14 +1,12 @@
 # Client-side editing: what to build
 
-Investigation is not finished; this is the list as it stands, so nothing measured gets
-forgotten. Numbers are a 61MP ARW (9504x6336) on a Radeon 780M iGPU unless stated, from
+Investigation in progress; retain measured findings. Unless stated, numbers are a 61MP ARW
+(9504x6336) on a Radeon 780M iGPU, from
 `native/rawshim/examples/open_bench.rs`.
 
-**Order, decided.** The CPU stages move to the GPU first, because parity is checkable there: the
-WGSL is held against the CPU it replaces by fixtures that already exist, where a wasm port is a
-second thing to trust at the same time. Then the client move, single-threaded - no
-`wasm-bindgen-rayon`, no `SharedArrayBuffer`, no cross-origin isolation, none of it until
-something measured says the 582ms is the problem.
+**Order, decided.** Move CPU stages to GPU first, checking WGSL parity against existing CPU
+fixtures. Then move to the client, single-threaded. No `wasm-bindgen-rayon`, `SharedArrayBuffer`
+or cross-origin isolation unless measurements identify the 582ms as a problem.
 
 ## The move
 
@@ -33,10 +31,9 @@ something measured says the 582ms is the problem.
       both assertions confirmed red before being trusted. `openGpuDevice()` really does return a
       `GPUDevice` in Chromium.
 
-      **wgpu cannot adopt a device from JS.** There is no `from_webgpu` and wgpu-hal has no WebGPU
-      backend, so there is no seam to inject one through - only `Device::as_webgpu()` outward. The
-      module therefore requests the device and the page borrows *its* one, which is the same
-      single-device requirement read the other way round.
+      **wgpu cannot adopt a JS device.** No `from_webgpu` or wgpu-hal WebGPU backend; only
+      outward `Device::as_webgpu()`. The module therefore requests the device and the page
+      borrows it, preserving the single-device requirement.
 
       **A browser now runs RCD and GALOSH** (`4b72aaa`). The frame stays on the device across the
       chain and the one readback left is the demosaic's output per tile, so the blocking
@@ -44,12 +41,9 @@ something measured says the 582ms is the problem.
       returns the page's device and the tab walks the *same* `decode_source` a server does, with
       no `#[cfg]` fork.
 
-      **The evidence is the absence of a complaint, which is why each fall-through now makes one.**
-      A CPU decode produces a picture too, so no assertion on the frame's shape can tell RCD from
-      the PPG it replaced. `eprintln!` is dropped on wasm32 - that std has no stderr - so
-      `crate::warn` routes to `console.warn`, and `local_decode.spec.ts` asserts nothing declined.
-      GALOSH had no announcement at all before: a frame carrying no fit and no filtering was
-      indistinguishable from a filtered one.
+      **Every fall-through warns.** Frame shape cannot distinguish RCD from CPU PPG, or GALOSH
+      filtering from its absence. wasm32 drops `eprintln!` without stderr; `crate::warn` routes
+      to `console.warn`, and `local_decode.spec.ts` asserts nothing declined.
 
       Native, 61MP, quiet box: condition + fit 1022-1072ms to 757-778ms, the whole decode
       2367-2407ms to 1947-2002ms, the open 6947ms to 6225ms. `condition` stopped losing to the CPU
@@ -66,9 +60,8 @@ something measured says the 582ms is the problem.
       --manifest-path native/rawshim/Cargo.toml` links a `.wasm` now. `gpu::device` is `None`
       there, because the page owns the `GPUDevice` and this crate's wasm half ends at the fit.
       Only `Gpu`'s own construction is gated, so nothing native moved.
-- [x] **A wasm decode runs, not merely compiles** (`a7bfbf1`). Both blockers were found by reading
-      `decode_rawler::decode_source` after it compiled, not by a compiler - a decode that links and
-      then panics on its first frame is what a build alone can tell you nothing about.
+- [x] **A wasm decode runs, not merely compiles** (`a7bfbf1`). Reading
+      `decode_rawler::decode_source` after compilation found both first-frame panic blockers.
 
       - **The clock, answered by `clock::Mark`.** `std::time::Instant::now()` panics on
         `wasm32-unknown-unknown`, and four paths read it for `BOWERBIRD_DECODE_PROFILE`'s laps
@@ -92,10 +85,9 @@ something measured says the 582ms is the problem.
         structure, PPG *panics* on what it cannot read - so a sensor the GPU turned away came back
         through the CPU, and which files the product opened depended on whether the host had a GPU.
 
-      **Threads are not a third blocker.** rayon 1.13 detects that the target cannot spawn and
-      configures a single-threaded fallback pool, so `par_chunks_mut` runs sequentially rather
-      than panicking. Nothing else on the decode path spawns: `ffi.rs` does, but a browser
-      reaches `edit::open` rather than the C ABI, and `hdr.rs`'s scope is `renditions`-gated.
+      **Threads do not block.** rayon 1.13 detects unavailable spawning and runs `par_chunks_mut`
+      sequentially. Decode spawns nothing else: browsers reach `edit::open`, not `ffi.rs`'s
+      C ABI, and `hdr.rs`'s scope is `renditions`-gated.
 - [x] **Threads: single, and no wasm threading is to be built.** The part in question is purely
       the entropy decode and bit-unpack into the sensor's `u16` grid - `raw_image`, rayon-parallel
       inside rawler (Sony's lossless is tiled in two dimensions). At 61MP it is 92ms on twelve
@@ -115,21 +107,16 @@ something measured says the 582ms is the problem.
       transferred, so a tile carries a request rather than 72MB, and the results come back
       transferred too. Longest main-thread task over the same open afterwards: **143ms**.
 
-      **The page never did borrow the module's device**, which is what made this possible: the
-      presenter opens its own through `navigator.gpu`, the module opens its own for the decode, and
-      what crosses between them is samples. A `GPUDevice` cannot cross a worker boundary at all, so
-      the claim above is now structural rather than aspirational; `openGpuDevice` is what the
-      worker asks to know whether it got an adapter, and nothing hands one out.
+      **The page never borrowed the module's device.** The presenter uses `navigator.gpu`, the
+      module opens a decode device, and only samples cross. A `GPUDevice` cannot cross workers;
+      `openGpuDevice` tells the worker whether it obtained an adapter, without handing one out.
 - [x] **The camera match is served** (`9e11861`), at `/image/:id/camera-match`, immutable under a
       per-photo URL because a match is a function of the file alone. Bytes, opaquely: a build that
       cannot read a blob ignores it and refits, so there is no version to negotiate at that
       boundary.
-- [x] **The RAW is already cacheable, and this item was aimed at the wrong function.** `download()`
-      does send `no-cache`, but `/download/original` does not go through it - it goes through
-      `serve`, which carries an ETag off the file's size and mtime and answers a conditional GET
-      with a 304. So a client that revalidates never re-fetches the 72MB. `immutable` would save
-      the revalidation round trip and is not worth it: it would also let a RAW replaced in place go
-      unnoticed, which is a stale picture in exchange for one small request.
+- [x] **The RAW is already cacheable.** `download()` sends `no-cache`, but `/download/original`
+      uses `serve`: size/mtime ETag, conditional GET returning 304 without re-fetching 72MB.
+      Reject `immutable`: saving revalidation would hide RAW replacement in place.
 
 ## Memory, if the RAW is decoded in a tab
 
@@ -140,10 +127,9 @@ something measured says the 582ms is the problem.
       through it. Whole frame 232MB/187ms becomes 118MB in strips; `raw_image` is untouched in
       result and slightly faster (187 -> 161ms).
 
-      **The frame-sized allocation was never the cost.** `vec![0; n]` is calloc, so the untouched
-      pages never fault in - the 122MB was virtual. What a loupe tile actually paid was
-      `read_params` calling `file.as_vec()`, copying the whole 78MB mmap to decrypt a few kilobytes
-      of it: **83 of its 89ms**. Now a borrow, and the tile is 104MB/6ms.
+      **The 122MB frame allocation was virtual:** `vec![0; n]` uses calloc; untouched pages never
+      fault. `read_params` / `file.as_vec()` spent **83 of 89ms** copying a 78MB mmap to decrypt
+      kilobytes. Borrowing instead gives 104MB/6ms per tile.
 
 - [x] **`MAP_POPULATE` stays** - decided, not done. `RawSource::new` prefaults, so opening a 72MB
       RAW is 78MB resident before a sample is decoded, a floor under every figure above. The floor
@@ -167,26 +153,18 @@ something measured says the 582ms is the problem.
 
 ## Move the open onto the GPU
 
-73% of the open is CPU work with a GPU sibling already in the tree. This has to happen whether or
-not the client does the open, and it has to happen *before* wasm runs any of it single-threaded.
+73% of the open is CPU work with existing GPU equivalents. Move it regardless of client
+opening, *before* wasm runs it single-threaded.
 
-**The prize is the transfers, not the stages.** RCD leaves the frame in VRAM and reads it back;
-the grade uploads it again. At 61MP that is 361MB each way to run pointwise arithmetic on a CPU.
-So a stage is worth moving even where the stage itself is cheap, and the last one to move is
-worth more than its own timing.
+**Avoid transfers.** RCD reads VRAM back; grade uploads again: 361MB each way at 61MP for
+pointwise CPU arithmetic. Even cheap stages merit moving; the last also removes transfers.
 
-> **Read every number in this section against the machine that produced it: the GPU is
-> integrated.** `open_bench` names it - `AMD Ryzen 7 7800X3D (RADV RAPHAEL_MENDOCINO)
-> (IntegratedGpu)`. There is no discrete card and no PCIe bus, so the "361MB upload" is a memcpy
-> into the same DRAM the CPU is already reading, and a kernel gets no memory bandwidth the CPU did
-> not already have. That cuts both ways and neither is the naive one: a transfer is far cheaper
-> here than the "361MB each way" framing suggests, so the *prize above is smaller than it sounds*;
-> but a bandwidth-bound kernel has nothing to win with either, so a stage that is a plain sweep
-> over the frame will keep losing to a threaded CPU no matter how the transfers are arranged. What
-> does win here is arithmetic density - RCD, GALOSH's pass12, the sorting network - where the work
-> per byte is high enough that shader lanes beat cores. The levels quantile is the counter-example
-> and the reason this box is worth writing down: a million atomics over one byte each, which is
-> exactly the shape that cannot win on an iGPU.
+> **These numbers describe an integrated GPU:** `open_bench` names
+> `AMD Ryzen 7 7800X3D (RADV RAPHAEL_MENDOCINO)
+> (IntegratedGpu)`. No discrete card or PCIe: "361MB upload" copies within shared DRAM.
+> Transfers cost less, but bandwidth-bound frame sweeps cannot beat a threaded CPU through
+> rearranged transfers alone. Arithmetic density wins: RCD, GALOSH's pass12, sorting network.
+> The levels quantile's million one-byte atomics is the counter-example that loses on this iGPU.
 >
 > A discrete card would change these conclusions, not just these constants. Re-measure before
 > porting anything on the strength of a number here.
@@ -207,11 +185,9 @@ worth more than its own timing.
       `k * whole + (k * rest) / counted`, and splitting `k` at bit 10 keeps every intermediate
       inside `u32`.
 
-**Ported is not wired, and wired is not faster.** `apply_lens` takes the GPU now (`7b39847`, 277
-fixture tests green with the pinned renders unmoved) and it is **588-610ms against the CPU's
-639ms** - no faster, because a stage on its own uploads 361MB and reads it back, which is what the
-CPU never had to do. The stage timings were never the prize; the transfers are. Until the stages
-share one buffer this whole section buys correctness and nothing else.
+**Ported is not wired; wired is not faster.** GPU `apply_lens` (`7b39847`, 277 fixture tests,
+unchanged pinned renders) takes **588-610ms against CPU 639ms**: no speedup while separately
+uploading and reading 361MB. Correctness is established; speed needs one shared buffer.
 
 - [x] **Chain them over one resident frame** (`442112a`). `base::prepare` uploads once, records
       encode -> defringe -> warp into one encoder and reads back once: six transfers become two.
@@ -313,9 +289,8 @@ share one buffer this whole section buys correctness and nothing else.
       `PROGRESS_TILE = 2048`): 20 updates at ~236ms for +22%. Finer is worse and was measured -
       1024 costs 73% of the frame for an interval already below what a reader resolves.
 
-      **The premise was stale: the frame already arrived in 20 pieces.** The decode was tiled at
-      this same 2048 for memory after this item was written, so what was missing was the report,
-      not the tiling.
+      **The frame already arrived in 20 pieces.** Memory work had tiled decode at 2048 after
+      this item was written; only progress reporting remained.
 
       **And tiled GALOSH never reproduced the frame denoised whole.** `pass12` shrinks inside a
       tile indexed from the region origin, so a region off that grid shrinks every pixel against a
@@ -340,11 +315,10 @@ share one buffer this whole section buys correctness and nothing else.
       | 1024 | 1.06x, 5595ms | 1.12x, 5868ms | 1.26x, 6619ms |
       | 2048 | 1.03x, 5396ms | 1.06x, 5526ms | 1.12x, 5816ms |
 
-      The clock tracks the area to within a percent or two, so tiling costs area and nothing else
-      now the per-call floor is gone. **The tile size decides what the halo costs**: the whole
-      16-to-64 range is 9% at 2048 and 37% at 512. 2048 at halo 32 costs 1.06x, which is cheaper
-      than 512 at *any* halo - so the only reason to go smaller is finer progressive updates, and
-      that is a latency-against-throughput call rather than a quality one.
+      Clock tracks area within a percent or two after removing the per-call floor. **Tile size
+      determines halo cost**: 16-to-64 costs 9% at 2048, 37% at 512. 2048/halo 32 costs 1.06x,
+      less than 512 at *any* halo. Smaller tiles buy finer updates, trading throughput for latency,
+      not quality.
 
       The evidence behind the halo itself is in `examples/halo_seams.rs` and
       `examples/halo_pattern.rs`, and in `29f8200`, `4287c03`, `1697656`, `df9f86a`.
@@ -384,9 +358,8 @@ share one buffer this whole section buys correctness and nothing else.
 - [x] **Loupe tiles become local**, so no server round trip per pointer move. They are already 12x
       faster from the kept table: 425ms to 35ms per tile.
 
-      **A local tile is pixels, not a picture.** What crossed the wire was an HDR AVIF because
-      bytes had to survive one; nothing does here. Encoding a picture in the tab to decode it again
-      in the same tab would be the round trip in miniature.
+      **A local tile is pixels, not a picture.** HDR AVIF was for transport; local encode/decode
+      would recreate that round trip within the tab.
 
       It does not cross the worker either, since the tick moved down: `holdTile` builds the window
       on the module's device and keeps it there, and what comes back is the rectangle the glass is
@@ -461,8 +434,8 @@ share one buffer this whole section buys correctness and nothing else.
       of a rule against the module's. `gpu_fixture.rs` is the pin for the graded frame now, and
       there is one implementation for it to pin.
 
-      What is left on the page is `raw_edit_presenter.ts`, which decides what to draw, and
-      `stage_resolution.ts`, which needs a layout box and a device pixel ratio and so cannot move.
+      Page responsibilities: `raw_edit_presenter.ts` decides what to draw;
+      `stage_resolution.ts` needs layout and device pixel ratio, so stays there.
 
 ## Stale, noticed on the way
 

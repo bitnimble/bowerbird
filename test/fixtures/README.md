@@ -1,7 +1,6 @@
 # Where the fixtures came from
 
-The RAWs and the snapshots are Git LFS objects (`.gitattributes`), so a fresh clone needs
-`git lfs pull` before the suites that read them will run.
+RAWs and snapshots use Git LFS (`.gitattributes`). Run `git lfs pull` before fixture suites.
 
 ## AFXT2721.RAF
 
@@ -9,26 +8,19 @@ A Fujifilm X-T3 frame, from the [PIXLS.US raw sample archive](https://raw.pixls.
 every contribution under **CC0** - the uploader releases it into the public domain. Downloaded from
 `https://raw.pixls.us/data/Fujifilm/X-T3/AFXT2721.RAF`.
 
-**The compressed one of the two X-T3 samples there, deliberately.** Its sibling is uncompressed, and
-would leave `decompress_fuji` - the part of the RAF decoder with any real work in it - unexercised.
-
-It is a still life rather than the landscape one would reach for, and that is the better fixture
-here: sharp high-contrast lettering over saturated blue and red is where an X-Trans demosaic shows
-what it does wrong. A landscape's foliage hides chroma error; a printed word does not.
+Compressed sample exercises `decompress_fuji`; uncompressed sibling does not. Still-life lettering
+over saturated blue/red exposes X-Trans chroma errors that landscape foliage hides.
 
 ## DSCF8146.RAF
 
 A Fujifilm X-T10 frame from the same archive and under the same CC0 terms, downloaded from
 `https://raw.pixls.us/data/Fujifilm/X-T10/DSCF8146.RAF`.
 
-**Shot at ISO 4000**, which is the whole reason it is here and is the highest in the archive's Fuji
-samples by more than two stops - the next is 800. A blind noise fit is fitted per photograph off the
-mosaic's own statistics, so every claim about one has to be made against a frame that actually has
-noise in it; `AFXT2721.RAF` is a lit still life at ISO 160 and would agree with anything.
+**ISO 4000**, more than two stops above archive's next Fuji sample at 800, exercises blind
+per-photo mosaic noise fitting. `AFXT2721.RAF` at ISO 160 is too clean for that claim.
 
-**And it is a different generation of the pattern.** The X-T10 is X-Trans II where the X-T3 is IV, so
-what reaches the decoder is a second body's pattern rather than a second copy of one - and bodies
-write different phases of the one 6x6, naming theirs in metadata.
+X-T10's X-Trans II also differs from X-T3's IV; bodies encode different phases of the 6x6
+pattern in metadata.
 
 A stained-glass window in a dim church interior: no photographed people, large flat plaster where
 noise is most visible, deep saturated glass for the chroma arm, and real shadow.

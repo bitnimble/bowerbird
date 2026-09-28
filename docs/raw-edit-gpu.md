@@ -4,13 +4,8 @@ Date: 2026-08-03. **Built, 2026-08-04**, see the status below before reading on.
 
 ## 0. Status: what this argued for, and what shipped
 
-This is the note that took the editor from a wasm CPU tick to a WebGPU one. It is
-kept as the record of *why*, so it still describes the CPU pipeline in the present
-tense throughout. That pipeline no longer exists. Read §1–§5 as the baseline being
-argued against, not as the system.
-
-**`docs/gpu-editor.md` is what runs**, and is the one to read to find out what a tick
-does. This is the argument for it.
+Historical rationale for moving wasm CPU ticks to WebGPU. §1–§5 use present tense for
+the retired baseline. **Current runtime: `docs/gpu-editor.md`.**
 
 Where the code went:
 
@@ -104,23 +99,16 @@ depending on route (DESIGN §21.2, §21.3).
 
 ## 4. The goal, and three costs
 
-**The goal is a full-resolution tick, not a faster settle.** Every tick, drag
-included, graded at the frame's real size, which is what would let
-`Resolution::Interactive` and the whole 960 preview path be deleted rather than
-optimised. Read the rest of this note against that target: reducing pixel count
-is a lever on the current pipeline, not the destination.
+Goal: full-resolution ticks, including drag, eliminating `Resolution::Interactive` and
+960 preview path. Pixel-count reductions are interim improvements.
 
 A tick costs
 
 **pixel count** × **per-pixel work** + **delivery to the compositor**
 
-and a GPU addresses only the middle factor. The other two are larger than they
-look, cheaper to move, and need no device, no second implementation and no
-fallback story. They also do not conflict with the full-resolution goal: the
-right size for a tick is the size the stage can show, which on most displays is
-below 3840 and on a 5K one is above it (§4.1). "Full resolution" means the frame
-is not deliberately degraded for the drag, not that the pixel count is fixed by
-a constant.
+GPU addresses per-pixel work; pixel count and delivery can improve independently.
+Full resolution means no drag degradation, with ticks sized to stage pixels: usually below
+3840, above it on some 5K displays (§4.1), never one fixed count.
 
 ### 4.1 The pixel count is a constant nobody chose for the screen
 
@@ -135,10 +123,8 @@ the emitted frame, and most of the resident set: 841MB to 1.24GB on the track
 route and 1.4GB to 2.17GB on the still route, moving from 1920 to 3840
 (DESIGN §21.2).
 
-It is inherited from the rendition default, a size chosen for a file kept
-forever, and nothing on screen agrees with it. There is no zoom in the editor
-(§21: Edit replaces the stage, Done discards), so the only resolution that means
-anything is the stage's own physical pixels.
+Constant inherits rendition-file size, unrelated to screen. This editor has no zoom
+(§21: Edit replaces stage, Done discards); relevant resolution is stage's physical pixels.
 
 Everything in §3 is linear in pixels above a fixed floor (the 65536-entry LUTs,
 and the peak's 1M-sample quantile), so sizing to the stage moves every
@@ -157,9 +143,7 @@ always a win:**
   at full resolution" is not true there. `finish` is a sharpen and a denoise,
   which is exactly what cannot be judged through an upscale
 
-So the fix is two-directional, and that matters more than the 2-4x: the constant
-is currently wrong in both directions and only accidentally right in the middle
-of the range.
+Stage sizing both avoids wasted pixels and fixes undersized output; typical saving is 2-4x.
 
 Mechanically the machinery exists: pass the stage's
 `clientWidth * devicePixelRatio` (or `clientHeight`, whichever bounds the frame)
@@ -180,12 +164,9 @@ at 960 every filter in `finish` covers roughly 4x the *picture* it covers at
 3840: the drag is already showing a different denoise and a different sharpen
 from the settle it lands on. It pays ~80ms of its ~88ms tick to do that.
 
-§21's contract is that tone and colour are exact and resolution is disposable.
-`finish` is neither tone nor colour, and at drag resolution it is already
-approximated. Dropping it during a drag (or keeping only defringe, one
-five-point Laplacian) leaves grade + PQ, about 13ms at 960, which is the first
-time anything here has been inside a frame budget. No device, no shader, no
-twin.
+§21 requires exact tone/colour, allowing reduced resolution. Drag's `finish` is already
+approximate. Skip it, or retain only five-point-Laplacian defringe, to reach grade + PQ
+at about 13ms/960 without GPU work.
 
 ### 4.3 Delivery caps the two blob routes, not compute
 
@@ -211,13 +192,10 @@ addressed, since §10.4's objections are about the unpack and the coder.
 
 ## 6. If the GPU is the answer, the frame should live there
 
-The shape this note first described, view the shared heap, `writeBuffer`,
-dispatch, `mapAsync`, write back, is the worst available version: it pays two
-transfers per tick to accelerate the middle of a tick. It is a stage swap, not
-an architecture.
+Shared heap, `writeBuffer`, dispatch, `mapAsync`, writeback pays two transfers per tick.
+Keep frames resident instead.
 
-`Prepared` is immutable between camera matches. That is the entire point of the
-type, and it is what makes the resident-frame shape obvious:
+`Prepared` is immutable between camera matches:
 
 - **Once at open**: upload `prepared` (59MB at 9.8MP), the camera match's colour
   tables, and the PQ LUT
@@ -225,11 +203,8 @@ type, and it is what makes the resident-frame shape obvious:
   bytes, then dispatch grade → PQ → finish over resident textures
 - **Readback**: only what the sink needs, and on one route nothing at all (§7)
 
-Stage 1 of §2 disappears with it: nothing is trampled, so there is no working
-copy to refresh. So does `Resolution::Interactive`, once a full-size tick lands
-inside a frame, and with it `preview`, the second `Prepared` and `shrunk_to`.
-That deletion is the goal (§4), not a side effect: the CPU/GPU twin is usually
-argued as pure addition, and it is not.
+Resident frame removes §2's working copy. Once full-size ticks meet frame budget, delete
+`Resolution::Interactive`, `preview`, second `Prepared` and `shrunk_to`, as §4 requires.
 
 ### 6.0 One shot, so keep everything GPU-shaped adjacent
 
@@ -268,16 +243,11 @@ const device = await adapter.requestDevice({
 });
 ```
 
-Three things make that worth writing down rather than assuming. Asking for more
-than the adapter has **rejects** rather than clamping, so the clamp is the
-caller's. The shader then has to branch on `device.limits`, not on what it asked
-for. And an adapter is **consumed** by its first `requestDevice`, so a fallback
-device needs a second `requestAdapter` rather than a second call.
+Clamp requests to adapter limits or creation **rejects**. Shaders use actual `device.limits`.
+First `requestDevice` consumes adapter; fallback needs another `requestAdapter`.
 
-A raised limit is therefore not a free win: it is a second code path, worth
-taking only where the default genuinely does not fit. The request itself costs
-nothing, but spending the memory does - a workgroup claiming 32KB halves how many
-an SM can hold resident, which is how a GPU hides memory latency.
+Raise limits only when defaults cannot fit. Memory use affects occupancy: a 32KB workgroup
+halves resident workgroups per SM, reducing latency hiding.
 
 Measured on this machine's integrated RDNA2, defaults against what the adapter
 actually offers:
@@ -342,10 +312,7 @@ value never differs between pipelines built from one entry point it is a
 
 ### 6.2 wgpu in Rust, not a device in JS
 
-A device in JS with shaders beside it is a second implementation of `finish` in
-a second language. That is precisely the divergence §21.1 exists to prevent, and
-this codebase has already paid for it twice: the editor's own copy of the grade
-lost the camera match, and its own decode fringed blown skies magenta.
+Separate JS `finish` risks §21.1's repeated drift: lost camera match and magenta blown skies.
 
 wgpu compiles to WebGPU on wasm and to Vulkan / Metal / DX natively, so one
 Rust implementation serves the editor tick **and** the server's renditions,
@@ -373,8 +340,7 @@ Split the requirement the way §21 already splits resolution from tone:
   the settle. Pin it as a bounded difference against the CPU result, not as
   equality
 
-Without that split there is no GPU path worth starting. With it, the part that
-carries risk is small, and it is the part a tolerance pin can actually guard.
+This split confines arithmetic-order differences to the tolerance-pinned stage.
 
 ## 7. The emit stage may be the thing that disappears
 
@@ -399,17 +365,13 @@ has another: a WebGPU canvas.
   the AVIF rewrap survives whatever happens here. Readback stays on that route:
   59MB, ~10ms, against the 617-798ms encode it feeds
 
-So on macOS the route table collapses from three to two: a canvas for Chromium
-and Safari, the AVIF rewrap for Firefox, which composites HDR through video and
-only video no matter what its WebGPU support does. Three questions stood between
-here and that, none of them about performance, and §7.1 to §7.4 answer all
-three: the mapping is a constant, the gamut needs no bespoke handling, and above
-the headroom the canvas is no worse than the media path it replaces.
+macOS needs two routes: Chromium/Safari canvas and Firefox AVIF rewrap for video HDR.
+§7.1–§7.4 establish constant luminance mapping, no bespoke gamut handling and no worse
+clipping beyond display headroom.
 
 ### 7.1 The canvas is relative where PQ is absolute
 
-Two measured facts change what the final transfer has to be, and the second one
-is the awkward one.
+Two measurements determine final transfer.
 
 **The canvas carries the sRGB transfer, not linear light.** Measured against a
 CSS `rgb(128,128,128)` swatch: a canvas value of 0.5 matches it, 0.2158 does
@@ -418,28 +380,15 @@ curve simply evaluated past 1.0, and the mapping is
 `srgb_encode(nits / sdr_white_nits)`, not `nits / 203`. A value of 3.0 is about
 12.8x SDR white in luminance, which is what the measured plateau actually means.
 
-**The reference white is 203 nits, and it is the browser's constant rather than
-the display's.** This looked like the blocking problem: PQ is absolute, an
-extended canvas is relative to whatever SDR white the OS is showing, and no API
-reports it (`screen.highDynamicRangeHeadroom` is unsupported in both engines).
-The §7.3 comparison answers it directly. Sweeping the divisor against a real PQ
-AVIF of the same pixels, the two arms match at **203**, in both engines: below
-it the canvas is brighter than the media path, above it darker, and the change
-is a uniform scale with no clipping at any setting.
+**Reference white is browser-fixed 203 nits.** `screen.highDynamicRangeHeadroom` is unsupported
+in both engines. Comparing identical PQ AVIF/canvas pixels (§7.3), divisor **203** matches both;
+lower brightens canvas, higher darkens it, uniformly without clipping.
 
-203 is BT.2408's reference white, and the compositor is evidently using it to
-bring the AVIF's absolute nits into the same extended-range space the canvas
-writes into. So the mapping is a constant, `srgb_encode(nits / 203)`, and it
-does not have to be measured, guessed, or tracked as the user moves the
-brightness slider: **both paths are relative to the same number, so they move
-together.**
+Results imply compositor maps AVIF nits through BT.2408's 203-nit reference white.
+Use constant `srgb_encode(nits / 203)`; both paths track brightness changes together.
 
-Two things follow. The headroom does not need to be readable after all: the EETF
-rolls off to the reader's configured display peak (a device setting), and
-whatever the panel cannot show is the compositor's problem on both paths
-equally. And the 203 is *not* `Grade::reference_white_nits`, which is a library
-setting a user can move; it is the browser's fixed constant, so the divisor
-stays 203 even when the library grades to a different anchor.
+EETF targets configured device peak; compositor handles panel limits identically on both paths.
+Divisor remains 203 regardless of user-adjustable library `Grade::reference_white_nits`.
 
 **Safari composites the first paint without the headroom.** On first load,
 lowering the divisor made the bright tiles clip and merge; switching to another
@@ -498,13 +447,8 @@ an extended-range float canvas can carry in principle, the way scRGB does.
 panel: the negatives-kept patch and the clipped-at-zero patch are
 indistinguishable, for both the green and the red.
 
-That result cannot separate the two explanations, and on this hardware it does
-not need to. The panel is P3, so a Rec.2020 green is outside what it can emit
-whatever the pipeline carries; a canvas that clamped and a canvas that carried
-the value into a compositor that then gamut-mapped for the display would both
-end up somewhere on the P3 hull. Any test that would tell them apart needs a
-display wider than the colour being tested, which is not the hardware this ships
-to.
+P3 hardware cannot distinguish canvas clamping from compositor gamut mapping: both place
+Rec.2020 green on the P3 hull. Distinguishing them needs a display wider than tested colours.
 
 **And the comparison in §7.3 says it does not matter, because the two paths
 already agree.** Every colour matched between the AVIF and the canvas, in both
@@ -512,19 +456,12 @@ engines, including the Rec.2020 primaries and secondaries at 203 and at 600 nits
 which are all outside P3. So whatever the compositor does to an out-of-P3 PQ
 colour lands in the same place as the matrix plus a plain clamp does.
 
-That is the requirement, and it is worth being precise about which one: the
-editor does not have to be *right* about a colour the panel cannot show, it has
-to be *the same* as the rendition beside it. It measurably is. So no bespoke
-gamut mapping is needed, and adding a hue-preserving compression would now be a
-way to introduce a difference rather than remove one. Revisit only on hardware
-wider than P3, where the two paths have room to disagree.
+Requirement is agreement with rendition on the same panel, which measurements establish.
+Bespoke hue-preserving gamut compression could introduce divergence. Revisit only beyond P3 hardware.
 
 ### 7.3 The comparison that settles it
 
-The question §7.1 and §7.2 both end on is whether a PQ Rec.2020 frame down the
-media path and the same pixels through a canvas land in the same place on one
-panel. That is a comparison, not a probe, so it needs a fixture rather than a
-feature test.
+Compare identical PQ Rec.2020 media/canvas pixels on one panel with a fixture, not feature detection.
 
 `native/rawshim/examples/pq_pattern.rs` writes the media arm: a Rec.2020 PQ
 10-bit 4:4:4 AVIF at quantizer 0, through the same `avif::save_still` and the
@@ -605,14 +542,8 @@ the rest. Consistent with the first-paint behaviour in §7.1: WebKit is stingier
 with headroom throughout. Whatever else that means, replacing the still route
 with a canvas does not cost highlight rendition on Safari, it gains a little.
 
-Two things follow. The canvas path carries **no** clipping risk the current
-media path does not already have, which retires the concern this section was
-opened to record. And what actually governs whether highlights clip is our own
-EETF target: a display peak of 1000 is a reasonable default against a headroom
-that is 5x to 15x depending on a slider we cannot read, which is why the reader
-can set it per device. If a headroom API ever lands (§7.1: unsupported in both
-engines today), pointing the EETF at it would be a real improvement over a
-setting.
+Canvas adds no clipping risk beyond media. EETF's 1000-nit default fits measured 5x to 15x
+headroom; device setting lets readers adjust. A future headroom API (§7.1) could replace that setting.
 
 ## 8. Can the editor worker reach a GPU?
 
@@ -763,9 +694,7 @@ are built. They are not the destination: only 5 delivers a full-resolution tick
 
 ## 10. Tauri changes the answer to two of these
 
-A native shell with a webview removes the two constraints this note spends the
-most words working around, so it is worth writing down which conclusions are
-browser-shaped and which survive.
+Native shells change threading and presentation constraints:
 
 **Survives.** The resident-frame architecture (§6), the adjacency argument
 (§6.0), the exact-grade / tolerant-finish split (§6.3), and the whole of §4:
@@ -910,10 +839,8 @@ So the wasm build stops being something the desktop app carries and becomes the
 compiles as a cdylib for wasm and an rlib for the server, and this is the same
 arrangement with the desktop app as a third consumer of the native side.
 
-Keeping the wasm open under Tauri instead is the version that buys nothing: the
-browser's numbers, the 6.7MB module, and `SharedArrayBuffer` back again. Tauri
-does control its own headers, so cross-origin isolation would at least be free
-there, but there is no reason to want it.
+Keeping wasm open under Tauri retains browser costs, 6.7MB module and `SharedArrayBuffer`.
+Tauri-controlled headers make isolation available but don't justify it.
 
 **(c) Render natively, put the pixels in the window.** Two very different
 things get called this:

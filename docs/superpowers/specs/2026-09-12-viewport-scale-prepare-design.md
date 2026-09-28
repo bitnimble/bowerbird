@@ -2,15 +2,13 @@
 
 Date: 2026-09-12
 
-The editor opens a composite - a 26-frame panorama, 300MP of canvas - without holding it, by
-preparing only what the viewport shows at the scale it shows it. The same machinery becomes the
-default way every photograph reaches the editor, and the one-file-in-the-tab open becomes the
-exception a small single file qualifies for.
+Open a composite - a 26-frame panorama, 300MP canvas - by preparing only the viewport at its
+display scale. Use this for every photograph by default; small single files may open in-tab.
 
-This is the design. `docs/superpowers/plans/2026-09-12-viewport-scale-prepare-plan.md` splits it
-in two and says why: **backend prepare at one level** is what makes a panorama open at all and is
-about a quarter of the surface, and **the level ladder with its windowing** is where every hard
-constraint lives. The plan's §0 lists the eleven, each with the code that imposes it.
+`docs/superpowers/plans/2026-09-12-viewport-scale-prepare-plan.md` splits this design:
+**backend prepare at one level** opens panoramas and covers about a quarter of the surface;
+**the level ladder with its windowing** carries every hard constraint. Plan §0 lists the eleven
+with their imposing code.
 
 ## 1. Terms
 
@@ -18,14 +16,12 @@ constraint lives. The plan's §0 lists the eleven, each with the code that impos
 denoise, demosaic, code, defringe, gather, sharpen. Its output is a `Resident` (u16 x 3, normalised
 PQ Rec.2020, two samples a word) plus the numbers the grade needs beside it - `tile::Prepared`'s
 `keep`, `origin`, `photograph`, `levels`, `matched`, `as_shot`, `defocus` and `reference_nits`.
-A client is served a *wire* form of those: `Prepared` derives no `Serialize`, holds its samples in
-the same struct, and keeps `reference_nits` crate-private, so what crosses is a struct naming the
-fields a caller reads, pinned against `Prepared` by a test.
+Serve a *wire* struct naming caller-visible fields, test-pinned against `Prepared`: `Prepared` derives
+no `Serialize`, includes samples, and keeps `reference_nits` crate-private.
 
-**Grade** is the tick: one pass per canvas pixel over the prepared frame, on the client, unchanged
-by this design. Exposure, tone, colour, the presence three, and temperature and tint are all grade
-inputs (`gpu::Adjust`), so every slider a reader drags stays a local 7ms tick with no round trip.
-Only the Detail sliders, the sharpen, the defringe and dust move the prepare.
+**Grade** remains one client pass per canvas pixel over the prepared frame. Exposure, tone,
+colour, the presence three, temperature and tint are grade inputs (`gpu::Adjust`): local 7ms ticks,
+no round trip. Only Detail, sharpen, defringe and dust change prepare.
 
 **Backend prepare** runs the prepare on the server's device and ships the `Resident` to the page.
 **Frontend prepare** runs it on the tab's device from RAW bytes the tab holds. Same Rust, same
@@ -46,17 +42,15 @@ source's own size, centre at `size / 2`. `canvas_to_ray` for a rectilinear canva
 and `Through::Lens` applies the same ratio table `warp.slang` does. Both gathers import
 `catmull_rom`.
 
-Measured before this was written, a one-source recipe through `composite_tile::prepared` against
-`tile::prepared` over the same rectangle, on both fixtures over a shadow and over the brightest
-block:
+Measured before this design: one-source `composite_tile::prepared` against `tile::prepared`, same
+rectangle, both fixtures' shadow and brightest block:
 
 | Fixture | Lens | Worst difference | Samples differing |
 |---|---|---|---|
 | DSC02981.ARW (Sony) | identity | 1 / 65535 | 0.5% |
 | IMG_5360.CR3 (Canon) | distortion fitted | 1 / 65535 | 0.6% |
 
-f32 rounding, not a second implementation. So the split closes at every layer where the
-single-file code currently sits beside the panorama code:
+Differences are f32 rounding. Merge single-file and panorama paths at every layer:
 
 | Today | After |
 |---|---|
@@ -66,10 +60,10 @@ single-file code currently sits beside the panorama code:
 | `composition::Composition` | `Recipe`, with a one-source constructor. The Rust type only: `schemas/recipes.ts` already exports a `Recipe`, and its sources are `.min(2)`, which a one-source recipe never has to satisfy because it is built in process and never stored on a row |
 | `edit.rs`'s private `open`, reached through `prepare_bytes` and `from_frame` | a prepare over the whole canvas, `Source::Frame` - the open holds a frame rather than bytes, and deliberately: the camera match is fitted against scene-linear samples before any coding |
 
-Per-source stages that sit in different places are placed once. **There are three positions
-today, not two:** a rendition sharpens at `hdr::Cut::from_base`, after the resize and the lens
-warp, with the warp's Jacobian; a loupe tile and the editor's open sharpen inside `base::prepare`;
-and a composite sharpens at the cut with no Jacobian at all, since `composite_gather.slang` emits none.
+Unify per-source stage placement. **Three positions today:** renditions sharpen at
+`hdr::Cut::from_base` after resize and lens warp, using its Jacobian; loupe tiles and editor opens
+sharpen inside `base::prepare`; composites sharpen at the cut without a Jacobian, since
+`composite_gather.slang` emits none.
 
 - **Sharpen** runs after the gather, once, for every recipe. `deconvolve_split` carries the sigma
   to the level's own pixels. The Jacobian is the thing a merge has to carry with it: it is the
@@ -83,10 +77,9 @@ composite.
 
 ## 3. Whole-picture numbers
 
-Every quantity measured over "the frame" is the recipe's, measured once and handed to every
-prepare. `TileRequest` already states this rule for five of them - `levels`, `noise_fit`,
-`capture_sigma`, `sensor_long`, `defocus` - and `CompositeRequest.levels` for the sixth. What this
-design adds is that the composite's answers are *its own* rather than its reference frame's:
+Measure whole-frame quantities once per recipe and pass to every prepare. `TileRequest` already
+requires this for five - `levels`, `noise_fit`, `capture_sigma`, `sensor_long`, `defocus` - and
+`CompositeRequest.levels` for the sixth. Composites now get *their own* answers:
 
 | Number | A composite's answer |
 |---|---|
@@ -105,30 +98,24 @@ union rows follow `union_match`'s own reasoning: carrying the reference's match 
 row of sky through the curves fitted to a frame of trees", measured at a stop under on the
 26-frame pan.
 
-**Two of those rows are self-consistent and physically approximate**, and it is worth saying so
-rather than leaving it implied. The noise fit and the gains are one frame's, so every pixel of a
-26-frame pan is damped by the sensor statistics of a frame it may not contain; and the blend
-reduces noise in the overlaps, which no single fit describes. Every window gets the same answer, so
-the pins hold - that is what makes it correct as a *design* - and the answer is the reference's
-rather than the picture's. `composite_job::base`'s current comment says a composite has no one camera's
-balance and no single noise fit, which is true and is why the alternative it chose was no table at
-all; one frame's is strictly better than none, and this row is what replaces that comment.
+**Noise fit and gains are consistent but physically approximate.** Every pixel of a 26-frame
+pan uses one reference's sensor statistics, even where that frame contributes nothing; blending
+also reduces overlap noise beyond any single fit. Identical answers per window preserve pins,
+but describe the reference, not the picture. `composite_job::base` currently omits the table
+because a composite has no single balance or noise fit; the reference's table is better than none.
 
 A window never measures any of these for itself, and `as_shot` and the defocus pair are the two
 that today are set only where the reference happens to fall inside the window. They travel on the
 request like the levels do, or a level-0 window at the far end of a pan grades temperature and
 tint differently from the coarse one.
 
-**The sharpen's residual table needs nothing new.** It is already derived from the photograph's
-`NoiseFit`, the reader's amounts, the levels the frame was coded against and the white-balance
-gains (`base::sharpen_noise_table`), all of which a window is handed - so a window's table is the
-frame's table by construction, and `sharpen.slang`'s `noise_at` reads what the host uploaded.
+**The sharpen's residual table needs nothing new.** `base::sharpen_noise_table` derives it from
+`NoiseFit`, amounts, coding levels and white-balance gains, all passed to windows. Window and
+frame tables therefore agree; `sharpen.slang`'s `noise_at` reads the uploaded table.
 
-What that exposes is a gap on the composite path rather than in the table: `composite_job::base` reports
-`Base::analysis` as `PhotoAnalysis::default()` and `wb_gains` as `[1, 1, 1]`, so the table
-`job::run` builds for a canvas comes out all zeroes and the deconvolution runs undamped. Filing the
-reference's noise fit and gains as the composite's own (the table above) is what closes it, and it
-is the same change that makes the numbers survive a restart.
+`composite_job::base` currently reports `Base::analysis` as `PhotoAnalysis::default()` and
+`wb_gains` as `[1, 1, 1]`: `job::run` builds a zero table, leaving deconvolution undamped. Store
+reference noise fit and gains as the composite's own to fix damping and survive restarts.
 
 **A window's `matched` is the recipe's, not its reference's.** `composite_tile::prepared` returns
 `sources[reference].analysis.from_raw.matched` today, which `composite_job::base` then overrides with
@@ -137,12 +124,11 @@ what a window hands back.
 
 ## 4. Stateless server
 
-The expensive whole-set measures are `union_levels` and `union_match`: both stack every source at a
-reduced size, and `union_match` decodes an embedded preview per source on top, so for 26 frames it
-is three passes over the set rather than one. They are **read from the composite's own
-`photo_analysis`, measured and written when it holds none**. Nothing is kept in memory between
-requests, so `/prepare` is a pure function of `(photoId, level, rect, detail)`, cacheable by hash
-anywhere, unaffected by a sidecar restart, and reused by the next open.
+`union_levels` and `union_match` each stack every source at reduced size; `union_match` also
+decodes each embedded preview: three passes over 26 frames. **Read the composite's own
+`photo_analysis`; measure and write misses.** Keep nothing in memory between requests:
+`/prepare` is a pure function of `(photoId, level, rect, detail)`, hash-cacheable, restart-safe,
+reusable across opens.
 
 The store exists: `photo_analysis_store.ts` writes `<dataDir>/<libraryId>/analysis/<photoId>.bba`,
 swallowing errors both ways, and `GET`/`PUT /image/:photoId/analysis` already serve it. So a read
@@ -182,11 +168,9 @@ GET /image/:photoId/prepare?level=L&left=&top=&width=&height=&detail=<hash>
 Beside `renditions` and `analysis`. The photo id is the only identity; the recipe kind is the
 server's to resolve and never appears in the URL.
 
-**The body is framed and carries both halves**: a `u32` little-endian JSON length, that much of the
-wire `Prepared`, padding to a multiple of four, then the window's samples read back off the device.
-Four bytes so the samples land on a word and the page can view them without a copy. The numbers
-are in the body rather than a response header because the desktop shell's proxy keeps seven
-response headers and drops every other, so a custom one would arrive empty in the webview.
+**Framed body:** `u32` little-endian JSON length, wire `Prepared` JSON, padding to a multiple of
+four, then device-readback window samples. Four-byte alignment permits a copy-free page view.
+Metadata belongs in the body: the desktop proxy keeps seven response headers and drops custom ones.
 
 `detail` hashes everything that moves the samples, which is more than the filters: the denoise
 amounts, the sharpen, the defringe and the dust, **and** `grade.white_quantile` (it picks the
@@ -239,18 +223,15 @@ impl Prepare {
 }
 ```
 
-`Frontend` answers level 0 over the whole canvas and the draw regions it, which is today's
-behaviour unchanged. It carries five things, not two: the held mosaic, the file's bytes, whether
-there is a sensor behind it, the noise fit and the open's request, all of which the prepare, the
-band and the drawing read.
+`Frontend` retains today's whole-canvas level 0 with draw-time regioning. It carries five things:
+held mosaic, file bytes, sensor presence, noise fit and open request, read by prepare, band and draw.
 
 `Backend` fetches the tiles of the window it does not hold, uploads each with `queue.writeBuffer`,
 and assembles the window by `copy_buffer_to_buffer` exactly as `composite_job::base` assembles a canvas
 from tiles (`tile_runs`) - which means every level's size and every window's width is **even**, six
 bytes a pixel standing on a word boundary only for an even count.
 
-**Three things above `prepared` do have to change for a window**, and the design was wrong to call
-them shared:
+**Three things above `prepared` must change for windows:**
 
 - The stage's draw is a whole-frame grade today (`window: None`). A windowed frame needs the
   `within`/`surrounded` plumbing the loupe arm uses *and* the reader's geometry, which
@@ -303,10 +284,10 @@ from the recipe's canvas and the client, and nothing above the open knows which 
 
 ## 8. Desktop shell
 
-Backend prepare always. The sidecar already runs this crate on the machine's GPU and `bowerbird://`
-already proxies any server route, so the shell needs no new transport: a window is one fetch over
-localhost, a memcpy of tens of megabytes against a prepare of seconds. There is no zero-copy path
-into a webview's WebGPU on any platform, so a fetch and a `writeBuffer` is the floor everywhere.
+Always backend prepare. The sidecar runs this crate on the machine's GPU; `bowerbird://` proxies
+server routes. Reuse that transport: one localhost fetch, tens of megabytes copied against seconds
+of preparation. No platform supports zero-copy into webview WebGPU; fetch plus `writeBuffer` is
+the floor.
 
 A native overlay surface (`raw-edit-gpu.md` §10.2c) is the later upgrade for absolute-nits HDR on
 macOS and Windows. `Prepare::Backend`'s client is the one seam it replaces, with `tile::prepared`
