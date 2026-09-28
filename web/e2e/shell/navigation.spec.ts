@@ -52,6 +52,30 @@ test('dropdowns show every option whenever the menu fits in the viewport', async
   }
 });
 
+test('dropdowns align the selected row with the trigger when the whole menu fits', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  for (const [mode, label] of [['embedded', 'Embedded JPEG'], ['remember', 'Last used']] as const) {
+    await setViewerRendition(page.request, mode);
+    await page.goto(route(PathSegment.settings(), 'general'));
+    const trigger = page.getByRole('combobox', { name: 'Default rendition to show' });
+    await trigger.click();
+    const popup = page.getByRole('listbox');
+    const selected = popup.getByRole('option', { name: label, exact: true });
+    const triggerCentre = await trigger.evaluate((element) => {
+      const { top, height } = element.getBoundingClientRect();
+      return top + height / 2;
+    });
+
+    await expect.poll(() => selected.evaluate((element) => {
+      const { top, height } = element.getBoundingClientRect();
+      return top + height / 2;
+    })).toBeCloseTo(triggerCentre, 0);
+    await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
+    await expect(popup).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press('Escape');
+  }
+});
+
 test('action menus use the whole viewport before scrolling', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await gotoLibrary(page, SHELL_PHOTOS_DIR);
