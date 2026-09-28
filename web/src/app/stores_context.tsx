@@ -149,7 +149,7 @@ function build(): { stores: Stores; presenters: Presenters } {
   const appSettings = new AppSettingsPresenter(stores.appSettings, toasts);
   // A finished scan moves the library's photo count, and sorting a grid edits
   // the collection it is of, so both write through the presenter that owns it.
-  const libraries = new LibrariesPresenter(stores.libraries, toasts);
+  const libraries = new LibrariesPresenter(stores.libraries, toasts, (statuses) => scan.observeStatuses(statuses));
   const deviceSettings = new DeviceSettingsPresenter(stores.deviceSettings);
   const photos = new PhotosPresenter(
     stores.listing,
@@ -165,6 +165,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     stores.deviceSettings,
   );
   const replication = new ReplicationPresenter(stores.replication, stores.libraries, libraries, photos, toasts);
+  const scan = new ScanPresenter(stores.scan, photos, libraries);
   // Writes every verdict through the photos presenter, so the gallery behind the session
   // keeps its rows correct.
   const stackTriage = new StackTriagePresenter(stores.stackTriage, photos);
@@ -183,7 +184,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     photos,
     shoots,
     albums,
-    scan: new ScanPresenter(stores.scan, photos, libraries),
+    scan,
     replication,
     // The grid says which photographs have no local copy, so a pass that removes one reloads it.
     backup: new BackupPresenter(stores.backup, photos, toasts),

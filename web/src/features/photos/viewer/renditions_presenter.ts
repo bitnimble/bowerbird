@@ -20,6 +20,7 @@ export class RenditionsPresenter {
     private readonly refreshDetail: (activity?: RequestActivity) => Promise<void>,
     private readonly fail: (error: unknown) => void,
     private readonly isCurrent: (photoId: string) => boolean,
+    private readonly localRenderFor: (photoId: string) => () => () => void = () => () => () => {},
   ) {}
 
   // This photo's render, made again from the RAW rather than served from the file
@@ -142,6 +143,6 @@ export class RenditionsPresenter {
 
   private async build(photoId: string, rendition: Rendition, force = false): Promise<void> {
     if (!this.device.renderOnThisDevice) return renditionsApi.build(photoId, rendition, force);
-    await renderHere(photoId, rendition, force);
+    await renderHere(photoId, rendition, force, this.localRenderFor(photoId));
   }
 }

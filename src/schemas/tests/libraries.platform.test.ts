@@ -39,6 +39,9 @@ describe('LibrarySchema.name', () => {
       auto_stack_window_seconds: 60,
       last_synced_at: null,
       photo_count: 0,
+      missing_photo_count: 0,
+      unavailable_photo_count: 0,
+      rendered_photo_count: 0,
     };
     expect(LibrarySchema.parse(library).name).toBe('Trip');
     expect(() => LibrarySchema.parse({ ...library, name: null })).toThrow();

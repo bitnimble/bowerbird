@@ -1,7 +1,7 @@
 import { AppError } from '../../../errors';
 import type { AssemblyRecipe } from '../../../schemas/assembly';
 import type { AlignShape } from '../../../schemas/jobs';
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
 import { cameraMatchWithStages } from '../../../schemas/render_stages';
 import { getDataPath } from '../../../utils/paths';

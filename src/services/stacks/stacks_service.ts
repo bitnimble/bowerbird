@@ -4,15 +4,19 @@ import { Logger } from '../../logger';
 import type { Ordering } from '../../schemas/common';
 import type { PhotoSummary } from '../../schemas/photos';
 import type { Stack } from '../../schemas/stacks';
+import { LibraryActivity } from '../activity/library_activity';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotoListingRepository } from '../photos/listing/photo_listing_repository';
 import { withShownRendition } from '../photos/listing/photo_read_service';
 import type { SettingsRepository } from '../settings/settings_repository';
 import { descriptorSize, stackGroups } from '../processing/rawshim/rawshim_ops';
+import { RawshimCommandWorker } from '../processing/rawshim/rawshim_command';
 import { bracketsOf } from './brackets';
 import type { StackCandidate, StacksRepository } from './stacks_repository';
 
 const log = new Logger('stacks');
+
+type GroupingInput = Parameters<RawshimCommandWorker['group']>[0] & { descriptors: Buffer[] };
 
 /**
  * Splits time-ordered candidates by the shoot they are in, then wherever the gap
@@ -63,11 +67,15 @@ export function runs(candidates: readonly StackCandidate[], windowSeconds: numbe
  * caller cannot route around it.
  */
 export class StacksService {
+  private readonly detecting = new Map<string, Promise<number>>();
+  private readonly descriptorRevision = new Map<string, number>();
+
   constructor(
     private readonly stacks: StacksRepository,
     private readonly photoListing: PhotoListingRepository,
     private readonly libraries: LibrariesRepository,
     private readonly settings: SettingsRepository,
+    private readonly activity: LibraryActivity = new LibraryActivity(),
   ) {}
 
   /**
@@ -84,6 +92,11 @@ export class StacksService {
       return;
     }
     this.stacks.writeDescriptor(photoId, Buffer.from(descriptor));
+    if (this.descriptorRevision.size === 0) return;
+    const libraryId = this.stacks.soleLibraryOf([photoId]);
+    if (libraryId == null) return;
+    const revision = this.descriptorRevision.get(libraryId);
+    if (revision != null) this.descriptorRevision.set(libraryId, revision + 1);
   }
 
   get(stackId: string): Stack {
@@ -200,6 +213,46 @@ export class StacksService {
    * Returns how many stacks the library now has by detection.
    */
   detect(libraryId: string): number {
+    for (;;) {
+      const detection = this.detection(libraryId);
+      let next = detection.next();
+      while (!next.done) {
+        const { descriptors, timestamps, threshold, windowSeconds } = next.value;
+        next = detection.next(stackGroups(descriptors, timestamps, threshold, windowSeconds));
+      }
+      if (next.value != null) return next.value;
+    }
+  }
+
+  detectAsync(libraryId: string): Promise<number> {
+    const pending = this.detecting.get(libraryId);
+    if (pending != null) return pending;
+    this.descriptorRevision.set(libraryId, 0);
+    const work = this.activity.track(libraryId, 'grouping', libraryId, async () => {
+      let detection = this.detection(libraryId);
+      let next = detection.next();
+      if (next.done && next.value != null) return next.value;
+      const worker = new RawshimCommandWorker();
+      try {
+        for (;;) {
+          while (!next.done) next = detection.next(await worker.group(next.value));
+          if (next.value != null) return next.value;
+          detection = this.detection(libraryId);
+          next = detection.next();
+        }
+      } finally {
+        detection.return(0);
+        worker.close();
+      }
+    });
+    this.detecting.set(libraryId, work);
+    return work.finally(() => {
+      this.detecting.delete(libraryId);
+      this.descriptorRevision.delete(libraryId);
+    });
+  }
+
+  private *detection(libraryId: string): Generator<GroupingInput, number | null, Int32Array> {
     const library = this.libraries.getById(libraryId);
     if (library == null) throw new AppError('NOT_FOUND', `library ${libraryId} not found`);
     // First, so the likeness pass below never sees a capture's frames: its candidates are
@@ -209,6 +262,7 @@ export class StacksService {
 
     const candidates = this.stacks.candidates(libraryId);
     if (candidates.length === 0) return 0;
+    const revision = this.descriptorRevision.get(libraryId);
 
     // Walked one run at a time, where a run ends at a shoot boundary or a gap
     // wider than the window.
@@ -232,12 +286,12 @@ export class StacksService {
       // the same length - which is what the grouping call is trusting.
       const usable = run.filter((candidate) => descriptors.has(candidate.id));
       if (usable.length < 2) continue;
-      const groups = stackGroups(
-        usable.map((candidate) => descriptors.get(candidate.id)!),
-        BigInt64Array.from(usable.map((candidate) => BigInt(candidate.timestamp))),
-        library.auto_stack_similarity,
-        library.auto_stack_window_seconds,
-      );
+      const groups = yield {
+        descriptors: usable.map((candidate) => descriptors.get(candidate.id)!),
+        timestamps: BigInt64Array.from(usable.map((candidate) => BigInt(candidate.timestamp))),
+        threshold: library.auto_stack_similarity,
+        windowSeconds: library.auto_stack_window_seconds,
+      };
       const byGroup = new Map<number, string[]>();
       for (const [index, group] of groups.entries()) {
         if (group < 0) continue;
@@ -248,7 +302,17 @@ export class StacksService {
       members.push(...byGroup.values());
     }
 
-    this.stacks.transaction(() => {
+    const made = this.stacks.transaction(() => {
+      const current = this.libraries.getById(libraryId);
+      if (current == null || !current.auto_stack) return 0;
+      if (this.descriptorRevision.get(libraryId) !== revision ||
+        current.auto_stack_similarity !== library.auto_stack_similarity ||
+        current.auto_stack_window_seconds !== library.auto_stack_window_seconds) return null;
+      const eligible = this.stacks.candidates(libraryId);
+      if (eligible.length !== candidates.length || eligible.some((candidate, index) => {
+        const before = candidates[index];
+        return before == null || candidate.id !== before.id || candidate.timestamp !== before.timestamp || candidate.shootId !== before.shootId;
+      })) return null;
       // The old automatic stacks go first, and their photos go back to 'none'
       // rather than 'unstacked': this pass is detection changing its own mind,
       // not a person rejecting the grouping, so the photos must stay available
@@ -259,10 +323,12 @@ export class StacksService {
         const id = withNewId((candidate) => this.stacks.create(candidate, libraryId, 'auto', now));
         this.stacks.addPhotos(id, photoIds);
       }
+      return members.length;
     });
 
-    log.info('detected stacks', { library: libraryId, stacks: members.length, candidates: candidates.length });
-    return members.length;
+    if (made == null) return null;
+    log.info('detected stacks', { library: libraryId, stacks: made, candidates: candidates.length });
+    return made;
   }
 
   /**

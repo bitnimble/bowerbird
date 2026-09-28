@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { AppError } from '../../../errors';
 import { sequenceColumn } from '../../../schemas/capture_sequence';
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration } from '../../../schemas/libraries';
 import type { Job } from '../../../schemas/jobs';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { getDataPath, getRenditionPath } from '../../../utils/paths';
@@ -18,6 +18,7 @@ import type { BasicPhoto, PhotoPathsRepository } from '../paths/photo_paths_repo
 import type { PhotoProcessingRepository } from './photo_processing_repository';
 import { photoLog as log } from '../photo_service_log';
 import { readEmbeddedJpeg } from '../../processing/rawshim/raw_decoder';
+import { LibraryActivity } from '../../activity/library_activity';
 
 interface RenderHow {
   force: boolean;
@@ -44,6 +45,7 @@ export class PhotoRenditionService {
     private readonly originals: Originals,
     private readonly extract: (filePath: string) => Promise<FileMetadata> = extractMetadata,
     private readonly fetchThrough: RenditionFetchService | null,
+    private readonly activity: LibraryActivity = new LibraryActivity(),
   ) {}
 
   // The photo and its library, and nothing else. Everything that serves bytes or
@@ -51,10 +53,10 @@ export class PhotoRenditionService {
     // view's payload - a second query for album membership, a stat per rendition,
     // a join for the ordering date - which a grid page of 100 tiles would pay for
     // 100 times over.
-    locate(photoId: string): { photo: BasicPhoto; library: Library } {
+    locate(photoId: string): { photo: BasicPhoto; library: LibraryConfiguration } {
       const photo = this.photoPaths.getBasicById(photoId);
       if (!photo) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
-      const library = this.libraries.getById(photo.library_id);
+      const library = this.libraries.getConfiguration(photo.library_id);
       if (!library) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
       return { photo, library };
     }
@@ -67,7 +69,7 @@ export class PhotoRenditionService {
       for (const photoId of photoIds) {
         const photo = this.photoListing.getById(photoId);
         if (!photo || photo.is_missing) continue;
-        const library = this.libraries.getById(photo.library_id);
+        const library = this.libraries.getConfiguration(photo.library_id);
         if (!library) continue;
   
         // A synthesised row has no header to re-read: what a recipe composes takes its metadata
@@ -77,6 +79,7 @@ export class PhotoRenditionService {
         // not worth pulling a library back off a drive one file at a time.
         const filePath = this.originals.here(library, photo);
         if (filePath == null) continue;
+        const finish = this.activity.begin(library.id, 'refreshing_metadata', photoId);
         try {
           const metadata = await this.extract(filePath);
           this.photoMetadata.updateMetadata(photoId, {
@@ -100,6 +103,8 @@ export class PhotoRenditionService {
         } catch (err) {
           // One unreadable file must not abandon the rest of the selection.
           log.warn('metadata refresh failed', { photo: photoId, file: photo.file_path, err });
+        } finally {
+          finish();
         }
       }
       log.info('metadata refreshed', { asked: photoIds.length, updated });
@@ -148,13 +153,13 @@ export class PhotoRenditionService {
       const bytes = await this.cachedEmbedded(library, photoId);
       return bytes == null ? null : { bytes, builtFrom };
     }
-  private async liftEmbedded(library: Library, photo: BasicPhoto): Promise<Uint8Array | null> {
+  private async liftEmbedded(library: LibraryConfiguration, photo: BasicPhoto): Promise<Uint8Array | null> {
       const original = await this.originals.open(library, photo);
       if (original == null) return null;
       const jpeg = readEmbeddedJpeg(original, this.photoListing.editOrientation(photo.id));
       return jpeg == null ? null : new Uint8Array(jpeg);
     }
-  private async cachedEmbedded(library: Library, photoId: string): Promise<Uint8Array | null> {
+  private async cachedEmbedded(library: LibraryConfiguration, photoId: string): Promise<Uint8Array | null> {
       const cached = Bun.file(getRenditionPath(library, photoId, 'embedded', false));
       return (await cached.exists()) ? new Uint8Array(await cached.arrayBuffer()) : null;
     }
@@ -239,6 +244,7 @@ export class PhotoRenditionService {
       const cached = existsSync(output);
       log.info('rendition cache', { photo: photo.id, rendition, hdr, cache: force ? 'forced' : rebuild ? 'stale' : cached ? 'hit' : 'miss' });
       if (!rebuild && cached) return;
+      if (!cached) this.photoProcessing.forgetBuilt(photo.id, [renditionVariant(rendition, hdr)]);
   
       // The arm of the camera view that passes through: the bytes are inside the file this row
       // names and nothing builds them (§10.2), so "make sure it is there" is answered by the file
@@ -266,7 +272,10 @@ export class PhotoRenditionService {
         // Every frame back on this disk before the merge is asked for: the renderer takes paths,
         // and one frame offloaded would otherwise be a decode failure rather than a picture.
         await this.originals.openAll(library, photo);
-        if (rebuild) await deleteGeneratedFile(getDataPath(library), output);
+        if (rebuild) {
+          await deleteGeneratedFile(getDataPath(library), output);
+          this.photoProcessing.forgetBuilt(photo.id, [renditionVariant(rendition, hdr)]);
+        }
         const startedAt = Date.now();
         // False where a frame has gone: the recipe is still true and the picture may be makeable
         // again after the next sync, so this is the same "not here yet" the queue reports, not a
@@ -292,7 +301,10 @@ export class PhotoRenditionService {
       }
       // The file *is* the cache, so rebuilding means removing it: the builder returns early
       // on a file that already exists, and would otherwise hand back the copy being rejected.
-      if (rebuild) await deleteGeneratedFile(getDataPath(library), output);
+      if (rebuild) {
+        await deleteGeneratedFile(getDataPath(library), output);
+        this.photoProcessing.forgetBuilt(photo.id, [renditionVariant(rendition, hdr)]);
+      }
       log.info('rendition rendering', { photo: photo.id, rendition, hdr, source: 'original' });
       // The analysis lives outside the rendition cache, so without this a forced build is
       // re-encoded from the measurements the pipeline change under test was meant to move.

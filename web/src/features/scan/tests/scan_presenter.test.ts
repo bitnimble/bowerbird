@@ -95,7 +95,7 @@ test('a stop reads as stopping until the run reports idle, and a refused stop do
   } finally { presenter.stop(); }
 });
 
-test('a stop asked of one library does not follow it after another library is watched', async () => {
+test('stops remain on their own libraries until each scan reports idle', async () => {
   const { store, presenter } = watching();
   try {
     reporting('rendition');
@@ -103,8 +103,14 @@ test('a stop asked of one library does not follow it after another library is wa
     librariesApi.cancelScan = (): Promise<void> => Promise.resolve();
     await presenter.cancel('one');
     await presenter.watch('two');
-    await presenter.watch('one');
+    await presenter.cancel('two');
+    expect(store.isStopping('one')).toBe(true);
+    expect(store.isStopping('two')).toBe(true);
+    presenter.observeStatuses([{ ...IDLE, library_id: 'one' }]);
     expect(store.isStopping('one')).toBe(false);
+    expect(store.isStopping('two')).toBe(true);
+    presenter.observeStatuses([{ ...IDLE, library_id: 'two' }]);
+    expect(store.isStopping('two')).toBe(false);
   } finally { presenter.stop(); }
 });
 

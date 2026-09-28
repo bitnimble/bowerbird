@@ -137,7 +137,6 @@ async function main(): Promise<void> {
   console.log(`pmrid at ${HOME}`);
 }
 
-/** `weights.bin` and `weights.json`, from the checkpoint's bytes. */
 function unpack(checkpoint: Uint8Array): Map<string, Uint8Array | string> {
   // A checkpoint is a zip, and Windows ships no `unzip` for the other getters' `tar` to be.
   const entries = unzipSync(checkpoint, { filter: ({ name }) => name === PICKLE || name.startsWith(STORAGES) });

@@ -6,7 +6,7 @@ import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import { newId } from '../../schemas/id';
 import type { AlignShape } from '../../schemas/jobs';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import type { CompositeKind } from '../../schemas/photos';
 import type { CameraMatch } from '../../schemas/render_stages';
 import {
@@ -45,6 +45,7 @@ import { cancelJob, JOB_CANCELLED, watchingJobProgress } from '../processing/raw
 import type { CompositeJobSource } from '../processing/workers/processing_types';
 import { owedOf, renditionVariant } from '../processing/renditions/renditions';
 import type { RenditionsRepository } from '../processing/renditions/renditions_repository';
+import { LibraryActivity } from '../activity/library_activity';
 
 const log = new Logger('panoramas');
 
@@ -145,6 +146,7 @@ export class CompositesService {
     private readonly edits: PhotoEditsRepository,
     /** The way to a frame's bytes, which may be on a backup rather than on this disk (§14.4). */
     private readonly originals: Originals,
+    private readonly activity: LibraryActivity = new LibraryActivity(),
   ) {}
 
   /**
@@ -170,7 +172,7 @@ export class CompositesService {
    * one composite of two sizes, not a library's worth of work.
    */
   mergePanorama(photoIds: readonly string[]): Promise<CompositePhoto> {
-    return this.serially(() => this.mergeNow(photoIds, 'panorama'));
+    return this.serially(photoIds, () => this.mergeNow(photoIds, 'panorama'));
   }
 
   /**
@@ -196,7 +198,7 @@ export class CompositesService {
     const ordered = frames.every((frame) => frame.sequence?.index != null) ?
         [...frames].sort((a, b) => (a.sequence?.index ?? 0) - (b.sequence?.index ?? 0)).map((frame) => frame.photoId)
       : this.photoComposites.orderedForComposite(photoIds).map((photo) => photo.id);
-    return await this.serially(() => this.mergeNow(ordered, kind));
+    return await this.serially(ordered, () => this.mergeNow(ordered, kind));
   }
 
   /**
@@ -204,8 +206,10 @@ export class CompositesService {
    * the device against each other for minutes, and there is one counter behind `jobProgress`, so
    * two at once report each other's progress.
    */
-  private serially<T>(work: () => Promise<T>): Promise<T> {
-    const queued = this.running.then(work);
+  private serially<T>(photoIds: readonly string[], work: () => Promise<T>): Promise<T> {
+    const libraryId = this.photoPaths.getBasicById(photoIds[0] ?? '')?.library_id ?? null;
+    const finish = this.activity.begin(libraryId, 'merging', newId());
+    const queued = this.running.then(work).finally(finish);
     this.running = queued.then(
       () => undefined,
       () => undefined,
@@ -285,7 +289,7 @@ export class CompositesService {
       fraction: 0,
     };
     this.keep(job);
-    void this.serially(async () => {
+    void this.serially(job.photoIds, async () => {
       await this.bringFrames(job.photoIds, library);
       return this.analyseNow(job, sources, library);
     }).then(
@@ -300,6 +304,10 @@ export class CompositesService {
       },
       (err: unknown) => {
         if (job.status !== 'analysing') return;
+        if (this.cancelledJobs.delete(job.id) || (err instanceof Error && err.message === JOB_CANCELLED)) {
+          job.status = 'cancelled';
+          return;
+        }
         job.status = 'failed';
         job.error = err instanceof Error ? err.message : String(err);
         log.warn('could not carve an assembly', { job: job.id, err });
@@ -338,7 +346,6 @@ export class CompositesService {
     library: Library,
   ): Promise<Carved> {
     if (this.cancelledJobs.delete(job.id)) {
-      job.status = 'cancelled';
       throw new AppError('VALIDATION_ERROR', 'cancelled');
     }
     // Between native calls nothing hears the signal, so the mark is read after every wait.
@@ -393,7 +400,6 @@ export class CompositesService {
       return { analysed, layers };
     } catch (err) {
       if (this.cancelledJobs.delete(job.id) || (err instanceof Error && err.message === JOB_CANCELLED)) {
-        job.status = 'cancelled';
         throw new AppError('VALIDATION_ERROR', 'cancelled');
       }
       throw err;
@@ -457,9 +463,9 @@ export class CompositesService {
       .filter((id) => this.photoPaths.getBasicById(id) == null || this.photoMetadata.isBinned(id));
     if (missingSources.length > 0) return { recipe, layers: [], missingSources };
 
-    const library = this.libraries.getById(photo.library_id);
+    const library = this.libraries.getConfiguration(photo.library_id);
     if (library == null) throw new AppError('NOT_FOUND', 'that library is gone');
-    const layers = await this.serially(async () => {
+    const layers = await this.serially(recipe.sources.map((source) => source.photoId), async () => {
       const on = this.processing.openComposite();
       try {
         return await this.layersFor(recipe, library, on);
@@ -477,7 +483,7 @@ export class CompositesService {
    */
   async solveSeams(recipe: AssemblyRecipe, picks: number[][]): Promise<(Seams | null)[] | null> {
     const { library } = await this.framesFor(recipe);
-    return this.solved(recipe, picks, library);
+    return this.activity.track(library.id, 'merging', newId(), () => this.solved(recipe, picks, library));
   }
 
   /**
@@ -495,12 +501,12 @@ export class CompositesService {
     const ready =
       held != null && held.base === recipe.base && held.pick.every((source, tile) => source === recipe.pick[tile]) ?
         recipe
-      : await this.seamed(recipe, library);
+      : await this.activity.track(library.id, 'merging', newId(), () => this.seamed(recipe, library));
     const dataPath = getDataPath(library);
     const layerKey = layerKeyOf(library, ready, this.processing.cameraMatchFor(library, 'full'));
     const outputPath = draftPreviewPath(dataPath, layerKey, pictureKeyOf(ready));
     if (!existsSync(outputPath)) {
-      await this.serially(async () => {
+      await this.serially(ready.sources.map((source) => source.photoId), async () => {
         const on = this.processing.openComposite();
         try {
           const sources = ready.sources.map((source) => this.sourceOf(source.photoId, library));
@@ -557,7 +563,7 @@ export class CompositesService {
    * this composites a canvas out of every frame and holds the device while it does.
    */
   commitAssembly(recipe: AssemblyRecipe): Promise<CompositePhoto> {
-    return this.serially(() => this.commitNow(recipe));
+    return this.serially(recipe.sources.map((source) => source.photoId), () => this.commitNow(recipe));
   }
 
   private async commitNow(asked: AssemblyRecipe): Promise<CompositePhoto> {
@@ -590,7 +596,7 @@ export class CompositesService {
    * date, its shoot, its rating and its place in every album are the row's already.
    */
   updateAssembly(photoId: string, recipe: AssemblyRecipe): Promise<CompositePhoto> {
-    return this.serially(() => this.updateNow(photoId, recipe));
+    return this.serially(recipe.sources.map((source) => source.photoId), () => this.updateNow(photoId, recipe));
   }
 
   private async updateNow(photoId: string, asked: AssemblyRecipe): Promise<CompositePhoto> {
@@ -632,7 +638,7 @@ export class CompositesService {
   private async framesFor(recipe: AssemblyRecipe): Promise<{ library: Library; sources: CompositeJobSource[] }> {
     const first = recipe.sources[0];
     if (first == null) throw new AppError('VALIDATION_ERROR', 'this recipe names no frames');
-    const library = this.libraries.getById(this.frameOf(first.photoId).library_id);
+    const library = this.libraries.getConfiguration(this.frameOf(first.photoId).library_id);
     if (library == null) throw new AppError('NOT_FOUND', 'that library is gone');
     await this.bringFrames(
       recipe.sources.map((source) => source.photoId),
@@ -731,7 +737,7 @@ export class CompositesService {
   renderable(photoId: string): { kind: CompositeKind; recipe: Composed; sources: CompositeJobSource[] } | null {
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null || !isComposite(photo.recipe)) return null;
-    const library = this.libraries.getById(photo.library_id);
+    const library = this.libraries.getConfiguration(photo.library_id);
     if (library == null) return null;
     const recipe = photo.recipe;
     const sources: CompositeJobSource[] = [];
@@ -884,7 +890,7 @@ export class CompositesService {
     if (libraries.size !== 1) {
       throw new AppError('VALIDATION_ERROR', 'these photographs are not all in one library');
     }
-    const library = this.libraries.getById([...libraries][0]!);
+    const library = this.libraries.getConfiguration([...libraries][0]!);
     if (library == null) throw new AppError('NOT_FOUND', 'that library is gone');
 
     const sources = ordered.map((photo) => this.sourceOf(photo.id, library));

@@ -745,13 +745,14 @@ export const SettingsPage = observer(function SettingsPage(): JSX.Element {
           <AddLibraryDialog open={adding} onOpenChange={setAdding} />
           <AddReplicaDialog open={joining} onOpenChange={setJoining} />
 
-          {store.isEmpty ?
+          {store.isEmpty && (
             <EmptyState title={SettingsStrings.noLibrariesYet()}>
               <Text as="p" variant="muted">
                 {SettingsStrings.noLibrariesHint()}
               </Text>
             </EmptyState>
-          : <LibraryList />}
+          )}
+          <LibraryList />
         </>
       )}
 

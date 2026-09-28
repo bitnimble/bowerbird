@@ -1,7 +1,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { AppError } from '../../../errors';
 import type { Ordering } from '../../../schemas/common';
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type {
   PhotoDaysRequest,
   PhotoDaysResponse,
@@ -93,7 +93,7 @@ export function withShownRendition<T extends UnresolvedSummary>(
 ): (T & Pick<PhotoSummary, 'shown_rendition' | 'has_embedded'>)[] {
   if (rows.length === 0) return [];
   const current = settings.get();
-  const byLibrary = new Map(libraries.list().map((library) => [library.id, library]));
+  const byLibrary = new Map(libraries.listConfigurations().map((library) => [library.id, library]));
   return rows.map((row) => {
     const ctx = contextOf(
       row,
@@ -124,7 +124,7 @@ export class PhotoReadService {
   get(photoId: string): PhotoDetail {
       const photo = this.photoListing.getById(photoId);
       if (!photo) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
-      const library = this.libraries.getById(photo.library_id);
+      const library = this.libraries.getConfiguration(photo.library_id);
       if (library != null) this.repairGridTile(photo, library);
       // One stat, on a single-photo read only. The file is the cache, so asking
       // the filesystem beats a column that can disagree with what is on disk.
@@ -172,7 +172,7 @@ export class PhotoReadService {
     libraryOfStack(stackId: string): Library {
       const row = this.photoPaths.libraryOfStack(stackId);
       if (row == null) throw new AppError('NOT_FOUND', `stack not found: ${stackId}`);
-      const library = this.libraries.getById(row);
+      const library = this.libraries.getConfiguration(row);
       if (!library) throw new AppError('NOT_FOUND', `library not found: ${row}`);
       return library;
     }
@@ -232,7 +232,7 @@ export class PhotoReadService {
     // own property, held in one place, rather than something every client keeps a
     // copy of and can disagree with (§18.3.1).
     listByLibrary(libraryId: string, query: PhotoListQuery): PhotoListResponse {
-      const library = this.libraries.getById(libraryId);
+      const library = this.libraries.getConfiguration(libraryId);
       if (!library) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
       const ordering = query.ordering ?? library.ordering;
       return this.respond(
@@ -290,7 +290,7 @@ export class PhotoReadService {
       const listFilters = fromSelectionFilters(filters);
       switch (scope.kind) {
         case 'library': {
-          const library = this.libraries.getById(scope.id);
+          const library = this.libraries.getConfiguration(scope.id);
           if (!library) throw new AppError('NOT_FOUND', `library not found: ${scope.id}`);
           return this.photoListing.idsInLibrary(scope.id, library.ordering, ranges, listFilters);
         }
@@ -322,7 +322,7 @@ export class PhotoReadService {
       const found = ((): Map<string, number[]> => {
         switch (scope.kind) {
           case 'library': {
-            const library = this.libraries.getById(scope.id);
+            const library = this.libraries.getConfiguration(scope.id);
             if (!library) throw new AppError('NOT_FOUND', `library not found: ${scope.id}`);
             return this.photoNavigation.positionsInLibrary(scope.id, library.ordering, keys, listFilters);
           }
@@ -383,7 +383,7 @@ export class PhotoReadService {
       const listFilters = fromSelectionFilters(filters);
       switch (scope.kind) {
         case 'library': {
-          const library = this.libraries.getById(scope.id);
+          const library = this.libraries.getConfiguration(scope.id);
           if (!library) throw new AppError('NOT_FOUND', `library not found: ${scope.id}`);
           return this.withShownRendition(this.photoNavigation.neighboursInLibrary(scope.id, library.ordering, photoId, limit, listFilters));
         }
@@ -406,7 +406,7 @@ export class PhotoReadService {
       const bounds = { from, to };
       switch (scope.kind) {
         case 'library': {
-          const library = this.libraries.getById(scope.id);
+          const library = this.libraries.getConfiguration(scope.id);
           if (!library) throw new AppError('NOT_FOUND', `library not found: ${scope.id}`);
           return this.withShownRendition(this.photoNavigation.rangeInLibrary(scope.id, library.ordering, bounds, listFilters));
         }

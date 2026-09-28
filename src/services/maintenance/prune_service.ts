@@ -1,12 +1,13 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Logger } from '../../logger';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { deleteDraft, deleteGeneratedDirectory, deleteGeneratedFile } from '../../utils/deletions';
 import { getDataPath } from '../../utils/paths';
 import { RENDITION_EXTENSION, renditionVariants, retiredRenditionDirs } from '../processing/renditions/renditions';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotoMetadataRepository } from '../photos/metadata/photo_metadata_repository';
+import { LibraryActivity } from '../activity/library_activity';
 
 // The directories holding files named `<photoId>.<ext>`. Taken from the same
 // helper that writes the files, so changing an output format cannot leave the
@@ -60,65 +61,71 @@ export class PruneService {
   constructor(
     private readonly libraries: LibrariesRepository,
     private readonly photoMetadata: PhotoMetadataRepository,
+    private readonly activity = new LibraryActivity(),
   ) {}
 
   async prune(): Promise<PruneResult> {
-    // One id set for every library: a file is named by photo id alone, and ids
-    // are global, so a per-library set could delete a file that legitimately
-    // belongs to another library sharing a data directory.
-    //
-    // A panorama's copies are a photograph's like any other, keyed by its own id, so there is
-    // nothing here to know about one.
-    const live = new Set(this.photoMetadata.allIds());
-    let removed = 0;
-    let bytes = 0;
+    const finish = this.activity.begin(null, 'pruning', 'renditions');
+    try {
+      // One id set for every library: a file is named by photo id alone, and ids
+      // are global, so a per-library set could delete a file that legitimately
+      // belongs to another library sharing a data directory.
+      //
+      // A panorama's copies are a photograph's like any other, keyed by its own id, so there is
+      // nothing here to know about one.
+      const live = new Set(this.photoMetadata.allIds());
+      let removed = 0;
+      let bytes = 0;
 
-    for (const library of this.libraries.list()) {
-      const dataPath = getDataPath(library);
-      const renditions = path.join(dataPath, 'renditions');
-      // A directory nothing writes to any more holds nothing but orphans, so
-      // every file in one goes: the extension check below is what does it, none
-      // of them being the extension a rendition has now.
-      const retired = retiredRenditionDirs().map((dir) => path.join(renditions, dir));
+      for (const library of this.libraries.list()) {
+        const dataPath = getDataPath(library);
+        const renditions = path.join(dataPath, 'renditions');
+        // A directory nothing writes to any more holds nothing but orphans, so
+        // every file in one goes: the extension check below is what does it, none
+        // of them being the extension a rendition has now.
+        const retired = retiredRenditionDirs().map((dir) => path.join(renditions, dir));
 
-      for (const dir of [...generatedDirs(library), ...retired]) {
-        let files: string[];
-        try {
-          files = await readdir(dir);
-        } catch {
-          continue; // never created, or the whole data directory is gone
-        }
-        for (const file of files) {
-          const id = file.replace(/\.[^.]+$/, '');
-          // A live photo still leaves a file behind when the output format
-          // changes: the render is rewritten under the new extension and the
-          // old one is never touched again.
-          if (live.has(id) && path.extname(file) === RENDITION_EXTENSION) continue;
-          const target = path.join(dir, file);
+        for (const dir of [...generatedDirs(library), ...retired]) {
+          let files: string[];
           try {
-            bytes += (await stat(target)).size;
-            await deleteGeneratedFile(dataPath, target);
-            removed++;
-          } catch (err) {
-            // A concurrent processing run may have just replaced it. Skip and
-            // let the next sweep decide.
-            log.warn('could not remove an orphan; next sweep decides', { file: target, err });
+            files = await readdir(dir);
+          } catch {
+            continue; // never created, or the whole data directory is gone
+          }
+          for (const file of files) {
+            const id = file.replace(/\.[^.]+$/, '');
+            // A live photo still leaves a file behind when the output format
+            // changes: the render is rewritten under the new extension and the
+            // old one is never touched again.
+            if (live.has(id) && path.extname(file) === RENDITION_EXTENSION) continue;
+            const target = path.join(dir, file);
+            try {
+              bytes += (await stat(target)).size;
+              await deleteGeneratedFile(dataPath, target);
+              removed++;
+            } catch (err) {
+              // A concurrent processing run may have just replaced it. Skip and
+              // let the next sweep decide.
+              log.warn('could not remove an orphan; next sweep decides', { file: target, err });
+            }
           }
         }
+
+        // ENOTEMPTY is the expected outcome whenever a file above would not go, and
+        // ENOENT whenever the directory was never there. Anything else is the path
+        // guard refusing, which is a bug in `retiredRenditionDirs` and must be said.
+        for (const dir of retired) {
+          await deleteGeneratedDirectory(dataPath, dir).catch((err: NodeJS.ErrnoException) => {
+            if (err.code === 'ENOTEMPTY' || err.code === 'ENOENT') return;
+            log.warn('could not remove a retired rendition directory', { dir, err });
+          });
+        }
       }
 
-      // ENOTEMPTY is the expected outcome whenever a file above would not go, and
-      // ENOENT whenever the directory was never there. Anything else is the path
-      // guard refusing, which is a bug in `retiredRenditionDirs` and must be said.
-      for (const dir of retired) {
-        await deleteGeneratedDirectory(dataPath, dir).catch((err: NodeJS.ErrnoException) => {
-          if (err.code === 'ENOTEMPTY' || err.code === 'ENOENT') return;
-          log.warn('could not remove a retired rendition directory', { dir, err });
-        });
-      }
+      return { removed, bytes };
+    } finally {
+      finish();
     }
-
-    return { removed, bytes };
   }
 
   /**
@@ -129,35 +136,40 @@ export class PruneService {
    * about one. Age is the only thing that can decide.
    */
   async pruneDrafts(olderThanDays = 7): Promise<PruneResult> {
-    const cutoff = Date.now() - olderThanDays * DAY_MS;
-    let removed = 0;
-    let bytes = 0;
+    const finish = this.activity.begin(null, 'pruning', 'drafts');
+    try {
+      const cutoff = Date.now() - olderThanDays * DAY_MS;
+      let removed = 0;
+      let bytes = 0;
 
-    for (const library of this.libraries.list()) {
-      const dataPath = getDataPath(library);
-      const drafts = path.join(dataPath, 'drafts');
-      let entries: string[];
-      try {
-        entries = await readdir(drafts);
-      } catch {
-        continue; // nothing has ever been carved in this library
-      }
-      for (const entry of entries) {
-        const target = path.join(drafts, entry);
-        const info = await stat(target).catch(() => null);
-        if (info == null || info.mtimeMs > cutoff) continue;
-        const size = await treeBytes(target);
+      for (const library of this.libraries.list()) {
+        const dataPath = getDataPath(library);
+        const drafts = path.join(dataPath, 'drafts');
+        let entries: string[];
         try {
-          await deleteDraft(dataPath, target);
-          removed++;
-          bytes += size;
-        } catch (err) {
-          log.warn('could not remove a stale draft; next sweep decides', { target, err });
+          entries = await readdir(drafts);
+        } catch {
+          continue; // nothing has ever been carved in this library
+        }
+        for (const entry of entries) {
+          const target = path.join(drafts, entry);
+          const info = await stat(target).catch(() => null);
+          if (info == null || info.mtimeMs > cutoff) continue;
+          const size = await treeBytes(target);
+          try {
+            await deleteDraft(dataPath, target);
+            removed++;
+            bytes += size;
+          } catch (err) {
+            log.warn('could not remove a stale draft; next sweep decides', { target, err });
+          }
         }
       }
-    }
 
-    return { removed, bytes };
+      return { removed, bytes };
+    } finally {
+      finish();
+    }
   }
 }
 

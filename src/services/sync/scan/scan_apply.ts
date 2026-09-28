@@ -53,7 +53,7 @@ export interface AppliedCounts {
     // then cascade-gone and inserting against the dead library_id would raise an
     // FK violation. Re-check here, no await between this and the synchronous
     // transaction, so the delete can't interleave, and abort cleanly.
-    if (!libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    if (!libraries.has(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
 
     leases.applyOwned(libraryId, owner, () => {
       // **Before anything path-guarded.** `setMissing` only marks a row whose

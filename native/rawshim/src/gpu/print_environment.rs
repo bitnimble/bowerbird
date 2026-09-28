@@ -102,7 +102,7 @@ impl Gpu {
         let level_view = |level: u32| texture.create_view(&wgpu::TextureViewDescriptor {
             base_mip_level: level, mip_level_count: Some(1), ..Default::default()
         });
-        let pipelines = &self.print_environment;
+        let pipelines = self.print_environment_pipelines();
         for level in 0..levels {
             let (width, height) = ((map.width >> level).max(1), (map.height >> level).max(1));
             let uniform = recording.init(&wgpu::util::BufferInitDescriptor {
@@ -141,16 +141,16 @@ impl Gpu {
 
     #[cfg(test)]
     pub(crate) fn print_environment_sampler(&self) -> &wgpu::Sampler {
-        &self.print_environment.sampler
+        &self.print_environment_pipelines().sampler
     }
 
     /// The map as the lamp calibration binds it.
     pub(crate) fn print_environment_group(&self, map: &Texture) -> wgpu::BindGroup {
         self.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("print environment map"), layout: &self.print_environment.map_layout,
+            label: Some("print environment map"), layout: &self.print_environment_pipelines().map_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&map.view()) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&self.print_environment.sampler) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&self.print_environment_pipelines().sampler) },
             ],
         })
     }

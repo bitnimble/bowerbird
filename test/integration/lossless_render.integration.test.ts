@@ -36,6 +36,9 @@ function library(id: string, hdr: boolean): Library {
     auto_stack_window_seconds: 60,
     last_synced_at: null,
     photo_count: 0,
+    missing_photo_count: 0,
+    unavailable_photo_count: 0,
+    rendered_photo_count: 0,
   };
 }
 

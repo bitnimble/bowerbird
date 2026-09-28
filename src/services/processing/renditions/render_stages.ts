@@ -1,4 +1,4 @@
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration } from '../../../schemas/libraries';
 import { cameraMatchWithStages, normaliseStages, type CameraMatch, type OptionalStage } from '../../../schemas/render_stages';
 import type { Developed } from '../workers/processing_types';
 import type { Rendition } from './renditions';
@@ -10,7 +10,7 @@ import type { Rendition } from './renditions';
  * setting covers (`RENDERED_RENDITIONS`), and the grid tile a rendition pass writes is cut from the
  * `full` job's own frame, so it carries whatever that job was built with.
  */
-export function renditionSkips(library: Library, rendition: Rendition): readonly OptionalStage[] {
+export function renditionSkips(library: LibraryConfiguration, rendition: Rendition): readonly OptionalStage[] {
   if (rendition === 'full') return library.render_skip_full;
   if (rendition === 'max') return library.render_skip_max;
   return [];

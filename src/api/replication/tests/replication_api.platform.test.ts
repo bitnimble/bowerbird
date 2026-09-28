@@ -39,6 +39,8 @@ import { stamp } from '../../../services/replication/stamps';
 import { replicatedState } from '../../../services/replication/tests/peers';
 import { applyErrorHandler } from '../../error_handler';
 import { ReplicationApi } from '../replication_api';
+import { LibraryActivity } from '../../../services/activity/library_activity';
+import { libraryMutex } from '../../../services/sync/coordination/library_mutex';
 
 const LIB = 'photolib';
 const SHOOT = 'shoot001';
@@ -167,6 +169,38 @@ function peerIdOf(db: Database): string {
   const identity = db.query('SELECT peer_id FROM replication_identity').get() as { peer_id: string };
   return identity.peer_id;
 }
+
+it('shows inbound catalogue work while it waits and clears it after success or refusal', async () => {
+  const db = catalogue();
+  seedLibrary(db, 1);
+  const activity = new LibraryActivity();
+  const service = new ReplicationService(db, new BlobLocations(db));
+  const peer = newId();
+  service.pair({ library_id: LIB, peer_id: peer, name: 'Remote' });
+  const api = new ReplicationApi(service, runnerFor(db), undefined, activity);
+  applyErrorHandler(api.routes);
+  const release = Promise.withResolvers<void>();
+  const held = libraryMutex.run(LIB, () => release.promise);
+  const request = { library_id: LIB, peer_id: peer, page: { changes: [], cursor: '', done: true } };
+  const sending = (): Promise<Response> => Promise.resolve(api.routes.request(route(PathSegment.push()), {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request),
+  }));
+  const incoming = sending();
+  try {
+    await Bun.sleep(0);
+    expect(activity.current(LIB)).toEqual([{ kind: 'syncing', count: 1 }]);
+  } finally {
+    release.resolve();
+    await held;
+  }
+  expect((await incoming).status).toBe(200);
+  expect(activity.current(LIB)).toEqual([]);
+
+  db.query('UPDATE libraries SET read_only = 1 WHERE id = ?').run(LIB);
+  expect((await sending()).status).toBe(403);
+  expect(activity.current(LIB)).toEqual([]);
+  db.close();
+});
 
 describe('clone (§9)', () => {
   it('brings a fresh replica to exactly what the origin holds, ids verbatim, over the ordinary stream', async () => {

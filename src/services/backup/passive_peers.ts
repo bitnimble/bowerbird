@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { BlobCommitRequestSchema } from '../../schemas/blobs';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { soleInputOf } from '../../schemas/recipes';
 import { PathSegment } from '../../schemas/route';
 import { deleteStagedBlob, unlinkMovedFile } from '../../utils/deletions';
@@ -231,7 +231,7 @@ export class PassivePeers implements PeerTransport {
   }
 
   private library(libraryId: string): Library {
-    const library = this.libraries.getById(libraryId);
+    const library = this.libraries.getConfiguration(libraryId);
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     return library;
   }

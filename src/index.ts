@@ -97,6 +97,9 @@ import { shim } from './services/processing/rawshim/rawshim';
 import { holdingRenderMemory } from './services/processing/rawshim/rawshim_job';
 import { config } from './config';
 import { Logger, setLogLevel } from './logger';
+import { LibraryActivity } from './services/activity/library_activity';
+import type { Activity, ActivityKind } from './schemas/activity';
+import { passivePeersOf } from './services/backup/passive_peers';
 import { requestLogLevel } from './api/request_logging';
 import { requireToken } from './api/require_token';
 import { REQUEST_ACTIVITY_HEADER } from './schemas/request_activity';
@@ -125,6 +128,7 @@ shim();
 const db = createDatabase(config.dbPath);
 
 const settingsRepo = new SettingsRepository(db);
+const activity = new LibraryActivity();
 const librariesRepo = new LibrariesRepository(db);
 const renderTimings = new RenderTimingsFile();
 // After the repository exists, because it reads every library's root. `DATA_DIR`
@@ -151,7 +155,7 @@ const photoEditsRepo = new PhotoEditsRepository(db);
 
 // Moving the originals themselves (§7). The queue is durable, so a restart takes
 // up whatever a kill interrupted rather than losing it.
-const blobLocations = new BlobLocations(db);
+const blobLocations = new BlobLocations(db, activity);
 const backupLocations = new BackupLocations(db);
 // Both kinds of peer behind one transport, so the transfer queue never learns which it is talking
 // to (§14.1): a device over HTTP, a backup folder off its mount.
@@ -179,6 +183,7 @@ const transferService = new TransferService(
   backupLocations,
   peers,
   buildArrived,
+  activity,
 );
 // The one way to a photograph's bytes, and the only thing that knows they might not be on this
 // disk (§14.4).
@@ -191,11 +196,12 @@ const processingService: ProcessingService = new ProcessingService(
   photoListingRepo,
   settingsRepo,
   (id) => photoEditsRepo.docFor(id),
-  (libraryId) => librariesRepo.getById(libraryId),
+  (libraryId) => librariesRepo.getConfiguration(libraryId),
   // Late-bound deliberately: `compositesService` is built on this one, so the reference has to be
   // a call at the moment the queue needs it rather than a value at construction.
   (photoId) => compositesService.renderable(photoId),
   holdingRenderMemory,
+  activity,
 );
 const eventsApi = new EventsApi(processingService);
 const replicationChanged = (libraryId: string): void => eventsApi.announce('replication', { library_id: libraryId });
@@ -210,6 +216,8 @@ const renditionFetch = new RenditionFetchService(
   peers,
   (photoId, written) => eventsApi.announce('rendition', { id: photoId, stage: written.stage, version: written.version }),
   (photoId, rendition, phase) => eventsApi.announce('rendition_fetch', { id: photoId, rendition, phase }),
+  undefined,
+  activity,
 );
 const photoRenditionService = new PhotoRenditionService(
   photoPathsRepo,
@@ -221,6 +229,7 @@ const photoRenditionService = new PhotoRenditionService(
   originals,
   extractMetadata,
   renditionFetch,
+  activity,
 );
 const photoReadService = new PhotoReadService(
   photoListingRepo,
@@ -244,7 +253,7 @@ const photoEditsService = new PhotoEditsService(
   (ids) => processingService.rebuildEdited(ids),
   replicationChanged,
   (photoId, stamp) => photoProcessingRepo.vouchCameHome(photoId, stamp),
-  (libraryId) => librariesRepo.getById(libraryId)?.denoiser ?? 'galosh',
+  (libraryId) => librariesRepo.getConfiguration(libraryId)?.denoiser ?? 'galosh',
 );
 const shootsService = new ShootsService(shootsRepo, photoPathsRepo, photoStateRepo, librariesRepo, folderRulesRepo);
 const scanConcurrency = (): number => settingsRepo.get().scan_concurrency;
@@ -266,7 +275,7 @@ const scanService = new ScanService(
   (libraryId) => replicationRunner.materialise(libraryId),
   (libraryId) => replicationRunner.stillToMove(libraryId),
 );
-const stacksService = new StacksService(stacksRepo, photoListingRepo, librariesRepo, settingsRepo);
+const stacksService = new StacksService(stacksRepo, photoListingRepo, librariesRepo, settingsRepo, activity);
 // A replica is born by the runner rather than by `LibrariesService.create`, so
 // this is what tells everything that hangs off a library appearing (§9.1).
 const replicaBorn = (library: Library): void => librariesService.announceCreated(library);
@@ -288,9 +297,10 @@ const replicationRunner = new ReplicationRunner(
     transferService.kick();
     return queued;
   },
+  activity,
 );
 const replicationService = new ReplicationService(db, blobLocations, Date.now, rebuildEdited, replicationChanged);
-const mirror = new Mirror(db, librariesRepo, backupLocations, transferService, new Cull(db, transferService));
+const mirror = new Mirror(db, librariesRepo, backupLocations, transferService, new Cull(db, transferService), activity);
 // Every import is a scan, so this is what covers "back up what just arrived" as well as what a
 // rename or a bin move owes the mirror (§14.3). The periodic pass is the backstop.
 scanService.onSettled((libraryId, changed) => {
@@ -311,6 +321,7 @@ const blobsApi = new BlobsApi(
   (libraryId) => replicationService.syncsOriginals(libraryId),
   (target) => photoReadService.resolve(target),
   photoRenditionService,
+  activity,
 );
 // Prune scan's per-library in-memory state when a library is deleted (unbounded otherwise).
 librariesService.addLifecycleListener(scanService);
@@ -340,8 +351,25 @@ scanService.onSettled((libraryId, changed) => {
   }
 });
 
-const librariesApi = new LibrariesApi(librariesService, scanService, folderRulesRepo, shootsService, (libraryId) =>
-  stacksService.detect(libraryId),
+function workForLibrary(libraryId: string): Activity[] {
+  const work = new Map<ActivityKind, Set<string>>();
+  for (const current of activity.current(libraryId)) {
+    if (current.kind !== 'rendering') work.set(current.kind, new Set(activity.subjects(libraryId, current.kind)));
+  }
+  const backups = new Set(passivePeersOf(db, libraryId).map((peer) => peer.peerId));
+  for (const transfer of transferService.pending(libraryId)) {
+    const kind = transfer.direction === 'pull' ? 'fetching' : backups.has(transfer.peer_id) ? 'backing_up' : 'sending';
+    const subjects = work.get(kind) ?? new Set<string>();
+    subjects.add(transfer.photo_id);
+    work.set(kind, subjects);
+  }
+  return [...work].map(([kind, subjects]) => ({ kind, count: subjects.size }));
+}
+
+const librariesApi = new LibrariesApi(librariesService, scanService, folderRulesRepo, shootsService,
+  (libraryId) => stacksService.detectAsync(libraryId),
+  workForLibrary,
+  () => activity.current(null),
 );
 const photosApi = new PhotosApi(photoReadService, photoMutationService, photoRenditionService, processingService);
 const albumsApi = new AlbumsApi(albumsService, photoReadService);
@@ -357,18 +385,21 @@ const compositesService: CompositesService = new CompositesService(
   processingService,
   photoEditsRepo,
   originals,
+  activity,
 );
 compositesService.onProgress((progress) => eventsApi.announce('composite', progress));
 const compositesApi = new CompositesApi(compositesService, photoReadService);
 const assembliesApi = new AssembliesApi(compositesService);
-const exportService = new ExportService(photoRenditionService, processingService, originals, settingsRepo, compositesService);
-const shareService = new ShareService(photoRenditionService, exportService);
+const exportService = new ExportService(photoRenditionService, processingService, originals, settingsRepo, compositesService, activity);
+const shareService = new ShareService(photoRenditionService, exportService, activity);
 const frameTvService = new FrameTvService(
   settingsRepo,
   shareService,
   new FrameTvTokens(path.join(config.dataDir, 'frame_tv_tokens.json')),
   discoverFrameTvs,
   (options) => new FrameArt(options),
+  (photoId) => photoRenditionService.locate(photoId).library.id,
+  activity,
 );
 settingsRepo.onChange((settings) => {
   if (!settings.frame_tv_enabled) frameTvService.close();
@@ -384,6 +415,7 @@ const imageApi = new ImageApi(
   originals,
   shareService,
   processingService,
+  activity,
 );
 const exportApi = new ExportApi(
   exportService,
@@ -473,7 +505,7 @@ app.route(route(PathSegment.api(), PathSegment.assemblies()), assembliesApi.rout
 app.route(route(PathSegment.api(), PathSegment.backup()), new BackupApi(mirror).routes);
 app.route(
   route(PathSegment.api(), PathSegment.replication()),
-  new ReplicationApi(replicationService, replicationRunner, (libraryId) => transferService.cancelIncoming(libraryId))
+  new ReplicationApi(replicationService, replicationRunner, (libraryId) => transferService.cancelIncoming(libraryId), activity)
     .routes,
 );
 app.route(route(PathSegment.api(), PathSegment.blobs()), blobsApi.routes);
@@ -487,7 +519,7 @@ app.route(route(PathSegment.image()), imageApi.routes);
 // Which AVIF quality to ship at: a diagnostic, same reasoning as the HDR check.
 app.route(
   route(PathSegment.qualityCheck()),
-  new QualityCheckApi(photoReadService, photoRenditionService, librariesService, settingsRepo, originals).routes,
+  new QualityCheckApi(photoReadService, photoRenditionService, librariesService, settingsRepo, originals, activity).routes,
 );
 
 // The web client, where a build of it sits beside this server (the container) or the desktop
@@ -522,6 +554,8 @@ const watcher = new LibraryWatcher(
   scanService,
   settingsRepo.get().watch_debounce_ms,
   settingsRepo.get().watch_poll_interval_ms,
+  undefined,
+  activity,
 );
 librariesService.addLifecycleListener(watcher);
 // An excluded folder is half of what the watcher decides what to watch by, and
@@ -567,8 +601,8 @@ scanService.onSettled((libraryId) => {
   if (library != null) void blobLocations.reconcile(library);
 });
 const dailyScan = new DailyScan(scanService);
-const scheduledPrune = new ScheduledPrune(new PruneService(librariesRepo, photoMetadataRepo));
-const scheduledBackup = new ScheduledBackup(new BackupService(config.dbPath));
+const scheduledPrune = new ScheduledPrune(new PruneService(librariesRepo, photoMetadataRepo, activity));
+const scheduledBackup = new ScheduledBackup(new BackupService(config.dbPath, {}, activity));
 
 function applySettings(settings: Settings): void {
   setLogLevel(settings.log_level);

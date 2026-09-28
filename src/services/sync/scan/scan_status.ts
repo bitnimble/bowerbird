@@ -3,6 +3,7 @@ import { Logger } from '../../../logger';
 import type { Library, LibraryScanStatus } from '../../../schemas/libraries';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
+import type { ProcessingTrigger } from './scan_rebuilds';
 
 const log = new Logger('scan');
 
@@ -39,6 +40,7 @@ export class ScanStatus {
   constructor(
     private readonly photoProcessing: PhotoProcessingRepository,
     private readonly libraries: LibrariesRepository,
+    private readonly processing?: Pick<ProcessingTrigger, 'getProcessingCount'>,
   ) {}
 
   set(libraryId: string, status: LibraryScanStatus): void {
@@ -106,12 +108,19 @@ export class ScanStatus {
     }
   }
 
-  // While rendition building runs (detached, §9.5), counts come live from DB
-  // rather than worker plumbing. With no in-memory status, persisted pending flags
-  // still report backlog left by a killed process (§9.6).
   getScanStatus(libraryId: string): LibraryScanStatus {
-    if (!this.libraries.getById(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    if (!this.libraries.has(libraryId)) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     const status = this.statuses.get(libraryId);
+    const active = this.processing?.getProcessingCount?.(libraryId);
+    if (active != null) {
+      const current = status ?? idleScanStatus(libraryId);
+      const queued = this.processingBatches.get(libraryId)?.queued ?? active;
+      return {
+        ...current,
+        photos_processing: active,
+        photos_processed: current.status === 'rendition' ? Math.max(0, queued - active) : current.photos_processed,
+      };
+    }
     if (status == null) {
       return { ...idleScanStatus(libraryId), photos_processing: this.photoProcessing.countPendingProcessing(libraryId) };
     }

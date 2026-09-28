@@ -12,6 +12,7 @@ import { getBinPath } from '../../../utils/paths';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../../libraries/libraries_service';
 import type { ScanService } from '../scan/scan_service';
+import { LibraryActivity } from '../../activity/library_activity';
 
 type Timer = ReturnType<typeof setTimeout>;
 
@@ -78,6 +79,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     private debounceMs: number,
     private pollIntervalMs: number,
     private readonly fsTypeOf: (absPath: string) => string | null = mountFsType,
+    private readonly activity = new LibraryActivity(),
   ) {}
 
   start(): void {
@@ -172,7 +174,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
       return;
     }
 
-    const establishing = subscribe(
+    const establishing = this.activity.track(library.id, 'checking_files', 'watch', () => subscribe(
       library.root_path,
       (err, events) => {
         if (err != null) {
@@ -214,7 +216,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
         // correctness boundary.
         ignore: this.ignoredPaths(library, scope),
       },
-    )
+    ))
       .then((sub: AsyncSubscription) => {
         // Torn down while the walk was in flight: nothing is holding this
         // subscription any more, so it would leak its watches.
@@ -281,7 +283,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
   private async poll(libraryId: string, scope: LibraryScope): Promise<void> {
     this.pollTimers.delete(libraryId);
     try {
-      const seen = await this.folderMtimes(scope);
+      const seen = await this.activity.track(libraryId, 'checking_files', 'folders', () => this.folderMtimes(scope));
       if (this.stopped || this.polled.get(libraryId) !== scope) return;
       const previous = this.dirMtimes.get(libraryId);
       this.dirMtimes.set(libraryId, seen);

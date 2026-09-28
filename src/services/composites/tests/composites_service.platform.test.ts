@@ -28,6 +28,7 @@ import { RenditionsRepository } from '../../processing/renditions/renditions_rep
 import type { SettingsRepository } from '../../settings/settings_repository';
 import type { AssemblyJob, Carved } from '../../../schemas/assembly';
 import { CompositesService, layerKeyOf } from '../composites_service';
+import { LibraryActivity } from '../../activity/library_activity';
 
 const LIB = 'panoramas-service-test';
 
@@ -106,6 +107,11 @@ let lenslessCarves = 0;
 let heldOpen = false;
 /** Releases the carve a held test is holding, in the order they were posted. */
 const holding: (() => void)[] = [];
+let onHeldCarve: (() => void) | null = null;
+
+function waitForHeldCarve(): Promise<void> {
+  return new Promise((resolve) => { onHeldCarve = resolve; });
+}
 
 /** A worker that aligns whatever it is given and renders nothing. */
 class MockWorker {
@@ -135,8 +141,12 @@ class MockWorker {
           data: { photoId: job.photoId, success: true, composite: analysed(job.sources.map((s) => s.photoId)) },
         });
       };
-      if (heldOpen) holding.push(answer);
-      else queueMicrotask(answer);
+      if (heldOpen) {
+        holding.push(answer);
+        const started = onHeldCarve;
+        onHeldCarve = null;
+        started?.();
+      } else queueMicrotask(answer);
       return;
     }
     if (job.kind === 'composite' && job.want === 'render' && failNextBuild) {
@@ -190,6 +200,7 @@ let photoProcessing: PhotoProcessingRepository;
 let libraries: LibrariesRepository;
 let renditions: RenditionsRepository;
 let edits: PhotoEditsRepository;
+let activity: LibraryActivity;
 
 function settings(): SettingsRepository {
   const values: Settings = { ...DEFAULT_SETTINGS };
@@ -219,6 +230,7 @@ beforeEach(() => {
   failNextBuild = false;
   heldOpen = false;
   holding.length = 0;
+  onHeldCarve = null;
   plantedRenditionFile = null;
   (globalThis as { Worker?: unknown }).Worker = MockWorker;
   root = mkdtempSync(path.join(tmpdir(), 'bb-pano-'));
@@ -237,6 +249,7 @@ beforeEach(() => {
   photoListing = new PhotoListingRepository(db);
   photoMetadata = new PhotoMetadataRepository(db, photoProcessing);
   edits = new PhotoEditsRepository(db);
+  activity = new LibraryActivity();
   panoramas = new CompositesService(
     photoComposites,
     photoPaths,
@@ -249,6 +262,7 @@ beforeEach(() => {
     new ProcessingService(photoProcessing, photoPaths, photoListing, settings(), (photoId) => edits.docFor(photoId)),
     edits,
     localOriginals(),
+    activity,
   );
 });
 
@@ -588,9 +602,10 @@ describe('CompositesService.startAssembly', () => {
 
   it('answers a job at once, which holds the tiles the carve found once it is ready', async () => {
     heldOpen = true;
+    const started = waitForHeldCarve();
     const id = panoramas.startAssembly(['photo002', 'photo001']);
     expect(panoramas.assemblyJob(id)).toMatchObject({ status: 'analysing', fraction: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await started;
     heldOpen = false;
     holding.shift()?.();
 
@@ -623,22 +638,23 @@ describe('CompositesService.startAssembly', () => {
   // there is one counter behind `jobProgress`, so two at once report each other's progress.
   it('queues a second carve behind the first rather than running both', async () => {
     heldOpen = true;
+    const firstStarted = waitForHeldCarve();
     const first = carve(['photo001', 'photo002']);
     const second = carve(['photo002', 'photo003']);
-    const raced = await Promise.race([
-      Promise.all([first, second]).then(() => 'both'),
-      new Promise((resolve) => setTimeout(() => resolve('neither'), 10)),
-    ]);
-    expect(raced).toBe('neither');
+    expect(activity.current(LIB)).toEqual([{ kind: 'merging', count: 2 }]);
+    await firstStarted;
     expect(holding).toHaveLength(1);
 
+    const secondStarted = waitForHeldCarve();
     holding.shift()?.();
     await first;
+    expect(activity.current(LIB)).toEqual([{ kind: 'merging', count: 1 }]);
     // Only now does the second reach the worker, which is what "behind the first" means.
-    await Promise.race([second, new Promise((resolve) => setTimeout(resolve, 10))]);
+    await secondStarted;
     expect(holding).toHaveLength(1);
     holding.shift()?.();
     await second;
+    expect(activity.current(LIB)).toEqual([]);
   });
 
   // A page is keyed by its job, so the same frames asked for twice are two carves.
@@ -725,6 +741,7 @@ describe('CompositesService.startAssembly', () => {
 
   it('cancel stops a carve, and the job says it was cancelled rather than that it failed', async () => {
     const id = panoramas.startAssembly(['photo001', 'photo002']);
+    expect(activity.current(LIB)).toEqual([{ kind: 'merging', count: 1 }]);
     panoramas.cancelAssembly(id);
 
     let job = panoramas.assemblyJob(id)!;
@@ -733,20 +750,27 @@ describe('CompositesService.startAssembly', () => {
       job = panoramas.assemblyJob(id)!;
     }
     expect(job.status).toBe('cancelled');
+    expect(activity.current(LIB)).toEqual([]);
     // And nothing was asked of the device at all: the cancel arrived before the carve started.
     expect(posted).toEqual([]);
   });
 
   it('a cancel landing as the analysis answers stops the carve before its layers, and not the next', async () => {
     heldOpen = true;
+    const started = waitForHeldCarve();
     const id = panoramas.startAssembly(['photo001', 'photo002']);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await started;
     panoramas.cancelAssembly(id);
     heldOpen = false;
     holding.shift()?.();
 
     expect((await settled(id)).status).toBe('cancelled');
+    expect(activity.current(LIB)).toEqual([]);
     expect(posted.map((job) => job.want)).toEqual(['analyse']);
+    const analysed = posted[0];
+    expect(analysed?.want).toBe('analyse');
+    if (analysed?.want !== 'analyse') throw new Error('no analysis posted');
+    expect(existsSync(analysed.volumePath)).toBe(false);
     expect((await carve(['photo001', 'photo002'])).status).toBe('ready');
   });
 

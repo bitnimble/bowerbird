@@ -20,7 +20,7 @@ function makeProcessingService(
   currentSettings: ConstructorParameters<typeof ProcessingService>[3],
 ): ProcessingService {
   return new ProcessingService(
-    photoProcessing,
+    Object.assign(photoProcessing, { forgetBuilt: jest.fn() }),
     {} as unknown as PhotoPathsRepository,
     {} as unknown as PhotoListingRepository,
     currentSettings,
@@ -72,6 +72,7 @@ describe('ProcessingService.processUnprocessed', () => {
       listPendingProcessing: jest.fn(() => [pending('a'), pending('b')]),
       markTileBuilt: jest.fn(),
       markRenditionsBuilt: jest.fn(),
+      forgetBuilt: jest.fn(),
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
     const holds: { postedBefore: number; postedAfter: number | null }[] = [];

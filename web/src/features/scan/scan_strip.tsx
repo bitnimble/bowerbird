@@ -1,6 +1,8 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
-import { type Library } from '../../../../src/schemas/libraries';
+import { type Library, type LibraryScanStatus } from '../../../../src/schemas/libraries';
+import type { Activity as ServerActivity } from '../../../../src/schemas/activity';
+import { ActivityStrips } from '../activity/activity_strips';
 import { useBackupStore, useReplicationStore, useScanStore } from '../../app/stores_context';
 import { durationLabel } from '../../ui/format';
 import { StatusDot, Strip, StripLabel } from '../../ui/strip';
@@ -35,84 +37,95 @@ const styles = stylex.create({
 // strip reads as a proportion bar and the mono count carries the exact figure.
 const MAX_CELLS = 48;
 
-// One line for everything a library is doing in the background: its scan, and what it is
-// exchanging with its devices and its backup.
-export const ScanStrip = observer(function ScanStrip({ library }: { library: Library }): JSX.Element | null {
+export const ScanStrip = observer(function ScanStrip({ library, status: current, activities }: {
+  library: Library;
+  status?: LibraryScanStatus;
+  activities?: readonly ServerActivity[];
+}): JSX.Element | null {
   const scan = useScanStore();
-  const reported = scan.libraryId === library.id ? scan.status : null;
-  const status = reported?.status === 'idle' ? null : reported;
+  const reported = current ?? (scan.libraryId === library.id ? scan.status : null);
+  const status = reported?.status === 'processing' ? reported : null;
+  const rendering = reported?.photos_processing ?? 0;
   const moving = useMoving(library.id);
-  if (status == null && moving.length === 0) return null;
+  const serverActivity = activities?.filter((activity) => activity.kind !== 'rendering');
+  if (status == null && rendering === 0 && (serverActivity?.length ?? moving.length) === 0) return null;
 
-  // The scan reports its own progress (§9.6), so the same strip covers both
-  // phases of a run rather than sitting empty through the first one.
-  const progress = status == null ? null : scan.progress;
+  const progress = status == null || status.photos_to_scan === 0 ? null : {
+    done: status.photos_scanned,
+    total: status.photos_to_scan,
+  };
   const cells = progress == null ? 0 : Math.min(progress.total, MAX_CELLS);
   const doneCells = progress == null ? 0 : Math.round((progress.done / progress.total) * cells);
-  // The tallies are what the scan concluded, so they only mean anything once it has.
-  const settled = status?.status === 'rendition';
+  const rate = scan.libraryId === library.id ? scan.rate : status?.photos_per_second ?? null;
+  const secondsLeft = progress == null || rate == null || rate <= 0 ? null : (progress.total - progress.done) / rate;
 
   return (
-    <Strip>
-      <StatusDot state={status?.status === 'processing' ? 'processing' : 'working'} />
-      {progress != null && cells > 0 && (
-        <div
-          {...stylex.props(styles.cells)}
-          role="img"
-          aria-label={ScanStripStrings.cellsLabel(progress.done, progress.total, progress.counting)}
-        >
-          {Array.from({ length: cells }, (_, i) => (
-            <span
-              key={i}
-              {...stylex.props(
-                styles.cell,
-                i < doneCells && styles.done,
-                i === doneCells && scan.isBusy && styles.active,
-              )}
-            />
-          ))}
-        </div>
-      )}
-      <StripLabel>
-        {status == null ?
-          ScanStripStrings.moving(moving, false)
-        : <>
+    <>
+      {status != null && (
+        <Strip>
+          <StatusDot state="processing" />
+          {progress != null && cells > 0 && (
+            <div
+              {...stylex.props(styles.cells)}
+              role="img"
+              aria-label={ScanStripStrings.cellsLabel(progress.done, progress.total)}
+            >
+              {Array.from({ length: cells }, (_, i) => (
+                <span
+                  key={i}
+                  {...stylex.props(
+                    styles.cell,
+                    i < doneCells && styles.done,
+                    i === doneCells && styles.active,
+                  )}
+                />
+              ))}
+            </div>
+          )}
+          <StripLabel>
             {scan.isStopping(library.id) ?
               ScanStripStrings.stopping()
-            : ScanStripStrings.phase(status.status, status.photos_to_scan > 0)}
-            {progress != null && ScanStripStrings.count(progress.done, progress.total, progress.counting)}
-            {progress != null && scan.rate != null && ScanStripStrings.rate(scan.rate.toFixed(1), progress.counting)}
-            {scan.secondsLeft != null && ScanStripStrings.eta(durationLabel(scan.secondsLeft))}
-            {settled && status.photos_scanned > 0 && ScanStripStrings.scanned(status.photos_scanned)}
-            {settled && status.photos_added > 0 && ScanStripStrings.added(status.photos_added)}
-            {settled && status.photos_moved > 0 && ScanStripStrings.moved(status.photos_moved)}
-            {settled && status.photos_removed > 0 && ScanStripStrings.missing(status.photos_removed)}
-            {moving.length > 0 && ScanStripStrings.moving(moving, true)}
-          </>
-        }
-      </StripLabel>
-    </Strip>
+            : ScanStripStrings.scanning(status.photos_to_scan > 0)}
+            {progress != null && ScanStripStrings.count(progress.done, progress.total)}
+            {rate != null && ScanStripStrings.rate(rate.toFixed(1))}
+            {secondsLeft != null && secondsLeft > 0 && ScanStripStrings.eta(durationLabel(secondsLeft))}
+          </StripLabel>
+        </Strip>
+      )}
+      {serverActivity != null ? <ActivityStrips activities={serverActivity} /> : moving.map(({ kind, text }) => (
+        <Strip key={kind}>
+          <StatusDot state="working" />
+          <StripLabel>{text}</StripLabel>
+        </Strip>
+      ))}
+      {rendering > 0 && (
+        <Strip>
+          <StatusDot state="working" />
+          <StripLabel>{ScanStripStrings.rendering(rendering)}</StripLabel>
+        </Strip>
+      )}
+    </>
   );
 });
 
-function useMoving(libraryId: string): string[] {
+type Activity = { kind: 'syncing' | 'fetching' | 'sending' | 'backup'; text: string };
+
+function useMoving(libraryId: string): Activity[] {
   const replication = useReplicationStore();
   const backup = useBackupStore();
   const backupPeer = backup.statusOf(libraryId)?.peer_id;
   const inFlight = replication
     .transfersOf(libraryId)
     .filter((t) => t.state === 'queued' || t.state === 'active');
-  const fetching = inFlight.filter((t) => t.direction === 'pull').length;
+  const fetching = inFlight.some((t) => t.direction === 'pull');
   const sending = inFlight.filter((t) => t.direction === 'push' && t.peer_id !== backupPeer).length;
   const backingUp = inFlight.filter((t) => t.direction === 'push' && t.peer_id === backupPeer).length;
-  return [
-    ...(replication.replicating === libraryId ? [ScanStripStrings.syncing()] : []),
-    ...(fetching > 0 ? [ScanStripStrings.fetching(fetching)]
-    : backup.fetchingBack === libraryId ? [ScanStripStrings.fetchingFromBackup()]
-    : []),
-    ...(sending > 0 ? [ScanStripStrings.sending(sending)] : []),
-    ...(backingUp > 0 ? [ScanStripStrings.backingUp(backingUp)]
-    : backup.running === libraryId ? [ScanStripStrings.backingUpNow()]
-    : []),
-  ];
+  const activities: Activity[] = [];
+  if (replication.replicating === libraryId) activities.push({ kind: 'syncing', text: ScanStripStrings.syncing() });
+  if (fetching) activities.push({ kind: 'fetching', text: ScanStripStrings.fetching() });
+  else if (backup.fetchingBack === libraryId) activities.push({ kind: 'fetching', text: ScanStripStrings.fetchingFromBackup() });
+  if (sending > 0) activities.push({ kind: 'sending', text: ScanStripStrings.sending(sending) });
+  if (backingUp > 0) activities.push({ kind: 'backup', text: ScanStripStrings.backingUp(backingUp) });
+  else if (backup.running === libraryId) activities.push({ kind: 'backup', text: ScanStripStrings.backingUpNow() });
+  return activities;
 }

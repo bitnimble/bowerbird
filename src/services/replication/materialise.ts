@@ -1,7 +1,7 @@
 import type { Database } from '../../db/driver';
 import { existsSync } from 'node:fs';
 import { Logger } from '../../logger';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { ReplicatedPathSchema } from '../../schemas/replication';
 import { libraryPath } from '../../utils/paths';
 import type { BlobLocations } from '../blobs/blob_locations';

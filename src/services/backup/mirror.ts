@@ -19,6 +19,7 @@ import type { BackupLocations } from './backup_locations';
 import { assertMirrorOf, backupPath, backupStagingDir, markerPath, mirrorReady, readMarker } from './backup_root';
 import type { Cull } from './cull';
 import { passivePeersOf, type PassivePeer } from './passive_peers';
+import { LibraryActivity } from '../activity/library_activity';
 
 // `backup` is the catalogue's own snapshots (§4.9), which this is not: one scope for two
 // subsystems is a log nobody can narrow.
@@ -54,6 +55,7 @@ export class Mirror {
     private readonly backups: BackupLocations,
     private readonly transfers: TransferService,
     private readonly cull: Cull,
+    private readonly activity = new LibraryActivity(),
   ) {}
 
   /**
@@ -156,7 +158,8 @@ export class Mirror {
     linkLibrary(this.db, libraryId);
     if (existing != null && existing.peerId !== peerId) this.forget(libraryId, existing.peerId);
     registerPeer(this.db, libraryId, peerId, name ?? path.basename(at), at, 'passive');
-    await this.rediscover({ libraryId, peerId, name: library.name, root: at });
+    await this.activity.track(libraryId, 'backing_up', 'adopt',
+      () => this.rediscover({ libraryId, peerId, name: library.name, root: at }));
     log.info('a library has a backup folder', { library: libraryId, at });
     const status = this.status(libraryId);
     if (status == null) throw new AppError('INTERNAL_ERROR', `the backup folder for ${libraryId} did not record`);
@@ -208,6 +211,7 @@ export class Mirror {
       throw new AppError('CONFLICT', 'A backup is running for this library. Try again when it finishes.');
     }
     this.running.add(peer.libraryId);
+    const finish = this.activity.begin(peer.libraryId, 'restoring_backup');
     try {
       assertMirrorOf(peer.root, peer.libraryId, this.library(peer.libraryId).name);
       const owed = new Set(this.backups.offloadedTo(peer.libraryId, peer.peerId));
@@ -226,6 +230,7 @@ export class Mirror {
         );
       }
     } finally {
+      finish();
       this.running.delete(peer.libraryId);
       this.fetchingBack.delete(peer.libraryId);
     }
@@ -262,6 +267,7 @@ export class Mirror {
     const nothing = { copied: 0, moved: 0, offloaded: 0 };
     if (peer == null || this.running.has(libraryId)) return nothing;
     this.running.add(libraryId);
+    const finish = this.activity.begin(libraryId, 'backing_up');
     try {
       const library = this.library(libraryId);
       assertMirrorOf(peer.root, libraryId, library.name);
@@ -284,6 +290,7 @@ export class Mirror {
       this.note(libraryId, peer.peerId, error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
+      finish();
       this.running.delete(libraryId);
     }
   }

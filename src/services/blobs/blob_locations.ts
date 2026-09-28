@@ -2,15 +2,17 @@ import type { Database } from '../../db/driver';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { Logger } from '../../logger';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration } from '../../schemas/libraries';
 import { ensureDir } from '../../utils/files';
 import { containsPath, libraryPath } from '../../utils/paths';
 import { ReplicatedPathSchema } from '../../schemas/replication';
-import { unsettled } from '../replication/materialise';
 import { peerId, stamp } from '../replication/stamps';
 import { replicates } from '../replication/tombstones';
+import { LibraryActivity } from '../activity/library_activity';
+import { inChunks } from '../photos/photo_batches';
 
 const log = new Logger('blobs');
+const RECONCILE_BATCH_SIZE = 64;
 
 // Which peers hold which originals (docs/replication.md §7.2), behind one writer
 // so the rows and their log entries cannot drift. Only this peer's own row is
@@ -25,7 +27,7 @@ export interface MaterialisationFlag {
 }
 
 export class BlobLocations {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Database, private readonly activity = new LibraryActivity()) {}
 
   selfId(): string {
     return peerId(this.db);
@@ -181,7 +183,7 @@ export class BlobLocations {
    * reads to the scan's mirroring as the user deleting the shoot, which would
    * tombstone it back to every peer.
    */
-  async reconcile(library: Library): Promise<void> {
+  async reconcile(library: LibraryConfiguration): Promise<void> {
     // A root that is not there is a drive that is not mounted, not a library whose
     // every original has gone. Read the second way this retracts every row the
     // device has, minting and replicating a grave per photograph, and re-asserts
@@ -193,49 +195,63 @@ export class BlobLocations {
       log.warn('skipping the blob reconcile: the library root is not there', { library: library.id });
       return;
     }
-    if (!library.read_only) {
-      const shoots = this.db
-        .query('SELECT folder_path FROM shoots WHERE library_id = ?')
-        .all(library.id) as { folder_path: string }[];
-      for (const shoot of shoots) {
-        const dir = path.join(library.root_path, shoot.folder_path);
-        if (containsPath(library.root_path, dir)) await ensureDir(dir);
+    const finish = this.activity.begin(library.id, 'reconciling');
+    try {
+      if (!library.read_only) {
+        const shoots = this.db
+          .query('SELECT folder_path FROM shoots WHERE library_id = ?')
+          .all(library.id) as { folder_path: string }[];
+        for (const shoot of shoots) {
+          const dir = path.join(library.root_path, shoot.folder_path);
+          if (containsPath(library.root_path, dir)) await ensureDir(dir);
+        }
       }
-    }
-    // Only the rows that are files. A composed photograph has no original anywhere, on this
-    // device or on any other, so it is not a holding this peer could assert or retract - and
-    // walking it here would mint a grave apiece on every scan, for bytes that never existed.
-    const rows = this.db
-      .query(
-        `SELECT id, json_extract(recipe, '$.path') AS file_path FROM photos
+      // Only the rows that are files. A composed photograph has no original anywhere, on this
+      // device or on any other, so it is not a holding this peer could assert or retract - and
+      // walking it here would mint a grave apiece on every scan, for bytes that never existed.
+      const ids = (this.db
+        .query(
+          `SELECT id FROM photos
           WHERE library_id = ? AND json_extract(recipe, '$.kind') = 'file'`,
-      )
-      .all(library.id) as { id: string; file_path: string }[];
-    // A photograph whose merged move has not been made yet is not one whose bytes
-    // have gone: the file is at the path it was at before, and saying otherwise
-    // would retract this peer's claim on an original it is holding - after which
-    // it is invisible to the sole-holder check somebody forgetting this peer runs
-    // (§8.4). The next reconcile, after the drain, records it at its new path.
-    // The same definition the scan reads, rather than a second one here: a
-    // photograph whose transfer found somebody else's file at its path is no more
-    // held than one whose merged move has not run, and reading either as possession
-    // makes this device advertise an original it does not have. The push that would
-    // deliver it then skips it as already held, so the recovery the collision
-    // surface offers - clear it and press send again - answers nothing, for good.
-    const pending = new Set(unsettled(this.db, library.id).map((entry) => entry.photoId));
-    for (const row of rows) {
-      if (pending.has(row.id)) continue;
-      // Checked on the value SQL read, not on the one the wire guard parsed (§11.2). `JSON.parse`
-      // keeps the last of a duplicated key where `json_extract` returns the first, so a recipe can
-      // validate as one path and read out as another - and this is a `path.join` and a stat, which
-      // would answer whether an attacker-named file exists anywhere the process can reach.
-      if (!ReplicatedPathSchema.safeParse(row.file_path).success) {
-        log.warn('refusing a recipe path that does not stay inside the library', { photo: row.id });
-        this.retract(library.id, row.id);
-        continue;
+        )
+        .all(library.id) as { id: string }[]).map((row) => row.id);
+      // A photograph whose merged move has not been made yet is not one whose bytes
+      // have gone: the file is at the path it was at before, and saying otherwise
+      // would retract this peer's claim on an original it is holding - after which
+      // it is invisible to the sole-holder check somebody forgetting this peer runs
+      // (§8.4). The next reconcile, after the drain, records it at its new path.
+      // The same definition the scan reads, rather than a second one here: a
+      // photograph whose transfer found somebody else's file at its path is no more
+      // held than one whose merged move has not run, and reading either as possession
+      // makes this device advertise an original it does not have. The push that would
+      // deliver it then skips it as already held, so the recovery the collision
+      // surface offers - clear it and press send again - answers nothing, for good.
+      for (const batch of inChunks(ids, RECONCILE_BATCH_SIZE)) {
+        await Bun.sleep(1);
+        const current = this.db.query('SELECT root_path FROM libraries WHERE id = ?').get(library.id) as { root_path: string } | null;
+        if (current?.root_path !== library.root_path || !existsSync(library.root_path)) return;
+        const rows = this.db
+          .query(`SELECT p.id, json_extract(p.recipe, '$.path') AS file_path FROM photos p
+            WHERE p.library_id = ? AND json_extract(p.recipe, '$.kind') = 'file' AND p.id IN (${batch.map(() => '?').join(', ')})
+              AND NOT EXISTS (SELECT 1 FROM materialisation_queue q WHERE q.library_id = p.library_id AND q.photo_id = p.id)
+              AND NOT EXISTS (SELECT 1 FROM materialisation_flags f WHERE f.library_id = p.library_id AND f.photo_id = p.id)`)
+          .all(library.id, ...batch) as { id: string; file_path: string }[];
+        for (const row of rows) {
+          // Checked on the value SQL read, not on the one the wire guard parsed (§11.2). `JSON.parse`
+          // keeps the last of a duplicated key where `json_extract` returns the first, so a recipe can
+          // validate as one path and read out as another - and this is a `path.join` and a stat, which
+          // would answer whether an attacker-named file exists anywhere the process can reach.
+          if (!ReplicatedPathSchema.safeParse(row.file_path).success) {
+            log.warn('refusing a recipe path that does not stay inside the library', { photo: row.id });
+            this.retract(library.id, row.id);
+            continue;
+          }
+          if (existsSync(libraryPath(library, row.file_path))) this.record(library.id, row.id);
+          else this.retract(library.id, row.id);
+        }
       }
-      if (existsSync(libraryPath(library, row.file_path))) this.record(library.id, row.id);
-      else this.retract(library.id, row.id);
+    } finally {
+      finish();
     }
   }
 }

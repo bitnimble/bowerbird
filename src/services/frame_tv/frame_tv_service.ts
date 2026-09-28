@@ -5,6 +5,7 @@ import type { FrameTv, SendToFrameTvRequest } from '../../schemas/frame_tv';
 import type { Settings } from '../../schemas/settings';
 import type { ShareService } from '../processing/exports/share_service';
 import type { FrameTvTokens } from './frame_tv_tokens';
+import { LibraryActivity } from '../activity/library_activity';
 
 const UPLOAD_TIMEOUT_MS = 30_000;
 
@@ -23,6 +24,8 @@ export class FrameTvService {
     private readonly tokens: Pick<FrameTvTokens, 'get' | 'set'>,
     private readonly discover: () => Promise<FrameTv[]>,
     private readonly connect: (options: FrameArtOptions) => FrameArtClient,
+    private readonly libraryOf: (photoId: string) => string | null = () => null,
+    private readonly activity: LibraryActivity = new LibraryActivity(),
   ) {}
 
   async list(): Promise<FrameTv[]> {
@@ -33,7 +36,8 @@ export class FrameTvService {
 
   async send(request: SendToFrameTvRequest): Promise<void> {
     this.requireEnabled();
-    const sent = this.sending.then(() => this.sendNow(request));
+    const finish = this.activity.begin(this.libraryOf(request.photo_id), 'sending_to_tv', request.photo_id);
+    const sent = this.sending.then(() => this.sendNow(request)).finally(finish);
     this.sending = sent.catch(() => undefined);
     await sent;
   }

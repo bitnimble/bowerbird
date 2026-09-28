@@ -1,9 +1,14 @@
 import { computed, observable } from 'mobx';
-import { type FolderRule, type Library, type LibrarySettings } from '../../../../src/schemas/libraries';
+import type { Activity } from '../../../../src/schemas/activity';
+import { type FolderRule, type Library, type LibraryScanStatus, type LibrarySettings } from '../../../../src/schemas/libraries';
 
 // Data only: observables + computeds. Every mutation lives on LibrariesPresenter.
 export class LibrariesStore {
   @observable.shallow accessor libraries: Library[] = [];
+  @observable.shallow accessor statuses = new Map<string, LibraryScanStatus>();
+  @observable.shallow accessor activities = new Map<string, Activity[]>();
+  @observable.shallow accessor globalActivity: Activity[] = [];
+  @observable.shallow accessor localRendering = new Map<string, ReadonlyMap<string, number>>();
   /** What a new library is created with, for the settings page's reset. Null until it arrives. */
   @observable.ref accessor defaults: LibrarySettings | null = null;
   // Per library, keyed by id, because only the library being looked at in

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { ActivitySnapshotSchema, type Activity } from '../../schemas/activity';
 import {
   CreateLibraryRequestSchema,
   DEFAULT_LIBRARY_SETTINGS,
@@ -34,7 +35,9 @@ export class LibrariesApi {
     // The folder tree has to lose a hidden shoot's folders along with the shoot (§12.4), which is
     // the one thing here that is a question about shoots rather than about the library.
     private readonly shoots: ShootsService,
-    private readonly detectStacks: (libraryId: string) => number,
+    private readonly detectStacks: (libraryId: string) => number | Promise<number>,
+    private readonly activityFor: (libraryId: string) => Activity[] = () => [],
+    private readonly globalActivity: () => Activity[] = () => [],
   ) {
     const app = new Hono();
 
@@ -44,6 +47,15 @@ export class LibrariesApi {
     });
 
     app.get(route(), (c) => c.json(respond(LibrariesSchema, this.service.list())));
+
+    app.get(route(PathSegment.activity()), (c) => c.json(respond(ActivitySnapshotSchema, {
+      libraries: this.service.list().map((library) => ({
+        ...library,
+        scan: this.scan.getScanStatus(library.id),
+        activities: this.activityFor(library.id),
+      })),
+      global: this.globalActivity(),
+    })));
 
     // What a new library is created with, so a client can offer "put this back"
     // without carrying a copy of the schema's defaults. Above `/:id`, which would
@@ -122,8 +134,8 @@ export class LibrariesApi {
     // The pass a scan runs when it has brought something in, asked for on its own:
     // the stacking settings are not retroactive, so changing one otherwise waits
     // for the next import to mean anything (§19.4).
-    app.post(route(PathSegment.param('id'), PathSegment.jobs(), PathSegment.stacks()), (c) =>
-      c.json(respond(DetectStacksResponseSchema, { stacks: this.detectStacks(this.service.get(c.req.param('id')).id) })),
+    app.post(route(PathSegment.param('id'), PathSegment.jobs(), PathSegment.stacks()), async (c) =>
+      c.json(respond(DetectStacksResponseSchema, { stacks: await this.detectStacks(this.service.get(c.req.param('id')).id) })),
     );
 
     app.get(route(PathSegment.param('id')), (c) => c.json(respond(LibrarySchema, this.service.get(c.req.param('id')))));

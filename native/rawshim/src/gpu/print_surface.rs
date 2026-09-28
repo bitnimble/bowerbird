@@ -122,7 +122,7 @@ impl Uploaded<'_> {
         recording.holding_texture(&environment);
         recording.holding(&calibration);
         let (parameters, proof) = self.print_scene_binding(recording, scene, display_peak);
-        let pipelines = &self.gpu.print_surface;
+        let pipelines = self.gpu.print_surface();
         let scene_group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
             label: Some("print surface scene"), layout: &pipelines.scene_layout,
             entries: &[
@@ -131,7 +131,7 @@ impl Uploaded<'_> {
                 wgpu::BindGroupEntry { binding: 2, resource: calibration.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: proof.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&environment.view()) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&self.gpu.print_environment.sampler) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(&self.gpu.print_environment_pipelines().sampler) },
             ],
         });
         let lighting = self.print_lighting(recording, scene, shape, &view, &scene_group);
@@ -223,7 +223,7 @@ impl Uploaded<'_> {
             return texture;
         }
         let group = self.gpu.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("print lighting"), layout: &self.gpu.print_surface.field_layout,
+            label: Some("print lighting"), layout: &self.gpu.print_surface().field_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: view.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&texture.view()) },
@@ -231,7 +231,7 @@ impl Uploaded<'_> {
         });
         {
             let mut pass = recording.encoder().begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("print lighting"), ..Default::default() });
-            pass.set_pipeline(&self.gpu.print_surface.field);
+            pass.set_pipeline(&self.gpu.print_surface().field);
             pass.set_bind_group(0, &group, &[]);
             pass.set_bind_group(1, scene_group, &[]);
             pass.dispatch_workgroups(extent.width.div_ceil(8), extent.height.div_ceil(8), extent.depth_or_array_layers);

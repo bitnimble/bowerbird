@@ -1,5 +1,5 @@
 import type { RenditionSource } from '../../../schemas/common';
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration } from '../../../schemas/libraries';
 import type { PhotoDetail, PhotoSummary } from '../../../schemas/photos';
 import type { Settings, ViewerRendition, ViewerRenditionMode } from '../../../schemas/settings';
 import { hasEmbeddedJpeg } from '../../../utils/scan';
@@ -179,7 +179,7 @@ export function builtSetFromRow(
  */
 export function contextOf(
   row: Pick<PhotoSummary, 'viewer_rendition' | 'is_edited' | 'frames_edited' | 'file_path'>,
-  library: Library | null,
+  library: LibraryConfiguration | null,
   settings: Settings,
   builtRenditions: ReadonlySet<ViewerRendition>,
   builtIsExact: boolean,

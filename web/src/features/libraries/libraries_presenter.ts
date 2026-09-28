@@ -1,6 +1,7 @@
-import { action, runInAction } from 'mobx';
+import { action } from 'mobx';
+import type { ActivitySnapshot } from '../../../../src/schemas/activity';
 import { type Ordering, type RenditionSource } from '../../../../src/schemas/common';
-import { type CreateLibraryRequest, type FolderRule, type Library, type UpdateLibraryRequest } from '../../../../src/schemas/libraries';
+import { type CreateLibraryRequest, type FolderRule, type Library, type LibraryScanStatus, type LibrarySettings, type UpdateLibraryRequest } from '../../../../src/schemas/libraries';
 import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
 import { setStage, type OptionalStage, type RenderedRendition } from '../../../../src/schemas/render_stages';
@@ -14,26 +15,96 @@ import { LibrariesPresenterStrings } from './libraries_presenter.strings';
 import type { LibrariesStore } from './libraries_store';
 
 export class LibrariesPresenter {
+  private readRevision = 0;
+
   constructor(
     private readonly store: LibrariesStore,
     private readonly toasts: ToastsPresenter,
+    private readonly statusesChanged: (statuses: readonly LibraryScanStatus[]) => void = () => {},
   ) {}
 
   async load(activity: RequestActivity = 'interactive'): Promise<void> {
+    const revision = ++this.readRevision;
     this.beginLoad();
     try {
       // Alongside the list rather than once at startup: it is one small immutable
       // record, and pairing them means the settings page never has a library in
       // hand with nothing to compare it against.
       const [libraries, defaults] = await Promise.all([librariesApi.list(activity), librariesApi.getDefaults(activity)]);
-      runInAction(() => {
-        this.store.libraries = libraries;
-        this.store.defaults = defaults;
-        this.store.loading = false;
-      });
+      this.loaded(libraries, defaults, revision);
     } catch (err) {
-      this.fail(describe(err));
+      if (revision === this.readRevision) this.fail(describe(err));
     }
+  }
+
+  @action.bound
+  private loaded(libraries: Library[], defaults: LibrarySettings, revision: number): void {
+    this.store.defaults = defaults;
+    if (revision !== this.readRevision) return;
+    this.store.libraries = libraries;
+    this.store.loading = false;
+  }
+
+  watch(): () => void {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let error: string | null = null;
+    const refresh = async (): Promise<void> => {
+      const revision = this.readRevision;
+      try {
+        const snapshot = await librariesApi.activity(controller.signal);
+        if (!controller.signal.aborted) {
+          this.refreshed(snapshot, error, revision);
+          error = null;
+        }
+      } catch (err) {
+        if (!controller.signal.aborted && revision === this.readRevision) {
+          error = describe(err);
+          this.fail(error);
+        }
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(() => void refresh(), 1000);
+      }
+    };
+    void refresh();
+    return () => {
+      controller.abort();
+      if (timer != null) clearTimeout(timer);
+    };
+  }
+
+  @action.bound
+  private refreshed(snapshot: ActivitySnapshot, error: string | null, revision: number): void {
+    if (revision === this.readRevision) {
+      this.store.libraries = snapshot.libraries;
+      this.readRevision++;
+    }
+    this.store.statuses = new Map(snapshot.libraries.map((library) => [library.id, library.scan]));
+    this.statusesChanged(snapshot.libraries.map((library) => library.scan));
+    this.store.activities = new Map(snapshot.libraries.map((library) => [library.id, library.activities]));
+    this.store.globalActivity = snapshot.global;
+    this.store.loading = false;
+    if (error != null && this.store.error === error) this.store.error = null;
+  }
+
+  startLocalRender(libraryId: string, photoId: string): () => void {
+    this.localRenderChanged(libraryId, photoId, 1);
+    let finished = false;
+    return () => {
+      if (finished) return;
+      finished = true;
+      this.localRenderChanged(libraryId, photoId, -1);
+    };
+  }
+
+  @action.bound
+  private localRenderChanged(libraryId: string, photoId: string, change: number): void {
+    const photos = new Map(this.store.localRendering.get(libraryId));
+    const count = (photos.get(photoId) ?? 0) + change;
+    if (count > 0) photos.set(photoId, count);
+    else photos.delete(photoId);
+    if (photos.size > 0) this.store.localRendering.set(libraryId, photos);
+    else this.store.localRendering.delete(libraryId);
   }
 
   /**

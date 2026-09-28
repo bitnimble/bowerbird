@@ -11,14 +11,17 @@ import { PhotoMetadataRepository } from '../../photos/metadata/photo_metadata_re
 import { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import { RenditionsRepository } from '../../processing/renditions/renditions_repository';
 import { PruneService } from '../prune_service';
+import { LibraryActivity } from '../../activity/library_activity';
 
 const LIB = 'prune-service-test';
 
 let db: Database;
 let root: string;
 let prune: PruneService;
+let activity: LibraryActivity;
 
 beforeEach(() => {
+  activity = new LibraryActivity();
   root = mkdtempSync(path.join(tmpdir(), 'bb-prune-'));
   db = new Database(':memory:');
   runMigrations(db);
@@ -26,6 +29,7 @@ beforeEach(() => {
   prune = new PruneService(
     new LibrariesRepository(db),
     new PhotoMetadataRepository(db, new PhotoProcessingRepository(db, new RenditionsRepository(db))),
+    activity,
   );
 });
 
@@ -59,7 +63,10 @@ describe('PruneService.pruneDrafts', () => {
     await utimes(old, longAgo, longAgo);
     await utimes(loose, longAgo, longAgo);
 
-    const result = await prune.pruneDrafts(7);
+    const pruning = prune.pruneDrafts(7);
+    expect(activity.current(null)).toEqual([{ kind: 'pruning', count: 1 }]);
+    const result = await pruning;
+    expect(activity.current(null)).toEqual([]);
 
     expect(existsSync(old)).toBe(false);
     expect(existsSync(loose)).toBe(false);
@@ -69,6 +76,12 @@ describe('PruneService.pruneDrafts', () => {
 
   it('says nothing about a library that has never carved anything', async () => {
     expect(await prune.pruneDrafts(7)).toEqual({ removed: 0, bytes: 0 });
+  });
+
+  it('clears pruning activity when the catalogue cannot be read', async () => {
+    db.close();
+    await expect(prune.prune()).rejects.toThrow();
+    expect(activity.current(null)).toEqual([]);
   });
 
   // The ordinary sweep is about ids that are no longer photographs, and a draft key is not one -

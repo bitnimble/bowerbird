@@ -1,5 +1,5 @@
 import type { ExportOptions } from '../../../schemas/export';
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import { getDataPath } from '../../../utils/paths';
 import type { SettingsRepository } from '../../settings/settings_repository';
 import { encoderQuality } from '../analysis/quality';

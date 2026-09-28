@@ -8,6 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LibrarySchema, LibraryScanStatusSchema } from '../src/schemas/libraries';
+import { ActivitySnapshotSchema } from '../src/schemas/activity';
 import { PhotoListResponseSchema } from '../src/schemas/photos';
 import type { UpdateSettingsRequest } from '../src/schemas/settings';
 
@@ -107,6 +108,15 @@ try {
   renameSync(arriving, join(root, 'photos', 'watched.arw'));
   await waitForPhoto(library.id, 'watched.arw');
   console.log('watcher imported watched.arw without a manual scan');
+  const activity = await fetch(`${origin}/api/libraries/activity`);
+  if (!activity.ok) throw new Error(await activity.text());
+  const snapshot = ActivitySnapshotSchema.parse(await activity.json());
+  const imported = snapshot.libraries.find((each) => each.id === library.id);
+  if (imported == null || imported.photo_count !== 2 || imported.missing_photo_count !== 0 ||
+      imported.unavailable_photo_count !== 0 || imported.rendered_photo_count !== 0) {
+    throw new Error(`unexpected imported library counts: ${JSON.stringify(imported)}`);
+  }
+  console.log('activity snapshot reports 2 photos, 0 missing, 0 unavailable, 0 rendered');
 } finally {
   server.kill();
   rmSync(root, { recursive: true, force: true });

@@ -2,7 +2,7 @@ import { gunzipSync } from 'node:zlib';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { AppError } from '../../errors';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration } from '../../schemas/libraries';
 import { EditDocSchema } from '../../schemas/photo_edits';
 import type { PrepareDevelop } from '../../schemas/prepare_develop';
 import { isComposite, soleInputOf } from '../../schemas/recipes';
@@ -24,6 +24,8 @@ import type { BasicPhoto } from '../../services/photos/paths/photo_paths_reposit
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
 import type { Missing, Shown } from '../../services/processing/workers/prepare_pool';
 import { takeAsLongAsItTakes } from '../long_requests';
+import { LibraryActivity } from '../../services/activity/library_activity';
+import { fileResponse } from '../file_response';
 
 // Where a variant's bytes live, given the photo it belongs to. Passing this in
 // keeps `serve` about HTTP: adding a variant is a route, not another branch in
@@ -34,7 +36,7 @@ import { takeAsLongAsItTakes } from '../long_requests';
 // rendition on every rendition in the grid (§8.2 `locate`).
 // Awaited, because one of them is "the RAW, wherever it is" and that may be a fetch off a backup
 // drive before there is a path to read (docs/replication.md §14.4).
-type PathFor = (library: Library, photo: BasicPhoto) => string | null | Promise<string | null>;
+type PathFor = (library: LibraryConfiguration, photo: BasicPhoto) => string | null | Promise<string | null>;
 
 type PreparesPictures = {
   preparePicture: (
@@ -205,6 +207,7 @@ export class ImageApi {
      * service to ignore.
      */
     private readonly pictures: PreparesPictures | null = null,
+    private readonly activity = new LibraryActivity(),
   ) {
     const app = new Hono();
     // One route for every rendition, named rather than spelled out per size: `grid`, `full`,
@@ -358,7 +361,7 @@ export class ImageApi {
   private async preparedPicture(
     pictures: PreparesPictures,
     photo: BasicPhoto,
-    library: Library,
+    library: LibraryConfiguration,
     c: Context,
   ): Promise<Uint8Array> {
     // What tells a composite this device cannot compose apart from an ordinary photograph is
@@ -402,7 +405,7 @@ export class ImageApi {
   // The camera's own JPEG, lifted out of the RAW and tagged for display. No
   // demosaic and nothing cached on disk: extraction is a header read plus a copy,
   // which is cheaper than the disk a fourth derivative per photo would cost.
-  private async serveEmbedded(photo: BasicPhoto, library: Library, c: Context): Promise<Response> {
+  private async serveEmbedded(photo: BasicPhoto, library: LibraryConfiguration, c: Context): Promise<Response> {
     const photoId = photo.id;
     const originalPath = await this.originals.open(library, photo);
     if (originalPath == null) throw new AppError('NOT_FOUND', `this photograph has no file to lift a JPEG out of: ${photoId}`);
@@ -551,7 +554,10 @@ export class ImageApi {
     if (!scrubIdentifying(bytes)) {
       throw new AppError('VALIDATION_ERROR', `identifying data cannot be removed from ${name}`);
     }
-    return download(new Uint8Array(bytes), originalMediaType(soleInputOf(photo.recipe) ?? ''), name);
+    const response = download(new Uint8Array(bytes), originalMediaType(soleInputOf(photo.recipe) ?? ''), name);
+    response.headers.set('Content-Length', String(bytes.byteLength));
+    if (c.req.method === 'HEAD') return response;
+    return this.activity.response(library.id, 'sending', photoId, response);
   }
 
   // 404s go through AppError (not c.notFound()) so every not-available response
@@ -590,6 +596,10 @@ export class ImageApi {
     };
     if (c.req.header('if-none-match') === etag) return new Response(null, { status: 304, headers });
 
+    if (downloadAs != null) {
+      const response = fileResponse(file, headers, c.req.method === 'GET' ? c.req.header('range') : undefined);
+      return c.req.method === 'HEAD' ? response : this.activity.response(library.id, 'sending', photo.id, response);
+    }
     return new Response(file, { headers });
   }
 }

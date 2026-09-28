@@ -1,5 +1,5 @@
 import { AppError } from '../../../errors';
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
 import type { PrepareDevelop } from '../../../schemas/prepare_develop';
 import { isComposite } from '../../../schemas/recipes';
@@ -11,6 +11,7 @@ import { openPrepareWorker, pictureLevel, type Missing, type PrepareWorker, type
 import type { CompositeJobSource, WorkerJob } from '../workers/processing_types';
 import { developed } from './developed';
 import type { RenderTargets } from './render_targets';
+import { LibraryActivity } from '../../activity/library_activity';
 
 export class PrepareRenderer {
   private preparing: PrepareWorker | null = null;
@@ -25,6 +26,7 @@ export class PrepareRenderer {
       photoId: string,
     ) => { kind: CompositeKind; recipe: unknown; sources: CompositeJobSource[] } | null,
     private readonly targets: RenderTargets,
+    private readonly activity: LibraryActivity = new LibraryActivity(),
   ) {}
 
   /**
@@ -110,8 +112,9 @@ export class PrepareRenderer {
           ...shared,
         };
 
-    return this.prepares()
-      .run({ job, level, width: size.width, height: size.height, window, parts });
+    return this.activity.track(library.id, 'preparing', photoId, () =>
+      this.prepares().run({ job, level, width: size.width, height: size.height, window, parts }),
+    );
   }
 
   /**

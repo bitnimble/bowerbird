@@ -29,6 +29,7 @@ import { takeAsLongAsItTakes } from '../long_requests';
 import { respond } from '../respond';
 import type { ReplicationRunner } from '../../services/replication/replication_runner';
 import type { ReplicationService } from '../../services/replication/replication_service';
+import { LibraryActivity } from '../../services/activity/library_activity';
 
 export class ReplicationApi {
   readonly routes: Hono;
@@ -38,6 +39,7 @@ export class ReplicationApi {
     private readonly runner: ReplicationRunner,
     /** What is still on its way here, for a device that has stopped wanting it (§7.10). */
     private readonly cancelIncoming: (libraryId: string) => Promise<number> = () => Promise.resolve(0),
+    private readonly activity = new LibraryActivity(),
   ) {
     const app = new Hono();
 
@@ -51,11 +53,14 @@ export class ReplicationApi {
 
     app.post(route(PathSegment.handshake()), async (c) => {
       const request = HandshakeRequestSchema.parse(await c.req.json());
-      return c.json(respond(HandshakeResponseSchema, this.replication.handshake(request)));
+      return c.json(respond(HandshakeResponseSchema, await this.activity.track(request.library_id, 'syncing', request.peer_id,
+        () => this.replication.handshake(request))));
     });
 
     app.post(route(PathSegment.changes()), async (c) => {
-      return c.json(respond(PageSchema, this.replication.changes(ChangesRequestSchema.parse(await c.req.json()))));
+      const request = ChangesRequestSchema.parse(await c.req.json());
+      return c.json(respond(PageSchema, await this.activity.track(request.library_id, 'syncing', request.peer_id,
+        () => this.replication.changes(request))));
     });
 
     // The other direction (§6.4): what the caller holds and this server lacks.
@@ -63,16 +68,19 @@ export class ReplicationApi {
     // topology but two servers on one network that is the only peer there is.
     app.post(route(PathSegment.push()), async (c) => {
       const request = PushPageRequestSchema.parse(await c.req.json());
-      return c.json(respond(PushPageResponseSchema, await this.replication.receive(request)));
+      return c.json(respond(PushPageResponseSchema, await this.activity.track(request.library_id, 'syncing', request.peer_id,
+        () => this.replication.receive(request))));
     });
 
     app.post(route(PathSegment.push(), PathSegment.done()), async (c) => {
-      this.replication.finishReceiving(PushDoneRequestSchema.parse(await c.req.json()));
+      const request = PushDoneRequestSchema.parse(await c.req.json());
+      await this.activity.track(request.library_id, 'syncing', request.peer_id, () => this.replication.finishReceiving(request));
       return c.body(null, 204);
     });
 
     app.post(route(PathSegment.ack()), async (c) => {
-      this.replication.ack(AckRequestSchema.parse(await c.req.json()));
+      const request = AckRequestSchema.parse(await c.req.json());
+      await this.activity.track(request.library_id, 'syncing', request.peer_id, () => this.replication.ack(request));
       return c.body(null, 204);
     });
 

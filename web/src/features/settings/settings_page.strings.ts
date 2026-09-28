@@ -1,3 +1,5 @@
+import type { Library } from '../../../../src/schemas/libraries';
+
 export const SettingsStrings = {
   resetSetting: (label: string) => `Reset ${label}`,
 
@@ -9,7 +11,9 @@ export const SettingsStrings = {
   removeLibraryQuestion: (libraryName: string) => `Remove "${libraryName}" from Bowerbird?`,
   removeLibraryWarning: (photoCount: number) =>
     `Your ${photoCount} ${photoCount === 1 ? 'photo stays' : 'photos stay'} on disk. Ratings, notes, Picks, albums, and shoots can't be recovered.`,
-  libraryPhotoCount: (photoCount: number) => `${photoCount} ${photoCount === 1 ? 'photo' : 'photos'}`,
+  libraryPhotoCount: ({ photo_count, missing_photo_count, unavailable_photo_count, rendered_photo_count }: Pick<
+    Library, 'photo_count' | 'missing_photo_count' | 'unavailable_photo_count' | 'rendered_photo_count'
+  >) => `${photo_count} ${photo_count === 1 ? 'photo' : 'photos'} (${missing_photo_count} missing, ${unavailable_photo_count} unavailable, ${rendered_photo_count} rendered)`,
   /** Opens one library's settings; `settings` names the whole page. */
   openLibrarySettings: () => 'Settings',
   librarySettingsTitle: (libraryName: string) => `Settings for ${libraryName}`,

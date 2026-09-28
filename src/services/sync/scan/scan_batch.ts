@@ -110,7 +110,7 @@ export class ScanBatch {
   // First scan commits additions in batches, so a killed import resumes where it reached.
   // Only a run with no rows qualifies: against populated library an addition can be move's far half.
   insertBatch(files: readonly DiskFile[]): void {
-    if (!this.libraries.getById(this.libraryId)) {
+    if (!this.libraries.has(this.libraryId)) {
       throw new AppError('NOT_FOUND', `library not found: ${this.libraryId}`);
     }
     this.keepLease();

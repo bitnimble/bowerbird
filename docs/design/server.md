@@ -197,6 +197,12 @@ The date range filters on `COALESCE(date_taken, date_added)`; the same date the 
 
 Library, shoot and album responses each carry a `photo_count` (excluding binned photos), and libraries carry `last_synced_at`, so a client can show how large and how stale a collection is without a second request per row.
 
+Library responses also carry `missing_photo_count`, `unavailable_photo_count`, and `rendered_photo_count`. The first two partition originals missing locally by whether another peer holds a copy. The last counts photos with at least one local viewer rendition, including fetched copies. Every count excludes binned photos and counts a photo once.
+
+`GET /api/libraries/activity` returns those library rows with scan status and independent active queues, plus global maintenance activity. One process-wide registry tracks work through completion, failure or cancellation; overlapping work on the same photo counts once. Original streams remain active until their bodies finish. Transfer queues include queued and active originals; render counts combine batch queues and on-demand work. Global catalogue backups, pruning and benchmarks have their own rows rather than being attributed to a library.
+
+Photo processing and listings read `LibraryConfiguration` through count-free repository lookups. Full library responses compute current counts for the API, without repeating those catalogue scans per photo. Existence checks query only the library row.
+
 `include_deleted` and `is_deleted` do different jobs: the former lifts the default "hide soft-deleted rows" clause, the latter selects on the flag. The Bin view is `include_deleted=true&is_deleted=true`; without the pair a client could ask for "live and deleted together" but never for "deleted alone".
 
 `is_hidden` needs no such pair: it is the widening half on its own. Omitted, the exclusion is where every listing starts and intersects like the scope filters above; sent, it is an ordinary chip, so `is_hidden=true&triage=picked&match=any` is one listing holding the put-away and the picks (§12.4). There is no "only the hidden ones" spelling beyond sending it alone, and no "not hidden" one at all.

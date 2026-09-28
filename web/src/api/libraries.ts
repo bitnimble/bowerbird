@@ -15,11 +15,16 @@ import {
   type UpdateLibraryRequest,
   UpdateLibraryRequestSchema,
 } from '../../../src/schemas/libraries';
+import { ActivitySnapshotSchema, type ActivitySnapshot } from '../../../src/schemas/activity';
 import { PathSegment, route } from '../../../src/schemas/route';
 import type { RequestActivity } from '../../../src/schemas/request_activity';
 import { NothingSchema, request } from './request';
 
 export const librariesApi = {
+  activity: (signal?: AbortSignal): Promise<ActivitySnapshot> =>
+    request(ActivitySnapshotSchema, 'GET', route(PathSegment.api(), PathSegment.libraries(), PathSegment.activity()), undefined, {
+      activity: 'background', signal,
+    }),
   // Every folder inside one library, in the root-relative paths a shoot's folder
   // is stored as. A hidden shoot's folders are left out with the shoot itself unless
   // `includeHidden` asks for them (§12.4).
@@ -29,8 +34,8 @@ export const librariesApi = {
       'GET',
       `${route(PathSegment.api(), PathSegment.libraries(), libraryId, PathSegment.folders())}${includeHidden ? '?include_hidden=true' : ''}`,
     ),
-  list: (activity: RequestActivity = 'interactive'): Promise<Library[]> =>
-    request(LibrariesSchema, 'GET', route(PathSegment.api(), PathSegment.libraries()), undefined, { activity }),
+  list: (activity: RequestActivity = 'interactive', signal?: AbortSignal): Promise<Library[]> =>
+    request(LibrariesSchema, 'GET', route(PathSegment.api(), PathSegment.libraries()), undefined, { activity, signal }),
   /** The per-library knobs a new library is created with, for the same reason as `getSettingsDefaults`. */
   getDefaults: (activity: RequestActivity = 'interactive'): Promise<LibrarySettings> =>
     request(
@@ -51,13 +56,13 @@ export const librariesApi = {
     request(LibraryScanStatusSchema, 'POST', route(PathSegment.api(), PathSegment.libraries(), id, PathSegment.sync())),
   cancelScan: (id: string): Promise<void> =>
     request(NothingSchema, 'DELETE', route(PathSegment.api(), PathSegment.libraries(), id, PathSegment.sync())),
-  scanStatus: (id: string): Promise<LibraryScanStatus> =>
+  scanStatus: (id: string, signal?: AbortSignal): Promise<LibraryScanStatus> =>
     request(
       LibraryScanStatusSchema,
       'GET',
       route(PathSegment.api(), PathSegment.libraries(), id, PathSegment.sync(), PathSegment.status()),
       undefined,
-      { activity: 'background' },
+      { activity: 'background', signal },
     ),
   rebuildTiles: (id: string): Promise<LibraryScanStatus> =>
     request(

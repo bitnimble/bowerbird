@@ -3,7 +3,7 @@ import type { ProcessingStage } from '../../../schemas/common';
 import type { AssemblyRecipe } from '../../../schemas/assembly';
 import type { ExportOptions } from '../../../schemas/export';
 import type { Job } from '../../../schemas/jobs';
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { AlignShape } from '../../../schemas/jobs';
 import type { CompositeKind } from '../../../schemas/photos';
 import type { Denoiser } from '../../../schemas/photo_edits';
@@ -34,6 +34,7 @@ import { CompositeRenderer } from './composite_renderer';
 import { PrepareRenderer } from './prepare_renderer';
 import { SinglePhotoRenderer } from './single_photo_renderer';
 import { ExportRenderer } from './export_renderer';
+import { LibraryActivity } from '../../activity/library_activity';
 
 export abstract class RenderService {
   protected readonly targets: RenderTargets;
@@ -55,12 +56,13 @@ export abstract class RenderService {
     protected readonly compositeOf: (
       photoId: string,
     ) => { kind: CompositeKind; recipe: unknown; sources: CompositeJobSource[] } | null,
+    protected readonly activity: LibraryActivity = new LibraryActivity(),
   ) {
     this.targets = new RenderTargets(settings);
     this.composites = new CompositeRenderer(photoProcessing, editsFor, compositeOf, this.targets, settings, (photoId, written) =>
       this.announce(photoId, written),
     );
-    this.prepareRenderer = new PrepareRenderer(photoPaths, photoListing, settings, editsFor, libraryOf, compositeOf, this.targets);
+    this.prepareRenderer = new PrepareRenderer(photoPaths, photoListing, settings, editsFor, libraryOf, compositeOf, this.targets, activity);
     this.singlePhoto = new SinglePhotoRenderer(
       photoProcessing,
       settings,
@@ -77,7 +79,7 @@ export abstract class RenderService {
 
   /** What a render's stages cost on this machine, measured now and filed in `into`. */
   async benchmarkRender(rendition: RenderedRendition, denoiser: Denoiser, into: RenderTimingsFile): Promise<RenderTiming> {
-    return this.benchmark.run(rendition, denoiser, into);
+    return this.activity.track(null, 'measuring', `${rendition}:${denoiser}`, () => this.benchmark.run(rendition, denoiser, into));
   }
 
   cameraMatchFor(library: Library, rendition: Rendition): CameraMatch {
@@ -220,7 +222,7 @@ export abstract class RenderService {
   }
 
   async buildComposite(photoId: string, library: Library, rendition: Rendition, hdr: boolean): Promise<boolean> {
-    return this.composites.buildComposite(photoId, library, rendition, hdr);
+    return this.activity.track(library.id, 'rendering', photoId, () => this.composites.buildComposite(photoId, library, rendition, hdr));
   }
 
   async buildCompositeRendition(
@@ -265,7 +267,9 @@ export abstract class RenderService {
     source: RenditionSource = 'render',
     remeasure = false,
   ): Promise<void> {
-    return this.singlePhoto.renderOne(rawFilePath, photoId, library, rendition, hdr, source, remeasure);
+    return this.activity.track(library.id, 'rendering', photoId, () =>
+      this.singlePhoto.renderOne(rawFilePath, photoId, library, rendition, hdr, source, remeasure),
+    );
   }
 
   renditionCommand(
@@ -286,7 +290,9 @@ export abstract class RenderService {
     builtFrom: string | null,
     rendered: Uint8Array<ArrayBuffer>,
   ): Promise<void> {
-    return this.singlePhoto.keepRendered(photoId, library, rendition, hdr, builtFrom, rendered);
+    return this.activity.track(library.id, 'rendering', photoId, () =>
+      this.singlePhoto.keepRendered(photoId, library, rendition, hdr, builtFrom, rendered),
+    );
   }
 
   async measureCameraMatch(

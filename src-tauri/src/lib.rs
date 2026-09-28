@@ -35,7 +35,10 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .setup(|app| {
             api::load_config(app.handle());
-            open_window(app.handle())?;
+            if let Err(err) = open_window(app.handle()) {
+                server::stop();
+                return Err(err.into());
+            }
             if let Err(why) = api::apply_ui_scale(app.handle()) {
                 eprintln!("[bowerbird] {why}");
             }
@@ -50,8 +53,15 @@ pub fn run() {
         .on_window_event(|window, event| {
             // The server outlives the window otherwise, holding the catalogue against
             // the next start and leaving a process nobody can see.
-            if matches!(event, tauri::WindowEvent::Destroyed) && window.label() == "main" {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed)
+                && window.label() == "main"
+            {
                 server::stop();
+                #[cfg(desktop)]
+                {
+                    use tauri::Manager;
+                    window.app_handle().exit(0);
+                }
             }
         })
         .register_asynchronous_uri_scheme_protocol("bowerbird", |_app, request, responder| {
@@ -77,8 +87,13 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(server::recover);
     builder
-        .run(tauri::generate_context!())
-        .expect("error while running the Bowerbird shell");
+        .build(tauri::generate_context!())
+        .expect("error while building the Bowerbird shell")
+        .run(|_, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                server::stop();
+            }
+        });
 }
 
 /// The local server, then the window on it, signed in.

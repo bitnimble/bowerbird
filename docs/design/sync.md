@@ -319,9 +319,9 @@ Updated during sync; exposed through the polling API.
 
 No generation guard on those writes, unlike the ones after the scan: the sync lease is not released until scan and apply are both done, so no newer generation of the same library can exist to stomp.
 
-**Without in-memory status, read pending work from the database.** `needs_tile` / `needs_renditions` survive restarts. An empty `idle` would hide pending work. `getScanStatus` falls back to `countPendingProcessing`, reporting `photosProcessing` with `idle`: waiting work, not running work.
+`photosProcessing` counts unique queued and active photos across library batches and the generic batch that processes fetched originals. It is independent of scan ownership, so an `idle` scan may have a positive rendering count. Stopped or failed batches report zero when they settle. Persistent build flags keep unfinished work available for the next batch.
 
-**Startup does not sync.** `src/index.ts` wires watcher, daily reconcile and prune; status reads start nothing. Interrupted imports resume on user request, file changes or `SYNC_FULL_AT`. Pending status exposes the work without automatically restarting a CPU-heavy job the user may have killed deliberately.
+**Startup does not sync.** `src/index.ts` wires watcher, daily reconcile and prune; status reads start nothing. Interrupted imports resume on user request, file changes or `SYNC_FULL_AT`. Persistent build flags describe work owed; live activity counts describe queues currently running or waiting to run.
 
 `last_synced_at` is the other half of this, and the durable one: it is a column, so it survives the restart the status does not, and says how stale the catalogue is (§4.1).
 

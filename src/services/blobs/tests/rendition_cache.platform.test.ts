@@ -7,7 +7,8 @@ import { runMigrations } from '../../../db/migrate';
 import type { Library } from '../../../schemas/libraries';
 import { dataPathForLibraryId, getRenditionPath } from '../../../utils/paths';
 import { LibrariesRepository } from '../../libraries/libraries_repository';
-import type { Rendition } from '../../processing/renditions/renditions';
+import { renditionVariant, type Rendition } from '../../processing/renditions/renditions';
+import { RenditionsRepository } from '../../processing/renditions/renditions_repository';
 import { RenditionCache } from '../rendition_cache';
 
 // The cap on renditions a device fetched rather than built (§7.9): it cannot
@@ -46,6 +47,7 @@ function fetched(db: Database, lib: Library, photoId: string, rendition: Renditi
   const file = getRenditionPath(lib, photoId, rendition, false);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, 'x'.repeat(bytes));
+  new RenditionsRepository(db).markBuilt(photoId, renditionVariant(rendition, false), '2026-01-01T00:00:00.000Z', null, null);
   return file;
 }
 
@@ -74,6 +76,8 @@ describe('the fetched-rendition cache', () => {
     expect(existsSync(files.get('p3')!)).toBe(true);
     expect(existsSync(p4)).toBe(true);
     expect(cache.bytesHeld(lib.id)).toBe(300);
+    expect(new LibrariesRepository(db).getById(lib.id)?.rendered_photo_count).toBe(0);
+    expect(new RenditionsRepository(db).stamps('p2', 'grid')).toEqual({ built_at: null, built_from: null });
   });
 
   it('counts nothing for a library still under its cap', async () => {
@@ -95,8 +99,39 @@ describe('the fetched-rendition cache', () => {
     const file = fetched(db, lib, 'p1', 'grid', 100);
     await cache.keep(lib, 'p1', 'grid', false, file);
 
+    rmSync(file);
     cache.forget(lib.id, 'p1', 'grid', false);
 
     expect(cache.bytesHeld(lib.id)).toBe(0);
+    expect(new LibrariesRepository(db).getById(lib.id)?.rendered_photo_count).toBe(0);
+  });
+
+  it('forgets only the absent variant and preserves its queued work', async () => {
+    const db = catalogue();
+    const lib = library(db);
+    const cache = new RenditionCache(db, 10_000);
+    const file = fetched(db, lib, 'p1', 'grid', 100);
+    const renditions = new RenditionsRepository(db);
+    const full = getRenditionPath(lib, 'p1', 'full', true);
+    mkdirSync(path.dirname(full), { recursive: true });
+    writeFileSync(full, 'full');
+    const at = '2026-09-01T00:00:00.000Z';
+    renditions.markBuilt('p1', 'grid', at, 'grid-edits', { from: 'render', matched: true });
+    renditions.markBuilt('p1', 'full-hdr', at, 'full-edits', { from: 'render', matched: true });
+    renditions.queue('p1', ['grid']);
+    await cache.keep(lib, 'p1', 'grid', false, file);
+
+    rmSync(file);
+    cache.forget(lib.id, 'p1', 'grid', false);
+
+    expect(
+      db.query('SELECT needs_build, built_at, built_from, source, matched FROM renditions WHERE photo_id = ? AND variant = ?')
+        .get('p1', 'grid'),
+    ).toEqual({ needs_build: 1, built_at: null, built_from: null, source: null, matched: null });
+    expect(existsSync(full)).toBe(true);
+    expect(renditions.stamps('p1', 'full-hdr')).toEqual({ built_at: at, built_from: 'full-edits' });
+    cache.forget(lib.id, 'p1', 'full', true);
+    expect(renditions.stamps('p1', 'full-hdr')).toEqual({ built_at: at, built_from: 'full-edits' });
+    expect(new LibrariesRepository(db).getById(lib.id)?.rendered_photo_count).toBe(1);
   });
 });

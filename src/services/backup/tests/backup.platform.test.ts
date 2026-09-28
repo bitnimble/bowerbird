@@ -20,6 +20,7 @@ import { BackupLocations } from '../backup_locations';
 import { Cull } from '../cull';
 import { Mirror } from '../mirror';
 import { PassivePeers } from '../passive_peers';
+import { LibraryActivity } from '../../activity/library_activity';
 
 // One device, one folder, real files on both sides. The passive peer answers the same blob
 // protocol a device does, so what is exercised here is the whole of a backup: the diff, the
@@ -49,7 +50,9 @@ function makeDevice(): {
   photoScan: PhotoScanRepository;
   photoPaths: PhotoPathsRepository;
   libraries: LibrariesRepository;
+  activity: LibraryActivity;
 } {
+  const activity = new LibraryActivity();
   const db = new Database(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db);
@@ -77,8 +80,10 @@ function makeDevice(): {
       canReach: () => false,
       request: () => Promise.reject(new Error('no device is paired')),
     }),
+    undefined,
+    activity,
   );
-  const mirror = new Mirror(db, libraries, backups, transfers, new Cull(db, transfers));
+  const mirror = new Mirror(db, libraries, backups, transfers, new Cull(db, transfers), activity);
   return {
     db,
     root,
@@ -89,8 +94,32 @@ function makeDevice(): {
     photoScan,
     photoPaths,
     libraries,
+    activity,
   };
 }
+
+it('tracks backup copying, offload and restoration beyond the transfer queue', async () => {
+  const device = makeDevice();
+  addPhoto(device, 'p1', 'p1.arw', 'original bytes', '2026-01-01T00:00:00.000Z');
+  await device.mirror.setTarget(LIB, device.backupRoot);
+  device.mirror.setBudget(LIB, 1);
+  const backup = device.mirror.run(LIB);
+  expect(device.activity.current(LIB)).toEqual([{ kind: 'backing_up', count: 1 }]);
+  expect(await backup).toMatchObject({ copied: 1, offloaded: 1 });
+  expect(device.activity.current(LIB)).toEqual([]);
+
+  const restored = device.mirror.removeTarget(LIB, true);
+  try {
+    expect(device.activity.current(LIB)).toEqual([
+      { kind: 'restoring_backup', count: 1 },
+      { kind: 'fetching', count: 1 },
+    ]);
+  } finally {
+    await restored;
+  }
+  expect(readFileSync(path.join(device.root, 'p1.arw'), 'utf8')).toBe('original bytes');
+  expect(device.activity.current(LIB)).toEqual([]);
+});
 
 function addPhoto(device: ReturnType<typeof makeDevice>, id: string, relPath: string, bytes: string, addedAt: string): void {
   const abs = path.join(device.root, relPath);

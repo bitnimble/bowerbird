@@ -14,11 +14,12 @@ import { fileRecipe } from '../../src/schemas/recipes';
 import type { BasicPhoto } from '../../src/services/photos/paths/photo_paths_repository';
 import type { PhotoRenditionService } from '../../src/services/photos/renditions/photo_rendition_service';
 import { dataPathForLibraryId } from '../../src/utils/paths';
+import { LibraryActivity } from '../../src/services/activity/library_activity';
 
 // Serving bytes needs an id, a library and a file path and nothing else, so the
 // API asks for `locate` rather than the detail payload (§8.2). Stubbing `get` here
 // instead left every one of these tests failing with a 500.
-function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) {
+function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false, activity = new LibraryActivity()) {
   const library: Library = {
     // Per root, because the data directory is keyed by library id now (§6) and
     // these tests clean up after themselves.
@@ -40,6 +41,9 @@ function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) 
     auto_stack_window_seconds: 60,
     last_synced_at: null,
     photo_count: 1,
+    missing_photo_count: 0,
+    unavailable_photo_count: 0,
+    rendered_photo_count: 0,
   };
   const photos = {
     locate(id: string): { photo: BasicPhoto; library: Library } {
@@ -62,6 +66,8 @@ function buildApp(root: string, photo: BasicPhoto | null, renditionHdr = false) 
       null,
       localOriginals(),
       {} as ConstructorParameters<typeof ImageApi>[4],
+      null,
+      activity,
     ).routes,
   );
   applyErrorHandler(app);
@@ -89,6 +95,27 @@ function withRoot(run: (root: string) => Promise<void>) {
     }
   };
 }
+
+test('tracks original downloads until their bytes finish or the reader cancels', withRoot(async (root) => {
+  writeFileSync(path.join(root, 'a.arw'), 'RAWBYTES');
+  const activity = new LibraryActivity();
+  const app = buildApp(root, photo({}), false, activity);
+  const response = await app.request('/image/p1/download/original');
+  expect(activity.current(path.basename(root))).toEqual([{ kind: 'sending', count: 1 }]);
+  expect(await response.text()).toBe('RAWBYTES');
+  expect(activity.current(path.basename(root))).toEqual([]);
+
+  const cancelled = await app.request('/image/p1/download/original');
+  expect(activity.current(path.basename(root))).toEqual([{ kind: 'sending', count: 1 }]);
+  await cancelled.body?.cancel();
+  expect(activity.current(path.basename(root))).toEqual([]);
+
+  const head = await app.request('/image/p1/download/original', { method: 'HEAD' });
+  expect(head.status).toBe(200);
+  expect(head.headers.get('content-length')).toBe('8');
+  expect(await head.text()).toBe('');
+  expect(activity.current(path.basename(root))).toEqual([]);
+}));
 
 test('serves a rendition with the avif content-type', withRoot(async (root) => {
   mkdirSync(renditions(root, 'grid'), { recursive: true });

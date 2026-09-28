@@ -9,6 +9,7 @@ const segment =
  */
 export const PathSegment = {
   ack: segment('ack'),
+  activity: segment('activity'),
   albums: segment('albums'),
   analysis: segment('analysis'),
   api: segment('api'),

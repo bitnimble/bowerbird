@@ -42,11 +42,9 @@ function build(over: {
     listByAlbum: jest.fn(() => emptyResult),
     ...over.photoListing,
   } as unknown as PhotoListingRepository;
-  // `list` as well as `getById`: a listing resolves `shown_rendition` for a page that may
-  // span libraries, so it looks them all up at once.
   const libraries = {
-    getById: jest.fn(() => null),
-    list: jest.fn(() => []),
+    getConfiguration: jest.fn(() => null),
+    listConfigurations: jest.fn(() => []),
     setBinIdentity: jest.fn(),
     ...over.libraries,
   } as unknown as LibrariesRepository;
@@ -109,7 +107,8 @@ const library: Library = { id: 'lib', root_path: '/r', bin_name: 'Bin', read_onl
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
+  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
 const shoot: Shoot = { id: 'sh', parent_id: null, library_id: 'lib', folder_path: 'Trip', name: 'Trip', description: null, banner_photo_id: null, ordering: 'taken_asc', photo_count: 0, is_hidden: false, hidden_directly: false };
 const album: Album = { id: 'al', name: 'Faves', ordering: 'taken_desc', banner_photo_id: null, photo_count: 0 };
 const detail = { id: 'p1', file_path: 'a.arw', recipe: fileRecipe('a.arw') } as PhotoDetail;
@@ -139,7 +138,7 @@ describe('PhotoReadService.get', () => {
       const photo = { ...detail, rendition_source: 'embedded' } as PhotoDetail;
       const { service, processing } = build({
         photoListing: { getById: jest.fn(() => photo) },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
       });
 
       service.get('p1');
@@ -180,7 +179,7 @@ describe('PhotoReadService.resolve', () => {
 
   it('resolves the runs against the collection ordering', () => {
     const idsInLibrary = jest.fn(() => ['a', 'b']);
-    const { service, photoListing } = build({ photoListing: { idsInLibrary }, libraries: { getById: jest.fn(() => library) } });
+    const { service, photoListing } = build({ photoListing: { idsInLibrary }, libraries: { getConfiguration: jest.fn(() => library) } });
     expect(service.resolve(selection())).toEqual(['a', 'b']);
     expect(photoListing.idsInLibrary).toHaveBeenCalledWith('lib', 'added_asc', [{ start: 0, end: 1 }], expect.anything());
   });
@@ -190,13 +189,13 @@ describe('PhotoReadService.resolve', () => {
   // run resolves to every member, so the two can name the same photo.
   it('adds the members to the runs, each photo once', () => {
     const idsInLibrary = jest.fn(() => ['a', 'b']);
-    const { service } = build({ photoListing: { idsInLibrary }, libraries: { getById: jest.fn(() => library) } });
+    const { service } = build({ photoListing: { idsInLibrary }, libraries: { getConfiguration: jest.fn(() => library) } });
     expect(service.resolve(selection({ members: ['b', 'c'] }))).toEqual(['a', 'b', 'c']);
   });
 
   it('asks the collection nothing when the selection is members alone', () => {
     const idsInLibrary = jest.fn(() => ['a']);
-    const { service, photoListing } = build({ photoListing: { idsInLibrary }, libraries: { getById: jest.fn(() => library) } });
+    const { service, photoListing } = build({ photoListing: { idsInLibrary }, libraries: { getConfiguration: jest.fn(() => library) } });
     expect(service.resolve(selection({ ranges: [], members: ['c'] }))).toEqual(['c']);
     expect(photoListing.idsInLibrary).not.toHaveBeenCalled();
   });
@@ -209,7 +208,7 @@ describe('PhotoReadService.listByLibrary', () => {
   });
 
   it("orders by the library's ordering and echoes pagination", () => {
-    const { service, photoListing } = build({ libraries: { getById: jest.fn(() => library) } });
+    const { service, photoListing } = build({ libraries: { getConfiguration: jest.fn(() => library) } });
     const res = service.listByLibrary('lib', { offset: 5, limit: 10, include_deleted: false, is_missing: true });
     expect(photoListing.listByLibrary).toHaveBeenCalledWith('lib', 'added_asc', 5, 10, {
       includeDeleted: false,
@@ -223,7 +222,7 @@ describe('PhotoReadService.listByLibrary', () => {
 
 describe('PhotoReadService.listMissing', () => {
   it('delegates to listByLibrary with is_missing=true', () => {
-    const { service, photoListing } = build({ libraries: { getById: jest.fn(() => library) } });
+    const { service, photoListing } = build({ libraries: { getConfiguration: jest.fn(() => library) } });
     service.listMissing('lib', { offset: 0, limit: 100, include_deleted: false });
     expect(photoListing.listByLibrary).toHaveBeenCalledWith('lib', 'added_asc', 0, 100, {
       includeDeleted: false,
@@ -236,7 +235,7 @@ describe('PhotoReadService.listMissing', () => {
   // (§18.3.3), so filters dropped here would resolve a different set of photos
   // than the grid ever showed.
   it('carries the rest of the filters through', () => {
-    const { service, photoListing } = build({ libraries: { getById: jest.fn(() => library) } });
+    const { service, photoListing } = build({ libraries: { getConfiguration: jest.fn(() => library) } });
     service.listMissing('lib', { offset: 0, limit: 100, include_deleted: false, rated: true, triage: ['picked'], q: 'DSC' });
     expect(photoListing.listByLibrary).toHaveBeenCalledWith(
       'lib',
@@ -286,7 +285,7 @@ describe('PhotoReadService listings resolve shown_rendition per row', () => {
   function listed(lib: Library, rows: PhotoSummary[], settings?: { viewer_rendition_mode: 'best_available' }): PhotoSummary[] {
     const { service } = build({
       photoListing: { listByLibrary: jest.fn(() => ({ photos: rows, total: rows.length })) },
-      libraries: { getById: jest.fn(() => lib), list: jest.fn(() => [lib]) },
+      libraries: { getConfiguration: jest.fn(() => lib), listConfigurations: jest.fn(() => [lib]) },
       ...(settings == null ? {} : { settings }),
     });
     return service.listByLibrary('lib', { offset: 0, limit: 10 } as never).photos;

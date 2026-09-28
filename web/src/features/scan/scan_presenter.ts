@@ -85,15 +85,30 @@ export class ScanPresenter {
   // Stops whatever the library is doing. The run settles back to idle on its own, once the batch
   // in hand is done, which the poll already in flight picks up like any other transition.
   async cancel(libraryId: string): Promise<void> {
-    runInAction(() => (this.store.stoppingLibraryId = libraryId));
+    this.setStopping(libraryId, true);
     try {
       await librariesApi.cancelScan(libraryId);
     } catch (err) {
       runInAction(() => {
         this.store.error = message(err);
-        this.store.stoppingLibraryId = null;
+        this.setStopping(libraryId, false);
       });
     }
+  }
+
+  @action.bound
+  private setStopping(libraryId: string, stopping: boolean): void {
+    const libraries = new Set(this.store.stoppingLibraryIds);
+    if (stopping) libraries.add(libraryId);
+    else libraries.delete(libraryId);
+    this.store.stoppingLibraryIds = libraries;
+  }
+
+  @action.bound
+  observeStatuses(statuses: readonly LibraryScanStatus[]): void {
+    const libraries = new Set(this.store.stoppingLibraryIds);
+    for (const status of statuses) if (status.status === 'idle') libraries.delete(status.library_id);
+    if (libraries.size !== this.store.stoppingLibraryIds.size) this.store.stoppingLibraryIds = libraries;
   }
 
   @action.bound
@@ -120,11 +135,11 @@ export class ScanPresenter {
       if (running || !unanswered) {
         runInAction(() => {
           this.store.status = status;
-          if (!running && this.store.stoppingLibraryId === libraryId) this.store.stoppingLibraryId = null;
+          if (!running) this.setStopping(libraryId, false);
         });
       }
       this.sample();
-      wasBusy = running || unanswered;
+      wasBusy = running || unanswered || status.photos_processing > 0;
       placingRows = status.status === 'processing';
     } catch (err) {
       runInAction(() => (this.store.error = message(err)));
@@ -190,7 +205,6 @@ export class ScanPresenter {
     if (this.store.libraryId !== libraryId) {
       this.samples.length = 0;
       this.store.rate = null;
-      this.store.stoppingLibraryId = null;
     }
     this.store.libraryId = libraryId;
     this.store.error = null;

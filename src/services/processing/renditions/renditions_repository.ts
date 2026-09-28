@@ -126,6 +126,15 @@ export class RenditionsRepository {
       .run(photoId, variant, builtAtIso, builtFrom, made?.from ?? null, made?.matched === true ? 1 : null);
   }
 
+  forgetBuilt(photoId: string, variants: readonly RenditionVariant[]): void {
+    for (const variant of variants) {
+      this.db.query(
+        `UPDATE renditions SET built_at = NULL, built_from = NULL, source = NULL, matched = NULL
+          WHERE photo_id = ? AND variant = ?`,
+      ).run(photoId, variant);
+    }
+  }
+
   /**
    * Whether this photograph's grid tile is the camera's own picture of the whole frame.
    *

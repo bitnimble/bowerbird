@@ -16,7 +16,7 @@ import {
 } from '../../schemas/blobs';
 import { ErrorEnvelopeSchema } from '../../schemas/error';
 import { newId } from '../../schemas/id';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { soleInputOf } from '../../schemas/recipes';
 import { PathSegment, route } from '../../schemas/route';
 import { deleteBackedUpOriginal, deleteEvictedOriginal, deleteStagedBlob } from '../../utils/deletions';
@@ -34,6 +34,7 @@ import type { PeerTransport } from './peer';
 import { appendToStage, materialise, stagePath, stagedSize, stagingDir } from './blob_store';
 import { unsettled } from '../replication/materialise';
 import { isEvicting, whileEvicting } from './evicting';
+import { LibraryActivity } from '../activity/library_activity';
 
 // Moving the originals themselves (docs/replication.md §7.3, §7.5, §7.6).
 // Catalogue replication never carries a byte of them; everything here is manual
@@ -135,6 +136,7 @@ export class TransferService {
     private readonly transport: PeerTransport,
     /** What an arriving original owes the pipeline (§7.8). */
     private readonly build: (photoIds: string[]) => void = () => {},
+    private readonly activity = new LibraryActivity(),
   ) {
     // A crash mid-transfer leaves rows active; the bytes staged so far are on
     // disk, so they are simply work still owed.
@@ -156,21 +158,26 @@ export class TransferService {
    */
   async sweepAbandonedStages(): Promise<number> {
     let swept = 0;
-    for (const library of this.libraries.list()) {
+    for (const library of this.libraries.listConfigurations()) {
       const dir = stagingDir(library);
       if (!existsSync(dir)) continue;
-      const waiting = new Set(
-        (
-          this.db
-            .query("SELECT photo_id FROM blob_transfers WHERE library_id = ? AND state IN ('queued', 'paused')")
-            .all(library.id) as { photo_id: string }[]
-        ).map((row) => row.photo_id),
-      );
-      for (const name of readdirSync(dir)) {
-        const photoId = name.endsWith('.partial') ? name.slice(0, -'.partial'.length) : null;
-        if (photoId == null || waiting.has(photoId)) continue;
-        await deleteStagedBlob(dir, path.join(dir, name));
-        swept += 1;
+      const finish = this.activity.begin(library.id, 'pruning', 'staged-originals');
+      try {
+        const waiting = new Set(
+          (
+            this.db
+              .query("SELECT photo_id FROM blob_transfers WHERE library_id = ? AND state IN ('queued', 'paused')")
+              .all(library.id) as { photo_id: string }[]
+          ).map((row) => row.photo_id),
+        );
+        for (const name of readdirSync(dir)) {
+          const photoId = name.endsWith('.partial') ? name.slice(0, -'.partial'.length) : null;
+          if (photoId == null || waiting.has(photoId)) continue;
+          await deleteStagedBlob(dir, path.join(dir, name));
+          swept += 1;
+        }
+      } finally {
+        finish();
       }
     }
     if (swept > 0) log.info('swept staged originals nothing was waiting on', { files: swept });
@@ -310,6 +317,12 @@ export class TransferService {
     }
     return this.db
       .query(`SELECT ${COLUMNS} FROM blob_transfers WHERE library_id = ? ORDER BY queued_at, id`)
+      .all(libraryId) as Transfer[];
+  }
+
+  pending(libraryId: string): Transfer[] {
+    return this.db
+      .query(`SELECT ${COLUMNS} FROM blob_transfers WHERE library_id = ? AND state IN ('queued', 'active') ORDER BY queued_at, id`)
       .all(libraryId) as Transfer[];
   }
 
@@ -565,26 +578,28 @@ export class TransferService {
     // question being asked of the peer is the one being asked of this device at the
     // same moment. Two peers each keeping a photograph "on the other" both hear yes
     // otherwise - neither has deleted yet - and the original ends up nowhere (§7.6).
-    const refusal = await whileEvicting(this.db, library.id, photoId, async () => {
-      const recorded = this.photoMetadata.contentHashOf(photoId);
-      if (recorded == null) return 'never transferred: no verified copy exists anywhere else';
-      // The row's path is only where the bytes are when the two agree. Where a
-      // merged move has not run, or a transfer refused to overwrite what it found,
-      // the file sitting there belongs to somebody else - and the peer is being
-      // asked about *its* copy, so it says yes and this unlinks the occupant. That
-      // is the photographer's own file, never imported, deleted to free space for a
-      // photograph whose original is somewhere else entirely.
-      if (unsettled(this.db, library.id).some((entry) => entry.photoId === photoId)) {
-        return 'this photograph has a move or a collision outstanding, so what is at its path may not be its own';
-      }
-      const at = soleInputOf(photo.recipe);
-      const abs = originalPathOf(library, photo);
-      // A row composed out of others holds no original, so there is nothing here an eviction
-      // would free: what it costs this device is its renditions, which the cache sweeps.
-      if (at == null || abs == null) return 'this photograph is composed rather than imported, so it has no original to evict';
-      if (!existsSync(abs)) return 'the original is not on this device';
-      return await this.removeLocalCopy(photo, library, at, abs, recorded, peer);
-    });
+    const refusal = await this.activity.track(library.id, 'offloading', photoId, () =>
+      whileEvicting(this.db, library.id, photoId, async () => {
+        const recorded = this.photoMetadata.contentHashOf(photoId);
+        if (recorded == null) return 'never transferred: no verified copy exists anywhere else';
+        // The row's path is only where the bytes are when the two agree. Where a
+        // merged move has not run, or a transfer refused to overwrite what it found,
+        // the file sitting there belongs to somebody else - and the peer is being
+        // asked about *its* copy, so it says yes and this unlinks the occupant. That
+        // is the photographer's own file, never imported, deleted to free space for a
+        // photograph whose original is somewhere else entirely.
+        if (unsettled(this.db, library.id).some((entry) => entry.photoId === photoId)) {
+          return 'this photograph has a move or a collision outstanding, so what is at its path may not be its own';
+        }
+        const at = soleInputOf(photo.recipe);
+        const abs = originalPathOf(library, photo);
+        // A row composed out of others holds no original, so there is nothing here an eviction
+        // would free: what it costs this device is its renditions, which the cache sweeps.
+        if (at == null || abs == null) return 'this photograph is composed rather than imported, so it has no original to evict';
+        if (!existsSync(abs)) return 'the original is not on this device';
+        return await this.removeLocalCopy(photo, library, at, abs, recorded, peer);
+      }),
+    );
     return refusal === 'busy' ? 'this device is already removing its copy' : refusal;
   }
 
@@ -628,8 +643,10 @@ export class TransferService {
   private async run(item: Transfer): Promise<void> {
     const abort = new AbortController();
     this.aborts.set(item.id, abort);
-    this.db.query("UPDATE blob_transfers SET state = 'active' WHERE id = ?").run(item.id);
+    const kind = item.direction === 'pull' ? 'fetching' : passivePeerOf(this.db, item.peer_id) != null ? 'backing_up' : 'sending';
+    const finish = this.activity.begin(item.library_id, kind, item.photo_id);
     try {
+      this.db.query("UPDATE blob_transfers SET state = 'active' WHERE id = ?").run(item.id);
       const photo = this.photo(item.photo_id);
       const library = this.library(item.library_id);
       if (item.direction === 'push') await this.push(item, photo, library, abort.signal);
@@ -645,6 +662,7 @@ export class TransferService {
       // retry is bounded by the same single worker as everything else.
       if (this.anyHolderWillDo.has(item.id)) this.tryNextHolder(item);
     } finally {
+      finish();
       this.aborts.delete(item.id);
       this.anyHolderWillDo.delete(item.id);
       this.wake(item.id);
@@ -773,7 +791,7 @@ export class TransferService {
   }
 
   private library(libraryId: string): Library {
-    const library = this.libraries.getById(libraryId);
+    const library = this.libraries.getConfiguration(libraryId);
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     return library;
   }

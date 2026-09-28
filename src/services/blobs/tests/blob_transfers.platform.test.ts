@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../db/driver';
-import type { Hono } from 'hono';
+import { Hono } from 'hono';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -21,6 +21,8 @@ import { stagePath, stagedSize, stagingDir } from '../blob_store';
 import { BackupLocations } from '../../backup/backup_locations';
 import type { PeerTransport } from '../peer';
 import { TransferService } from '../transfer_service';
+import { LibraryActivity } from '../../activity/library_activity';
+import { queueMaterialisation } from '../../replication/materialise';
 
 // Two real replicas in one process: real temp directories, real files, and the
 // blob endpoints answering each other through Hono's request(), which is the
@@ -38,6 +40,7 @@ interface Peer {
   libraries: LibrariesRepository;
   locations: BlobLocations;
   transfers: TransferService;
+  activity: LibraryActivity;
   routes: Hono;
   /** Every request this peer sent, for asserting what actually travelled. */
   sent: { path: string; method: string; range: string | null }[];
@@ -54,6 +57,7 @@ afterEach(() => {
 });
 
 function makePeer(name: string): Peer {
+  const activity = new LibraryActivity();
   const db = new Database(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db);
@@ -67,7 +71,7 @@ function makePeer(name: string): Peer {
   const photoMetadata = new PhotoMetadataRepository(db, photoProcessing);
   const photoScan = new PhotoScanRepository(db, photoProcessing);
   const libraries = new LibrariesRepository(db);
-  const locations = new BlobLocations(db);
+  const locations = new BlobLocations(db, activity);
   const sent: Peer['sent'] = [];
   const transport: PeerTransport = {
     canReach: (peer) => net.has(peer),
@@ -93,13 +97,119 @@ function makePeer(name: string): Peer {
     new BackupLocations(db),
     transport,
     build,
+    activity,
   );
-  const api = new BlobsApi(photoPaths, photoMetadata, photoProcessing, libraries, locations, transfers, build);
+  const api = new BlobsApi(photoPaths, photoMetadata, photoProcessing, libraries, locations, transfers,
+    build, undefined, undefined, null, activity);
   applyErrorHandler(api.routes);
   const id = peerId(db);
   net.set(id, api.routes);
-  return { id, db, root, photoPaths, photoMetadata, photoScan, libraries, locations, transfers, routes: api.routes, sent, built };
+  return { id, db, root, photoPaths, photoMetadata, photoScan, libraries, locations, transfers, activity, routes: api.routes, sent, built };
 }
+
+it('tracks originals served to a peer until the response finishes or is cancelled', async () => {
+  const peer = makePeer('sender');
+  addPhoto(peer, 'p1', 'p1.arw', 'original bytes');
+  const response = await peer.routes.request(route('p1', PathSegment.original()));
+  expect(peer.activity.current(LIB)).toEqual([{ kind: 'sending', count: 1 }]);
+  expect(await response.text()).toBe('original bytes');
+  expect(peer.activity.current(LIB)).toEqual([]);
+
+  const cancelled = await peer.routes.request(route('p1', PathSegment.original()));
+  expect(peer.activity.current(LIB)).toEqual([{ kind: 'sending', count: 1 }]);
+  await cancelled.body?.cancel();
+  expect(peer.activity.current(LIB)).toEqual([]);
+});
+
+it('serves resumed original bytes over HTTP with their exact range headers', async () => {
+  const peer = makePeer('range');
+  addPhoto(peer, 'p1', 'p1.arw', '0123456789ABCDEF');
+  const server = Bun.serve({ port: 0, fetch: peer.routes.fetch });
+  try {
+    const response = await fetch(`http://localhost:${server.port}${route('p1', PathSegment.original())}`, {
+      headers: { Range: 'bytes=12-' },
+    });
+    expect(response.status).toBe(206);
+    expect(response.headers.get('content-range')).toBe('bytes 12-15/16');
+    expect(response.headers.get('content-length')).toBe('4');
+    expect(await response.text()).toBe('CDEF');
+    await Bun.sleep(0);
+    expect(peer.activity.current(LIB)).toEqual([]);
+
+    for (const range of [undefined, 'bytes=12-', 'bytes=99-200']) {
+      const head = await fetch(`http://localhost:${server.port}${route('p1', PathSegment.original())}`, {
+        method: 'HEAD', headers: range == null ? {} : { Range: range },
+      });
+      expect(head.status).toBe(200);
+      expect(head.headers.get('content-range')).toBeNull();
+      expect(head.headers.get('content-length')).toBe('16');
+      expect(await head.text()).toBe('');
+      expect(peer.activity.current(LIB)).toEqual([]);
+    }
+  } finally {
+    server.stop(true);
+  }
+});
+
+it('tracks a peer upload until its bytes finish or its stream fails', async () => {
+  const peer = makePeer('receiver');
+  addPhoto(peer, 'p1', 'p1.arw');
+  addPhoto(peer, 'p2', 'p2.arw');
+  for (const fails of [false, true]) {
+    const source = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>();
+    const body = new ReadableStream<Uint8Array>({ start: source.resolve });
+    const upload = peer.routes.request(`${route(fails ? 'p2' : 'p1', PathSegment.stage())}?offset=0`, { method: 'PUT', body });
+    await Bun.sleep(0);
+    expect(peer.activity.current(LIB)).toEqual([{ kind: 'receiving', count: 1 }]);
+    const controller = await source.promise;
+    if (fails) controller.error(new Error('connection lost'));
+    else {
+      controller.enqueue(new TextEncoder().encode('original bytes'));
+      controller.close();
+    }
+    expect((await upload).status).toBe(fails ? 500 : 200);
+    expect(peer.activity.current(LIB)).toEqual([]);
+  }
+});
+
+it('keeps a cancelled transfer visible until its in-flight byte work settles', async () => {
+  const sender = makePeer('sender');
+  const receiver = makePeer('receiver');
+  addPhoto(sender, 'photo1', 'one.arw', 'RAW-one');
+  addPhoto(receiver, 'photo1', 'one.arw');
+  knowsHolder(receiver, 'photo1', sender.id);
+  const started = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  const held = new Hono();
+  held.get(route('photo1', PathSegment.original()), () => {
+    started.resolve();
+    return new Response(new ReadableStream<Uint8Array>({
+      async start(controller) {
+        await released.promise;
+        controller.error(new Error('copy stopped'));
+      },
+    }));
+  });
+  held.route('/', sender.routes);
+  net.set(sender.id, held);
+
+  const transfer = receiver.transfers.fetchOriginal('photo1');
+  expect(transfer).not.toBeNull();
+  if (transfer == null) throw new Error('missing transfer');
+  await started.promise;
+  try {
+    expect(receiver.activity.current(LIB)).toEqual([{ kind: 'fetching', count: 1 }]);
+    await receiver.transfers.cancel(transfer.id);
+    expect(receiver.transfers.pending(LIB)).toEqual([]);
+    expect(receiver.transfers.get(transfer.id).state).toBe('cancelled');
+    expect(receiver.activity.current(LIB)).toEqual([{ kind: 'fetching', count: 1 }]);
+  } finally {
+    released.resolve();
+    await receiver.transfers.drain();
+  }
+  expect(receiver.activity.current(LIB)).toEqual([]);
+  expect(receiver.transfers.get(transfer.id).state).toBe('cancelled');
+});
 
 function addPhoto(peer: Peer, id: string, relPath: string, bytes?: string): void {
   if (bytes != null) {
@@ -812,6 +922,38 @@ describe('a device that does not keep RAW files', () => {
 });
 
 describe('reconcile', () => {
+  it('yields with visible activity and reads paths, pending moves and collisions again before recording holdings', async () => {
+    const a = makePeer('a');
+    addPhoto(a, 'moved', 'before.arw', 'RAW-moved');
+    addPhoto(a, 'found', 'missing.arw');
+    addPhoto(a, 'flagged', 'occupied.arw', 'not this original');
+    a.locations.record(LIB, 'moved');
+    const reconciling = a.locations.reconcile(library(a));
+    expect(a.activity.current(LIB)).toEqual([{ kind: 'reconciling', count: 1 }]);
+    a.db.query('UPDATE photos SET recipe = ? WHERE id = ?').run(JSON.stringify({ kind: 'file', path: 'after.arw' }), 'moved');
+    queueMaterialisation(a.db, LIB, 'moved', 'before.arw');
+    a.db.query('UPDATE photos SET recipe = ? WHERE id = ?').run(JSON.stringify({ kind: 'file', path: 'found.arw' }), 'found');
+    writeFileSync(path.join(a.root, 'found.arw'), 'RAW-found');
+    a.locations.flag(LIB, 'flagged', 'occupied.arw', 'target occupied');
+    await reconciling;
+
+    expect(a.locations.heldBy(LIB, 'moved', a.id)).toBe(true);
+    expect(a.locations.heldBy(LIB, 'found', a.id)).toBe(true);
+    expect(a.locations.heldBy(LIB, 'flagged', a.id)).toBe(false);
+    expect(a.activity.current(LIB)).toEqual([]);
+  });
+
+  it('keeps recorded holdings when the root disappears while reconciliation yields', async () => {
+    const a = makePeer('a');
+    addPhoto(a, 'photo1', 'one.arw', 'RAW-one');
+    a.locations.record(LIB, 'photo1');
+    const reconciling = a.locations.reconcile(library(a));
+    rmSync(a.root, { recursive: true, force: true });
+    await reconciling;
+    expect(a.locations.heldBy(LIB, 'photo1', a.id)).toBe(true);
+    expect(a.activity.current(LIB)).toEqual([]);
+  });
+
   it('asserts the self-row where bytes exist, retracts it where they have gone, and keeps shoot folders', async () => {
     const a = makePeer('a');
     addPhoto(a, 'photo1', 'Day1/one.arw', 'RAW-one');

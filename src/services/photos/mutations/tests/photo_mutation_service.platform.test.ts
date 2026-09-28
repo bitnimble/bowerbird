@@ -63,7 +63,8 @@ describe('PhotoMutationService.delete', () => {
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
+  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
       const markDeleted = jest.fn();
       // getBasicByIds, not getById: the delete reads the four columns it needs
       // for a whole batch rather than a detail payload per photo (§12.1).
@@ -108,7 +109,8 @@ describe('PhotoMutationService.delete', () => {
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
+  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
       const markDeleted = jest.fn();
       const setFilePath = jest.fn();
       const rows = [
@@ -144,7 +146,8 @@ describe('PhotoMutationService.delete', () => {
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
+  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
       const photo = { id: 'p1', library_id: 'lib', shoot_id: null, recipe: fileRecipe('a.arw') };
       const { service } = build({
         photoPaths: {
@@ -202,6 +205,9 @@ describe('PhotoMutationService.delete', () => {
         auto_stack_window_seconds: 60,
         last_synced_at: null,
         photo_count: 0,
+        missing_photo_count: 0,
+        unavailable_photo_count: 0,
+        rendered_photo_count: 0,
       };
       const getBasicByIds = jest.fn(() => ids.map((id) => ({ id, library_id: 'lib', shoot_id: null, recipe: fileRecipe(`${id}.arw`) })));
       // Counted by hand: jest.fn erases the generic the repository declares.

@@ -21,7 +21,8 @@ const library: Library = { id: 'lib', root_path: '/definitely/not/a/real/root', 
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
+  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
 const DEBOUNCE = 1000;
 const POLL = 20_000;
 const TEN_MINUTES = 10 * 60 * 1000;

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { Logger } from '../../../logger';
 import { newId } from '../../../schemas/id';
 import type { Job } from '../../../schemas/jobs';
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { Denoiser } from '../../../schemas/photo_edits';
 import { deleteGeneratedFile } from '../../../utils/deletions';
 import { getDataPath } from '../../../utils/paths';

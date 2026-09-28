@@ -3,8 +3,8 @@
 //   bun run scripts/release-check.ts [docker] [android] [macos] [windows]
 //
 // With no names it builds every one it can: `macos` needs `BOWERBIRD_MACOS_SDK` naming a macOS SDK
-// packaged for osxcross (`MacOSX<version>.sdk.tar.xz`, made from Xcode by osxcross's
-// `gen_sdk_package.sh`), and is left out without one. The apps land in `dist/`, as the release
+// packaged for osxcross (`MacOSX<version>.sdk.tar.xz`), and is left out without one.
+// The apps land in `dist/`, as the release
 // workflow lays them out.
 //
 // Built from HEAD in a detached worktree rather than from this checkout, because a tag releases

@@ -205,6 +205,10 @@ export class PhotosPresenter {
       (activity) => this.refreshDetail(activity),
       (error) => this.fail(error),
       (photoId) => this.isCurrent(photoId),
+      (photoId) => {
+        const libraryId = this.viewer.photoFor(photoId)?.library_id;
+        return () => libraryId == null ? () => {} : this.libraries.startLocalRender(libraryId, photoId);
+      },
     );
     // Never stopped: this presenter is the app's, and so is the gallery's rail.
     this.rail.watch();

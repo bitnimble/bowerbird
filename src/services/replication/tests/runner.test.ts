@@ -12,8 +12,10 @@ import { ReplicationRunner } from '../replication_runner';
 import { replicate } from '../session';
 import { peerId, stamp } from '../stamps';
 import { LIB, makePeer, type Peer } from './peers';
+import { LibraryActivity } from '../../activity/library_activity';
+import { libraryMutex } from '../../sync/coordination/library_mutex';
 
-function runnerFor(peer: Peer): ReplicationRunner {
+function runnerFor(peer: Peer, activity = new LibraryActivity()): ReplicationRunner {
   return new ReplicationRunner(
     peer.db,
     new SyncLocksRepository(peer.db),
@@ -23,8 +25,31 @@ function runnerFor(peer: Peer): ReplicationRunner {
     () => {},
     () => {},
     () => Promise.resolve(0),
+    activity,
   );
 }
+
+it('reports a sync held by library work and clears activity after success or refusal', async () => {
+  const peer = makePeer('status');
+  const activity = new LibraryActivity();
+  const runner = runnerFor(peer, activity);
+  const release = Promise.withResolvers<void>();
+  const held = libraryMutex.run(LIB, () => release.promise);
+  const syncing = runner.replicate(LIB);
+  try {
+    expect(activity.current(LIB)).toEqual([{ kind: 'syncing', count: 1 }]);
+  } finally {
+    release.resolve();
+    await Promise.all([held, syncing]);
+  }
+  expect(activity.current(LIB)).toEqual([]);
+
+  const locks = new SyncLocksRepository(peer.db);
+  expect(locks.acquire(LIB, 'other-job')).toBe(true);
+  await expect(runner.replicate(LIB)).rejects.toThrow('a job is already running for this library');
+  expect(activity.current(LIB)).toEqual([]);
+  locks.release(LIB, 'other-job');
+});
 
 function graves(peer: Peer): number {
   const row = peer.db

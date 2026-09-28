@@ -1,9 +1,11 @@
 // A library's settings dialog is an address, so the sidebar's "Sync errors" row can open it at the
 // section the error is in.
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { runInAction } from 'mobx';
 import { useEffect } from 'react';
-import { type Library } from '../../../../../src/schemas/libraries';
+import { type Library, type LibraryScanStatus } from '../../../../../src/schemas/libraries';
+import { librariesApi } from '../../../api/libraries';
+import type { Activity } from '../../../../../src/schemas/activity';
 import { restoreApiAfterTests } from '../../../test_api';
 import { registerDom } from '../../../test_dom';
 import { LibrariesPresenter } from '../../libraries/libraries_presenter';
@@ -29,10 +31,44 @@ const LIBRARY = {
   name: 'Reef',
   root_path: '/srv/reef',
   photo_count: 12,
+  missing_photo_count: 3,
+  unavailable_photo_count: 1,
+  rendered_photo_count: 7,
   render_skip_full: [],
   render_skip_max: [],
   denoiser: 'galosh',
 } as unknown as Library;
+
+const IDLE: LibraryScanStatus = {
+  library_id: LIBRARY.id,
+  status: 'idle',
+  photos_to_scan: 0,
+  photos_scanned: 0,
+  photos_added: 0,
+  photos_removed: 0,
+  photos_moved: 0,
+  photos_modified: 0,
+  photos_processing: 0,
+  photos_processed: 0,
+  photos_per_second: null,
+};
+
+let reportedLibrary = LIBRARY;
+let reportedStatus = IDLE;
+let reportedActivity: Activity[] = [];
+let reportedGlobal: Activity[] = [];
+beforeEach(() => {
+  reportedLibrary = LIBRARY;
+  reportedStatus = IDLE;
+  reportedActivity = [];
+  reportedGlobal = [];
+  librariesApi.list = () => Promise.resolve([reportedLibrary]);
+  librariesApi.scanStatus = () => Promise.resolve(reportedStatus);
+  librariesApi.activity = () => Promise.resolve({
+    libraries: [{ ...reportedLibrary, scan: reportedStatus, activities: reportedActivity }],
+    global: reportedGlobal,
+  });
+});
 
 function Seed(): null {
   const libraries = useLibrariesStore();
@@ -113,8 +149,51 @@ test('web library tiles show the path as plain text', async () => {
   Reflect.deleteProperty(globalThis, '__TAURI__');
   await openAt('/settings/libraries');
   expect(screen.queryByRole('link', { name: '/srv/reef' })).toBeNull();
-  expect(screen.getByText('/srv/reef · 12 photos')).toBeTruthy();
+  expect(screen.getByText('/srv/reef · 12 photos (3 missing, 1 unavailable, 7 rendered)')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Open library folder' })).toBeNull();
+});
+
+test('library counts and the render queue keep updating after fetching ends', async () => {
+  reportedStatus = { ...IDLE, photos_processing: 3 };
+  await openAt('/settings/libraries');
+  expect(screen.getByText('rendering 3 photos')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+
+  reportedLibrary = {
+    ...LIBRARY,
+    photo_count: 15,
+    missing_photo_count: 0,
+    unavailable_photo_count: 0,
+    rendered_photo_count: 15,
+  };
+  reportedStatus = IDLE;
+  await waitFor(() => {
+    expect(screen.getByText('/srv/reef · 15 photos (0 missing, 0 unavailable, 15 rendered)')).toBeTruthy();
+    expect(screen.queryByText(/rendering/)).toBeNull();
+  }, { timeout: 2500 });
+});
+
+test('work started on the server is visible without client action flags', async () => {
+  reportedActivity = [
+    { kind: 'syncing', count: 1 }, { kind: 'fetching', count: 2 },
+    { kind: 'sending', count: 3 }, { kind: 'backing_up', count: 1 },
+    { kind: 'preparing', count: 1 }, { kind: 'merging', count: 1 },
+    { kind: 'exporting', count: 1 }, { kind: 'refreshing_metadata', count: 1 },
+  ];
+  reportedGlobal = [{ kind: 'catalogue_backup', count: 1 }, { kind: 'pruning', count: 1 }];
+  await openAt('/settings/libraries');
+  for (const text of [
+    'syncing', 'fetching', 'sending 3 originals', 'backing up originals',
+    'preparing 1 photo', 'merging photos', 'exporting 1 photo', 'refreshing photo details',
+    'backing up catalogue', 'cleaning up generated files',
+  ]) expect(screen.getByText(text)).toBeTruthy();
+});
+
+test('a scan started elsewhere offers Stop for its own library', async () => {
+  reportedStatus = { ...IDLE, status: 'processing', photos_to_scan: 10 };
+  await openAt('/settings/libraries');
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Scan library' })).toBeNull();
 });
 
 test('opening a missing library folder reports the native error', async () => {

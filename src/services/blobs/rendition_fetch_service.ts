@@ -4,7 +4,7 @@ import { rename } from 'node:fs/promises';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import { newId } from '../../schemas/id';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { PathSegment, route } from '../../schemas/route';
 import { stampWithinSkew } from '../replication/stamps';
 import { deleteGeneratedFile } from '../../utils/deletions';
@@ -23,6 +23,7 @@ import type { PeerTransport } from './peer';
 import type { RenditionWritten } from '../processing/workers/processing_types';
 import { BlobRenditionStatusSchema } from '../../schemas/blobs';
 import type { RenditionFetchPhase } from '../../schemas/events';
+import { LibraryActivity } from '../activity/library_activity';
 
 // Renditions from a peer (docs/replication.md §7.9): a device holding the
 // catalogue but not the original serves tiles and renditions anyway, by fetching
@@ -69,6 +70,7 @@ export class RenditionFetchService {
     /** Told what a fetch is waiting on while it waits, and null once it has settled. */
     private readonly announcePhase: (photoId: string, rendition: Rendition, phase: RenditionFetchPhase | null) => void = () => {},
     private readonly cache: RenditionCache = new RenditionCache(db),
+    private readonly activity = new LibraryActivity(),
   ) {}
 
   /**
@@ -84,7 +86,7 @@ export class RenditionFetchService {
   async ensureCurrent(photoId: string, rendition: Rendition, force = false): Promise<void> {
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null) return;
-    const library = this.libraries.getById(photo.library_id);
+    const library = this.libraries.getConfiguration(photo.library_id);
     if (library == null) return;
     // The local pipeline owns every photo whose original is here: it builds on request, rebuilds
     // on edit and sweeps what it rebuilt. A fetched copy would fight it, and a locally built
@@ -134,7 +136,7 @@ export class RenditionFetchService {
   async relay(photoId: string, rendition: Rendition, hdr: boolean, via: readonly string[], force = false): Promise<void> {
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null) return;
-    const library = this.libraries.getById(photo.library_id);
+    const library = this.libraries.getConfiguration(photo.library_id);
     if (library == null) return;
     const target = getRenditionPath(library, photo.id, rendition, hdr);
     const stamps = this.photoProcessing.renditionStamps(photo.id, renditionVariant(rendition, hdr));
@@ -216,51 +218,56 @@ export class RenditionFetchService {
     via: readonly string[] = [],
     report?: (phase: RenditionFetchPhase) => void,
   ): Promise<void> {
-    const passedThrough = [...via, this.locations.selfId()];
-    const query = new URLSearchParams({ ...(hdr ? { hdr: '1' } : {}), ...(force ? { force: '1' } : {}) }).toString();
-    for (const peer of this.candidates(library.id, photo.id, passedThrough)) {
-      try {
-        if (report != null) report(force ? 'rendering' : await this.phaseAt(peer, photo.id, rendition, hdr));
-        const res = await this.transport.request(
-          peer,
-          `${route(photo.id, PathSegment.rendition(), rendition)}${query === '' ? '' : `?${query}`}`,
-          { headers: { [VIA_HEADER]: passedThrough.join(',') } },
-          RENDER_ON_PEER_MS,
-        );
-        if (!res.ok || res.body == null) continue;
-        // Bounded, not merely well shaped: it is written to a column that decides
-        // staleness from here on, so a peer reporting a stamp dated centuries ahead
-        // - which is a perfectly valid one - would leave this device holding a
-        // rendition no edit can ever sort above, and re-advertising that stamp to
-        // the next peer (§11.2). The same hour the clock allows a replicated write.
-        // Anything outside it is read as no answer, which refuses the copy rather
-        // than trusting it.
-        const reported = res.headers.get('x-rendition-built-from');
-        const senderBuiltFrom = reported != null && stampWithinSkew(this.db, reported) ? reported : null;
-        if (reported != null && senderBuiltFrom == null) {
-          log.warn('a peer reported a rendition built from a stamp this clock will not take', {
-            photo: photo.id,
-            rendition,
+    const finish = this.activity.begin(library.id, 'fetching', photo.id);
+    try {
+      const passedThrough = [...via, this.locations.selfId()];
+      const query = new URLSearchParams({ ...(hdr ? { hdr: '1' } : {}), ...(force ? { force: '1' } : {}) }).toString();
+      for (const peer of this.candidates(library.id, photo.id, passedThrough)) {
+        try {
+          if (report != null) report(force ? 'rendering' : await this.phaseAt(peer, photo.id, rendition, hdr));
+          const res = await this.transport.request(
             peer,
-            reported,
-          });
+            `${route(photo.id, PathSegment.rendition(), rendition)}${query === '' ? '' : `?${query}`}`,
+            { headers: { [VIA_HEADER]: passedThrough.join(',') } },
+            RENDER_ON_PEER_MS,
+          );
+          if (!res.ok || res.body == null) continue;
+          // Bounded, not merely well shaped: it is written to a column that decides
+          // staleness from here on, so a peer reporting a stamp dated centuries ahead
+          // - which is a perfectly valid one - would leave this device holding a
+          // rendition no edit can ever sort above, and re-advertising that stamp to
+          // the next peer (§11.2). The same hour the clock allows a replicated write.
+          // Anything outside it is read as no answer, which refuses the copy rather
+          // than trusting it.
+          const reported = res.headers.get('x-rendition-built-from');
+          const senderBuiltFrom = reported != null && stampWithinSkew(this.db, reported) ? reported : null;
+          if (reported != null && senderBuiltFrom == null) {
+            log.warn('a peer reported a rendition built from a stamp this clock will not take', {
+              photo: photo.id,
+              rendition,
+              peer,
+              reported,
+            });
+          }
+          // The sender refuses copies stale against the edits *it* holds; this side
+          // can know an edit the sender has not replicated yet, so what it was built
+          // from is checked against the local edit stamp too.
+          if (!renditionCurrent(senderBuiltFrom, editedFrom)) continue;
+          const expected = res.headers.get('x-content-hash');
+          if (expected == null) continue;
+          await this.accept(photo, library, rendition, hdr, target, res, senderBuiltFrom, expected);
+          return;
+        } catch (error) {
+          log.warn('could not fetch a rendition from a peer', { photo: photo.id, rendition, peer, err: String(error) });
         }
-        // The sender refuses copies stale against the edits *it* holds; this side
-        // can know an edit the sender has not replicated yet, so what it was built
-        // from is checked against the local edit stamp too.
-        if (!renditionCurrent(senderBuiltFrom, editedFrom)) continue;
-        const expected = res.headers.get('x-content-hash');
-        if (expected == null) continue;
-        await this.accept(photo, library, rendition, hdr, target, res, senderBuiltFrom, expected);
-        return;
-      } catch (error) {
-        log.warn('could not fetch a rendition from a peer', { photo: photo.id, rendition, peer, err: String(error) });
       }
+      throw new AppError(
+        'NOT_FOUND',
+        `no peer holds a current ${rendition} of ${photo.id} and there is no local original to build from`,
+      );
+    } finally {
+      finish();
     }
-    throw new AppError(
-      'NOT_FOUND',
-      `no peer holds a current ${rendition} of ${photo.id} and there is no local original to build from`,
-    );
   }
 
   private async phaseAt(peer: string, photoId: string, rendition: Rendition, hdr: boolean): Promise<RenditionFetchPhase> {

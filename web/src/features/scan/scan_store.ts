@@ -12,14 +12,14 @@ export class ScanStore {
   // until there is enough to measure it over.
   @observable accessor rate: number | null = null;
   /** The library a Stop was asked of, until its run reports idle. */
-  @observable accessor stoppingLibraryId: string | null = null;
+  @observable.ref accessor stoppingLibraryIds: ReadonlySet<string> = new Set();
 
   @computed get isBusy(): boolean {
     return this.status != null && this.status.status !== 'idle';
   }
 
   isStopping(libraryId: string): boolean {
-    return this.stoppingLibraryId === libraryId;
+    return this.stoppingLibraryIds.has(libraryId);
   }
 
   @computed get secondsLeft(): number | null {

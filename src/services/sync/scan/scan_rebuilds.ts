@@ -12,6 +12,7 @@ const log = new Logger('scan');
 
 export interface ProcessingTrigger {
   processUnprocessed(scope?: ProcessingScope, stopped?: () => boolean): void | Promise<void>;
+  getProcessingCount?(libraryId: string): number;
   /**
    * How this library's grid tiles are encoded, for a scan to build them while it holds each
    * RAW open (§10.4), or undefined where it should leave them to the rendition pass.

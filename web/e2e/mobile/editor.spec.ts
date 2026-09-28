@@ -40,6 +40,7 @@ test('phone tilt changes print lighting while the photo keeps its editor framing
   });
   await page.goto(route(PathSegment.photos(), photoId, PathSegment.edit()));
   await waitForEditorLive(page);
+  await expect(editDiagnostics(page)).toHaveAttribute('data-rendered-mode', 'photo');
   const aspect = await editPreview(page).evaluate((canvas: HTMLCanvasElement) => canvas.width / canvas.height);
   const worker = page.workers().find((worker) => worker.url().includes('gpu_worker'));
   if (worker == null) throw new Error('The GPU worker was not created');

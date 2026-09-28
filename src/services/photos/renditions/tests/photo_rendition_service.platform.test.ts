@@ -57,13 +57,12 @@ function build(over: {
     // An unedited photograph, which is what every test here that is not about edits
     // means: nothing to have moved past, so every stored copy reads as current.
     renditionStamps: jest.fn(() => ({ built_from: null, edited_from: null })),
+    forgetBuilt: jest.fn(),
     ...over.photoProcessing,
   } as unknown as PhotoProcessingRepository;
-  // `list` as well as `getById`: a listing resolves `shown_rendition` for a page that may
-  // span libraries, so it looks them all up at once.
   const libraries = {
-    getById: jest.fn(() => null),
-    list: jest.fn(() => []),
+    getConfiguration: jest.fn(() => null),
+    listConfigurations: jest.fn(() => []),
     setBinIdentity: jest.fn(),
     ...over.libraries,
   } as unknown as LibrariesRepository;
@@ -121,7 +120,8 @@ const library: Library = { id: 'lib', root_path: '/r', bin_name: 'Bin', read_onl
   rendition_source: 'embedded' as const,
   rendition_hdr: false,
   render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
+  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
 const detail = { id: 'p1', file_path: 'a.arw', recipe: fileRecipe('a.arw') } as PhotoDetail;
 
 function panoramaRecipe(): Recipe {
@@ -198,7 +198,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       const renderOne = jest.fn(() => new Promise<void>((resolve) => pending.push(resolve)));
       const { service, processing } = build({
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
       });
 
@@ -236,7 +236,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       const renderOne = jest.fn(async () => {});
       const { service } = build({
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
       });
 
@@ -268,7 +268,7 @@ describe('PhotoRenditionService.buildRendition', () => {
             recipe: panoramaRecipe(),
           })),
         },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne, buildComposite },
       });
 
@@ -294,7 +294,7 @@ describe('PhotoRenditionService.buildRendition', () => {
             recipe: panoramaRecipe(),
           })),
         },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { buildComposite: jest.fn(async () => false) },
       });
 
@@ -312,7 +312,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       const renderOne = jest.fn(async () => {});
       const { service } = build({
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
       });
 
@@ -331,7 +331,7 @@ describe('PhotoRenditionService.buildRendition', () => {
     const relay = jest.fn(async () => {});
     const { service } = build({
       photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: library.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
-      libraries: { getById: jest.fn(() => library) },
+      libraries: { getConfiguration: jest.fn(() => library) },
       fetchThrough: { takesFromPeer: () => false, ensureCurrent, relay },
     });
 
@@ -351,7 +351,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       });
       const { service } = build({
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         fetchThrough: { takesFromPeer: () => true, ensureCurrent },
       });
 
@@ -373,7 +373,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       const ensureCurrent = jest.fn(async () => {});
       const { service } = build({
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
         fetchThrough: { takesFromPeer: () => false, ensureCurrent },
       });
@@ -400,7 +400,7 @@ describe('PhotoRenditionService.buildRendition', () => {
       });
       const { service } = build({
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renderOne },
         fetchThrough: { takesFromPeer: () => true, ensureCurrent },
       });
@@ -425,7 +425,7 @@ describe('PhotoRenditionService.renditionJob', () => {
       const renditionCommand = jest.fn(() => ({ command, builtFrom: 'stamp-1' }));
       const { service } = build({
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renditionCommand },
       });
 
@@ -446,7 +446,7 @@ describe('PhotoRenditionService.renditionJob', () => {
         photoPaths: {
           getBasicById: jest.fn((id: 'pano' | 'gone') => ({ id, library_id: lib.id, shoot_id: null, recipe: recipes[id] })),
         },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { renditionCommand },
       });
 
@@ -465,7 +465,7 @@ describe('PhotoRenditionService.renditionJob', () => {
       const keepRendered = jest.fn(async () => {});
       const { service } = build({
         photoPaths: { getBasicById: jest.fn(() => ({ id: 'p1', library_id: lib.id, shoot_id: null, recipe: fileRecipe('a.arw') })) },
-        libraries: { getById: jest.fn(() => lib) },
+        libraries: { getConfiguration: jest.fn(() => lib) },
         processing: { keepRendered },
       });
       const rendered = new Uint8Array([1, 2, 3]);
@@ -483,7 +483,7 @@ describe('PhotoReadService renditions', () => {
   function detailFor(lib: Library) {
     const { read } = build({
       photoListing: { getById: jest.fn(() => detail) },
-      libraries: { getById: jest.fn(() => lib) },
+      libraries: { getConfiguration: jest.fn(() => lib) },
     });
     return read.get('p1');
   }

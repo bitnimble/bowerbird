@@ -13,13 +13,16 @@ import type { FolderRulesRepository } from '../../../services/shoots/folder_rule
 import type { ShootsService } from '../../../services/shoots/shoots_service';
 import type { ScanService } from '../../../services/sync/scan/scan_service';
 import { LibrariesApi } from '../libraries_api';
+import { ActivitySnapshotSchema, type Activity, type ActivitySnapshot } from '../../../schemas/activity';
+import { LibraryActivity } from '../../../services/activity/library_activity';
 
 const LIBRARY_ID = 'lib00001';
 const library: Library = { id: LIBRARY_ID, root_path: '/r', bin_name: 'Bin', read_only: false, name: 'lib', ordering: 'taken_desc',
   rendition_source: 'embedded',
   rendition_hdr: false,
   render_skip_full: [], render_skip_max: [], denoiser: 'galosh',
-  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0 };
+  include_subfolders: true, include_non_raw: false, auto_stack: true, auto_stack_similarity: 0.78, auto_stack_window_seconds: 60, last_synced_at: null, photo_count: 0,
+  missing_photo_count: 0, unavailable_photo_count: 0, rendered_photo_count: 0 };
 const status: LibraryScanStatus = {
   library_id: LIBRARY_ID,
   status: 'processing',
@@ -40,6 +43,8 @@ function buildApp(
   rules: Partial<FolderRulesRepository> = {},
   detectStacks: (libraryId: string) => number = jest.fn(() => 0),
   shootsOver: Partial<ShootsService> = {},
+  activityFor: (libraryId: string) => Activity[] = () => [],
+  globalActivity: () => Activity[] = () => [],
 ) {
   const libraries = {
     create: jest.fn(async () => library),
@@ -63,13 +68,51 @@ function buildApp(
   const app = new Hono();
   app.route(
     route(PathSegment.api(), PathSegment.libraries()),
-    new LibrariesApi(libraries, syncSvc, folderRules, shoots, detectStacks).routes,
+    new LibrariesApi(libraries, syncSvc, folderRules, shoots, detectStacks, activityFor, globalActivity).routes,
   );
   applyErrorHandler(app);
   return { app, libraries, scan: syncSvc, folderRules, shoots, detectStacks };
 }
 
 describe('LibrariesApi', () => {
+  it('reports independent queues and global work in one live library snapshot', async () => {
+    const activity = new LibraryActivity();
+    const finishFetch = activity.begin(LIBRARY_ID, 'fetching', 'photo');
+    const finishBackup = activity.begin(null, 'catalogue_backup');
+    const list = jest.fn(() => [{ ...library, photo_count: 10, missing_photo_count: 2, rendered_photo_count: 5 }]);
+    const { app } = buildApp(
+      { list },
+      { getScanStatus: () => ({ ...status, status: 'idle', photos_processing: 3 }) },
+      {}, undefined, {},
+      (id) => activity.current(id),
+      () => activity.current(null),
+    );
+    const read = async (): Promise<ActivitySnapshot> => {
+      const response = await app.request(route(PathSegment.api(), PathSegment.libraries(), PathSegment.activity()));
+      expect(response.status).toBe(200);
+      return ActivitySnapshotSchema.parse(await response.json());
+    };
+
+    const fetching = await read();
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(fetching.libraries[0]).toMatchObject({
+      photo_count: 10, missing_photo_count: 2, rendered_photo_count: 5,
+      activities: [{ kind: 'fetching', count: 1 }],
+      scan: { status: 'idle', photos_processing: 3 },
+    });
+    expect(fetching.global).toEqual([{ kind: 'catalogue_backup', count: 1 }]);
+
+    finishFetch();
+    const rendering = await read();
+    expect(rendering.libraries[0]?.activities).toEqual([]);
+    expect(rendering.libraries[0]?.scan.photos_processing).toBe(3);
+
+    list.mockReturnValue([]);
+    expect(await read()).toEqual({ libraries: [], global: [{ kind: 'catalogue_backup', count: 1 }] });
+    finishBackup();
+    expect(await read()).toEqual({ libraries: [], global: [] });
+  });
+
   it('creates a library (201)', async () => {
     const { app } = buildApp();
     const res = await app.request(route(PathSegment.api(), PathSegment.libraries()), {

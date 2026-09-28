@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { Logger } from '../../../logger';
-import type { Library } from '../../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../../schemas/libraries';
 import type { CompositeKind } from '../../../schemas/photos';
 import { isComposite } from '../../../schemas/recipes';
 import { deleteGeneratedFile } from '../../../utils/deletions';
@@ -32,6 +32,7 @@ import { readStages, withStagesOff } from '../renditions/render_stages';
 import { runProcessingPool } from '../workers/processing_pool';
 import { developed } from './developed';
 import { RenderService } from './render_service';
+import { LibraryActivity } from '../../activity/library_activity';
 
 const log = new Logger('processing');
 
@@ -73,6 +74,7 @@ export class ProcessingService extends RenderService {
   // for everything pending. Absent means nothing more to do, which is how the
   // drain loop knows to stop.
   private readonly queued = new Map<string, Set<string> | null>();
+  private readonly active = new Map<string, Map<string, string>>();
 
   constructor(
     photoProcessing: PhotoProcessingRepository,
@@ -109,8 +111,9 @@ export class ProcessingService extends RenderService {
      * are mocks, never loads the native library.
      */
     private readonly holdingRenderMemory: <T>(run: () => Promise<T>) => Promise<T> = (run) => run(),
+    activity: LibraryActivity = new LibraryActivity(),
   ) {
-    super(photoProcessing, photoPaths, photoListing, settings, editsFor, libraryOf, compositeOf);
+    super(photoProcessing, photoPaths, photoListing, settings, editsFor, libraryOf, compositeOf, activity);
   }
 
   // Rebuilds the grid tile of specific photos, from the camera's JPEG an import
@@ -169,6 +172,29 @@ export class ProcessingService extends RenderService {
     return this.start(scope.libraryId, key, stopped);
   }
 
+  getProcessingCount(libraryId: string): number {
+    const activeIds = new Set(this.activity.subjects(libraryId, 'rendering'));
+    const queuedIds = new Set<string>();
+    let allQueued = false;
+    for (const key of this.inFlight.keys()) {
+      if (key !== '*' && key !== libraryId) continue;
+      for (const [photoId, owner] of this.active.get(key) ?? []) {
+        if (owner === libraryId) activeIds.add(photoId);
+      }
+      if (!this.queued.has(key)) continue;
+      const queued = this.queued.get(key);
+      if (queued == null) allQueued = true;
+      else for (const photoId of queued) queuedIds.add(photoId);
+    }
+    if (allQueued) {
+      const pending = this.photoProcessing.countPendingProcessing(libraryId);
+      const overlap = activeIds.size === 0 ? 0 : this.photoProcessing.countPendingProcessing(libraryId, [...activeIds]);
+      return activeIds.size + pending - overlap;
+    }
+    for (const photoId of activeIds) queuedIds.delete(photoId);
+    return activeIds.size + (queuedIds.size === 0 ? 0 : this.photoProcessing.countPendingProcessing(libraryId, [...queuedIds]));
+  }
+
   // `drain` is async, so its return resolves a promise and the cleanup below runs
   // a microtask later. A call landing in that gap finds this key still in flight,
   // is handed a batch that has already settled, and leaves what it asked for in
@@ -177,6 +203,7 @@ export class ProcessingService extends RenderService {
   private start(libraryId: string | undefined, key: string, stopped?: () => boolean): Promise<void> {
     const run = this.holdingRenderMemory(() => this.drain(libraryId, key, stopped)).finally(() => {
       this.inFlight.delete(key);
+      this.active.delete(key);
       // Not while stopped: `drain` returns without consuming `queued` in that
       // case, so relaunching on it would spin.
       if (stopped?.() !== true && this.queued.has(key)) void this.start(libraryId, key, stopped);
@@ -209,14 +236,19 @@ export class ProcessingService extends RenderService {
       this.queued.delete(key);
       if (scope === undefined) return; // nothing asked for since the last pass
       const pending = this.photoProcessing.listPendingProcessing(libraryId, scope == null ? undefined : [...scope]);
+      const active = new Map(pending.map((row) => [row.photo_id, row.library_id]));
+      this.active.set(key, active);
       // Composites are composed rather than decoded, one at a time and on a worker of their own:
       // a panorama holds the device for the whole of a canvas, so putting one in the pool beside
       // the tiles would stall every other photograph behind it.
       await this.composePending(
         pending.filter((row) => isComposite(row.recipe)),
+        active,
         stopped,
       );
       const staged = pending.map((p) => this.toStages(p)).filter((p) => p != null);
+      const stagedIds = new Set(staged.map((photo) => photo.photoId));
+      for (const photoId of active.keys()) if (!stagedIds.has(photoId)) active.delete(photoId);
       if (staged.length === 0) continue;
       const startedAt = Date.now();
       log.info('batch start', {
@@ -226,7 +258,8 @@ export class ProcessingService extends RenderService {
         renditions: staged.filter((p) => p.renditions != null).length,
         workers: Math.min(this.settings.get().processing_concurrency, staged.length),
       });
-      await this.runStaged(staged, stopped);
+      await this.runStaged(staged, active, stopped);
+      active.clear();
       log.info('batch done', {
         library: libraryId,
         photos: staged.length,
@@ -248,13 +281,18 @@ export class ProcessingService extends RenderService {
    * still true, the picture simply cannot be made here and now, and the alternative is a
    * photograph marked failed for something that may come back on the next sync.
    */
-  private async composePending(pending: readonly PendingPhoto[], stopped?: () => boolean): Promise<void> {
+  private async composePending(
+    pending: readonly PendingPhoto[],
+    active: Map<string, string>,
+    stopped?: () => boolean,
+  ): Promise<void> {
     for (const row of pending) {
       if (stopped?.() === true) return;
       const library = this.libraryOf(row.library_id);
       const composite = this.compositeOf(row.photo_id);
       if (library == null || composite == null) {
         log.debug('a composite is owed copies nothing here can make yet', { photo: row.photo_id });
+        active.delete(row.photo_id);
         continue;
       }
       // What any row owes and what each copy is built from, decided by the rule every recipe
@@ -282,7 +320,10 @@ export class ProcessingService extends RenderService {
       if (wants.full && !owed.some((want) => want.rendition === 'full')) {
         this.photoProcessing.markRenditionsUnowed(row.photo_id, renditionVariant('full', row.rendition_hdr === 1));
       }
-      if (owed.length === 0) continue;
+      if (owed.length === 0) {
+        active.delete(row.photo_id);
+        continue;
+      }
       const on = this.openComposite();
       try {
         for (const want of owed) {
@@ -314,6 +355,7 @@ export class ProcessingService extends RenderService {
       } catch (err) {
         log.error('could not compose a panorama; it stays owed', { photo: row.photo_id, err });
       } finally {
+        active.delete(row.photo_id);
         on.close();
       }
     }
@@ -326,7 +368,7 @@ export class ProcessingService extends RenderService {
   // render, so a shoot's grid is browsable in seconds instead of after the
   // renders finish. Each pass clears its own flag as it lands, so a run interrupted
   // between them resumes at the second rather than repeating the first.
-  private async runStaged(staged: StagedPhoto[], stopped?: () => boolean): Promise<void> {
+  private async runStaged(staged: StagedPhoto[], active: Map<string, string>, stopped?: () => boolean): Promise<void> {
     const byId = new Map(staged.map((photo) => [photo.photoId, photo]));
     // A photo whose tile failed is not carried into the second pass: the failure is
     // the file, not the stage, so a render would fail the same way.
@@ -341,6 +383,7 @@ export class ProcessingService extends RenderService {
       if (photo.tile == null && photo.renditions == null && photo.owesRenditions) {
         this.stageDone(photo, photo.photoId, 'renditions');
       }
+      if (photo.tile == null && photo.renditions == null) active.delete(photo.photoId);
     }
 
     await runProcessingPool(
@@ -350,6 +393,7 @@ export class ProcessingService extends RenderService {
         const photo = byId.get(result.photoId) ?? null;
         if (!result.success) {
           failed.add(result.photoId);
+          active.delete(result.photoId);
           this.recordFailure(result, job, photo);
           return;
         }
@@ -357,6 +401,7 @@ export class ProcessingService extends RenderService {
         // ~1.5s away, and a grid already on screen should fill at the tile's pace
         // rather than wait for both.
         this.stageDone(photo, result.photoId, 'tile', result.descriptor);
+        if (photo?.renditions == null) active.delete(result.photoId);
       },
       stopped,
     );
@@ -369,6 +414,7 @@ export class ProcessingService extends RenderService {
       this.settings.get().processing_concurrency,
       (result, job) => {
         const photo = byId.get(result.photoId) ?? null;
+        active.delete(result.photoId);
         if (!result.success) {
           this.recordFailure(result, job, photo);
           return;
@@ -493,6 +539,7 @@ export class ProcessingService extends RenderService {
     for (const variant of renditionVariants()) {
       const file = path.join(photo.dataPath, 'renditions', variant, `${photo.photoId}${RENDITION_EXTENSION}`);
       if (keep.has(file)) continue;
+      this.photoProcessing.forgetBuilt(photo.photoId, [variant]);
       void deleteGeneratedFile(photo.dataPath, file).catch(() => {});
     }
   }
@@ -596,6 +643,7 @@ export class ProcessingService extends RenderService {
     // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
     // batch forever. On a DB write failure, log and leave the flags set.
     try {
+      this.photoProcessing.forgetBuilt(result.photoId, job.targets.map((target) => renditionVariant(target.rendition, target.hdr)));
       // If the source file moved/was deleted since the job was queued (a move that
       // landed before the worker ran), don't burn it as a terminal failure: leave
       // its flags set so a later sync reprocesses it at its current path.

@@ -1,10 +1,11 @@
 import type { Database } from '../../db/driver';
 import { statSync } from 'node:fs';
 import { Logger } from '../../logger';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { deleteGeneratedFile } from '../../utils/deletions';
 import { getDataPath, renditionPathFor } from '../../utils/paths';
-import type { Rendition } from '../processing/renditions/renditions';
+import { renditionVariant, type Rendition } from '../processing/renditions/renditions';
+import { RenditionsRepository } from '../processing/renditions/renditions_repository';
 
 // What a device with no originals keeps of other people's renditions (§7.9).
 //
@@ -26,6 +27,8 @@ const log = new Logger('blobs');
 export const FETCHED_RENDITION_CACHE_BYTES = 2 * 1024 * 1024 * 1024;
 
 export class RenditionCache {
+  private readonly renditions: RenditionsRepository;
+
   constructor(
     private readonly db: Database,
     private readonly limitBytes: number = FETCHED_RENDITION_CACHE_BYTES,
@@ -34,7 +37,9 @@ export class RenditionCache {
      * told apart: real opens are seconds apart, and a test's are not.
      */
     private readonly now: () => string = () => new Date().toISOString(),
-  ) {}
+  ) {
+    this.renditions = new RenditionsRepository(db);
+  }
 
   /** Records a fetched file, and gives back whatever the cap says can no longer stay. */
   async keep(library: Library, photoId: string, rendition: Rendition, hdr: boolean, path: string): Promise<void> {
@@ -66,9 +71,13 @@ export class RenditionCache {
 
   /** Forgets a file that has gone, so the total stops counting it. */
   forget(libraryId: string, photoId: string, rendition: Rendition, hdr: boolean): void {
-    this.db
-      .query('DELETE FROM fetched_renditions WHERE library_id = ? AND photo_id = ? AND rendition = ? AND hdr = ?')
-      .run(libraryId, photoId, rendition, hdr ? 1 : 0);
+    this.db.transaction(() => {
+      const forgotten = this.db
+        .query('DELETE FROM fetched_renditions WHERE library_id = ? AND photo_id = ? AND rendition = ? AND hdr = ?')
+        .run(libraryId, photoId, rendition, hdr ? 1 : 0).changes;
+      if (forgotten === 0) return;
+      this.renditions.forgetBuilt(photoId, [renditionVariant(rendition, hdr)]);
+    })();
   }
 
   bytesHeld(libraryId: string): number {

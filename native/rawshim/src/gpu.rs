@@ -25,6 +25,11 @@ use crate::hdr_fit::{self, HdrColour};
 mod print_environment;
 mod print_surface;
 
+#[cfg(not(target_arch = "wasm32"))]
+type PipelineCell<T> = std::sync::OnceLock<T>;
+#[cfg(target_arch = "wasm32")]
+type PipelineCell<T> = std::cell::OnceCell<T>;
+
 /// `frame.slang`'s `FROM_FRAME`, as the draw's two pipelines name it.
 const FROM_FRAME_ID: &str = "0";
 
@@ -256,21 +261,18 @@ pub struct Gpu {
     instance: wgpu::Instance,
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
+    frame_module: wgpu::ShaderModule,
     draw_layout: wgpu::BindGroupLayout,
-    draw_from_frame: wgpu::RenderPipeline,
-    draw_from_pyramid: wgpu::RenderPipeline,
+    draw_from_frame: PipelineCell<wgpu::RenderPipeline>,
+    draw_from_pyramid: PipelineCell<wgpu::RenderPipeline>,
     print_layout: wgpu::BindGroupLayout,
-    print_pipeline: wgpu::RenderPipeline,
-    print_pq_pipeline: wgpu::RenderPipeline,
-    print_pigment_pipeline: wgpu::RenderPipeline,
-    print_flat_pipeline: wgpu::RenderPipeline,
-    print_surface: print_surface::Pipelines,
-    print_environment: print_environment::Pipelines,
-    print_albedo_layout: wgpu::BindGroupLayout,
-    print_albedo_tabulate: wgpu::ComputePipeline,
-    print_albedo_average: wgpu::ComputePipeline,
-    print_light_calibrate: wgpu::ComputePipeline,
-    print_room_calibrate: wgpu::ComputePipeline,
+    print_pipeline: PipelineCell<wgpu::RenderPipeline>,
+    print_pq_pipeline: PipelineCell<wgpu::RenderPipeline>,
+    print_pigment_pipeline: PipelineCell<wgpu::RenderPipeline>,
+    print_flat_pipeline: PipelineCell<wgpu::RenderPipeline>,
+    print_surface: PipelineCell<print_surface::Pipelines>,
+    print_environment: PipelineCell<print_environment::Pipelines>,
+    print_material: PipelineCell<PrintMaterial>,
     pack_layout: wgpu::BindGroupLayout,
     pack: wgpu::ComputePipeline,
     peak_layout: wgpu::BindGroupLayout,
@@ -301,6 +303,14 @@ pub struct Gpu {
     /// anchors every frame to the reference white before coding it and what comes back out
     /// is nits - nothing here depends on the photograph.
     nits_of_code: Buffer,
+}
+
+struct PrintMaterial {
+    layout: wgpu::BindGroupLayout,
+    tabulate: wgpu::ComputePipeline,
+    average: wgpu::ComputePipeline,
+    light: wgpu::ComputePipeline,
+    room: wgpu::ComputePipeline,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -866,7 +876,7 @@ impl Gpu {
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let group = self.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("print light calibration"), layout: &self.print_albedo_layout,
+            label: Some("print light calibration"), layout: &self.print_material().layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: buffer.as_entire_binding() },
@@ -877,10 +887,10 @@ impl Gpu {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
             pass.set_bind_group(0, &group, &[]);
             pass.set_bind_group(1, &map, &[]);
-            pass.set_pipeline(&self.print_light_calibrate);
+            pass.set_pipeline(&self.print_material().light);
             pass.dispatch_workgroups(1, 1, 1);
             if room.is_none() {
-                pass.set_pipeline(&self.print_room_calibrate);
+                pass.set_pipeline(&self.print_material().room);
                 pass.dispatch_workgroups(1, 1, 1);
             }
         }
@@ -902,7 +912,7 @@ impl Gpu {
             label: Some("print material"), contents: &values, usage: wgpu::BufferUsages::UNIFORM,
         });
         let group = self.bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("print albedo"), layout: &self.print_albedo_layout,
+            label: Some("print albedo"), layout: &self.print_material().layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: buffer.as_entire_binding() },
@@ -911,13 +921,105 @@ impl Gpu {
         {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
             pass.set_bind_group(0, &group, &[]);
-            pass.set_pipeline(&self.print_albedo_tabulate);
+            pass.set_pipeline(&self.print_material().tabulate);
             pass.dispatch_workgroups(crate::print::ALBEDO_VIEWS.div_ceil(64), crate::print::ALBEDO_ROUGHNESSES, 1);
-            pass.set_pipeline(&self.print_albedo_average);
+            pass.set_pipeline(&self.print_material().average);
             pass.dispatch_workgroups(crate::print::ALBEDO_ROUGHNESSES.div_ceil(64), 1, 1);
         }
         recording.submit();
         buffer
+    }
+
+    fn print_material(&self) -> &PrintMaterial {
+        self.print_material.get_or_init(|| {
+            let device = &self.device;
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("print albedo"),
+                source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_albedo.wgsl")).into()),
+            });
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("print albedo"),
+                entries: &[Binding::Uniform.entry(0), Binding::Storage { read_only: false }.entry(1)],
+            });
+            let albedo_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("print albedo"), bind_group_layouts: &[Some(&layout)],
+                ..Default::default()
+            });
+            let compute = |label, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, entry| {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(label), layout: Some(layout), module, entry_point: Some(entry),
+                    compilation_options: Default::default(), cache: None,
+                })
+            };
+            let tabulate = compute("print albedo", &module, &albedo_layout, "tabulate");
+            let average = compute("print average albedo", &module, &albedo_layout, "average");
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("print lamp"),
+                source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl")).into()),
+            });
+            let light_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("print light calibration"),
+                bind_group_layouts: &[Some(&layout), Some(&self.print_environment_pipelines().map_layout)],
+                ..Default::default()
+            });
+            let light = compute("print light calibration", &module, &light_layout, "calibrate");
+            let room = compute("print light calibration", &module, &light_layout, "room");
+            PrintMaterial { layout, tabulate, average, light, room }
+        })
+    }
+
+    fn print_environment_pipelines(&self) -> &print_environment::Pipelines {
+        self.print_environment.get_or_init(|| print_environment::Pipelines::new(&self.device))
+    }
+
+    fn print_surface(&self) -> &print_surface::Pipelines {
+        self.print_surface.get_or_init(|| print_surface::Pipelines::new(&self.device))
+    }
+
+    fn drawing(&self, from_frame: bool, entry: &str) -> &wgpu::RenderPipeline {
+        let held = match entry {
+            "fs" if from_frame => &self.draw_from_frame,
+            "fs" => &self.draw_from_pyramid,
+            "fs_print" => &self.print_pipeline,
+            "fs_print_pq" => &self.print_pq_pipeline,
+            "fs_print_pigment" => &self.print_pigment_pipeline,
+            "fs_print_flat" => &self.print_flat_pipeline,
+            _ => unreachable!("a frame drawing entry point"),
+        };
+        held.get_or_init(|| {
+            self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("draw"),
+                layout: Some(&self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("draw"),
+                    bind_group_layouts: &if entry != "fs" && entry != "fs_print_pigment" {
+                        vec![Some(&self.draw_layout), Some(&self.print_layout)]
+                    } else {
+                        vec![Some(&self.draw_layout)]
+                    },
+                    ..Default::default()
+                })),
+                vertex: wgpu::VertexState {
+                    module: &self.frame_module, entry_point: Some("vs"),
+                    compilation_options: Default::default(), buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.frame_module, entry_point: Some(entry),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: crate::wgsl_overrides::for_entry(
+                            "frame.wgsl", entry, &[(FROM_FRAME_ID, f64::from(u8::from(from_frame)))],
+                        ),
+                        ..Default::default()
+                    },
+                    targets: &[Some(if entry == "fs_print_pq" {
+                        wgpu::TextureFormat::Rgba16Uint.into()
+                    } else {
+                        CANVAS_FORMAT.into()
+                    })],
+                }),
+                primitive: Default::default(), depth_stencil: None, multisample: Default::default(),
+                multiview_mask: Default::default(), cache: None,
+            })
+        })
     }
 
     /// One submission, and the pool everything it reads is allocated from.
@@ -1269,10 +1371,6 @@ impl Gpu {
         let chroma_blur = compute("chroma blur", &chroma_module, &chroma_blur_layout, "blur");
 
         let pipeline = compute("encode", &module, &layout, "encode");
-        // The draw, which is `encode` over the same frame writing a canvas pixel instead of an
-        // output one. Two pipelines over one entry point: `FROM_FRAME` is a specialisation
-        // constant rather than a branch because as a branch it cost the zoomed-out case a third
-        // of its time for a path those fragments never take (`frame.slang`).
         let print_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("print"),
             entries: &[
@@ -1281,85 +1379,6 @@ impl Gpu {
                 Binding::Detail.drawn(4), Binding::Sampler.drawn(5),
             ],
         });
-        let print_albedo_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("print albedo"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_albedo.wgsl")).into()),
-        });
-        let print_albedo_layout = group_layout("print albedo", &[
-            (0, Binding::Uniform), (1, Binding::Storage { read_only: false }),
-        ]);
-        let print_albedo_tabulate = compute("print albedo", &print_albedo_module, &print_albedo_layout, "tabulate");
-        let print_albedo_average = compute("print average albedo", &print_albedo_module, &print_albedo_layout, "average");
-        let print_light_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("print lamp"),
-            source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("OUT_DIR"), "/wgsl/print_light_calibrate.wgsl")).into()),
-        });
-        let drawing = |from_frame: bool, entry: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("draw"),
-                layout: Some(&device.create_pipeline_layout(
-                    &wgpu::PipelineLayoutDescriptor {
-                        label: Some("draw"),
-                        bind_group_layouts: &if entry != "fs" && entry != "fs_print_pigment" {
-                            vec![Some(&draw_layout), Some(&print_layout)]
-                        } else {
-                            vec![Some(&draw_layout)]
-                        },
-                        ..Default::default()
-                    },
-                )),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        // Keyed by the id `frame.slang`'s `[vk::constant_id(0)]` fixes, not by
-                        // the name: the generated WGSL renames it `FROM_FRAME_0`, and a key that
-                        // matched no constant is a pipeline the driver refuses outright.
-                        constants: crate::wgsl_overrides::for_entry(
-                            "frame.wgsl",
-                            entry,
-                            &[(FROM_FRAME_ID, f64::from(u8::from(from_frame)))],
-                        ),
-                        ..Default::default()
-                    },
-                    targets: &[Some(if entry == "fs_print_pq" {
-                        wgpu::TextureFormat::Rgba16Uint.into()
-                    } else {
-                        CANVAS_FORMAT.into()
-                    })],
-                }),
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                multiview_mask: Default::default(),
-                cache: None,
-            })
-        };
-        let draw_from_frame = drawing(true, "fs");
-        let draw_from_pyramid = drawing(false, "fs");
-        let print_pipeline = drawing(true, "fs_print");
-        let print_pq_pipeline = drawing(true, "fs_print_pq");
-        let print_pigment_pipeline = drawing(true, "fs_print_pigment");
-        let print_flat_pipeline = drawing(true, "fs_print_flat");
-        let print_surface = print_surface::Pipelines::new(&device);
-        let print_environment = print_environment::Pipelines::new(&device);
-        let print_light_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("print light calibration"),
-            bind_group_layouts: &[Some(&print_albedo_layout), Some(&print_environment.map_layout)],
-            ..Default::default()
-        });
-        let calibrating = |entry: &str| device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("print light calibration"), layout: Some(&print_light_layout),
-            module: &print_light_module, entry_point: Some(entry), compilation_options: Default::default(), cache: None,
-        });
-        let print_light_calibrate = calibrating("calibrate");
-        let print_room_calibrate = calibrating("room");
         let peak_measure = compute("measure", &peak_module, &peak_layout, "measure");
         // The editor's route to the same number, so that it has one here to be held against:
         // `collect` keeps the brightest of the sampled million and `remeasure` grades only
@@ -1422,21 +1441,18 @@ impl Gpu {
             instance,
             layout,
             pipeline,
+            frame_module: module,
             draw_layout,
-            draw_from_frame,
-            draw_from_pyramid,
+            draw_from_frame: PipelineCell::new(),
+            draw_from_pyramid: PipelineCell::new(),
             print_layout,
-            print_pipeline,
-            print_pq_pipeline,
-            print_pigment_pipeline,
-            print_flat_pipeline,
-            print_surface,
-            print_environment,
-            print_albedo_layout,
-            print_albedo_tabulate,
-            print_albedo_average,
-            print_light_calibrate,
-            print_room_calibrate,
+            print_pipeline: PipelineCell::new(),
+            print_pq_pipeline: PipelineCell::new(),
+            print_pigment_pipeline: PipelineCell::new(),
+            print_flat_pipeline: PipelineCell::new(),
+            print_surface: PipelineCell::new(),
+            print_environment: PipelineCell::new(),
+            print_material: PipelineCell::new(),
             pack_layout,
             pack,
             peak_layout,
@@ -4014,7 +4030,7 @@ impl Uploaded<'_> {
                     wgpu::BindGroupEntry { binding: 3, resource: proof.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&environment.view()) },
                     wgpu::BindGroupEntry {
-                        binding: 5, resource: wgpu::BindingResource::Sampler(&self.gpu.print_environment.sampler),
+                        binding: 5, resource: wgpu::BindingResource::Sampler(&self.gpu.print_environment_pipelines().sampler),
                     },
                 ],
             })
@@ -4035,17 +4051,17 @@ impl Uploaded<'_> {
         });
         let flat = print.is_some_and(|scene| matches!(scene.presentation, crate::print::Presentation::Flat));
         pass.set_pipeline(if pigment {
-            &self.gpu.print_pigment_pipeline
+            self.gpu.drawing(true, "fs_print_pigment")
         } else if flat && !pq {
-            &self.gpu.print_flat_pipeline
+            self.gpu.drawing(true, "fs_print_flat")
         } else if print.is_some() && pq {
-            &self.gpu.print_pq_pipeline
+            self.gpu.drawing(true, "fs_print_pq")
         } else if print.is_some() {
-            &self.gpu.print_pipeline
+            self.gpu.drawing(true, "fs_print")
         } else if from_frame {
-            &self.gpu.draw_from_frame
+            self.gpu.drawing(true, "fs")
         } else {
-            &self.gpu.draw_from_pyramid
+            self.gpu.drawing(false, "fs")
         });
         pass.set_bind_group(0, &group, &[]);
         if let Some(group) = print_group.as_ref() {
@@ -4463,6 +4479,40 @@ fn half(v: f32) -> [u8; 2] {
 mod tests {
     use crate::light::{Light, Stops};
     use wgpu::util::DeviceExt;
+
+    #[test]
+    fn renditions_defer_canvas_and_print_pipelines_and_draws_reuse_them() {
+        super::device().expect("a GPU adapter");
+        let gpu = super::Gpu::new().expect("a GPU adapter");
+        let grade = super::Grade::new(
+            2, 2,
+            crate::tone::Levels { white: Light::measured(1.0), peak: Light::measured(1.0), floor: None },
+            Light::exactly(203.0), Light::exactly(1000.0),
+        );
+        let frame = [4096u16; 12];
+        let encoded = gpu.encode(&frame, &grade);
+        assert_eq!(encoded.len(), 12);
+        assert!(encoded.iter().any(|&code| code > 0));
+        assert_eq!(gpu.encode(&frame, &grade), encoded);
+        let drawings = [
+            &gpu.draw_from_frame, &gpu.draw_from_pyramid, &gpu.print_pipeline,
+            &gpu.print_pq_pipeline, &gpu.print_pigment_pipeline, &gpu.print_flat_pipeline,
+        ];
+        assert!(drawings.iter().all(|cell| cell.get().is_none()));
+        assert!(gpu.print_material.get().is_none());
+        assert!(gpu.print_surface.get().is_none());
+        assert!(gpu.print_environment.get().is_none());
+
+        for (from_frame, entry) in [
+            (true, "fs"), (false, "fs"), (true, "fs_print"), (true, "fs_print_pq"),
+            (true, "fs_print_pigment"), (true, "fs_print_flat"),
+        ] {
+            assert!(std::ptr::eq(gpu.drawing(from_frame, entry), gpu.drawing(from_frame, entry)));
+        }
+        assert!(std::ptr::eq(gpu.print_material(), gpu.print_material()));
+        assert!(std::ptr::eq(gpu.print_surface(), gpu.print_surface()));
+        assert!(std::ptr::eq(gpu.print_environment_pipelines(), gpu.print_environment_pipelines()));
+    }
 
     /// A drawn frame packed to RGB9E5 unpacks to what was drawn, within the format's 9 bits,
     /// headroom and all: what a canvas the page draws itself is shown.

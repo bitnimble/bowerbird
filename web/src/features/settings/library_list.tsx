@@ -13,6 +13,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { type Library } from '../../../../src/schemas/libraries';
+import type { Activity } from '../../../../src/schemas/activity';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { canRevealFile } from '../../api/transport';
 import {
@@ -30,6 +31,7 @@ import { BackupStrings } from '../backup/backup_panel.strings';
 import { SyncedDevicesPanel } from '../replication/synced_devices_panel';
 import { SyncedDevicesStrings } from '../replication/synced_devices_panel.strings';
 import { ScanStrip } from '../scan/scan_strip';
+import { ActivityStrips } from '../activity/activity_strips';
 import { Button } from '../../ui/button';
 import { DialogBody, DialogColumns } from '../../ui/dialog_layout';
 import { focusRing } from '../../ui/focus_ring';
@@ -107,18 +109,29 @@ const styles = stylex.create({
 // library, and the gallery is for looking at photos.
 export const LibraryList = observer(function LibraryList(): JSX.Element {
   const store = useLibrariesStore();
+  const { libraries } = usePresenters();
+  useEffect(() => libraries.watch(), [libraries]);
 
   return (
-    <div {...stylex.props(styles.tiles)} role="list" aria-label={SettingsStrings.libraries()}>
-      {store.libraries.map((library) => (
-        <LibraryTile key={library.id} library={library} />
-      ))}
-    </div>
+    <>
+      <ActivityStrips activities={store.globalActivity} />
+      <div {...stylex.props(styles.tiles)} role="list" aria-label={SettingsStrings.libraries()}>
+        {store.libraries.map((library) => (
+          <LibraryTile key={library.id} library={library} />
+        ))}
+      </div>
+    </>
   );
 });
 
 const LibraryTile = observer(function LibraryTile({ library }: { library: Library }): JSX.Element {
   const scan = useScanStore();
+  const libraryStore = useLibrariesStore();
+  const status = libraryStore.statuses.get(library.id) ?? (scan.libraryId === library.id ? scan.status : null);
+  const scanBusy = status != null && status.status !== 'idle';
+  const activity = libraryStore.activities.get(library.id);
+  const local = libraryStore.localRendering.get(library.id)?.size ?? 0;
+  const activities: readonly Activity[] | undefined = local > 0 ? [...(activity ?? []), { kind: 'local_rendering', count: local }] : activity;
   const { libraries, scan: scanPresenter, confirm } = usePresenters();
   const navigate = useNavigate();
   const params = useParams();
@@ -149,9 +162,9 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
           </TextLink>
         ) : library.root_path}
         {' · '}
-        {SettingsStrings.libraryPhotoCount(library.photo_count)}
+        {SettingsStrings.libraryPhotoCount(library)}
       </Text>
-      <ScanStrip library={library} />
+      <ScanStrip library={library} status={libraryStore.statuses.get(library.id)} activities={activities} />
       <LibraryJobs library={library} />
 
       <Row style={styles.actions}>
@@ -162,7 +175,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
 
         {/* The same slot, because stopping is what you want from a run in
             flight and starting another is not on offer anyway. */}
-        {scan.isBusy && scan.libraryId === library.id ? (
+        {scanBusy ? (
           <Button
             disabled={scan.isStopping(library.id)}
             aria-busy={scan.isStopping(library.id)}
@@ -559,13 +572,16 @@ const LibraryNumberField = observer(function LibraryNumberField({
 // something you reach for every visit.
 const LibraryJobs = observer(function LibraryJobs({ library }: { library: Library }): JSX.Element {
   const scan = useScanStore();
+  const store = useLibrariesStore();
   const replication = useReplicationStore();
   const backupStore = useBackupStore();
   const { scan: scanPresenter, libraries, replication: replicationPresenter, backup } = usePresenters();
-  const busy = scan.isBusy && scan.libraryId === library.id;
+  const status = store.statuses.get(library.id) ?? (scan.libraryId === library.id ? scan.status : null);
+  const busy = status != null && (status.status !== 'idle' || status.photos_processing > 0);
+  const activity = store.activities.get(library.id) ?? [];
   const renders = library.rendition_source === 'render';
-  const syncing = replication.replicating === library.id;
-  const backingUp = backupStore.running === library.id;
+  const syncing = activity.some((work) => work.kind === 'syncing') || replication.replicating === library.id;
+  const backingUp = activity.some((work) => work.kind === 'backing_up' || work.kind === 'restoring_backup') || backupStore.running === library.id;
 
   return (
     <details>

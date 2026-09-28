@@ -27,8 +27,10 @@ test('a library added and scanned in Settings shows a rendition for every RAW fi
   const path = chooser.getByRole('textbox', { name: 'Library root' });
   await expect(path).not.toHaveValue('');
   await path.fill(INDEX_PHOTOS_DIR);
+  await path.press('Enter');
   await chooser.getByRole('button', { name: 'Choose folder' }).click();
   await expect(chooser).toHaveCount(0);
+  await expect(dialog.getByText(INDEX_PHOTOS_DIR, { exact: true })).toBeVisible();
   // The camera's JPEG rather than the default render, which is minutes of work per frame, and
   // no stacking, which would collapse the fixture's identical frames into one tile.
   await dialog.getByRole('checkbox', { name: 'Automatically pre-render imported photos' }).uncheck();
@@ -37,6 +39,10 @@ test('a library added and scanned in Settings shows a rendition for every RAW fi
   await dialog.getByRole('button', { name: 'Add library' }).click();
   // Creating a library walks the folder before the row can be re-read.
   await expect(libraryRow(page, INDEX_PHOTOS_DIR)).toBeVisible({ timeout: 30_000 });
+  await expect(libraryRow(page, INDEX_PHOTOS_DIR).getByText(
+    `${INDEX_PHOTOS_DIR} · ${PHOTO_NAMES.length} photos (0 missing, 0 unavailable, 0 rendered)`,
+    { exact: true },
+  )).toBeVisible({ timeout: 45_000 });
 
   await libraryRow(page, INDEX_PHOTOS_DIR).getByRole('button', { name: 'Scan library' }).click({ timeout: 45_000 });
   await openLibrary(page, INDEX_PHOTOS_DIR);

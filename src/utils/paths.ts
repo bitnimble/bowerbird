@@ -3,7 +3,7 @@ import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config';
 import { newId } from '../schemas/id';
-import type { Library } from '../schemas/libraries';
+import type { LibraryConfiguration } from '../schemas/libraries';
 import { soleInputOf, type StoredRecipe } from '../schemas/recipes';
 import { RENDITION_EXTENSION, renditionVariant, type Rendition } from '../services/processing/renditions/renditions';
 
@@ -20,7 +20,7 @@ export function dataPathForLibraryId(libraryId: string): string {
   return path.join(config.dataDir, libraryId);
 }
 
-export function getDataPath(library: Pick<Library, 'id'>): string {
+export function getDataPath(library: Pick<LibraryConfiguration, 'id'>): string {
   return dataPathForLibraryId(library.id);
 }
 
@@ -38,7 +38,7 @@ export function renditionPathFor(dataPath: string, photoId: string, rendition: R
   return path.join(dataPath, 'renditions', renditionVariant(rendition, hdr), `${photoId}${RENDITION_EXTENSION}`);
 }
 
-export function getRenditionPath(library: Library, photoId: string, rendition: Rendition, hdr: boolean): string {
+export function getRenditionPath(library: LibraryConfiguration, photoId: string, rendition: Rendition, hdr: boolean): string {
   return renditionPathFor(getDataPath(library), photoId, rendition, hdr);
 }
 
@@ -121,7 +121,7 @@ export function photoAnalysisPathFor(dataPath: string, photoId: string): string 
 // The only place the bin's folder name is spelled: it is per library (§12.3) and
 // the scan skips it by name, so a second spelling anywhere is a bin the scan
 // walks straight back into. That is also what makes renaming it tractable (§4.1).
-export function getBinPath(library: Pick<Library, 'root_path' | 'bin_name'>, relFolder = ''): string | null {
+export function getBinPath(library: Pick<LibraryConfiguration, 'root_path' | 'bin_name'>, relFolder = ''): string | null {
   return library.bin_name == null ? null : path.join(library.root_path, library.bin_name, relFolder);
 }
 
@@ -180,7 +180,7 @@ export function resolveCatalogue(dbPath: string): string {
  * is `originalPathOf` below, which answers for the recipe. This is for the callers holding a path
  * that is not a row's - where a binning came from, where a merged move left one.
  */
-export function libraryPath(library: Library, relPath: string): string {
+export function libraryPath(library: LibraryConfiguration, relPath: string): string {
   return path.join(library.root_path, relPath);
 }
 
@@ -191,7 +191,7 @@ export function libraryPath(library: Library, relPath: string): string {
  * row composed from several files has no single one, and there is no answer here that would not
  * be a guess at which of them the caller meant.
  */
-export function originalPathOf(library: Library, photo: { recipe: StoredRecipe }): string | null {
+export function originalPathOf(library: LibraryConfiguration, photo: { recipe: StoredRecipe }): string | null {
   const relPath = soleInputOf(photo.recipe);
   return relPath == null ? null : libraryPath(library, relPath);
 }

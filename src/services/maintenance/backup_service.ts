@@ -1,6 +1,7 @@
 import { mkdir, readdir, rename, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Logger } from '../../logger';
+import { LibraryActivity } from '../activity/library_activity';
 import { deleteBackupFile } from '../../utils/deletions';
 import { backupsDir } from '../../utils/paths';
 import type { BackupJob, BackupOutcome } from './backup_worker';
@@ -167,6 +168,7 @@ export class BackupService {
   constructor(
     private readonly dbPath: string,
     options: BackupWorkerOptions = {},
+    private readonly activity = new LibraryActivity(),
   ) {
     this.workerUrl = options.workerUrl;
     this.deadlineMs = options.deadlineMs ?? WORKER_DEADLINE_MS;
@@ -174,40 +176,45 @@ export class BackupService {
 
   /** Takes one snapshot, then trims the directory to the newest `keep` of them. */
   async backup(keep: number): Promise<BackupResult> {
-    const dir = backupsDir(this.dbPath);
-    await mkdir(dir, { recursive: true });
-
-    const base = backupBase(this.dbPath);
-    await this.sweepAbandoned(dir, base);
-
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const target = path.join(dir, `${base}-${stamp}.db`);
-    // Written aside and renamed into place only once it has been verified. Rename
-    // is atomic, so nothing appearing under a real name is ever a partial file, and
-    // a partial backup that looks whole is worse than no backup at all. Dot-prefixed
-    // to stay out of the rotation's sight, and counter-suffixed so two runs starting
-    // in the same millisecond do not vacuum into one file.
-    const temp = path.join(dir, `.${base}-${stamp}-${nextAttempt()}.part`);
-
-    let bytes: number;
+    const finish = this.activity.begin(null, 'catalogue_backup');
     try {
-      bytes = await this.write(temp);
-    } catch (err) {
-      await deleteBackupFile(dir, temp).catch(() => {});
-      throw err;
-    }
-    await rename(temp, target);
+      const dir = backupsDir(this.dbPath);
+      await mkdir(dir, { recursive: true });
 
-    // After the snapshot is safely in place, and never fatal to it: a snapshot that
-    // exists must not be reported as a failed backup because an *old* file would not
-    // delete. The operator needs to hear about it, which is what the log is for.
-    let removed = 0;
-    try {
-      removed = await this.rotate(dir, keep, target);
-    } catch (err) {
-      log.error('the backup was taken, but rotating older ones failed', { err });
+      const base = backupBase(this.dbPath);
+      await this.sweepAbandoned(dir, base);
+
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const target = path.join(dir, `${base}-${stamp}.db`);
+      // Written aside and renamed into place only once it has been verified. Rename
+      // is atomic, so nothing appearing under a real name is ever a partial file, and
+      // a partial backup that looks whole is worse than no backup at all. Dot-prefixed
+      // to stay out of the rotation's sight, and counter-suffixed so two runs starting
+      // in the same millisecond do not vacuum into one file.
+      const temp = path.join(dir, `.${base}-${stamp}-${nextAttempt()}.part`);
+
+      let bytes: number;
+      try {
+        bytes = await this.write(temp);
+      } catch (err) {
+        await deleteBackupFile(dir, temp).catch(() => {});
+        throw err;
+      }
+      await rename(temp, target);
+
+      // After the snapshot is safely in place, and never fatal to it: a snapshot that
+      // exists must not be reported as a failed backup because an *old* file would not
+      // delete. The operator needs to hear about it, which is what the log is for.
+      let removed = 0;
+      try {
+        removed = await this.rotate(dir, keep, target);
+      } catch (err) {
+        log.error('the backup was taken, but rotating older ones failed', { err });
+      }
+      return { path: target, bytes, removed };
+    } finally {
+      finish();
     }
-    return { path: target, bytes, removed };
   }
 
   /**

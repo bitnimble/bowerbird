@@ -13,6 +13,7 @@ import type { SettingsRepository } from '../../settings/settings_repository';
 import type { ProcessingService } from '../pipeline/processing_service';
 import { encoderQuality } from '../analysis/quality';
 import { exportStill, transcodeJpeg, watchingJobProgress, writeGainMap } from '../rawshim/rawshim_job';
+import { LibraryActivity } from '../../activity/library_activity';
 
 // Perceived quality for a share, which nobody is offered a dialog for: the picture is going to
 // a message rather than to a library, and the export dialog is where a reader who wants to
@@ -57,6 +58,7 @@ export class ExportService {
      * one, as they did before a panorama could be exported.
      */
     private readonly panoramas?: CompositesService,
+    private readonly activity: LibraryActivity = new LibraryActivity(),
   ) {}
 
   /**
@@ -84,6 +86,8 @@ export class ExportService {
       hdr: options.exportHdr, gainMap: options.gainMap, edits: options.includeEdits,
       halfSize: options.halfSize, thumbnail: withThumbnail,
     });
+    const { library } = this.photoRenditions.locate(photoId);
+    const finish = this.activity.begin(library.id, 'exporting', photoId);
     try {
       const exported = await this.render(photoId, options, withThumbnail, onProgress);
       log.info('export finished', { photo: photoId, format: options.format, bytes: exported.bytes.byteLength, ms: Math.round(performance.now() - started) });
@@ -91,6 +95,8 @@ export class ExportService {
     } catch (err) {
       log.error('export failed', { photo: photoId, format: options.format, ms: Math.round(performance.now() - started), err });
       throw err;
+    } finally {
+      finish();
     }
   }
 

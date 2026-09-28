@@ -84,8 +84,19 @@ export const LibrarySchema = z.object({
   auto_stack_window_seconds: z.number().int().min(1).default(60),
   last_synced_at: z.string().nullable(),
   photo_count: z.number().int(),
+  missing_photo_count: z.number().int().nonnegative(),
+  unavailable_photo_count: z.number().int().nonnegative(),
+  rendered_photo_count: z.number().int().nonnegative(),
 });
 export type Library = z.infer<typeof LibrarySchema>;
+
+export const LibraryConfigurationSchema = LibrarySchema.omit({
+  photo_count: true,
+  missing_photo_count: true,
+  unavailable_photo_count: true,
+  rendered_photo_count: true,
+});
+export type LibraryConfiguration = z.infer<typeof LibraryConfigurationSchema>;
 
 export const LibrariesSchema = z.array(LibrarySchema);
 

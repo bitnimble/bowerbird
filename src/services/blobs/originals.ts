@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration } from '../../schemas/libraries';
 import { isComposite, sourcesOf } from '../../schemas/recipes';
 import { originalPathOf } from '../../utils/paths';
 import type { BackupLocations } from '../backup/backup_locations';
@@ -47,7 +47,7 @@ export class Originals {
    * metadata refresh over a selection, the detail view's "is it here". Fetching a RAW back over a
    * network for any of those would turn a stat into a minute.
    */
-  here(library: Library, photo: BasicPhoto): string | null {
+  here(library: LibraryConfiguration, photo: BasicPhoto): string | null {
     const abs = originalPathOf(library, photo);
     return abs != null && existsSync(abs) ? abs : null;
   }
@@ -60,7 +60,7 @@ export class Originals {
    * device and no drive this one knows of. A backup that holds the file but is not plugged in is
    * the third case and the only one that throws, because it is the one that is somebody's to fix.
    */
-  async open(library: Library, photo: BasicPhoto): Promise<string | null> {
+  async open(library: LibraryConfiguration, photo: BasicPhoto): Promise<string | null> {
     const abs = originalPathOf(library, photo);
     if (abs == null) return null;
     if (existsSync(abs)) {
@@ -84,7 +84,7 @@ export class Originals {
    * had, which is the same answer a frame that has gone has always given - the recipe is still
    * true and the picture may be makeable after the next sync.
    */
-  async openAll(library: Library, photo: BasicPhoto): Promise<boolean> {
+  async openAll(library: LibraryConfiguration, photo: BasicPhoto): Promise<boolean> {
     if (!isComposite(photo.recipe)) return (await this.open(library, photo)) != null;
     for (const frameId of sourcesOf(photo.recipe)) {
       const frame = this.photoPaths.getBasicById(frameId);
@@ -121,7 +121,7 @@ export class Originals {
    * whole RAW rather than the region decode the fork exists for. Ranged reads straight off the
    * mount are the upgrade, and they want an IO seam that reaches through the FFI.
    */
-  private async fetchFromBackup(library: Library, photo: BasicPhoto): Promise<boolean> {
+  private async fetchFromBackup(library: LibraryConfiguration, photo: BasicPhoto): Promise<boolean> {
     for (const peerId of this.backups.holders(library.id, photo.id)) {
       const peer = passivePeerOf(this.db, peerId);
       if (peer == null) continue;

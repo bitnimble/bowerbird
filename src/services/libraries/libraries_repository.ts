@@ -1,6 +1,6 @@
 import type { Database } from '../../db/driver';
 import type { Ordering, RenditionSource } from '../../schemas/common';
-import type { Library } from '../../schemas/libraries';
+import type { Library, LibraryConfiguration } from '../../schemas/libraries';
 import { DenoiserSchema, type Denoiser } from '../../schemas/photo_edits';
 import { readStages, writeStages } from '../processing/renditions/render_stages';
 import type { OptionalStage, RenderedRendition } from '../../schemas/render_stages';
@@ -13,7 +13,7 @@ export interface BinIdentity {
   birthtime: number | null;
 }
 
-interface LibraryRow {
+interface LibraryConfigurationRow {
   id: string;
   root_path: string;
   bin_name: string | null;
@@ -31,16 +31,39 @@ interface LibraryRow {
   auto_stack_similarity: number;
   auto_stack_window_seconds: number;
   last_synced_at: string | null;
-  photo_count: number;
 }
+
+interface LibraryRow extends LibraryConfigurationRow {
+  photo_count: number;
+  missing_photo_count: number;
+  unavailable_photo_count: number;
+  rendered_photo_count: number;
+}
+
+const ORIGINAL_ON_PEER = `(
+  (EXISTS (SELECT 1 FROM replication_peers rp WHERE rp.library_id = p.library_id AND rp.kind = 'active')
+   AND EXISTS (SELECT 1 FROM blob_locations b
+     WHERE b.library_id = p.library_id AND b.photo_id = p.id
+       AND b.peer_id <> (SELECT peer_id FROM replication_identity WHERE singleton = 1)))
+  OR EXISTS (SELECT 1 FROM backup_locations b
+    JOIN replication_peers rp ON rp.library_id = b.library_id AND rp.peer_id = b.peer_id AND rp.kind = 'passive'
+    WHERE b.library_id = p.library_id AND b.photo_id = p.id))`;
 
 // photo_count excludes binned photos: it answers "how big is this library", and
 // the Bin has its own count in the UI.
-const SELECT = `SELECT l.id, l.root_path, l.bin_name, l.read_only, l.name, l.ordering, l.rendition_source, l.rendition_hdr,
+const COLUMNS = `l.id, l.root_path, l.bin_name, l.read_only, l.name, l.ordering, l.rendition_source, l.rendition_hdr,
   l.render_skip_full, l.render_skip_max, l.denoiser,
   l.include_subfolders, l.include_non_raw, l.auto_stack, l.auto_stack_similarity, l.auto_stack_window_seconds,
-  l.last_synced_at,
-  (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count
+  l.last_synced_at`;
+const SELECT = `SELECT ${COLUMNS},
+  (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0) AS photo_count,
+  (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
+    AND p.is_missing = 1 AND ${ORIGINAL_ON_PEER}) AS missing_photo_count,
+  (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
+    AND p.is_missing = 1 AND NOT ${ORIGINAL_ON_PEER}) AS unavailable_photo_count,
+  (SELECT COUNT(*) FROM photos p WHERE p.library_id = l.id AND p.is_deleted = 0
+    AND EXISTS (SELECT 1 FROM renditions r WHERE r.photo_id = p.id AND r.built_at IS NOT NULL
+      AND r.variant IN ('full', 'full-hdr', 'max', 'max-hdr'))) AS rendered_photo_count
   FROM libraries l`;
 
 export class LibrariesRepository {
@@ -88,6 +111,20 @@ export class LibrariesRepository {
   getById(id: string): Library | null {
     const row = this.db.query(`${SELECT} WHERE l.id = ?`).get(id) as LibraryRow | null;
     return row ? mapRow(row) : null;
+  }
+
+  getConfiguration(id: string): LibraryConfiguration | null {
+    const row = this.db.query(`SELECT ${COLUMNS} FROM libraries l WHERE l.id = ?`).get(id) as LibraryConfigurationRow | null;
+    return row == null ? null : mapConfiguration(row);
+  }
+
+  listConfigurations(): LibraryConfiguration[] {
+    const rows = this.db.query(`SELECT ${COLUMNS} FROM libraries l ORDER BY l.root_path`).all() as LibraryConfigurationRow[];
+    return rows.map(mapConfiguration);
+  }
+
+  has(id: string): boolean {
+    return this.db.query('SELECT 1 FROM libraries WHERE id = ?').get(id) != null;
   }
 
   getByRootPath(rootPath: string): Library | null {
@@ -199,7 +236,7 @@ export class LibrariesRepository {
   }
 }
 
-function mapRow(row: LibraryRow): Library {
+function mapConfiguration(row: LibraryConfigurationRow): LibraryConfiguration {
   return {
     id: row.id,
     root_path: row.root_path,
@@ -218,6 +255,15 @@ function mapRow(row: LibraryRow): Library {
     auto_stack_similarity: row.auto_stack_similarity,
     auto_stack_window_seconds: row.auto_stack_window_seconds,
     last_synced_at: row.last_synced_at,
+  };
+}
+
+function mapRow(row: LibraryRow): Library {
+  return {
+    ...mapConfiguration(row),
     photo_count: row.photo_count,
+    missing_photo_count: row.missing_photo_count,
+    unavailable_photo_count: row.unavailable_photo_count,
+    rendered_photo_count: row.rendered_photo_count,
   };
 }

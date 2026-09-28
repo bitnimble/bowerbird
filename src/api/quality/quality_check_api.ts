@@ -4,13 +4,15 @@ import path from 'node:path';
 import { Hono } from 'hono';
 import { AppError } from '../../errors';
 import { dustSettings } from '../../schemas/dust_settings';
+import type { Job } from '../../schemas/jobs';
 import { PathSegment, route } from '../../schemas/route';
 import type { Originals } from '../../services/blobs/originals';
+import { LibraryActivity } from '../../services/activity/library_activity';
 import type { LibrariesService } from '../../services/libraries/libraries_service';
 import type { PhotoReadService } from '../../services/photos/listing/photo_read_service';
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
 import { encoderQuality } from '../../services/processing/analysis/quality';
-import { runJob } from '../../services/processing/rawshim/rawshim_job';
+import { renderNativeJob } from '../../services/processing/rawshim/rawshim_command';
 import { AS_METERED } from '../../services/processing/pipeline/developed';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 
@@ -31,13 +33,15 @@ const CACHE = path.join(tmpdir(), 'bowerbird-quality-check');
 
 export class QualityCheckApi {
   readonly routes: Hono;
+  private readonly encoding = new Map<string, Promise<number>>();
 
   constructor(
-    private readonly photoRead: PhotoReadService,
-    private readonly photoRenditions: PhotoRenditionService,
-    private readonly libraries: LibrariesService,
-    private readonly settings: SettingsRepository,
-    private readonly originals: Originals,
+    private readonly photoRead: Pick<PhotoReadService, 'listByLibrary'>,
+    private readonly photoRenditions: Pick<PhotoRenditionService, 'locate'>,
+    private readonly libraries: Pick<LibrariesService, 'list'>,
+    private readonly settings: Pick<SettingsRepository, 'get'>,
+    private readonly originals: Pick<Originals, 'open'>,
+    private readonly activity: LibraryActivity = new LibraryActivity(),
   ) {
     const app = new Hono();
 
@@ -66,8 +70,9 @@ export class QualityCheckApi {
       const settings = this.settings.get();
       const file = path.join(CACHE, `${photo.id}-${quality}-${settings.avif_speed}-${library.denoiser}.avif`);
       let encodeMs = 0;
-
-      if (!(await Bun.file(file).exists())) {
+      const pending = this.encoding.get(file);
+      if (pending != null) await pending;
+      else if (!(await Bun.file(file).exists())) {
         // Created here rather than once at startup: this lives in the temp
         // directory, which something else is entitled to clean at any time.
         mkdirSync(CACHE, { recursive: true });
@@ -76,8 +81,7 @@ export class QualityCheckApi {
         // compared. Going through the same call the import does is also what keeps
         // the page honest - a setting that changed the renditions and not this
         // would make it a picture of something nobody ships.
-        const started = Bun.nanoseconds();
-        runJob({
+        encodeMs = await this.encode(library.id, photo.id, file, {
           rawFilePath,
           cameraMatch: settings.match_embedded_jpeg ? 'lensAndColour' : 'none',
           // The photograph's own, which is the document's default: this page compares
@@ -113,10 +117,6 @@ export class QualityCheckApi {
             },
           ],
         });
-        // The decode is inside the timing now, where it was excluded before. It is
-        // the same work at every quality, so it shifts each number by the same
-        // constant and the comparison the page exists for is unchanged.
-        encodeMs = Math.round((Bun.nanoseconds() - started) / 1e6);
       }
 
       const out = Bun.file(file);
@@ -132,6 +132,30 @@ export class QualityCheckApi {
     });
 
     this.routes = app;
+  }
+
+  private async encode(libraryId: string, photoId: string, file: string, job: Job): Promise<number> {
+    const pending = this.encoding.get(file);
+    if (pending != null) {
+      await pending;
+      return 0;
+    }
+    const work = this.activity.track(libraryId, 'checking_quality', photoId, async () => {
+      const started = Bun.nanoseconds();
+      try {
+        await renderNativeJob(job);
+        return Math.round((Bun.nanoseconds() - started) / 1e6);
+      } catch (err) {
+        await Bun.file(file).delete().catch(() => {});
+        throw err;
+      }
+    });
+    this.encoding.set(file, work);
+    try {
+      return await work;
+    } finally {
+      this.encoding.delete(file);
+    }
   }
 
   private firstPhotoId(): string {

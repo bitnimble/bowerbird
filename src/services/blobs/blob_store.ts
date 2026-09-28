@@ -2,7 +2,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { link, open } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration } from '../../schemas/libraries';
 import { unlinkMovedFile } from '../../utils/deletions';
 import { ensureDir } from '../../utils/files';
 import { containsPath, libraryPath } from '../../utils/paths';
@@ -13,11 +13,11 @@ import { containsPath, libraryPath } from '../../utils/paths';
 // Hidden, so the scan never walks it, and under the library root rather than the
 // data directory so the final rename never crosses a filesystem - staged-plus-
 // rename is only atomic on one (§8.1).
-export function stagingDir(library: Pick<Library, 'root_path'>): string {
+export function stagingDir(library: Pick<LibraryConfiguration, 'root_path'>): string {
   return path.join(library.root_path, '.bowerbird-staging');
 }
 
-export function stagePath(library: Pick<Library, 'root_path'>, photoId: string): string {
+export function stagePath(library: Pick<LibraryConfiguration, 'root_path'>, photoId: string): string {
   return path.join(stagingDir(library), `${photoId}.partial`);
 }
 
@@ -84,7 +84,7 @@ export type Placement = { placed: true } | { placed: false; occupiedBy: string }
  * would diverge from the replicated path and then replicate the accident (§7.7).
  * Occupied - by anything, tracked or not - means skip, and the caller flags it.
  */
-export async function materialise(library: Library, filePath: string, stageFile: string): Promise<Placement> {
+export async function materialise(library: LibraryConfiguration, filePath: string, stageFile: string): Promise<Placement> {
   const target = libraryPath(library, filePath);
   // A replicated path is remote input to a disk write (§11.2).
   if (!containsPath(library.root_path, target)) {

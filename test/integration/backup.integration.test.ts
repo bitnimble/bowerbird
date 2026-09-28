@@ -15,6 +15,7 @@ import { newestStamp } from '../../src/services/replication/restamp';
 import { stamp } from '../../src/services/replication/stamps';
 import { deleteBackupFile } from '../../src/utils/deletions';
 import { backupsDir } from '../../src/utils/paths';
+import { LibraryActivity } from '../../src/services/activity/library_activity';
 
 const LIB = 'lib0ab01';
 const LATER = 'lib0ab02';
@@ -23,6 +24,7 @@ let dir: string;
 let dbPath: string;
 let db: Database;
 let backups: BackupService;
+let activity: LibraryActivity;
 
 function addLibrary(id: string, name: string): void {
   db.query('INSERT INTO libraries (id, root_path, name) VALUES (?, ?, ?)').run(id, path.join(dir, name), name);
@@ -54,10 +56,11 @@ function everything(): string[] {
 }
 
 beforeEach(() => {
+  activity = new LibraryActivity();
   dir = mkdtempSync(path.join(tmpdir(), 'bb-backup-'));
   dbPath = path.join(dir, 'bowerbird.db');
   db = createDatabase(dbPath);
-  backups = new BackupService(dbPath);
+  backups = new BackupService(dbPath, {}, activity);
 });
 
 afterEach(() => {
@@ -68,7 +71,10 @@ afterEach(() => {
 test('a backup is a self-contained catalogue, holding writes still sitting in the WAL', async () => {
   addLibrary(LIB, 'holiday');
 
-  const { path: file, bytes, removed } = await backups.backup(7);
+  const pending = backups.backup(7);
+  expect(activity.current(null)).toEqual([{ kind: 'catalogue_backup', count: 1 }]);
+  const { path: file, bytes, removed } = await pending;
+  expect(activity.current(null)).toEqual([]);
 
   expect(existsSync(file)).toBe(true);
   expect(bytes).toBe(statSync(file).size);
@@ -91,7 +97,10 @@ test('a backup that fails leaves nothing behind, and says so', async () => {
   db.close();
   writeFileSync(dbPath, 'not a database');
 
-  await expect(backups.backup(7)).rejects.toThrow();
+  const pending = backups.backup(7);
+  expect(activity.current(null)).toEqual([{ kind: 'catalogue_backup', count: 1 }]);
+  await expect(pending).rejects.toThrow();
+  expect(activity.current(null)).toEqual([]);
   // No promoted snapshot, and no abandoned working file either.
   expect(everything()).toEqual([]);
 

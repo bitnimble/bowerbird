@@ -165,6 +165,9 @@ export class LibrariesService {
       include_non_raw: request.include_non_raw,
       last_synced_at: null,
       photo_count: 0,
+      missing_photo_count: 0,
+      unavailable_photo_count: 0,
+      rendered_photo_count: 0,
     };
 
     // Every directory a rendition can land in, up front, so a library that has

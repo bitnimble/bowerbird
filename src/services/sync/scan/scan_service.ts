@@ -67,7 +67,7 @@ export class ScanService implements LibraryLifecycleListener {
     const reconciler = new ScanReconciler(photoPaths, photoMetadata, photoScan, libraries, shoots, folderRules);
     const fileReader = new ScanFileReader(extract, scanConcurrency);
     this.leases = new ScanLeases(photoScan, syncLocks);
-    this.status = new ScanStatus(photoProcessing, libraries);
+    this.status = new ScanStatus(photoProcessing, libraries, processing);
     this.rebuilds = new ScanRebuilds(photoProcessing, libraries, this.leases, this.status, processing);
     this.runner = new ScanRunner(
       photoScan,

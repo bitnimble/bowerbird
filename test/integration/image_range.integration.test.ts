@@ -1,7 +1,6 @@
 // DESIGN §13.5 requires Content-Length from file stats and Range/206 partial
-// content so clients can seek in large originals. Range is applied by Bun.serve
-// to a BunFile body, NOT by Hono's app.request() shim, so these must go over a
-// real socket to mean anything.
+// content so clients can seek in large originals. These go over a real socket
+// to check the headers and bytes the browser receives.
 //   docker exec bowerbird-dev bun test test/integration
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -52,6 +51,9 @@ beforeAll(() => {
     auto_stack_window_seconds: 60,
     last_synced_at: null,
     photo_count: 1,
+    missing_photo_count: 0,
+    unavailable_photo_count: 0,
+    rendered_photo_count: 0,
   };
   const basic: BasicPhoto = { id: 'p1', library_id: LIB, shoot_id: null, recipe: fileRecipe('a.arw') };
   // `locate`, not `get`: serving bytes wants three columns, not the detail payload
@@ -113,4 +115,36 @@ test('an open-ended range serves through to the end of the file', async () => {
 test('an unsatisfiable range is rejected rather than served as a full body', async () => {
   const res = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: 'bytes=99-200' } });
   expect(res.status).toBe(416);
+  expect(res.headers.get('content-range')).toBe(`bytes */${BODY.length}`);
+  expect(res.headers.get('content-length')).toBe('0');
+  expect(await res.text()).toBe('');
+});
+
+test.each(['bytes=4-7', 'bytes=12-', 'bytes=99-200'])('a HEAD original ignores range %s and describes the whole file', async (range) => {
+  const response = await fetch(`${origin}/image/p1/download/original`, { method: 'HEAD', headers: { Range: range } });
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-range')).toBeNull();
+  expect(response.headers.get('content-length')).toBe(String(BODY.length));
+  expect(await response.text()).toBe('');
+});
+
+test.each([
+  ['bytes=-4', 'CDEF', 'bytes 12-15/16'],
+  ['bytes=-99', BODY, 'bytes 0-15/16'],
+  ['bytes=4-99', '456789ABCDEF', 'bytes 4-15/16'],
+  ['bytes = 4-7', '4567', 'bytes 4-7/16'],
+])('an original download preserves range %s', async (range, expected, contentRange) => {
+  const response = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: range } });
+  expect(response.status).toBe(206);
+  expect(response.headers.get('content-range')).toBe(contentRange);
+  expect(response.headers.get('content-length')).toBe(String(expected.length));
+  expect(await response.text()).toBe(expected);
+});
+
+test.each(['bytes=5-3', 'bytes=foo', 'items=1-2', 'bytes=0-1,3-4'])('an original download ignores invalid or multiple range %s', async (range) => {
+  const response = await fetch(`${origin}/image/p1/download/original`, { headers: { Range: range } });
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-range')).toBeNull();
+  expect(response.headers.get('content-length')).toBe(String(BODY.length));
+  expect(await response.text()).toBe(BODY);
 });

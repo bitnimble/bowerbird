@@ -14,6 +14,7 @@ import { drainMaterialisations, unsettled } from './materialise';
 import { autoTransfersOriginals, pairedPeers, reachablePeers, recordPeerOutcome, syncsOriginals } from './pairing';
 import { addReplica, browseRemote, pullFromRemote, pushToRemote } from './remote';
 import type { PullResult } from './session';
+import { LibraryActivity } from '../activity/library_activity';
 
 // What drives replication on this machine (docs/replication.md §6.4, §9): birth a
 // replica, and run sessions against the peers it can dial. The catalogue
@@ -55,6 +56,7 @@ export class ReplicationRunner {
     private readonly replicated: (libraryId: string) => void,
     /** Queues the originals one side holds that the other lacks, answering how many. */
     private readonly transferOriginals: (libraryId: string, peerId: string, direction: TransferDirection) => Promise<number>,
+    private readonly activity = new LibraryActivity(),
   ) {}
 
   /** §9.1: what a peer is offering, which registers nothing on either side. */
@@ -106,6 +108,7 @@ export class ReplicationRunner {
   }
 
   async replicate(libraryId: string): Promise<ReplicateResult> {
+    const finish = this.activity.begin(libraryId, 'syncing');
     try {
       const { applied, peers, reached } = await this.session(libraryId);
       if (autoTransfersOriginals(this.db, libraryId)) {
@@ -113,6 +116,7 @@ export class ReplicationRunner {
       }
       return { applied, peers };
     } finally {
+      finish();
       // Whatever the session managed, including nothing: an outcome is recorded
       // against each peer before anything here can throw, so a run that gave up
       // part-way is exactly the one with something to say. After the originals are
@@ -253,7 +257,7 @@ export class ReplicationRunner {
   async materialise(libraryId: string): Promise<number> {
     const library = this.libraries.getById(libraryId);
     if (library == null) return 0;
-    return drainMaterialisations(this.db, library, this.locations);
+    return this.activity.track(libraryId, 'syncing', 'materialise', () => drainMaterialisations(this.db, library, this.locations));
   }
 
   /** What the drain could not make, which a scan has to leave alone (§7.4). */

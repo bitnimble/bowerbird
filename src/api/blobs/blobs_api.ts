@@ -18,7 +18,7 @@ import {
   TransfersQuerySchema,
   TransfersSchema,
 } from '../../schemas/blobs';
-import type { Library } from '../../schemas/libraries';
+import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import type { PhotoTarget } from '../../schemas/photos';
 import { PathSegment, route } from '../../schemas/route';
 import { containsPath, getRenditionPath, originalPathOf } from '../../utils/paths';
@@ -43,6 +43,7 @@ import type { PhotoMetadataRepository } from '../../services/photos/metadata/pho
 import type { BasicPhoto, PhotoPathsRepository } from '../../services/photos/paths/photo_paths_repository';
 import type { PhotoProcessingRepository } from '../../services/photos/renditions/photo_processing_repository';
 import type { LibrariesRepository } from '../../services/libraries/libraries_repository';
+import { LibraryActivity } from '../../services/activity/library_activity';
 
 // Originals moving between peers (docs/replication.md §7): the byte-serving
 // half a remote peer calls, and the queue actions the UI calls. Mounted under
@@ -72,6 +73,7 @@ export class BlobsApi {
     },
     /** What renders a copy a peer asks for (§7.9). Null serves only what is already on disk. */
     private readonly renditions: Pick<PhotoRenditionService, 'buildForPeer' | 'embeddedJpegForPeer'> | null = null,
+    private readonly activity = new LibraryActivity(),
   ) {
     const app = new Hono();
 
@@ -140,7 +142,7 @@ export class BlobsApi {
     const file = Bun.file(abs);
     if (!(await file.exists())) throw new AppError('NOT_FOUND', `original not on disk: ${photo.id}`);
     const size = file.size;
-    const offset = rangeOffset(c.req.header('range'));
+    const offset = rangeOffset(c.req.method === 'GET' ? c.req.header('range') : undefined);
     if (offset > size) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${size}-byte file`);
     const headers: Record<string, string> = {
       'Content-Type': 'application/octet-stream',
@@ -149,14 +151,17 @@ export class BlobsApi {
       ...(offset > 0 ? { 'Content-Range': `bytes ${offset}-${size - 1}/${size}` } : {}),
     };
     const status = offset > 0 ? 206 : 200;
+    if (c.req.method === 'HEAD') return new Response(null, { status, headers });
     if (this.photoMetadata.contentHashOf(photo.id) != null) {
-      return new Response(offset > 0 ? file.slice(offset) : file, { status, headers });
+      return this.activity.response(library.id, 'sending', photo.id,
+        new Response(offset > 0 ? file.slice(offset) : file, { status, headers }));
     }
     // The photo's first transfer: hashed while streaming, off the read this
     // response is already paying for, and recorded when the last byte has gone
     // (§7.1). A resumed first transfer still reads from zero, so the hash always
     // covers the whole file.
-    return new Response(this.hashingBody(file, offset, photo, library), { status, headers });
+    return this.activity.response(library.id, 'sending', photo.id,
+      new Response(this.hashingBody(file, offset, photo, library), { status, headers }));
   }
 
   private hashingBody(file: ReturnType<typeof Bun.file>, offset: number, photo: BasicPhoto, library: Library): ReadableStream<Uint8Array> {
@@ -205,7 +210,7 @@ export class BlobsApi {
       throw new AppError('NOT_FOUND', `no current ${kind} rendition here for ${photo.id}`);
     }
     const size = file.size;
-    const offset = rangeOffset(c.req.header('range'));
+    const offset = rangeOffset(c.req.method === 'GET' ? c.req.header('range') : undefined);
     if (offset > size) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${size}-byte file`);
     const headers: Record<string, string> = {
       'Content-Type': RENDITION_CONTENT_TYPE,
@@ -213,13 +218,15 @@ export class BlobsApi {
       'Accept-Ranges': 'bytes',
       // Always over the whole file, whatever the range: it is what the caller
       // verifies its assembled copy against.
-      'X-Content-Hash': await contentHash(abs),
+      'X-Content-Hash': await this.activity.track(library.id, 'checking_files', photo.id, () => contentHash(abs)),
       // What it was rendered from, so the caller can hold it against an edit this
       // device has not been told about yet.
       ...(builtFrom == null ? {} : { 'X-Rendition-Built-From': builtFrom }),
       ...(offset > 0 ? { 'Content-Range': `bytes ${offset}-${size - 1}/${size}` } : {}),
     };
-    return new Response(offset > 0 ? file.slice(offset) : file, { status: offset > 0 ? 206 : 200, headers });
+    if (c.req.method === 'HEAD') return new Response(null, { status: offset > 0 ? 206 : 200, headers });
+    return this.activity.response(library.id, 'sending_renditions', photo.id,
+      new Response(offset > 0 ? file.slice(offset) : file, { status: offset > 0 ? 206 : 200, headers }));
   }
 
   private renditionStatus(c: Context): Response {
@@ -239,7 +246,7 @@ export class BlobsApi {
     const found = (await this.renditions?.embeddedJpegForPeer(photo.id, via)) ?? null;
     if (found == null) throw new AppError('NOT_FOUND', `no current camera JPEG here for ${photo.id}`);
     const { bytes: jpeg, builtFrom } = found;
-    const offset = rangeOffset(c.req.header('range'));
+    const offset = rangeOffset(c.req.method === 'GET' ? c.req.header('range') : undefined);
     if (offset > jpeg.length) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${jpeg.length}-byte file`);
     const headers: Record<string, string> = {
       'Content-Type': 'image/jpeg',
@@ -249,7 +256,9 @@ export class BlobsApi {
       ...(builtFrom == null ? {} : { 'X-Rendition-Built-From': builtFrom }),
       ...(offset > 0 ? { 'Content-Range': `bytes ${offset}-${jpeg.length - 1}/${jpeg.length}` } : {}),
     };
-    return new Response(jpeg.subarray(offset), { status: offset > 0 ? 206 : 200, headers });
+    if (c.req.method === 'HEAD') return new Response(null, { status: offset > 0 ? 206 : 200, headers });
+    return this.activity.response(photo.library_id, 'sending_renditions', photo.id,
+      new Response(jpeg.subarray(offset), { status: offset > 0 ? 206 : 200, headers }));
   }
 
   private async serveHash(c: Context): Promise<Response> {
@@ -267,7 +276,7 @@ export class BlobsApi {
       // is refused for not matching it.
       throw new AppError('NOT_FOUND', `no settled original on disk: ${photo.id}`);
     }
-    const computed = await contentHash(abs);
+    const computed = await this.activity.track(library.id, 'checking_files', photo.id, () => contentHash(abs));
     this.photoMetadata.setContentHash(photo.id, computed);
     this.locations.record(library.id, photo.id);
     return c.json(respond(BlobHashResponseSchema, { content_hash: computed }));
@@ -286,7 +295,10 @@ export class BlobsApi {
     if (this.transfers.isEvicting(library.id, photo.id) || !existsSync(abs)) {
       return c.json(respond(BlobVerifyResponseSchema, { held: false }));
     }
-    return c.json(respond(BlobVerifyResponseSchema, { held: true, content_hash: await contentHash(abs) }));
+    return c.json(respond(BlobVerifyResponseSchema, {
+      held: true,
+      content_hash: await this.activity.track(library.id, 'checking_files', photo.id, () => contentHash(abs)),
+    }));
   }
 
   private stageStatus(c: Context): Response {
@@ -323,24 +335,30 @@ export class BlobsApi {
     const { offset } = BlobAppendQuerySchema.parse(c.req.query());
     const body = c.req.raw.body;
     if (body == null) throw new AppError('VALIDATION_ERROR', 'no bytes in the request');
-    const staged = await appendToStage(stagePath(library, photo.id), offset, body);
+    const staged = await this.activity.track(library.id, 'receiving', photo.id,
+      () => appendToStage(stagePath(library, photo.id), offset, body));
     return c.json(respond(BlobAppendResponseSchema, { staged }));
   }
 
   private async commit(c: Context): Promise<Response> {
     const { photo, library } = this.acceptingOriginals(c);
     const { content_hash } = BlobCommitRequestSchema.parse(await c.req.json());
-    const stage = stagePath(library, photo.id);
-    if (!existsSync(stage)) throw new AppError('VALIDATION_ERROR', `nothing staged for ${photo.id}`);
+    const finish = this.activity.begin(library.id, 'receiving', photo.id);
+    try {
+      const stage = stagePath(library, photo.id);
+      if (!existsSync(stage)) throw new AppError('VALIDATION_ERROR', `nothing staged for ${photo.id}`);
 
-    const recorded = this.photoMetadata.contentHashOf(photo.id);
-    const computed = await contentHash(stage);
-    if (computed !== content_hash || (recorded != null && computed !== recorded)) {
-      await deleteStagedBlob(stagingDir(library), stage);
-      throw new AppError('VALIDATION_ERROR', `discarded staged ${photo.id}: bytes hash ${computed}, expected ${recorded ?? content_hash}`);
+      const recorded = this.photoMetadata.contentHashOf(photo.id);
+      const computed = await contentHash(stage);
+      if (computed !== content_hash || (recorded != null && computed !== recorded)) {
+        await deleteStagedBlob(stagingDir(library), stage);
+        throw new AppError('VALIDATION_ERROR', `discarded staged ${photo.id}: bytes hash ${computed}, expected ${recorded ?? content_hash}`);
+      }
+      await acceptVerifiedBlob(this.photoPaths, this.photoMetadata, this.locations, library, photo.id, stage, this.build);
+      return c.body(null, 204);
+    } finally {
+      finish();
     }
-    await acceptVerifiedBlob(this.photoPaths, this.photoMetadata, this.locations, library, photo.id, stage, this.build);
-    return c.body(null, 204);
   }
 
   private assertKeepsOriginals(library: Library): void {
@@ -359,13 +377,13 @@ export class BlobsApi {
     if (photoId == null) throw new AppError('NOT_FOUND', 'photo not found');
     const photo = this.photoPaths.getBasicById(photoId);
     if (photo == null) throw new AppError('NOT_FOUND', `photo not found: ${photoId}`);
-    const library = this.libraries.getById(photo.library_id);
+    const library = this.libraries.getConfiguration(photo.library_id);
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${photo.library_id}`);
     return { photo, library };
   }
 
   private library(libraryId: string): Library {
-    const library = this.libraries.getById(libraryId);
+    const library = this.libraries.getConfiguration(libraryId);
     if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
     return library;
   }
