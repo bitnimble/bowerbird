@@ -7,5 +7,7 @@ export const FormatStrings = {
   minutes: (minutes: number) => `${minutes} min`,
   hours: (hours: number) => `${hours} h`,
   megabytes: (megabytes: string) => `${megabytes} MB`,
+  gigabytes: (gigabytes: string) => `${gigabytes} GB`,
+  terabytes: (terabytes: string) => `${terabytes} TB`,
   kilobytes: (kilobytes: number) => `${kilobytes} KB`,
 };

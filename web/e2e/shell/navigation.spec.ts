@@ -11,6 +11,32 @@ test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, SHELL_PHOTOS_DIR);
 });
 
+test('System settings shows persistent disk usage in Maintenance', async ({ page }) => {
+  await page.goto(route(PathSegment.settings(), 'system'));
+  await expect(page.getByText('Maintenance', { exact: true })).toBeVisible();
+  const usage = page.getByRole('status', { name: 'Bowerbird disk usage' });
+  await expect(usage).toHaveAttribute('aria-busy', 'false');
+  await expect(usage).toHaveText(/^\d+(?:\.\d+)? (?:KB|MB|GB|TB)$/);
+  await expect(page.getByText('Excludes your originals', { exact: true })).toBeVisible();
+});
+
+test('disk usage failure stays in the status region and can be retried', async ({ page }) => {
+  let fail = true;
+  await page.route('**/api/settings/storage-usage', async (request) => {
+    if (fail) await request.fulfill({ status: 500, json: {} });
+    else await request.continue();
+  });
+  await page.goto(route(PathSegment.settings(), 'system'));
+  await expect(page.getByText("We couldn't measure disk usage. Try again.", { exact: true })).toBeVisible();
+  const usage = page.getByRole('status', { name: 'Bowerbird disk usage' });
+  await expect(usage).toHaveText("We couldn't measure disk usage. Try again.");
+  await expect(usage).toHaveAttribute('aria-busy', 'false');
+
+  fail = false;
+  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(usage).toHaveText(/^\d+(?:\.\d+)? (?:KB|MB|GB|TB)$/);
+});
+
 test('a settings tab is a link, and survives a reload and the back button', async ({ page }) => {
   await page.goto(route(PathSegment.settings(), 'advanced'));
   await expect(page.getByLabel('Colour fringing removal')).toBeVisible();

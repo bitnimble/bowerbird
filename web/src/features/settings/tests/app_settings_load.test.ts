@@ -33,3 +33,38 @@ test('loading holds until the settings land', async () => {
   expect(store.settings).toEqual(DEFAULT_SETTINGS);
   expect(store.loading).toBe(false);
 });
+
+test('disk usage loads once while pending and refreshes on the next visit', async () => {
+  let land: (usage: { bytes: number }) => void = () => {};
+  let requests = 0;
+  settingsApi.storageUsage = () => {
+    requests++;
+    return new Promise((resolve) => (land = resolve));
+  };
+  const { store, presenter } = build();
+  const first = presenter.loadStorageUsage();
+  const concurrent = presenter.loadStorageUsage();
+  expect(store.storageUsage).toEqual({ kind: 'loading' });
+  expect(requests).toBe(1);
+  land({ bytes: 1536 });
+  await Promise.all([first, concurrent]);
+  expect(store.storageUsage).toEqual({ kind: 'ready', bytes: 1536 });
+
+  const refreshed = presenter.loadStorageUsage();
+  expect(store.storageUsage).toEqual({ kind: 'loading' });
+  expect(requests).toBe(2);
+  land({ bytes: 2048 });
+  await refreshed;
+  expect(store.storageUsage).toEqual({ kind: 'ready', bytes: 2048 });
+});
+
+test('disk usage failure can be retried without showing zero', async () => {
+  settingsApi.storageUsage = () => Promise.reject(new Error('unreadable'));
+  const { store, presenter } = build();
+  await presenter.loadStorageUsage();
+  expect(store.storageUsage).toEqual({ kind: 'failed' });
+
+  settingsApi.storageUsage = () => Promise.resolve({ bytes: 4096 });
+  await presenter.loadStorageUsage();
+  expect(store.storageUsage).toEqual({ kind: 'ready', bytes: 4096 });
+});

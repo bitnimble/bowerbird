@@ -3,12 +3,13 @@ import { RenderTimingSchema, RenderTimingsSchema, RenderedRenditionSchema, type 
 import { DenoiserSchema, type Denoiser } from '../../schemas/photo_edits';
 import { PathSegment, route } from '../../schemas/route';
 import { DEFAULT_SETTINGS, SettingsSchema, UpdateSettingsRequestSchema } from '../../schemas/settings';
+import { StorageUsageSchema } from '../../schemas/storage_usage';
+import type { StorageUsageService } from '../../services/maintenance/storage_usage_service';
 import type { RenderTimingsFile } from '../../services/processing/renditions/render_timings_file';
 import type { SettingsRepository } from '../../services/settings/settings_repository';
 import { takeAsLongAsItTakes } from '../long_requests';
 import { respond } from '../respond';
 
-// No service layer: these are stored preferences with nothing to orchestrate.
 export class SettingsApi {
   readonly routes: Hono;
 
@@ -17,6 +18,7 @@ export class SettingsApi {
     // What a render costs here, which belongs to the machine rather than to any library (§10.1).
     private readonly timings: RenderTimingsFile,
     private readonly benchmarkRender: (rendition: RenderedRendition, denoiser: Denoiser) => Promise<RenderTiming>,
+    private readonly storageUsage: StorageUsageService,
   ) {
     const app = new Hono();
 
@@ -28,6 +30,11 @@ export class SettingsApi {
     app.get(route(PathSegment.defaults()), (c) => c.json(respond(SettingsSchema, DEFAULT_SETTINGS)));
 
     app.get(route(PathSegment.renderTimings()), (c) => c.json(respond(RenderTimingsSchema, this.timings.read())));
+
+    app.get(route(PathSegment.storageUsage()), async (c) => {
+      takeAsLongAsItTakes(c);
+      return c.json(respond(StorageUsageSchema, await this.storageUsage.measure()));
+    });
 
     // Several renders of one photograph, which on a `max` is minutes - well past Bun's idle
     // ceiling, so this asks for the whole of it as a first scan does.

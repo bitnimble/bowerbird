@@ -61,7 +61,7 @@ type GithubRelease = z.infer<typeof GithubReleaseSchema>;
  * there is nothing to install a payload, so the reader is pointed at the installer or the
  * image instead of being offered a button that could only half work.
  */
-function updatesHome(): string | null {
+export function updatesHome(): string | null {
   const home = process.env.BOWERBIRD_UPDATES;
   if (home == null || home.trim() === '') return null;
   // Absolute or nothing. A relative one resolves against this process's working directory

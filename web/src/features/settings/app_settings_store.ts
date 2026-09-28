@@ -18,6 +18,10 @@ export class AppSettingsStore {
   @observable.ref accessor defaults: Settings | null = null;
   /** True until the first load lands or fails. */
   @observable accessor loading = true;
+  @observable.ref accessor storageUsage:
+    | { kind: 'loading' }
+    | { kind: 'failed' }
+    | { kind: 'ready'; bytes: number } = { kind: 'loading' };
   // What a render was measured to cost on the machine the server is on (§10.1). Empty is nothing
   // measured, which is the panel quoting estimates instead.
   @observable.ref accessor renderTimings: RenderTimings = {};

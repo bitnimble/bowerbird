@@ -19,6 +19,10 @@ export function durationLabel(seconds: number): string {
 }
 
 export function fileSizeLabel(bytes: number): string {
+  const tb = bytes / (1024 ** 4);
+  if (tb >= 1) return FormatStrings.terabytes(tb.toFixed(1));
+  const gb = bytes / (1024 ** 3);
+  if (gb >= 1) return FormatStrings.gigabytes(gb.toFixed(1));
   const mb = bytes / (1024 * 1024);
   return mb >= 1 ? FormatStrings.megabytes(mb.toFixed(1)) : FormatStrings.kilobytes(Math.round(bytes / 1024));
 }
