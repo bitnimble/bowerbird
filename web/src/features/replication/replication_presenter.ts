@@ -3,7 +3,7 @@ import { type EvictResult, type Transfer } from '../../../../src/schemas/blobs';
 import { type EditConflict } from '../../../../src/schemas/photo_edits';
 import { type PhotoTarget } from '../../../../src/schemas/photos';
 import type { RequestActivity } from '../../../../src/schemas/request_activity';
-import { type AllPeersResponse, type BrowsedRemote, type PeersResponse } from '../../../../src/schemas/replication';
+import { type AddReplicaRequest, type AllPeersResponse, type BrowsedRemote, type PeersResponse } from '../../../../src/schemas/replication';
 import { blobsApi } from '../../api/blobs';
 import { photoEditsApi } from '../../api/photo_edits';
 import { replicationApi } from '../../api/replication';
@@ -192,10 +192,10 @@ export class ReplicationPresenter {
    * Pairs with one of them and takes its catalogue, which is the whole add (§9.1). A replica that
    * keeps originals has them queued by the server once the catalogue lands.
    */
-  async addReplica(address: string, libraryId: string, rootPath: string, syncOriginals: boolean): Promise<boolean> {
+  async addReplica(request: AddReplicaRequest): Promise<boolean> {
     this.clearError();
     try {
-      const replica = await replicationApi.addReplica(address, libraryId, rootPath, syncOriginals);
+      const replica = await replicationApi.addReplica(request);
       this.toasts.show(ReplicationPresenterStrings.syncedLibraryAdded(replica.applied));
       await this.libraries.load();
       await this.loadPeers(replica.library_id);

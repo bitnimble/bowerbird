@@ -14,7 +14,6 @@ export const AddReplicaStrings = {
   noLibraries: () => 'No libraries on that device',
   photoCount: (count: string, isOne: boolean) => `${count} ${isOne ? 'photo' : 'photos'}`,
   readOnly: () => ' · read-only, sync unavailable',
-  alreadySynced: () => ' · already synced with another device',
   /** The wizard's previous step, which is not the way out of a page. */
   back: () => 'Back',
 

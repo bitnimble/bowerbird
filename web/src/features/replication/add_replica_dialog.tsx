@@ -49,6 +49,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
   const [picked, setPicked] = useState<RemoteLibrary | null>(null);
   const [path, setPath] = useState('');
   const [keepOriginals, setKeepOriginals] = useState(true);
+  const [autoTransferOriginals, setAutoTransferOriginals] = useState(true);
   const [busy, setBusy] = useState(false);
 
   // This dialog is always mounted and only toggled open, so nothing here unmounts
@@ -64,6 +65,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     setRemote(null);
     setPicked(null);
     setKeepOriginals(true);
+    setAutoTransferOriginals(true);
     setBusy(false);
     const next = newBrowser();
     setBrowser(next);
@@ -87,7 +89,13 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     if (picked == null) return;
     const mine = opening.current;
     setBusy(true);
-    const done = await replication.addReplica(address.trim(), picked.id, root, keepOriginals);
+    const done = await replication.addReplica({
+      address: address.trim(),
+      library_id: picked.id,
+      root_path: root,
+      sync_originals: keepOriginals,
+      auto_transfer_originals: autoTransferOriginals,
+    });
     if (mine !== opening.current) return;
     setBusy(false);
     if (done) onOpenChange(false);
@@ -159,7 +167,6 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                   <Text variant="muted" as="span">
                     {AddReplicaStrings.photoCount(candidate.photo_count.toLocaleString(), candidate.photo_count === 1)}
                     {candidate.read_only && AddReplicaStrings.readOnly()}
-                    {candidate.replicating && !candidate.read_only && AddReplicaStrings.alreadySynced()}
                   </Text>
                 </Row>
               ))}
@@ -212,6 +219,16 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
               <Text variant="mono" as="p">
                 {keepOriginals ? SyncedDevicesStrings.keepsOriginals() : SyncedDevicesStrings.catalogueOnly()}
               </Text>
+              <Row as="label">
+                <input
+                  {...stylex.props(focusRing.ring)}
+                  type="checkbox"
+                  aria-label={SyncedDevicesStrings.autoTransferOriginals()}
+                  checked={autoTransferOriginals}
+                  onChange={(e) => setAutoTransferOriginals(e.currentTarget.checked)}
+                />
+                <Text as="span">{SyncedDevicesStrings.autoTransferOriginals()}</Text>
+              </Row>
             </Field>
 
             {store.linkError != null && <ErrorBanner>{store.linkError}</ErrorBanner>}

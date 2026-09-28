@@ -203,6 +203,7 @@ describe('clone (§9)', () => {
     });
     expect(created.status).toBe(201);
     expect(await created.json()).toMatchObject({ library_id: LIB, peer_id: peerIdOf(origin.db) });
+    expect(autoTransfersOriginals(clone.db, LIB)).toBe(true);
     expect(replicatedState(clone.db)).toBe(replicatedState(origin.db));
 
     // The address pairing recorded is what a later session dials, so "sync now"
@@ -643,11 +644,13 @@ describe('browse, then add (§9.1)', () => {
       library_id: LIB,
       root_path: cloneRoot(),
       sync_originals: false,
+      auto_transfer_originals: false,
     });
     expect(added.status).toBe(201);
     expect(await added.json()).toMatchObject({ library_id: LIB });
     // The body's own field, rather than the default, decides what this keeps.
     expect(syncsOriginals(clone.db, LIB)).toBe(false);
+    expect(autoTransfersOriginals(clone.db, LIB)).toBe(false);
   });
 
   // A replica is created under the remote's library id, verbatim, so deleting one
@@ -745,7 +748,10 @@ describe('browse, then add (§9.1)', () => {
       () => Promise.resolve(0),
     );
 
-    const summary = await runner.add(origin.url, LIB, cloneRoot(), true);
+    const summary = await runner.add({
+      address: origin.url, library_id: LIB, root_path: cloneRoot(),
+      sync_originals: true, auto_transfer_originals: false,
+    });
 
     expect(announced).toEqual([LIB]);
     // The clone ran, rather than dying on a lease its own announcement took.
@@ -779,9 +785,13 @@ describe('browse, then add (§9.1)', () => {
       () => Promise.resolve(0),
     );
 
-    await expect(runner.add(origin.url, LIB, cloneRoot(), true)).rejects.toThrow('already running');
+    await expect(runner.add({
+      address: origin.url, library_id: LIB, root_path: cloneRoot(),
+      sync_originals: true, auto_transfer_originals: true,
+    })).rejects.toThrow('already running');
 
     expect(announced).toEqual([LIB]);
+    expect(autoTransfersOriginals(clone.db, LIB)).toBe(true);
   });
 
   // A listener is somebody else's code, and it runs over a replica that is
@@ -804,7 +814,10 @@ describe('browse, then add (§9.1)', () => {
       () => Promise.resolve(0),
     );
 
-    const summary = await runner.add(origin.url, LIB, cloneRoot(), true);
+    const summary = await runner.add({
+      address: origin.url, library_id: LIB, root_path: cloneRoot(),
+      sync_originals: true, auto_transfer_originals: false,
+    });
 
     expect(summary.library_id).toBe(LIB);
   });
@@ -934,13 +947,36 @@ describe('originals moved by a session', () => {
     );
   }
 
+  it.each([true, false])('exchanges originals once during setup with keep originals %s', async (keepOriginals) => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+    const clone = serve(catalogue());
+    const asked: string[] = [];
+
+    await recordingRunner(clone.db, asked).add({
+      address: origin.url,
+      library_id: LIB,
+      root_path: cloneRoot(),
+      sync_originals: keepOriginals,
+      auto_transfer_originals: true,
+    });
+
+    expect(asked).toEqual([
+      ...(keepOriginals ? [`pull ${LIB} ${peerIdOf(origin.db)}`] : []),
+      `push ${LIB} ${peerIdOf(origin.db)}`,
+    ]);
+  });
+
   it('fetches the originals of a replica that keeps them, from the device it joined', async () => {
     const origin = serve(catalogue());
     seedLibrary(origin.db, 1);
     const clone = serve(catalogue());
     const asked: string[] = [];
 
-    await recordingRunner(clone.db, asked).add(origin.url, LIB, cloneRoot(), true);
+    await recordingRunner(clone.db, asked).add({
+      address: origin.url, library_id: LIB, root_path: cloneRoot(),
+      sync_originals: true, auto_transfer_originals: false,
+    });
 
     expect(asked).toEqual([`pull ${LIB} ${peerIdOf(origin.db)}`]);
   });
@@ -951,7 +987,10 @@ describe('originals moved by a session', () => {
     const clone = serve(catalogue());
     const asked: string[] = [];
 
-    await recordingRunner(clone.db, asked).add(origin.url, LIB, cloneRoot(), false);
+    await recordingRunner(clone.db, asked).add({
+      address: origin.url, library_id: LIB, root_path: cloneRoot(),
+      sync_originals: false, auto_transfer_originals: false,
+    });
 
     expect(asked).toEqual([]);
   });
@@ -962,7 +1001,10 @@ describe('originals moved by a session', () => {
     const clone = serve(catalogue());
     const asked: string[] = [];
     const runner = recordingRunner(clone.db, asked);
-    await runner.add(origin.url, LIB, cloneRoot(), true);
+    await runner.add({
+      address: origin.url, library_id: LIB, root_path: cloneRoot(),
+      sync_originals: true, auto_transfer_originals: false,
+    });
 
     asked.length = 0;
     await runner.replicate(LIB);
@@ -1008,7 +1050,10 @@ describe('originals moved by a session', () => {
         return Promise.resolve(0);
       },
     );
-    await runner.add(origin.url, LIB, cloneRoot(), false);
+    await runner.add({
+      address: origin.url, library_id: LIB, root_path: cloneRoot(),
+      sync_originals: false, auto_transfer_originals: false,
+    });
     setAutoTransfersOriginals(clone.db, LIB, true);
 
     happened.length = 0;

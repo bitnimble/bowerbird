@@ -27,3 +27,29 @@ test('the home page opens the welcome wizard until it is finished', async ({ pag
   await expect(page.getByRole('navigation', { name: 'Sidebar' })).toBeVisible();
   await expect(page).not.toHaveURL(WELCOME);
 });
+
+for (const entry of ['welcome', 'settings'] as const) {
+  test(`${entry} opens shared connect flow with automatic originals enabled`, async ({ page }) => {
+    await setOnboardingComplete(page.request, entry === 'settings');
+    await page.route(`**${route(PathSegment.api(), PathSegment.replication(), PathSegment.replicas(), PathSegment.browse())}`, async (request) => {
+      await request.fulfill({ json: {
+        peer_id: 'peer000000000001',
+        name: 'Desktop',
+        clock_ms: Date.now(),
+        clock_skew_ms: 0,
+        libraries: [{ id: 'library1', name: 'Trip', photo_count: 12, read_only: false, replicating: true }],
+      } });
+    });
+    await page.goto(entry === 'welcome' ? route(PathSegment.welcome()) : route(PathSegment.settings(), 'libraries'));
+    await page.getByRole('button', { name: 'Connect to another Bowerbird' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Connect to another Bowerbird' });
+    await dialog.getByRole('textbox', { name: 'Device address' }).fill('http://desktop:5173');
+    await dialog.getByRole('button', { name: 'Next' }).click();
+    await expect(dialog.getByText('12 photos', { exact: true })).toBeVisible();
+    await dialog.getByRole('radio', { name: 'Trip' }).check();
+    await dialog.getByRole('button', { name: 'Next' }).click();
+
+    await expect(dialog.getByRole('checkbox', { name: 'Keep originals on this device' })).toBeChecked();
+    await expect(dialog.getByRole('checkbox', { name: 'Automatically send and fetch originals' })).toBeChecked();
+  });
+}

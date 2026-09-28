@@ -941,8 +941,11 @@ Production similarly serves the client from bun so one published address answers
 
 On the joining device: **"Connect to another Bowerbird"** is three steps. The address; the list of what
 that device offers; then the folder, which the picker can create, and whether to keep originals
-(§7.10). A replica that keeps them queues a fetch of every original the device it joined holds as
-soon as the catalogue has landed.
+(§7.10) and automatically send and fetch originals. Both options start enabled and are independent.
+Keeping originals controls whether this device receives them, automatic transfer controls whether
+each session exchanges missing originals. The choices are saved when the replica is created,
+before its first session. A replica that keeps originals queues a fetch of every original the
+device it joined holds as soon as the catalogue has landed, including when automatic transfer is disabled.
 
 **Pairing exchanges no credentials** (§11.1); trust comes from the network. Listing libraries
 registers nothing on either side. Pair only on final add, together with cloning.
@@ -973,9 +976,9 @@ and this sentence is the one that belongs in the user docs in bold.
   awaiting-originals counts in both directions, and errors. What is moving - a session, fetches,
   sends, a backup pass - is also said on the library's own status line beside its scan, and
   "Sync library to other devices" is a library job.
-- **"Automatically send and fetch originals"** per library, off by default: every session that
-  reaches a device also queues the originals either side lacks, in each direction the two sides'
-  §7.10 answers allow.
+- **"Automatically send and fetch originals"** per library, enabled by default when connecting
+  to another device. Every session that reaches a device also queues the originals either side
+  lacks, in each direction the two sides' §7.10 answers allow.
 - **Transfer manager**: the persistent queue: per-item progress, pause/resume/cancel, errors.
 - **Conflict page**: candidate cards (§5.3), fetch-to-preview when the original is remote.
 - **Remote badge** names the holding peer ("Original on: Macbook"); opening fetches with

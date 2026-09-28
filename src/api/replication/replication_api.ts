@@ -92,9 +92,9 @@ export class ReplicationApi {
     });
 
     app.post(route(PathSegment.replicas()), async (c) => {
-      const { address, library_id, root_path, sync_originals } = AddReplicaRequestSchema.parse(await c.req.json());
+      const request = AddReplicaRequestSchema.parse(await c.req.json());
       takeAsLongAsItTakes(c);
-      return c.json(respond(ReplicaSummarySchema, await this.runner.add(address, library_id, root_path, sync_originals)), 201);
+      return c.json(respond(ReplicaSummarySchema, await this.runner.add(request)), 201);
     });
 
     // Catalogues replicate on a timer; this is the reader asking for it now.

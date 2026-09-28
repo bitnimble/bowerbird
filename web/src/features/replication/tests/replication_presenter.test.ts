@@ -7,7 +7,7 @@ import { type Transfer } from '../../../../../src/schemas/blobs';
 import type { RequestActivity } from '../../../../../src/schemas/request_activity';
 import { type Library } from '../../../../../src/schemas/libraries';
 import { type EditConflict } from '../../../../../src/schemas/photo_edits';
-import { type PairedPeer, type PeersResponse } from '../../../../../src/schemas/replication';
+import { type AddReplicaRequest, type PairedPeer, type PeersResponse } from '../../../../../src/schemas/replication';
 import { blobsApi } from '../../../api/blobs';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { replicationApi } from '../../../api/replication';
@@ -373,19 +373,22 @@ test('an address that answers nothing says so and adds no library', async () => 
   expect(store.linkError).toContain('Unable to connect');
 });
 
-test('adding one re-reads the library list, since a whole catalogue just arrived', async () => {
+test.each([true, false])('adding one forwards automatic transfers %s and re-reads the library list', async (autoTransferOriginals) => {
   const { presenter, toasts } = harness();
-  const asked: unknown[] = [];
-  replicationApi.addReplica = (address, libraryId, rootPath, syncOriginals) => {
-    asked.push({ address, libraryId, rootPath, syncOriginals });
-    return Promise.resolve({ library_id: libraryId, peer_id: PEER.peer_id, applied: 240 });
+  const asked: AddReplicaRequest[] = [];
+  replicationApi.addReplica = (request) => {
+    asked.push(request);
+    return Promise.resolve({ library_id: request.library_id, peer_id: PEER.peer_id, applied: 240 });
   };
 
-  const added = await presenter.addReplica('http://desktop:5173', 'lib', '/photos/trip', false);
+  const added = await presenter.addReplica({
+    address: 'http://desktop:5173', library_id: 'lib', root_path: '/fixture/trip',
+    sync_originals: false, auto_transfer_originals: autoTransferOriginals,
+  });
 
   expect(added).toBe(true);
   expect(asked).toEqual([
-    { address: 'http://desktop:5173', libraryId: 'lib', rootPath: '/photos/trip', syncOriginals: false },
+    { address: 'http://desktop:5173', library_id: 'lib', root_path: '/fixture/trip', sync_originals: false, auto_transfer_originals: autoTransferOriginals },
   ]);
   expect(toasts[0]).toBe('Synced library added with 240 changes so far.');
 });
@@ -396,7 +399,10 @@ test('an add that failed still re-reads the library list', async () => {
   const { store, presenter, libraryLoads } = harness();
   replicationApi.addReplica = () => Promise.reject(new Error('/photos/trip is not empty'));
 
-  const added = await presenter.addReplica('http://desktop:5173', 'lib', '/photos/trip', true);
+  const added = await presenter.addReplica({
+    address: 'http://desktop:5173', library_id: 'lib', root_path: '/fixture/trip',
+    sync_originals: true, auto_transfer_originals: true,
+  });
 
   expect(added).toBe(false);
   expect(store.linkError).toContain('not empty');

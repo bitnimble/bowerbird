@@ -111,6 +111,7 @@ export function addReplica(
   libraryId: string,
   rootPath: string,
   syncOriginals = true,
+  autoTransferOriginals = false,
 ): Promise<ClonedLibrary> {
   return libraryMutex.run(libraryId, async () => {
     if (db.query('SELECT 1 FROM libraries WHERE id = ?').get(libraryId) != null) {
@@ -175,9 +176,10 @@ export function addReplica(
         // Linked bare, without the genesis walk the server ran when it paired: a
         // clone is born holding nothing, and genesis-stamping its default-valued
         // library row would let those defaults beat the server's real settings.
-        db.query('INSERT INTO replication_libraries (library_id, sync_originals) VALUES (?, ?)').run(
+        db.query('INSERT INTO replication_libraries (library_id, sync_originals, auto_transfer_originals) VALUES (?, ?, ?)').run(
           libraryId,
           syncOriginals ? 1 : 0,
+          autoTransferOriginals ? 1 : 0,
         );
         // With the address, because this is the side that dials: everything this
         // replica ever wants from the server - a session, a photograph's original, a

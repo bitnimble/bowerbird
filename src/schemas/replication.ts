@@ -385,6 +385,7 @@ export const AddReplicaRequestSchema = z.object({
   library_id: IdSchema,
   root_path: z.string().min(1).refine((path) => path.trim() !== ''),
   sync_originals: WantsOriginalsSchema,
+  auto_transfer_originals: z.boolean().default(true),
 });
 export type AddReplicaRequest = z.infer<typeof AddReplicaRequestSchema>;
 

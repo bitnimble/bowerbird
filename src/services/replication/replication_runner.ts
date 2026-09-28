@@ -3,7 +3,7 @@ import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import { newId } from '../../schemas/id';
 import type { TransferDirection } from '../../schemas/blobs';
-import type { BrowsedRemote, ReplicaSummary, ReplicateResult } from '../../schemas/replication';
+import type { AddReplicaRequest, BrowsedRemote, ReplicaSummary, ReplicateResult } from '../../schemas/replication';
 import type { BlobLocations } from '../blobs/blob_locations';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { Library } from '../../schemas/libraries';
@@ -63,11 +63,20 @@ export class ReplicationRunner {
   }
 
   /** §9.1: pair with one of them and take its catalogue. */
-  async add(address: string, libraryId: string, rootPath: string, syncOriginals: boolean): Promise<ReplicaSummary> {
-    const cloned = await addReplica(this.db, trimmed(address), libraryId, rootPath, syncOriginals);
+  async add(request: AddReplicaRequest): Promise<ReplicaSummary> {
+    const cloned = await addReplica(
+      this.db,
+      trimmed(request.address),
+      request.library_id,
+      request.root_path,
+      request.sync_originals,
+      request.auto_transfer_originals,
+    );
     try {
       const result = await this.replicate(cloned.libraryId);
-      if (syncOriginals) await this.queueOriginals(cloned.libraryId, cloned.peer, 'pull');
+      if (request.sync_originals && !request.auto_transfer_originals) {
+        await this.queueOriginals(cloned.libraryId, cloned.peer, 'pull');
+      }
       return { library_id: cloned.libraryId, peer_id: cloned.peer, applied: result.applied };
     } finally {
       // After the clone, not before it: announcing a library starts its first

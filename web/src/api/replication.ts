@@ -1,5 +1,6 @@
 import {
   AddReplicaRequestSchema,
+  type AddReplicaRequest,
   type AllPeersResponse,
   AllPeersResponseSchema,
   type BrowsedRemote,
@@ -68,17 +69,12 @@ export const replicationApi = {
       route(PathSegment.api(), PathSegment.replication(), PathSegment.replicas(), PathSegment.browse()),
       BrowseRemoteRequestSchema.parse({ address }),
     ),
-  addReplica: (address: string, libraryId: string, rootPath: string, syncOriginals: boolean): Promise<ReplicaSummary> =>
+  addReplica: (body: AddReplicaRequest): Promise<ReplicaSummary> =>
     request(
       ReplicaSummarySchema,
       'POST',
       route(PathSegment.api(), PathSegment.replication(), PathSegment.replicas()),
-      AddReplicaRequestSchema.parse({
-        address,
-        library_id: libraryId,
-        root_path: rootPath,
-        sync_originals: syncOriginals,
-      }),
+      AddReplicaRequestSchema.parse(body),
     ),
   replicate: (libraryId: string): Promise<{ applied: number; peers: number }> =>
     request(
