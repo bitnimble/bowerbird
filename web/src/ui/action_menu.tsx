@@ -37,7 +37,7 @@ export function ActionMenu<T extends string>({
         {!iconOnly && <ChevronDown size={ICON} {...stylex.props(buttonStyles.caret)} />}
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="end">
+        <Menu.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="end" sticky>
           <Menu.Popup {...stylex.props(menuStyles.popup)}>
             {heading == null ? items : <Section label={heading}>{items}</Section>}
           </Menu.Popup>

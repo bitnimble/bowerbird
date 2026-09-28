@@ -99,7 +99,7 @@ export const AddLabelMenu = observer(function AddLabelMenu({
         {AddLabelMenuStrings.addLabel()}
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="start">
+        <Popover.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="start" sticky>
           <Popover.Popup {...stylex.props(menuStyles.popup, styles.popup)} aria-label={AddLabelMenuStrings.addLabel()}>
             <div {...stylex.props(styles.search)}>
               <TextField

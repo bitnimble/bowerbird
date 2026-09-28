@@ -5,7 +5,7 @@ import { expect } from '@playwright/test';
 import { test } from '../fixtures';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { PHOTO_NAMES, SHELL_PHOTOS_DIR } from '../fixture_library';
-import { gallery, openLibrary, setViewMode, tiles, useLibrary } from '../helpers';
+import { gallery, gotoLibrary, openLibrary, setViewMode, setViewerRendition, tiles, useLibrary } from '../helpers';
 
 test.beforeAll(async ({ browser }) => {
   await useLibrary(browser, SHELL_PHOTOS_DIR);
@@ -28,6 +28,81 @@ test('a settings tab is a link, and survives a reload and the back button', asyn
   // The bare path is still a link people have, and it opens what it always did.
   await page.goto(route(PathSegment.settings()));
   await expect(page.getByRole('button', { name: 'Add library' })).toBeVisible();
+});
+
+test('dropdowns show every option whenever the menu fits in the viewport', async ({ page }) => {
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 1280, height: 300 },
+    { width: 420, height: 360 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const mode of ['embedded', 'best_available'] as const) {
+      await setViewerRendition(page.request, mode);
+      await page.goto(route(PathSegment.settings(), 'general'));
+      await page.getByRole('combobox', { name: 'Default rendition to show' }).click();
+
+      const popup = page.getByRole('listbox');
+      await expect(popup.getByRole('option')).toHaveCount(6);
+      await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
+      await expect(popup.getByRole('option', { name: 'Embedded JPEG', exact: true })).toBeInViewport({ ratio: 1 });
+      await expect(popup.getByRole('option', { name: 'Best available', exact: true })).toBeInViewport({ ratio: 1 });
+      await page.keyboard.press('Escape');
+    }
+  }
+});
+
+test('action menus use the whole viewport before scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await gotoLibrary(page, SHELL_PHOTOS_DIR);
+  const trigger = page.getByRole('button', { name: 'Grid options', exact: true });
+  await trigger.click();
+  const popup = page.getByRole('menu');
+  await expect(popup).toBeVisible();
+  const height = await popup.evaluate((element) => element.scrollHeight + 20);
+  await page.keyboard.press('Escape');
+
+  await page.setViewportSize({ width: 1280, height });
+  await trigger.click();
+  await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
+  await expect(popup.getByRole('menuitem', { name: 'Select all', exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(popup.getByRole('menuitemcheckbox', { name: 'Expand all stacks', exact: true })).toBeInViewport({ ratio: 1 });
+});
+
+test('filter dropdown panels use the whole viewport before scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 420, height: 1200 });
+  await gotoLibrary(page, SHELL_PHOTOS_DIR);
+  const trigger = page.getByRole('button', { name: 'Filters', exact: true });
+  await trigger.click();
+  const popup = page.getByRole('dialog');
+  await expect(popup).toBeVisible();
+  await expect(popup.getByRole('button', { name: 'Camera body', exact: true })).toBeVisible();
+  const viewport = await popup.evaluate((element) => ({
+    width: Math.ceil(element.getBoundingClientRect().width) + 20,
+    height: element.scrollHeight + 20,
+  }));
+  await page.keyboard.press('Escape');
+
+  await page.setViewportSize(viewport);
+  await trigger.click();
+  await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
+  await expect(popup).toBeInViewport({ ratio: 1 });
+});
+
+test('dropdowns taller than the viewport still scroll and allow selection', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 160 });
+  await setViewerRendition(page.request, 'best_available');
+  await page.goto(route(PathSegment.settings(), 'general'));
+  const trigger = page.getByRole('combobox', { name: 'Default rendition to show' });
+  await trigger.click();
+  const popup = page.getByRole('listbox');
+  await expect.poll(() => popup.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0);
+  await expect(popup).toBeInViewport({ ratio: 1 });
+
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Enter');
+  await expect(popup).toBeHidden();
+  await expect(trigger).toHaveText('Embedded JPEG');
 });
 
 test('the home page lands in a library, and a narrow screen gets the sidebar as a drawer', async ({ page }) => {

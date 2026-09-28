@@ -46,7 +46,13 @@ export function Select<T extends string>({
         )}
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
-        <BaseSelect.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="start">
+        <BaseSelect.Positioner
+          {...stylex.props(menuStyles.positioner)}
+          sideOffset={4}
+          align="start"
+          alignItemWithTrigger={false}
+          sticky
+        >
           <BaseSelect.Popup {...stylex.props(menuStyles.popup)}>
             {options.map((option) => (
               <BaseSelect.Item key={option.value} value={option.value} {...stylex.props(menuStyles.item)}>
