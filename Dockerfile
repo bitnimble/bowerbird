@@ -112,9 +112,6 @@ ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 # root-owned and the app can write neither its database nor a rendition.
 RUN mkdir -p /app/node_modules /app/web/node_modules /config /data && chown -R bun:bun /app /config /data
 
-# The CPU Vulkan driver, through the same getter a machine with no GPU runs. A stage of its own
-# rather than a step in `native`, so `dev` can carry it without building the crate three times.
-#
 # Every getter stage runs over a cache mount of its own, so an edit to a script that busts the
 # layer still finds the tree it pinned there, by recipe, and fetches nothing. The mount is not
 # in the image, so the link into it is swapped for a copy; and a build cancelled mid-fetch leaves
@@ -236,22 +233,6 @@ COPY package.json bun.lock ./
 COPY packages/samsung-frame-art ./packages/samsung-frame-art
 RUN bun install --frozen-lockfile --production
 
-# The pixel library (native/rawshim, DESIGN 10.4), built once per instruction set.
-#
-# Three builds, ~20MB each, because a shared object is a fraction of the toolchain
-# that produces one: compiling on the host at startup was tried and cost 906MB of
-# image to ship 20MB of library. Measured, `x86-64-v4` captures the
-# entire gain a `-C target-cpu=native` build on the host would - the win is AVX-512
-# rather than any microarchitectural scheduling - so there is nothing left for a host
-# compiler to find.
-#
-#   x86-64      the portable baseline; runs anywhere, including the Goldmont
-#               Celerons in low-end NAS boxes, which have no AVX at all
-#   x86-64-v3   AVX2, Haswell and Excavator onwards. ~5% of the grade stage
-#   x86-64-v4   AVX-512. ~26% of the grade stage, ~8% of a rendition job
-#
-# The entrypoint picks between them by running each, so nothing here has to predict
-# what the host supports.
 FROM base AS native
 # The codecs arrive built, from `codecs`; what the crate needs from apt is a linker and
 # libclang-dev, without which bindgen cannot parse their headers.
@@ -275,25 +256,12 @@ COPY --from=slangc /app/native/rawshim/.slangc ./native/rawshim/.slangc
 COPY --from=codecs /app/native/rawshim/.codecs ./native/rawshim/.codecs
 COPY --from=pmrid /app/native/rawshim/.pmrid ./native/rawshim/.pmrid
 COPY --from=environments /app/native/rawshim/.environments ./native/rawshim/.environments
-# One target dir, emptied between levels. Changing target-cpu invalidates every
-# artefact, so a dir per level caches nothing that three passes over one does not -
-# it only holds all three at once, 2.5GB apiece, which a GitHub runner cannot fit.
-#
-# The target is named so that `RUSTFLAGS` reaches the library and not the build scripts:
-# without it cargo compiles those for the same target-cpu and then *runs* them, and a builder
-# whose own CPU is older than the level being asked for dies on `SIGILL` partway up the
-# dependency tree. Which builder a job lands on is nobody's choice, so this is a coin toss
-# rather than a machine to blame.
-RUN set -eu; \
-  for level in x86-64 x86-64-v3 x86-64-v4; do \
-    RUSTFLAGS="-C target-cpu=$level" cargo build --release \
-      --manifest-path native/rawshim/Cargo.toml \
-      --target x86_64-unknown-linux-gnu \
-      --target-dir /build/target; \
-    mkdir -p "/build/$level"; \
-    mv /build/target/x86_64-unknown-linux-gnu/release/librawshim.so "/build/$level/librawshim.so"; \
-    rm -rf /build/target; \
-  done
+RUN RUSTFLAGS="-C target-cpu=x86-64" cargo build --release \
+    --manifest-path native/rawshim/Cargo.toml \
+    --target x86_64-unknown-linux-gnu \
+    --target-dir /build/target \
+  && mv /build/target/x86_64-unknown-linux-gnu/release/librawshim.so /build/librawshim.so \
+  && rm -rf /build/target
 
 # The same crate again as wasm, which is what the editor ticks through in the
 # browser (§0.4: one implementation, and this is it running on the other host).
@@ -500,14 +468,8 @@ ENV DATA_DIR=/data
 ENV BOWERBIRD_PLATFORM=docker-x86_64
 
 COPY --from=deps --chown=bun:bun /app/node_modules ./node_modules
-# The baseline keeps the plain name: it is the fallback the loader ends at, and the
-# only one guaranteed to run.
-COPY --from=native --chown=bun:bun /build/x86-64/librawshim.so ./native/librawshim.so
-COPY --from=native --chown=bun:bun /build/x86-64-v3/librawshim.so ./native/librawshim.v3.so
-COPY --from=native --chown=bun:bun /build/x86-64-v4/librawshim.so ./native/librawshim.v4.so
-# native/ stays writable rather than read-only: the entrypoint symlinks the variant
-# it picked into it on every start.
-COPY --chown=bun:bun native/entrypoint.sh native/verify_shim.ts native/report_gpu.ts ./native/
+COPY --from=native --chown=bun:bun /build/librawshim.so ./native/librawshim.so
+COPY --chown=bun:bun native/entrypoint.sh native/report_gpu.ts ./native/
 RUN chmod +x ./native/entrypoint.sh
 COPY --chown=bun:bun package.json bun.lock tsconfig.json VERSION ./
 COPY --chown=bun:bun src ./src
@@ -535,7 +497,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 # host, so the common case needs no configuration; a host whose owner is not 1000
 # overrides it with `user:` in the compose file.
 USER bun
-# The entrypoint tunes the pixel library and then execs the command. `docker run … <anything>`
-# still works: CMD is still the command.
 ENTRYPOINT ["/app/native/entrypoint.sh"]
 CMD ["bun", "run", "src/index.ts"]

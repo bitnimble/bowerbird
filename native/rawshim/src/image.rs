@@ -152,11 +152,6 @@ pub(crate) fn ratio_tables(knots: &[f64], crop: f64, channels: &Channels) -> [Ve
 
 /// Lanczos3 reduce onto an exact grid, on the host.
 ///
-/// **The callers are the ones with no device to reach for**: a plane a CPU codec has just handed
-/// back, bounded before anything else sees it, and `ffi::bb_selftest`, which probes the vectorised
-/// code in a throwaway process. Everything a fit resamples is `fit_grids.slang`'s, written to this
-/// filter's conventions and pinned against it.
-///
 /// **A warp is not a substitute, and reaching for one here was a real bug.** A bilinear
 /// gather reads two taps per axis, so reducing 6000x4000 to 1280 with it reads four of every
 /// hundred source pixels and aliases the rest into the result: against this reduce it came

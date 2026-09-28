@@ -785,59 +785,9 @@ fn lensfun_geometry(path: &str) -> Option<fit::Geometry> {
     Some(fit::Geometry::Profiled(in_spline_units(knots)))
 }
 
-/// Exercises the pixel paths on a tiny image. 0 if the library works here.
-///
-/// For one specific job: the container entrypoint builds a second copy of this
-/// library with `-C target-cpu=native` and has to decide whether to trust it
-/// before promoting it over the portable one baked into the image. A build tuned
-/// for instructions the host turns out to lack dies with `SIGILL`, which cannot
-/// be caught, so it has to die in a throwaway process rather than inside a worker
-/// halfway through an import.
-///
-/// It therefore has to run the *vectorised* code, not just enter the library: a
-/// symbol returning a constant would load and answer perfectly on a CPU that
-/// faults the moment real pixel work starts. So this reduces a frame, which is the
-/// resample every fit and preview goes through, then builds a blur's taps over the
-/// result and reads a noise level off a histogram of it, which are the float loops a
-/// tuned build compiles differently.
-#[expect(unsafe_code)]
-#[unsafe(no_mangle)]
-pub extern "C" fn bb_selftest() -> i32 {
-    let width = 64;
-    let height = 48;
-    let source = crate::rgb::Rgb {
-        width,
-        height,
-        data: (0..width * height * 3).map(|i| (i % 251) as u8).collect(),
-    };
-    let small = crate::image::resize_to_fit(source.as_ref(), 32);
-    if small.width != 32 || small.data.iter().all(|value| *value == 0) {
-        return -1;
-    }
-    let taps = crate::image::gaussian(0.8, 2);
-    let mut bins = vec![0u32; crate::image::NOISE_BINS];
-    for (tap, value) in taps.iter().cycle().zip(&small.data) {
-        let residual = (f32::from(*value) / 255.0 * tap).min(crate::image::NOISE_MAX);
-        let bin =
-            (residual / crate::image::NOISE_MAX * (crate::image::NOISE_BINS - 1) as f32) as usize;
-        bins[bin] += 1;
-    }
-    let sigma = crate::image::sigma_from(&bins, 1.0);
-    match sigma.is_finite() && taps.iter().sum::<f32>() > 0.0 {
-        true => 0,
-        false => -1,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_selftest_passes_on_the_machine_that_built_it() {
-        // If this can fail here it is worthless as a gate on a tuned build.
-        assert_eq!(bb_selftest(), 0);
-    }
 
     /// The download path end to end: a stored rendition is an AVIF and what goes to the
     /// browser is a JPEG, so this crosses libavif's decoder and the JPEG encoder in one

@@ -149,9 +149,6 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
-          # amd64 only, and the entrypoint is why: the image ships three rawshim
-          # builds picked between by x86 instruction set, and the Rust stage names
-          # those levels. An arm64 build has no target-cpu to give it.
           platforms: linux/amd64
           push: true
           # The web bundle is built inside the image, where the workflow's environment

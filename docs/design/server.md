@@ -399,7 +399,7 @@ them by hand is telling the server something untrue about itself.
 |---|---|---|
 | `BOWERBIRD_UPDATES` | the desktop shell | Where an update is staged, and set only where the app can hand itself to the updater, which is what decides whether an in-place update is offered at all |
 | `BOWERBIRD_PLATFORM` | the Dockerfile | Which release platform this install is, where it cannot be worked out from the kernel - the image runs the same Linux a desktop build does and installs an entirely different file |
-| `BOWERBIRD_NATIVE_LIB` | the shell, the container entrypoint | The pixel library to open, named rather than searched for: a packaged app has no source tree beside it, and the container's is whichever instruction-set variant won the startup probe (§10.4) |
+| `BOWERBIRD_NATIVE_LIB` | the shell, the container entrypoint | The path to the packaged pixel library. The container ships an x86-64 build (§10.4). |
 | `WEB_DIST` | the desktop shell | The web client to serve, which is the page the shell's webview loads from this server. Unset, `./web/dist` where it exists, which is the container's |
 | `BOWERBIRD_API_TOKEN` | the desktop shell | A secret every request must carry, as a bearer token or the cookie the shell's page is signed in with (`?token=` once, then redirected off the address), so nothing else on the machine can drive the library |
 

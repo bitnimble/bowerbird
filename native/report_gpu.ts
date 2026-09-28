@@ -7,10 +7,6 @@
 // GPU. This is the line that tells them apart, before a library is imported rather
 // than after the thumbnails take all night.
 //
-// Its own short-lived process, like `verify_shim.ts` beside it: building a wgpu device
-// is adapter enumeration and shader compilation, and the app will do its own when the
-// first job arrives. Nothing here is shared with it.
-//
 // Never fatal. This reports; it does not gate. A build with no Vulkan driver at all is
 // the one case that really cannot render, and `job::run` says so per job with an error
 // naming what to install.

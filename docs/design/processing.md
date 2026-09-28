@@ -410,24 +410,9 @@ The embedded-preview and header paths (§11.1) stayed on the C API through `bun:
 
 **`opt-level` and LTO are not levers here.** Measured end to end on the rendition job, `opt-level = 2`, `opt-level = 3` and `opt-level = 3` with fat LTO and one codegen unit are indistinguishable - every stage inside noise across two frames. Structural rather than incidental: the expensive work was inside libvips and LibRaw, both precompiled shared libraries no profile of ours reaches and LTO cannot cross into, and this crate's own hot loops (`warp`, `pairs`, `score`, `apply`) already vectorise at `opt-level = 2` and are all in one crate, so there is nothing for LTO to inline across. A pinned `opt-level = 2` was removed for saying nothing; a full rebuild is 0.4s either way. Most of the premise has since moved - the resize, the blur and the JPEG are this crate's dependencies now, not libvips' - so the measurement is due a repeat; each replacement carries its own SIMD kernels rather than relying on the profile to vectorise them, and all are separate crates that LTO still cannot inline across at `codegen-units = 16`, which is the reason to expect the conclusion to hold rather than a reason to assume it.
 
-**Instruction set is a lever, unlike the above.** On a Zen 4 host, medians over three runs:
-
-| `target-cpu` | fit (24MP) | grade (24MP) | job (24MP) | grade (15MP) | job (15MP) |
-|---|---|---|---|---|---|
-| `x86-64` (baseline) | 460ms | 310ms | 1562ms | 303ms | 2516ms |
-| `x86-64-v2` | 451ms | 307ms | 1565ms | 298ms | 2502ms |
-| `x86-64-v3` | 437ms | 296ms | 1530ms | 289ms | 2512ms |
-| `x86-64-v4` | 398ms | 229ms | 1446ms | 217ms | 2418ms |
-| `znver4` | 396ms | 235ms | 1494ms | 225ms | 2436ms |
-| `native` | 402ms | 230ms | 1438ms | 221ms | 2457ms |
-
-**`v4`, `znver4` and `native` are the same number.** The gain is AVX-512 and nothing else - no microarchitectural scheduling on top - so a portable build gets all of it and there is nothing for a host compiler to find. `v2` is noise and is not shipped; `v3` is ~5% and is, being free.
-
-So the image ships one build per instruction set and picks between them at startup. Building on the host was tried first and is the wrong shape by four orders of magnitude: a `.so` is ~750KB, and the toolchain that produces one is 906MB of image (642MB rustup, 264MB build-essential) plus ~7s of every container start. Three variants cost 1.5MB and ~0.9s.
-
-**Chosen by running them, not by reading CPU flags.** `native/entrypoint.sh` tries v4 then v3, each in a throwaway `bun native/verify_shim.ts` process, and symlinks the first that survives to `librawshim.selected.so`; the loader prefers that and ends at the plain `librawshim.so` baseline (§`rawshim.ts`). This is not the obvious design and is the cheaper one: a build using an absent instruction dies with `SIGILL`, which cannot be caught, so it has to die somewhere harmless anyway - and once a probe exists it *is* the feature detection, needing no flag table, no maintenance as levels are added, and no trust in a hypervisor that reports what it does not honour. `bb_selftest` reduces a frame, builds a blur's taps and reads a noise level off a histogram of it rather than returning a constant, because a library that merely loads proves nothing about a CPU that faults once real pixel work starts. `BOWERBIRD_SHIM_VARIANT=baseline|v3|v4` pins one.
-
-Every failure path ends at the baseline, which is what makes the whole arrangement safe to ship: the baseline is plain x86-64 and runs on the Goldmont Celerons in low-end NAS boxes, which have no AVX at all.
+The Docker image ships one `librawshim.so`, built with `-C target-cpu=x86-64`. It runs on
+Goldmont Celerons in low-end NAS boxes, which have no AVX. `native/entrypoint.sh` sets
+`BOWERBIRD_NATIVE_LIB` to the packaged library, reports the GPU adapter and starts the app.
 
 #### What an import costs, by stage
 

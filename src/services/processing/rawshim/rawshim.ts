@@ -25,11 +25,6 @@ const LIB = process.platform === 'darwin' ? 'librawshim.dylib' : process.platfor
 
 // In order of preference, first hit wins.
 const CANDIDATES = [
-  // Where whatever started this server says it put it, which is how both shipped
-  // deployments answer: the desktop shell unpacks the library as a resource, and the
-  // container's entrypoint names the instruction-set variant that won its probe (§10.4).
-  // Neither has a source tree to sit beside, and neither is at a path that can be
-  // written down here - an updated install runs out of a version directory.
   ...(process.env.BOWERBIRD_NATIVE_LIB == null ? [] : [process.env.BOWERBIRD_NATIVE_LIB]),
   ...(process.env.BOWERBIRD_NATIVE_DIR == null ? [] : [path.join(process.env.BOWERBIRD_NATIVE_DIR, LIB)]),
   // Next to the source tree, which is a development build and what a live-mounted
