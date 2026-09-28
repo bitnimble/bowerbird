@@ -22,7 +22,7 @@ plugin({
       exports: { default: await Bun.file(path).text() },
       loader: 'object',
     }));
-    build.onLoad({ filter: /\/(web|landing)\/src\/.*\.tsx?$/ }, async ({ path }) => {
+    build.onLoad({ filter: /[\\/](web|landing)[\\/]src[\\/].*\.tsx?$/ }, async ({ path }) => {
       const source = await Bun.file(path).text();
       // The hook reads nothing off its bundler context.
       const compiled = await transform.call(undefined as never, source, path);

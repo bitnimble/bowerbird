@@ -41,7 +41,7 @@ pub(crate) async fn original_path(photo_id: &str) -> Result<PathBuf, String> {
 
 /// One folder per photo, so opening it again replaces the copy rather than numbering another.
 async fn downloaded(photo_id: &str) -> Result<PathBuf, String> {
-    let folder = crate::export::plain(photo_id).ok_or_else(|| format!("not a photo id: {photo_id}"))?;
+    let folder = crate::export_paths::plain(photo_id).ok_or_else(|| format!("not a photo id: {photo_id}"))?;
     let url = format!("{}/image/{photo_id}/download/original", crate::api::origin());
     let (named, bytes) = fetched(&url).await?;
     let named = named.ok_or_else(|| format!("{url} did not name the file it answered with"))?;
@@ -63,7 +63,7 @@ async fn fetched(url: &str) -> Result<(Option<String>, Vec<u8>), String> {
         .headers()
         .get("content-disposition")
         .and_then(|value| value.to_str().ok())
-        .and_then(crate::export::filename_from);
+        .and_then(crate::export_paths::filename_from);
     let bytes = reply
         .bytes()
         .await

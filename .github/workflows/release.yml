@@ -99,8 +99,25 @@ jobs:
           echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
           echo "building: docker=$(wanted docker && echo yes || echo no) android=$(wanted android && echo yes || echo no) desktop=$desktop"
 
-  docker:
+  platform-tests:
     needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - run: git lfs pull --include="assets/reference_frame.ARW"
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - run: bun install --frozen-lockfile
+      - run: bun install --cwd web --frozen-lockfile
+      - run: bun run test:platform
+
+  docker:
+    needs: [plan, platform-tests]
     if: needs.plan.outputs.docker == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -201,7 +218,7 @@ jobs:
   # The editor's decoder, which every web build imports by path. Wasm, so one build serves
   # every platform, and `build:wasm` in an app job finds it already built from the same sources.
   wasm:
-    needs: plan
+    needs: [plan, platform-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -237,7 +254,7 @@ jobs:
 
   # One row per platform, from `plan`, which is where the rows are written.
   desktop:
-    needs: plan
+    needs: [plan, platform-tests]
     if: needs.plan.outputs.desktop != '[]'
     permissions:
       contents: read
@@ -381,7 +398,7 @@ jobs:
   # names - a build otherwise stops at a sidecar for a triple nothing builds one for. The app
   # points at a hosted library instead, which `lib.rs` already treats as the ordinary case.
   android:
-    needs: plan
+    needs: [plan, platform-tests]
     if: needs.plan.outputs.android == 'true'
     runs-on: ubuntu-22.04
     permissions:
@@ -480,10 +497,10 @@ jobs:
   # so a platform whose build failed is simply absent from it - and an install of that
   # platform is told there is nothing for it rather than handed a 404.
   publish:
-    needs: [plan, docker, desktop, android]
+    needs: [plan, platform-tests, docker, desktop, android]
     # A platform that failed to build should not hold the release back; what it must not
     # do is appear in the manifest, which it cannot, having uploaded nothing.
-    if: ${{ always() && needs.plan.outputs.tag != '' }}
+    if: ${{ always() && needs.platform-tests.result == 'success' && needs.plan.outputs.tag != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

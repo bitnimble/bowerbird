@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../db/driver';
 import type { Hono } from 'hono';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { BlobsApi } from '../../../api/blobs/blobs_api';
@@ -277,7 +277,9 @@ describe('push', () => {
     expect(item.state).toBe('failed');
     expect(item.error).toContain('occupied');
     expect(readFileSync(path.join(b.root, 'ONE.ARW'), 'utf8')).toBe('users own');
-    expect(existsSync(path.join(b.root, 'one.arw'))).toBe(false);
+    const names = readdirSync(b.root);
+    expect(names).toContain('ONE.ARW');
+    expect(names).not.toContain('one.arw');
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(false);
     expect(b.locations.flags(LIB)).toEqual([
       { library_id: LIB, photo_id: 'photo1', target_path: 'one.arw', reason: 'target occupied by ONE.ARW' },

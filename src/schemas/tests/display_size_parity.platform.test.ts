@@ -24,8 +24,8 @@ import type { EditDoc } from '../photo_edits';
 
 const TABLE = join(import.meta.dir, '..', '..', '..', 'test', 'fixtures', 'tables', 'display-size.txt');
 
-test('the page shapes a geometry the way the native host does', () => {
-  const rows = readFileSync(TABLE, 'utf8').trim().split('\n');
+test.each(['\n', '\r\n'])('the page shapes a geometry the way the native host does with %j line endings', (lineEnding) => {
+  const rows = readFileSync(TABLE, 'utf8').replace(/\r?\n/g, lineEnding).trim().split(/\r?\n/);
   expect(rows.length).toBeGreaterThan(0);
 
   for (const row of rows) {

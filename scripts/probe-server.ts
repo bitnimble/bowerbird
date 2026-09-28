@@ -4,9 +4,12 @@
 //
 // `bun run scripts/probe-server.ts <command...>`
 import { spawn } from 'bun';
-import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { LibrarySchema, LibraryScanStatusSchema } from '../src/schemas/libraries';
+import { PhotoListResponseSchema } from '../src/schemas/photos';
+import type { UpdateSettingsRequest } from '../src/schemas/settings';
 
 const root = join(tmpdir(), `bowerbird-probe-${process.pid}`);
 rmSync(root, { recursive: true, force: true });
@@ -46,6 +49,21 @@ async function answered(path: string): Promise<Response | null> {
   }
 }
 
+async function waitForPhoto(libraryId: string, filePath: string): Promise<void> {
+  for (let attempt = 0; attempt < 120; attempt++) {
+    const listed = await fetch(`${origin}/api/libraries/${libraryId}/photos?limit=10`);
+    if (!listed.ok) throw new Error(await listed.text());
+    const photos = PhotoListResponseSchema.parse(await listed.json());
+    if (photos.photos.some((photo) => photo.file_path === filePath)) {
+      const status = await fetch(`${origin}/api/libraries/${libraryId}/sync/status`);
+      if (!status.ok) throw new Error(await status.text());
+      if (LibraryScanStatusSchema.parse(await status.json()).status === 'idle') return;
+    }
+    await Bun.sleep(250);
+  }
+  throw new Error(`the server never catalogued ${filePath} and settled its scan`);
+}
+
 try {
   let up: Response | null = null;
   for (let attempt = 0; attempt < 60 && up == null; attempt++) {
@@ -55,16 +73,23 @@ try {
   if (up == null) throw new Error('the server never answered');
   console.log(`GET /api/libraries -> ${up.status}`);
 
+  const configured = await fetch(`${origin}/api/settings`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ watch_enabled: true, watch_debounce_ms: 150, full_sync_at: '' } satisfies UpdateSettingsRequest),
+  });
+  if (!configured.ok) throw new Error(await configured.text());
+
   // A library exercises the scan, which is where the worker threads and the native
   // library are actually reached from.
   const created = await fetch(`${origin}/api/libraries`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ root_path: join(root, 'photos') }),
+    body: JSON.stringify({ root_path: join(root, 'photos'), auto_stack: false, rendition_source: 'embedded' }),
   });
   console.log(`POST /api/libraries -> ${created.status}`);
   if (!created.ok) throw new Error(await created.text());
-  const library = (await created.json()) as { id: string };
+  const library = LibrarySchema.parse(await created.json());
 
   // Adding a library starts one of its own, so "already running" is the same good
   // news as "started": either way the scan reached its worker threads.
@@ -74,19 +99,14 @@ try {
   console.log(`POST sync -> ${synced.status}${synced.ok ? '' : ' (a scan was already under way)'}`);
   if (!running) throw new Error(body);
 
-  // And the decoder itself, which a scan of an empty folder never reaches: the FFI
-  // is opened lazily, so nothing up to here has proved the native library was even
-  // found. A real RAW read through to a catalogued photograph is the proof.
-  for (let attempt = 0; attempt < 120; attempt++) {
-    const listed = await fetch(`${origin}/api/libraries/${library.id}/photos?limit=1`);
-    const photos = (await listed.json()) as { photos?: unknown[] };
-    if ((photos.photos ?? []).length > 0) {
-      console.log('a RAW was decoded and catalogued: the native library loaded');
-      break;
-    }
-    if (attempt === 119) throw new Error('the scan never catalogued the RAW, so the native library never loaded');
-    await Bun.sleep(250);
-  }
+  await waitForPhoto(library.id, 'probe.arw');
+  console.log('a RAW was decoded and catalogued: the native library loaded');
+
+  const arriving = join(root, 'photos', 'watched.arw.part');
+  copyFileSync(FIXTURE, arriving);
+  renameSync(arriving, join(root, 'photos', 'watched.arw'));
+  await waitForPhoto(library.id, 'watched.arw');
+  console.log('watcher imported watched.arw without a manual scan');
 } finally {
   server.kill();
   rmSync(root, { recursive: true, force: true });

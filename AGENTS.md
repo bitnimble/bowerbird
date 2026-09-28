@@ -278,13 +278,14 @@ this existed. Bare `cargo` still works and still leaves the litter behind.
 
 ## Which suite a test belongs in
 
-Six runners, and the rule is what a claim *needs*, not which layer it happens to live in.
+Seven runners, and the rule is what a claim *needs*, not which layer it happens to live in.
 
 | Runner | Command | For |
 |---|---|---|
 | `cargo test` | `bun run test:native <name>` | The native pipeline: decode, fit, warp, the grade, and the WGSL held against it |
 | `bun test` (root) | `bun run test` | The server and the schemas (`src`, `scripts`) |
 | `bun test` (web) | `bun run --cwd web test` | Everything in `web/src` that is not a browser |
+| Platform tests | `bun run test:platform [path filter]` | OS-sensitive filesystem, paths, network, native addons, shell adapters and updater behaviour, before release builds |
 | `bun test` + jsdom | the web one, via `registerDom()` | React components: what a control does when it is used |
 | `bun test` + the budget | `bun run test:bench` | What a render costs, stage by stage, against `test/fixtures/bench.budget.json` |
 | Playwright | `bun run --cwd web test:e2e` | Only what a real browser or a real GPU can answer |
@@ -428,7 +429,7 @@ Where a rule does still exist twice, a test pins the two together rather than tr
 - `the_draw_places_a_pixel_where_the_gather_does` - the geometry mapping, over every output
   pixel of a set of geometries, `image::Plan::at` against `geometry.slang`.
 - `module-json.json` - the three shapes a tick crosses the worker boundary as, deserialised by
-  `module_json.rs` and rebuilt by `module_json.test.ts`. A field renamed on one side is `missing
+  `module_json.rs` and rebuilt by `module_json.platform.test.ts`. A field renamed on one side is `missing
   field` at the first tick, which is a black stage.
 - `display-size.txt` - what a geometry does to a frame's shape, `hdr::cropped_size` against
   `schemas/display_size.ts`, which the grid lays tiles out with.

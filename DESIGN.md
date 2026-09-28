@@ -91,7 +91,7 @@ bowerbird/
 │   │   ├── libraries/
 │   │   │   ├── libraries_api.ts
 │   │   │   └── tests/
-│   │   │       └── libraries_api.test.ts
+│   │   │       └── libraries_api.platform.test.ts
 │   │   ├── photos/
 │   │   │   ├── photos_api.ts
 │   │   │   └── tests/
@@ -117,7 +117,7 @@ bowerbird/
 │   │   │   ├── libraries_service.ts
 │   │   │   ├── libraries_repository.ts
 │   │   │   └── tests/
-│   │   │       └── libraries_service.test.ts
+│   │   │       └── libraries_service.platform.test.ts
 │   │   ├── photos/                  # a folder per domain, each with its own tests/ (§8.2)
 │   │   │   ├── listing/             # the list/ids/models/days queries, navigation, and the read service
 │   │   │   ├── mutations/           # rating, triage, notes, hiding, and the mutation service
@@ -131,7 +131,7 @@ bowerbird/
 │   │   │   ├── shoots_repository.ts
 │   │   │   ├── folder_rules_repository.ts   # excluded / plain folders (§4.7)
 │   │   │   └── tests/
-│   │   │       └── shoots_service.test.ts
+│   │   │       └── shoots_service.platform.test.ts
 │   │   ├── albums/
 │   │   │   ├── albums_service.ts
 │   │   │   ├── albums_repository.ts

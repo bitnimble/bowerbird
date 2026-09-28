@@ -337,7 +337,7 @@ RUN cd web && bun run build
 # (`bun run release:check`). Nothing in `runtime` reads any of them.
 #
 # The checkout they build, with every platform's optional packages: a cross-built sidecar ships
-# the target's libSQL addon (`build-sidecar.ts`), which a Linux install leaves out.
+# the target's libSQL and Parcel addons (`build-sidecar.ts`), which a Linux install leaves out.
 FROM base AS source
 COPY package.json bun.lock ./
 COPY packages/samsung-frame-art ./packages/samsung-frame-art

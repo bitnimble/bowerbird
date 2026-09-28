@@ -13,7 +13,7 @@
 // landed (`BOWERBIRD_NATIVE_LIB`).
 import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { hostTriple } from './host-triple.ts';
 import { elfClosure, machNames } from './native_closure';
 
@@ -49,7 +49,7 @@ function flag(name: string): string | undefined {
 
 /**
  * What everything here is built for: the shell Tauri looks for on the end of a sidecar's name,
- * the Bun runtime and the libSQL addon that run beside it, and `rawshim` itself.
+ * the Bun runtime and the native addons that run beside it, and `rawshim` itself.
  */
 function targetTriple(): string {
   return flag('target') ?? hostTriple();
@@ -87,41 +87,33 @@ function nativeLibrary(triple: string): string {
   throw new Error(`no ${name} for ${triple} to ship. Run \`bun run build:native\` first.`);
 }
 
-/** What libSQL calls the machine, which is not what Rust calls it. */
-function libsqlPackage(triple: string): string {
-  const named: Record<string, string> = {
-    'x86_64-unknown-linux-gnu': 'linux-x64-gnu',
-    'x86_64-unknown-linux-musl': 'linux-x64-musl',
-    'aarch64-unknown-linux-gnu': 'linux-arm64-gnu',
-    'aarch64-unknown-linux-musl': 'linux-arm64-musl',
-    'armv7-unknown-linux-gnueabihf': 'linux-arm-gnueabihf',
-    'aarch64-apple-darwin': 'darwin-arm64',
-    'x86_64-pc-windows-msvc': 'win32-x64-msvc',
+function nativePackages(triple: string): readonly [string, string] {
+  const named: Record<string, readonly [string, string]> = {
+    'x86_64-unknown-linux-gnu': ['@libsql/linux-x64-gnu', '@parcel/watcher-linux-x64-glibc'],
+    'x86_64-unknown-linux-musl': ['@libsql/linux-x64-musl', '@parcel/watcher-linux-x64-musl'],
+    'aarch64-unknown-linux-gnu': ['@libsql/linux-arm64-gnu', '@parcel/watcher-linux-arm64-glibc'],
+    'aarch64-unknown-linux-musl': ['@libsql/linux-arm64-musl', '@parcel/watcher-linux-arm64-musl'],
+    'armv7-unknown-linux-gnueabihf': ['@libsql/linux-arm-gnueabihf', '@parcel/watcher-linux-arm-glibc'],
+    'aarch64-apple-darwin': ['@libsql/darwin-arm64', '@parcel/watcher-darwin-arm64'],
+    'x86_64-pc-windows-msvc': ['@libsql/win32-x64-msvc', '@parcel/watcher-win32-x64'],
   };
-  const name = named[triple];
-  if (name == null) throw new Error(`no libSQL native package is published for ${triple}`);
-  return `@libsql/${name}`;
+  const names = named[triple];
+  if (names == null) throw new Error(`no native addon packages are configured for ${triple}`);
+  return names;
 }
 
-/**
- * The libSQL addon, under a `node_modules` of the bundle's own.
- *
- * `libsql` reaches its `.node` through a bare `require('@libsql/<target>')` evaluated at runtime,
- * which the bundler cannot follow and therefore cannot inline. Beside the bundle is the only place
- * that resolves once the app is installed - and a build run from inside this repo otherwise appears
- * to work, because resolution walks up into the repo's own `node_modules`.
- */
-function shipTheAddon(triple: string): void {
-  const name = libsqlPackage(triple);
-  const from = join(ROOT, 'node_modules', name);
-  if (!existsSync(from)) {
-    throw new Error(`${name} is not installed, so ${triple} would get a server that cannot open a catalogue. Run \`bun add -d ${name}\`.`);
+function shipTheAddons(triple: string): void {
+  for (const name of nativePackages(triple)) {
+    const from = join(ROOT, 'node_modules', name);
+    if (!existsSync(from)) {
+      throw new Error(`${name} is not installed, so ${triple} cannot ship its server. Install the target's native addon packages first.`);
+    }
+    cpSync(from, join(SERVER, 'node_modules', name), { recursive: true, dereference: true });
   }
-  cpSync(from, join(SERVER, 'node_modules', name), { recursive: true });
 }
 
 /**
- * Every shared library `rawshim` needs, carried by the app rather than found (DESIGN §23.7.1).
+ * Every shared library the native modules need, carried by the app rather than found (DESIGN §23.7.1).
  *
  * The codecs are static everywhere (`get-codecs.ts`), so on Windows and macOS there is nothing to
  * carry: the C and C++ runtimes are the OS's own. Linux's are not - a distribution's libstdc++ is
@@ -129,18 +121,19 @@ function shipTheAddon(triple: string): void {
  */
 function shipTheClosure(triple: string): void {
   if (triple.includes('windows')) return;
+  const libraries = [shippedLibrary(), join(SERVER, 'node_modules', nativePackages(triple)[1], 'watcher.node')];
   // Each arm drives the target's own loader tools: `otool` reads a Mach-O on any machine that has
   // one (LLVM's `llvm-otool` under that name), where `ldd` only reads what this machine can load.
   if (triple.includes('apple')) {
     if (spawnSync('sh', ['-c', 'command -v otool']).status !== 0) {
       throw new Error(`the libraries ${triple} needs are read with otool, which is not on the path`);
     }
-    return askNothingOfMacos();
+    return askNothingOfMacos(libraries);
   }
   if (process.platform !== 'linux') {
     throw new Error(`the libraries ${triple} needs can only be read on ${triple}: assemble that app there`);
   }
-  underOrigin();
+  underOrigin(libraries);
 }
 
 /**
@@ -149,36 +142,39 @@ function shipTheClosure(triple: string): void {
  * `$ORIGIN` is the directory of the object that names it, and a search path does not reach a
  * dependency's own dependencies - so every copy gets one, not just the library the server opens.
  */
-function underOrigin(): void {
-  const shipped = elfClosure(walk('ldd', shippedLibrary())).map((path) => carry(path, NATIVE));
-  const relocated = [shippedLibrary(), ...shipped];
+function underOrigin(libraries: string[]): void {
+  const needed = new Set(libraries.flatMap((library) => elfClosure(walk('ldd', library))));
+  const shipped = [...needed].map((path) => carry(path, NATIVE));
+  const relocated = [...libraries, ...shipped];
   for (const at of relocated) {
     // `DT_RPATH` and not the `DT_RUNPATH` patchelf writes by default: the loader consults a
     // runpath *after* `LD_LIBRARY_PATH`, so an app launched from a shell that names an older
     // libstdc++ - conda, Steam, a `~/.local/lib` - would get that one instead of the copy beside
     // it, which is the failure this carrying exists to prevent.
-    run('patchelf', ['--force-rpath', '--set-rpath', '$ORIGIN', at]);
+    const directory = relative(dirname(at), NATIVE);
+    run('patchelf', ['--force-rpath', '--set-rpath', directory === '' ? '$ORIGIN' : `$ORIGIN/${directory}`, at]);
   }
   for (const at of relocated) refuseStrangers(at, elfClosure(walk('ldd', at)));
   console.log(`closure: ${NATIVE} (${shipped.length} libraries, rpath $ORIGIN)`);
 }
 
 /**
- * macOS, where `rawshim` should ask for nothing but Apple's own libraries, and is refused if it
- * does: a Homebrew library named here links on the build machine and fails to load on a reader's.
+ * macOS, where native modules should ask for nothing but Apple's own libraries, and are refused if they
+ * do: a Homebrew library named here links on the build machine and fails to load on a reader's.
  */
-function askNothingOfMacos(): void {
-  const library = shippedLibrary();
-  const foreign = machNames(walk('otool', library, '-L'), basename(library));
-  if (foreign.length > 0) {
-    throw new Error(`${library} needs ${foreign.join(', ')}, which no reader's Mac has: link it statically`);
+function askNothingOfMacos(libraries: string[]): void {
+  for (const library of libraries) {
+    const foreign = machNames(walk('otool', library, '-L'), basename(library));
+    if (foreign.length > 0) {
+      throw new Error(`${library} needs ${foreign.join(', ')}, which no reader's Mac has: link it statically`);
+    }
+    console.log(`closure: ${library} needs nothing but macOS`);
   }
-  console.log(`closure: ${library} needs nothing but macOS`);
 }
 
 /** Nothing the app opens may come from outside the tree it carries. */
 function refuseStrangers(library: string, named: string[]): void {
-  const strangers = named.filter((path) => !path.startsWith(`${NATIVE}/`));
+  const strangers = named.filter((path) => !resolve(path).startsWith(`${NATIVE}/`));
   if (strangers.length > 0) {
     throw new Error(`${library} still reaches outside what this app carries: ${strangers.join(', ')}`);
   }
@@ -221,8 +217,6 @@ rmSync(RESOURCES, { recursive: true, force: true });
 mkdirSync(SERVER, { recursive: true });
 mkdirSync(NATIVE, { recursive: true });
 
-// `@parcel/watcher` is left out deliberately: it is a native addon that cannot be
-// bundled, and the server is built to be told no and fall back (`watch_backend.ts`).
 // Flat, so a worker is `<dir>/<name>.js` and nothing has to know which folder it
 // came from; `workerEntry` builds exactly that path.
 run('bun', [
@@ -235,7 +229,7 @@ run('bun', [
   '[name].[ext]',
   '--splitting',
   '--external',
-  '@parcel/watcher',
+  '*.node',
   '--external',
   'samsung-frame-art',
   ...ENTRIES,
@@ -247,7 +241,7 @@ run('bun', [
 // layouts. Without this the desktop server starts, finds no migrations folder and cannot open a
 // catalogue at all.
 cpSync(join(ROOT, 'src', 'db', 'migrations'), join(SERVER, 'migrations'), { recursive: true });
-shipTheAddon(triple);
+shipTheAddons(triple);
 // LGPL: shipped as its own module rather than bundled, so a recipient can replace it (THIRD_PARTY.md).
 cpSync(join(ROOT, 'node_modules', 'samsung-frame-art'), join(SERVER, 'node_modules', 'samsung-frame-art'), {
   recursive: true,
@@ -286,4 +280,4 @@ console.log(`sidecar: ${sidecar} (the Bun runtime, from ${runtime})`);
 console.log(`server:  ${join(SERVER, 'index.js')}`);
 console.log(`native:  ${shippedLibrary()} (from ${library})`);
 console.log(`schema:  ${join(SERVER, 'migrations')}`);
-console.log(`libsql:  ${join(SERVER, 'node_modules', libsqlPackage(triple))}`);
+for (const name of nativePackages(triple)) console.log(`addon:   ${join(SERVER, 'node_modules', name)}`);

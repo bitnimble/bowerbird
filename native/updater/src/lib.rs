@@ -599,9 +599,10 @@ fn log(home: &Path, line: &str) {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -653,6 +654,7 @@ mod tests {
     }
 
     /// A process that has already exited and been reaped, so waiting on it returns at once.
+    #[cfg(unix)]
     fn gone() -> u32 {
         let mut child = Command::new("true").spawn().unwrap();
         let pid = child.id();
@@ -661,11 +663,13 @@ mod tests {
     }
 
     /// An app that records which version started and exits with `code`.
+    #[cfg(unix)]
     fn app(plan: &Plan, version: &str, code: i32) -> String {
         let log = plan.home.join("starts");
         format!("#!/bin/sh\necho {version} >> '{}'\nexit {code}\n", log.display())
     }
 
+    #[cfg(unix)]
     fn executable(path: &Path) {
         fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -689,6 +693,7 @@ mod tests {
         assert_eq!(entries(&plan.install), ["Bowerbird", "added.dll", "resources", "uninstall"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_swap_that_fails_part_way_puts_back_what_it_had_swapped() {
         let dir = scratch();
@@ -725,6 +730,7 @@ mod tests {
         assert!(marked(&plan.install, PREVIOUS).unwrap().is_empty());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_restore_that_fails_on_one_entry_leaves_it_live_and_restores_the_rest() {
         let dir = scratch();
@@ -757,6 +763,7 @@ mod tests {
         assert_eq!(read(plan.install.join("Bowerbird")), "old shell");
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_update_that_starts_is_kept_and_its_leftovers_cleared() {
         let dir = scratch();
@@ -774,6 +781,7 @@ mod tests {
         assert!(!plan.home.join("staged.version").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_version_that_fails_on_startup_is_swapped_back_out_and_the_old_one_started() {
         let dir = scratch();
@@ -796,6 +804,23 @@ mod tests {
         assert_eq!(entries(&plan.install), ["Bowerbird"]);
     }
 
+    #[test]
+    fn a_payload_tree_is_copied_with_its_nested_files() {
+        let dir = scratch();
+        let from = dir.join("from");
+        fs::create_dir_all(from.join("resources/nested")).unwrap();
+        fs::write(from.join("app"), "binary").unwrap();
+        fs::write(from.join("resources/nested/server.js"), "server").unwrap();
+
+        copy_tree(&from, &dir.join("to")).unwrap();
+
+        assert_eq!(read(dir.join("to/app")), "binary");
+        assert_eq!(read(dir.join("to/resources/nested/server.js")), "server");
+        assert_eq!(read(from.join("app")), "binary");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
     #[test]
     fn a_payload_on_another_volume_is_copied_with_its_links_and_modes() {
         let dir = scratch();

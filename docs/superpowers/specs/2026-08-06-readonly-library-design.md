@@ -323,8 +323,8 @@ The Bin does not move: originals belong beside the photographs they came from
 - **The data-directory rule in `isPathAllowed`** (`scope.ts:69-71`), plus
   `LibraryScope.dataPath` *and* `resolvedDataPath`, and `libraryScope()`'s `dataPath`
   parameter (`scope.ts:24-37`). Callers to update: `sync_service.ts:142`,
-  `shoots_service.ts:269`, and the fixtures in `utils/tests/files.test.ts:50`,
-  `utils/tests/scope.test.ts:12`, `test/integration/watcher_ignores.integration.test.ts:42`.
+  `shoots_service.ts:269`, and the fixtures in `utils/tests/files.platform.test.ts:50`,
+  `utils/tests/scope.platform.test.ts:12`, `test/integration/watcher_ignores.platform.test.ts:42`.
   A legacy `<root>/.bowerbird` is still skipped by the dotfolder rule.
 - **`scopeKey`'s `dataPath` component** (`library_watcher.ts:349`) - a compile error
   otherwise - and the watcher's `getDataPath` ignore entry (`:214`). `scopeKey` gains
@@ -894,10 +894,10 @@ repositories, `:128-136`), wired in `src/index.ts`.
 
 **What this deletes:** `sync_lock.ts`'s contents, `SYNC_LOCK_NAME` and
 `deleteSyncLockSync` (`utils/deletions.ts:20,64-70`), the watcher's ignore entry
-(`library_watcher.ts:216`), `utils/tests/deletions.test.ts:86-97`, all of
+(`library_watcher.ts:216`), `utils/tests/deletions.platform.test.ts:86-97`, all of
 `services/sync/tests/sync_lock.test.ts` (its PID and stale-file tests are about a
 mechanism that stops existing), and
-`test/integration/watcher_ignores.integration.test.ts:108-110`. It also removes one
+`test/integration/watcher_ignores.platform.test.ts:108-110`. It also removes one
 write from the library root for every library, which is why a read-only library needs
 no lock special case.
 

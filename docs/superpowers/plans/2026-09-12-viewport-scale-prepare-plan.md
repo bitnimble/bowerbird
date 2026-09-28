@@ -202,8 +202,8 @@ would be computed and dropped.
   drops the rest (`src-tauri/src/api.rs:313`).
 - `ImageApi` gains two constructor dependencies (the recipe resolver and the prepare runner), so
   `src/index.ts:237` and the four suites that construct it move with it:
-  `src/api/image/tests/photo_analysis_route.test.ts`, `embedded_route.test.ts`,
-  `share_route.test.ts`, `src/services/photos/tests/photos_service.test.ts`.
+  `src/api/image/tests/photo_analysis_route.test.ts`, `embedded_route.platform.test.ts`,
+  `share_route.platform.test.ts`, `src/services/photos/tests/photos_service.test.ts`.
 
 ### 2.2 What `detail` has to hash
 

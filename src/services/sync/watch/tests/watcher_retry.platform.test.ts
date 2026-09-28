@@ -8,7 +8,7 @@ import type { ScanService } from '../../scan/scan_service';
 // Mocked rather than pointed at a path that does not exist, so the test is about
 // our retry loop rather than about how the watcher reports a missing root.
 let attempts = 0;
-mock.module('../watch_backend', () => ({
+mock.module('@parcel/watcher', () => ({
   subscribe: () => {
     attempts++;
     return Promise.reject(new Error('ENOENT'));

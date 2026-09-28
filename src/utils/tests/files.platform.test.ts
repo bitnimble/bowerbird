@@ -145,7 +145,7 @@ describe('scanLibraryTree', () => {
   it('does not loop on a symlink cycle', withRoot(async (root) => {
     mkdirSync(path.join(root, 'sub'));
     writeFileSync(path.join(root, 'sub', 'x.arw'), '');
-    symlinkSync(root, path.join(root, 'sub', 'loop')); // sub/loop -> root
+    symlinkSync(root, path.join(root, 'sub', 'loop'), process.platform === 'win32' ? 'junction' : 'dir');
 
     const { files } = await scanLibraryTree(scope(root));
     expect(files.map((f) => f.relPath)).toEqual(['sub/x.arw']);

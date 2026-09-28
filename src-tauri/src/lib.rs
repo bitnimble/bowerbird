@@ -13,6 +13,7 @@ mod display;
 mod events;
 /// Renders the page asks for and this app writes to a folder, rather than answers.
 mod export;
+mod export_paths;
 mod open_with;
 mod reveal;
 /// The Bowerbird server this app carries, so the library is local and works offline.

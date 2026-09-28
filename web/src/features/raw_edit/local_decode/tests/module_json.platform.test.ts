@@ -14,7 +14,7 @@ import { OpenAskSchema } from '../local_open';
 // Typed as what it is meant to be so the comparisons below read straight. It is the *literals*
 // that carry the annotation this pin rests on; the file is the other host's answer.
 const sample = (await Bun.file(
-  new URL('../../../../../../test/fixtures/tables/module-json.json', import.meta.url).pathname,
+  new URL('../../../../../../test/fixtures/tables/module-json.json', import.meta.url),
 ).json()) as {
   region: Region;
   adjust: EditAdjust;
@@ -24,7 +24,7 @@ const sample = (await Bun.file(
 describe('what a tick carries', () => {
   test('names the print scene as the module reads it', async () => {
     const wire: unknown = await Bun.file(
-      new URL('../../../../../../test/fixtures/tables/module-json.json', import.meta.url).pathname,
+      new URL('../../../../../../test/fixtures/tables/module-json.json', import.meta.url),
     ).json();
     expect(z.object({ print: PrintSceneSchema }).parse(wire).print).toEqual({
       ...DEFAULT_PRINT_SCENE,

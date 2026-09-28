@@ -1,6 +1,7 @@
 import { statSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { subscribe, type AsyncSubscription } from '@parcel/watcher';
 import { AppError } from '../../../errors';
 import { Logger } from '../../../logger';
 import type { Library } from '../../../schemas/libraries';
@@ -11,7 +12,6 @@ import { getBinPath } from '../../../utils/paths';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { LibraryLifecycleListener } from '../../libraries/libraries_service';
 import type { ScanService } from '../scan/scan_service';
-import { subscribe, type Subscription } from './watch_backend';
 
 type Timer = ReturnType<typeof setTimeout>;
 
@@ -34,13 +34,11 @@ const SAMPLE = 5;
 // detection stays with scan; the watcher only decides *when* to run it, and for
 // which paths.
 //
-// Who does the watching is `watch_backend.ts`'s question, not this file's.
-//
 // A library on a filesystem that delivers no events is polled instead (§9.8), and
 // the two never both run for one library: which it gets is decided per library
 // from what its root is mounted on.
 export class LibraryWatcher implements LibraryLifecycleListener {
-  private readonly watchers = new Map<string, Subscription>();
+  private readonly watchers = new Map<string, AsyncSubscription>();
   private readonly timers = new Map<string, Timer>();
   private readonly retryTimers = new Map<string, Timer>();
   private readonly retryDelays = new Map<string, number>();
@@ -217,7 +215,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
         ignore: this.ignoredPaths(library, scope),
       },
     )
-      .then((sub: Subscription) => {
+      .then((sub: AsyncSubscription) => {
         // Torn down while the walk was in flight: nothing is holding this
         // subscription any more, so it would leak its watches.
         if (this.stopped || !this.libraries.getById(library.id)) {
@@ -406,7 +404,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
     this.dirMtimes.delete(libraryId);
   }
 
-  private async close(libraryId: string, sub: Subscription): Promise<void> {
+  private async close(libraryId: string, sub: AsyncSubscription): Promise<void> {
     try {
       await sub.unsubscribe();
     } catch (err) {

@@ -49,9 +49,9 @@ test('says why the picture failed, in place of the spinner', () => {
   );
 });
 
-test("the module's stages are the ones it reports", async () => {
+test.each(['\n', '\r\n'])("the module's stages are the ones it reports with %j line endings", async (lineEnding) => {
   const table = await Bun.file(
-    new URL('../../../../../../test/fixtures/tables/open-stages.txt', import.meta.url).pathname,
+    new URL('../../../../../../test/fixtures/tables/open-stages.txt', import.meta.url),
   ).text();
-  expect(table.trim().split('\n')).toEqual(OpenStageSchema.options);
+  expect(table.replace(/\r?\n/g, lineEnding).trim().split(/\r?\n/)).toEqual(OpenStageSchema.options);
 });

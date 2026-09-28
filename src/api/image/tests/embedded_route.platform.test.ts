@@ -23,7 +23,7 @@ const LIB = 'lib-embedded-route';
 
 function serving(recipe: StoredRecipe): Hono {
   const photos = {
-    locate: () => ({ library: { id: LIB }, photo: { id: 'p1', file_path: null, recipe } }),
+    locate: () => ({ library: { id: LIB, root_path: dataPathForLibraryId(LIB) }, photo: { id: 'p1', file_path: null, recipe } }),
     rebuildIfStale: () => undefined,
   };
   const app = new Hono();
@@ -67,5 +67,5 @@ it('goes to the file a row names rather than to a stored copy', async () => {
     route(PathSegment.image(), 'p1', PathSegment.renditions(), 'embedded'),
   );
 
-  expect(answer.status).not.toBe(200);
+  expect(answer.status).toBe(404);
 });

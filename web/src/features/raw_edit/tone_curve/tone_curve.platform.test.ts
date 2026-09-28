@@ -3,7 +3,7 @@ import { ToneCurvePointsSchema, type ToneCurvePoints } from '../../../../../src/
 import { evaluate, IDENTITY_CURVE, insertPoint, movePoint, nudgePoint, removePoint, tangents } from './tone_curve';
 
 test('matches native tone curve tangents and samples', async () => {
-  const fixtures = await Bun.file(new URL('../../../../../test/fixtures/tables/tone-curve.json', import.meta.url).pathname).json() as {
+  const fixtures = await Bun.file(new URL('../../../../../test/fixtures/tables/tone-curve.json', import.meta.url)).json() as {
     name: string;
     points: ToneCurvePoints;
     tangents: number[];

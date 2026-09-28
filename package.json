@@ -18,6 +18,7 @@
     "lint": "oxlint",
     "test": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test ./src/ ./scripts/ ./packages/samsung-frame-art/ --path-ignore-patterns=landing/scripts/screenshots.spec.ts",
     "test:integration": "LOG_LEVEL=warn DATA_DIR=${TMPDIR:-/tmp}/bowerbird-test-data bun test test/integration",
+    "test:platform": "bun run scripts/test-platform.ts",
     "test:native": "bun run scripts/test-native.ts",
     "converge": "bun run scripts/converge.ts",
     "test:bench": "bun test test/bench",

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Database } from '../../../db/driver';
@@ -132,8 +132,10 @@ describe('sidecarFor', () => {
   });
 
   it('accepts upper case, which is what a case-insensitive filesystem hands back', () => {
-    writeFileSync(path.join(root, 'C.XMP'), '');
-    expect(sidecarFor(path.join(root, 'C.CR3'))).toBe(path.join(root, 'C.XMP'));
+    writeFileSync(path.join(root, 'C.XMP'), 'sidecar');
+    const found = sidecarFor(path.join(root, 'C.CR3'));
+    expect(found).not.toBeNull();
+    expect(readFileSync(found!, 'utf8')).toBe('sidecar');
   });
 
   it('is null where there is none, rather than a path that does not exist', () => {

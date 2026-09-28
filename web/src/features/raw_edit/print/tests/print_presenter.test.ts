@@ -10,7 +10,7 @@ afterEach(() => editor.presenter.close());
 
 describe('print viewing', () => {
   test('framed display sizes match the native uniform-border fixture', async () => {
-    const table = await Bun.file(new URL('../../../../../../test/fixtures/tables/print-frame-size.txt', import.meta.url).pathname).text();
+    const table = await Bun.file(new URL('../../../../../../test/fixtures/tables/print-frame-size.txt', import.meta.url)).text();
     const rows = table.trim().split('\n');
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
@@ -137,7 +137,7 @@ describe('print viewing', () => {
   });
 
   test('every environment is lit as the module measures its map', async () => {
-    const table = await Bun.file(new URL('../../../../../../test/fixtures/tables/print-environments.json', import.meta.url).pathname).json();
+    const table = await Bun.file(new URL('../../../../../../test/fixtures/tables/print-environments.json', import.meta.url)).json();
     expect(ENVIRONMENT_LIGHTING).toEqual(table);
   });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readPhotoAnalysis, writePhotoAnalysis } from '../photo_analysis_store';
@@ -45,7 +45,7 @@ describe('the photo analysis kept on disk', () => {
     // way looks like from here. Rendering a photograph must not depend on keeping this.
     const at = dataDir();
     const blocked = path.join(at, 'not-a-dir');
-    Bun.write(blocked, 'x');
+    writeFileSync(blocked, 'x');
 
     expect(() => writePhotoAnalysis(blocked, 'photo-1', new Uint8Array([1]))).not.toThrow();
     expect(readPhotoAnalysis(blocked, 'photo-1')).toBeUndefined();
