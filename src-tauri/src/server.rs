@@ -34,6 +34,18 @@ struct Local {
 }
 
 impl Local {
+    fn sign_in(&self, url: &tauri::Url) -> Option<tauri::Url> {
+        if !self.serves(url.as_str()) {
+            return None;
+        }
+        let mut signed_in = url.clone();
+        signed_in.query_pairs_mut()
+            .clear()
+            .extend_pairs(url.query_pairs().filter(|(name, _)| name != SIGN_IN_PARAM))
+            .append_pair(SIGN_IN_PARAM, &self.token);
+        Some(signed_in)
+    }
+
     fn serves(&self, url: &str) -> bool {
         url.strip_prefix(&self.origin).is_some_and(|path| path.starts_with('/'))
     }
@@ -48,6 +60,27 @@ pub(crate) fn local_origin() -> Option<String> {
 pub(crate) fn token_for(url: &str) -> Option<String> {
     let held = LOCAL.lock().ok()?;
     held.as_ref().filter(|local| local.serves(url)).map(|local| local.token.clone())
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn recover(webview: &tauri::Webview<crate::Runtime>) {
+    if webview.label() != "main" {
+        return;
+    }
+    eprintln!("[bowerbird] web content process terminated; restoring the page");
+    let current = webview.url().ok();
+    let signed_in = LOCAL.lock().ok().and_then(|held| {
+        let local = held.as_ref()?;
+        let current = current.or_else(|| tauri::Url::parse(&local.origin).ok())?;
+        local.sign_in(&current)
+    });
+    let Some(signed_in) = signed_in else {
+        eprintln!("[bowerbird] could not sign the page in after its content process terminated");
+        return;
+    };
+    if webview.navigate(signed_in).is_err() {
+        eprintln!("[bowerbird] could not restore the page after its content process terminated");
+    }
 }
 
 fn fresh_token() -> Result<String, String> {
@@ -193,10 +226,11 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     watch_for_update(app.clone());
     wait_until_answering(&origin)?;
     eprintln!("[bowerbird] serving this library locally on {origin}");
-    let mut signed_in = tauri::Url::parse(&origin).map_err(|err| format!("{origin} is not an address: {err}"))?;
-    signed_in.query_pairs_mut().append_pair(SIGN_IN_PARAM, &token);
+    let root = tauri::Url::parse(&origin).map_err(|err| format!("{origin} is not an address: {err}"))?;
+    let local = Local { origin, token };
+    let signed_in = local.sign_in(&root).ok_or("the local server refused its own address")?;
     if let Ok(mut held) = LOCAL.lock() {
-        *held = Some(Local { origin, token });
+        *held = Some(local);
     }
     Ok(signed_in)
 }
@@ -331,5 +365,36 @@ mod tests {
         assert!(!local.serves("http://127.0.0.1:12345/api/libraries"));
         assert!(!local.serves("http://127.0.0.1:1234.evil.test/api"));
         assert!(!local.serves("https://library.example/api/libraries"));
+    }
+
+    #[test]
+    fn signing_in_keeps_the_open_photo_and_its_query_and_fragment() {
+        let local = Local { origin: "http://127.0.0.1:1234".into(), token: "secret".into() };
+        let here = tauri::Url::parse("http://127.0.0.1:1234/photos/abc12345?from=library&sort=taken_desc#detail").unwrap();
+        let signed_in = local.sign_in(&here).unwrap();
+        assert_eq!(signed_in.as_str(), "http://127.0.0.1:1234/photos/abc12345?from=library&sort=taken_desc&token=secret#detail");
+        assert_eq!(here.as_str(), "http://127.0.0.1:1234/photos/abc12345?from=library&sort=taken_desc#detail");
+    }
+
+    #[test]
+    fn signing_in_replaces_every_token_from_a_previous_attempt() {
+        let local = Local { origin: "http://127.0.0.1:1234".into(), token: "secret".into() };
+        let here = tauri::Url::parse("http://127.0.0.1:1234/photos/abc12345?token=expired&sort=taken_desc&token=wrong#detail").unwrap();
+        assert_eq!(local.sign_in(&here).unwrap().as_str(), "http://127.0.0.1:1234/photos/abc12345?sort=taken_desc&token=secret#detail");
+    }
+
+    #[test]
+    fn signing_in_refuses_every_other_origin() {
+        let local = Local { origin: "http://127.0.0.1:1234".into(), token: "secret".into() };
+        for address in [
+            "http://127.0.0.1:12345/photos/abc12345",
+            "http://127.0.0.1.evil.test:1234/photos/abc12345",
+            "https://127.0.0.1:1234/photos/abc12345",
+            "https://library.example/photos/abc12345",
+            "http://127.0.0.1:1234@evil.test/photos/abc12345",
+        ] {
+            let here = tauri::Url::parse(address).unwrap();
+            assert!(local.sign_in(&here).is_none());
+        }
     }
 }
