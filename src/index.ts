@@ -9,6 +9,7 @@ import { LibrariesApi } from './api/libraries/libraries_api';
 import { assertNoDataDirectoryOverlap, LibrariesService } from './services/libraries/libraries_service';
 import { LibrariesRepository } from './services/libraries/libraries_repository';
 import { RenderTimingsFile } from './services/processing/renditions/render_timings_file';
+import { StorageUsageService } from './services/maintenance/storage_usage_service';
 import { PhotosApi } from './api/photos/photos_api';
 import { PhotoCompositesRepository } from './services/photos/composites/photo_composites_repository';
 import { PhotoListingRepository } from './services/photos/listing/photo_listing_repository';
@@ -447,8 +448,12 @@ app.use(route(PathSegment.any()), async (c, next) => {
 app.route(route(PathSegment.api(), PathSegment.events()), eventsApi.routes);
 app.route(
   route(PathSegment.api(), PathSegment.settings()),
-  new SettingsApi(settingsRepo, renderTimings, (rendition, denoiser) => processingService.benchmarkRender(rendition, denoiser, renderTimings))
-    .routes,
+  new SettingsApi(
+    settingsRepo,
+    renderTimings,
+    (rendition, denoiser) => processingService.benchmarkRender(rendition, denoiser, renderTimings),
+    new StorageUsageService(),
+  ).routes,
 );
 app.route(route(PathSegment.api(), PathSegment.updates()), new UpdatesApi(new UpdateService()).routes);
 app.route(route(PathSegment.api(), PathSegment.browse()), new BrowseApi().routes);

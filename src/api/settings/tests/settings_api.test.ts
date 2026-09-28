@@ -1,11 +1,15 @@
 import { describe, it, expect, jest } from 'bun:test';
 import { Hono } from 'hono';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { applyErrorHandler } from '../../error_handler';
 import type { RenderTiming, RenderTimings } from '../../../schemas/render_stages';
 import { PathSegment, route } from '../../../schemas/route';
 import { DEFAULT_SETTINGS } from '../../../schemas/settings';
 import type { RenderTimingsFile } from '../../../services/processing/renditions/render_timings_file';
 import type { SettingsRepository } from '../../../services/settings/settings_repository';
+import { StorageUsageService } from '../../../services/maintenance/storage_usage_service';
 import { SettingsApi } from '../settings_api';
 
 const MEASURED: RenderTiming = { total: 800, stages: { colour: 400 }, measured_at: '2026-01-01T00:00:00.000Z' };
@@ -13,16 +17,37 @@ const MEASURED: RenderTiming = { total: 800, stages: { colour: 400 }, measured_a
 function buildApp(
   read: () => RenderTimings = () => ({}),
   benchmarkRender: () => Promise<RenderTiming> = jest.fn(async () => MEASURED),
+  storageUsage = new StorageUsageService({ dataDir: '/missing-bowerbird-test-data', dbPath: '/missing-bowerbird-test-catalogue/catalogue.db' }),
 ) {
   const settings = { get: jest.fn(() => DEFAULT_SETTINGS) } as unknown as SettingsRepository;
   const timings = { read: jest.fn(read), put: jest.fn() } as unknown as RenderTimingsFile;
   const app = new Hono();
-  app.route(route(PathSegment.api(), PathSegment.settings()), new SettingsApi(settings, timings, benchmarkRender).routes);
+  app.route(route(PathSegment.api(), PathSegment.settings()), new SettingsApi(
+    settings,
+    timings,
+    benchmarkRender,
+    storageUsage,
+  ).routes);
   applyErrorHandler(app);
   return { app, benchmarkRender };
 }
 
 const AT = route(PathSegment.api(), PathSegment.settings(), PathSegment.renderTimings());
+
+it('reports persistent storage usage through settings', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'bowerbird-storage-api-'));
+  try {
+    const dbPath = path.join(root, 'catalogue.db');
+    writeFileSync(dbPath, Buffer.alloc(128));
+    const storageUsage = new StorageUsageService({ dataDir: path.join(root, 'data'), dbPath });
+    const { app } = buildApp(undefined, undefined, storageUsage);
+    const res = await app.request(route(PathSegment.api(), PathSegment.settings(), PathSegment.storageUsage()));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ bytes: 128 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe('SettingsApi render timings', () => {
   it('answers with what has been measured here', async () => {

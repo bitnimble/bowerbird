@@ -108,6 +108,7 @@ export const PathSegment = {
   stacks: segment('stacks'),
   stage: segment('stage'),
   status: segment('status'),
+  storageUsage: segment('storage-usage'),
   sync: segment('sync'),
   tile: segment('tile'),
   tiles: segment('tiles'),

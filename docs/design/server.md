@@ -295,6 +295,7 @@ app.get('/image/:photoId/renditions/:rendition', async (c) => {
 |---|---|---|
 | `GET` | `/api/settings` | Everything the user can change that is not a property of one library |
 | `PATCH` | `/api/settings` | Update them |
+| `GET` | `/api/settings/storage-usage` | Total file bytes in persistent server data, catalogue and its sidecars, backups, retained restore copies, printer profiles, and diagnostic caches. Excludes originals, exports, temporary jobs, and staged updates. |
 | `GET` | `/api/events` | Server-sent events; `rendition` carries the id of a photo whose renditions were just written (§18.6) |
 | `GET` | `/api/updates` | What version this install is and which releases are newer, cached ten minutes (§23.5) |
 | `POST` | `/api/updates/check` | The same answer, without the cache |

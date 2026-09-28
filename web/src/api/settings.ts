@@ -12,10 +12,13 @@ import {
   type RenderedRendition,
 } from '../../../src/schemas/render_stages';
 import { type Denoiser } from '../../../src/schemas/photo_edits';
+import { StorageUsageSchema, type StorageUsage } from '../../../src/schemas/storage_usage';
 import { PathSegment, route } from '../../../src/schemas/route';
 import { request } from './request';
 
 export const settingsApi = {
+  storageUsage: (): Promise<StorageUsage> =>
+    request(StorageUsageSchema, 'GET', route(PathSegment.api(), PathSegment.settings(), PathSegment.storageUsage())),
   get: (): Promise<Settings> => request(SettingsSchema, 'GET', route(PathSegment.api(), PathSegment.settings())),
   update: (body: UpdateSettingsRequest): Promise<Settings> =>
     request(SettingsSchema, 'PATCH', route(PathSegment.api(), PathSegment.settings()), UpdateSettingsRequestSchema.parse(body)),

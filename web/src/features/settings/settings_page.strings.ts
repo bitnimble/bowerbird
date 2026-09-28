@@ -161,6 +161,11 @@ export const SettingsStrings = {
   avifSpeedHint: () => '10 is fastest',
 
   groupMaintenance: () => 'Maintenance',
+  diskUsage: () => 'Bowerbird disk usage',
+  diskUsageHint: () => 'Excludes your originals',
+  calculatingDiskUsage: () => 'Calculating…',
+  couldNotMeasureDiskUsage: () => "We couldn't measure disk usage. Try again.",
+  retryDiskUsage: () => 'Try again',
   watchDebounce: () => 'Scan delay after a change',
   watchPollInterval: () => 'Network library scan interval',
   watchPollIntervalHint: () => 'Bowerbird checks network drives for changes at this interval.',

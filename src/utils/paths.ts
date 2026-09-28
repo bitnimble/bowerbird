@@ -1,4 +1,5 @@
 import { lstatSync, readlinkSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config';
 import { newId } from '../schemas/id';
@@ -137,6 +138,14 @@ export function backupsDir(dbPath: string): string {
 // for the reason backups are, since `DATA_DIR` is theirs to clear.
 export function printerProfilesDir(dbPath: string): string {
   return path.join(path.dirname(path.resolve(dbPath)), 'printer-profiles');
+}
+
+export async function listPrinterProfiles(directory: string): Promise<string[]> {
+  const names = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  return names.filter((name) => /\.ic[cm]$/i.test(name)).sort((a, b) => a.localeCompare(b));
 }
 
 // A symlinked DB_PATH is a deliberate placement - the catalogue lives on another

@@ -17,6 +17,29 @@ export class AppSettingsPresenter {
   private loaded = false;
   private inFlight: Promise<void> | null = null;
   private loadedTimings = false;
+  private storageUsageInFlight: Promise<void> | null = null;
+
+  loadStorageUsage = (): Promise<void> => {
+    this.storageUsageInFlight ??= this.fetchStorageUsage().finally(() => {
+      this.storageUsageInFlight = null;
+    });
+    return this.storageUsageInFlight;
+  };
+
+  private async fetchStorageUsage(): Promise<void> {
+    this.setStorageUsage({ kind: 'loading' });
+    try {
+      const usage = await settingsApi.storageUsage();
+      this.setStorageUsage({ kind: 'ready', bytes: usage.bytes });
+    } catch {
+      this.setStorageUsage({ kind: 'failed' });
+    }
+  }
+
+  @action.bound
+  private setStorageUsage = (usage: AppSettingsStore['storageUsage']): void => {
+    this.store.storageUsage = usage;
+  };
 
   async load(): Promise<void> {
     if (this.loaded) return;

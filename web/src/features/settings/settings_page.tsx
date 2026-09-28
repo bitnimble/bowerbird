@@ -35,7 +35,7 @@ import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
 import { EmptyState } from '../../ui/empty_state';
 import { ErrorBanner } from '../../ui/error_banner';
-import { relativeTime } from '../../ui/format';
+import { fileSizeLabel, relativeTime } from '../../ui/format';
 import { Heading } from '../../ui/heading';
 import { ICON } from '../../ui/icon';
 import type { Option } from '../../ui/option';
@@ -502,8 +502,6 @@ const ServerAddress = observer(function ServerAddress(): JSX.Element | null {
   );
 });
 
-// The one row here that is not a setting: backing the catalogue up, moving it, or
-// clearing it out after an uninstall all start with being told where it is.
 function AppDataFolder(): JSX.Element | null {
   const [path, setPath] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -571,7 +569,10 @@ const DeviceName = observer(function DeviceName(): JSX.Element | null {
 
 const SystemTab = observer(function SystemTab(): JSX.Element {
   const store = useAppSettingsStore();
+  const { appSettings } = usePresenters();
   const write = useSettingWriter();
+
+  useEffect(() => void appSettings.loadStorageUsage(), [appSettings]);
 
   const settings = store.settings;
 
@@ -621,6 +622,19 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
         <>
           <GroupTitle>{SettingsStrings.groupMaintenance()}</GroupTitle>
           <Panel flush>
+            <SettingRow
+              label={SettingsStrings.diskUsage()}
+              hint={SettingsStrings.diskUsageHint()}
+            >
+              <output aria-label={SettingsStrings.diskUsage()} aria-busy={store.storageUsage.kind === 'loading'}>
+                {store.storageUsage.kind === 'failed' ? SettingsStrings.couldNotMeasureDiskUsage()
+                : store.storageUsage.kind === 'ready' ? fileSizeLabel(store.storageUsage.bytes)
+                : SettingsStrings.calculatingDiskUsage()}
+              </output>
+              {store.storageUsage.kind === 'failed' && (
+                <Button onClick={appSettings.loadStorageUsage}>{SettingsStrings.retryDiskUsage()}</Button>
+              )}
+            </SettingRow>
             {settings != null && (
               <>
                 <NumberSetting
