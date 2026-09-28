@@ -40,5 +40,4 @@ export const ExportStrings = {
 
   couldNotStart: () => "We couldn't start this export. Check your selection and try again.",
   unnamedExport: () => "We couldn't export this photo because it has no filename. Try again.",
-  unknownFolderAnswer: () => "We couldn't find the export folder. Choose it again.",
 };

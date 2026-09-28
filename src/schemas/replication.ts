@@ -383,7 +383,7 @@ export type BrowseRemoteRequest = z.infer<typeof BrowseRemoteRequestSchema>;
 export const AddReplicaRequestSchema = z.object({
   address: z.string().trim().min(1).max(2048),
   library_id: IdSchema,
-  root_path: z.string().trim().min(1),
+  root_path: z.string().min(1).refine((path) => path.trim() !== ''),
   sync_originals: WantsOriginalsSchema,
 });
 export type AddReplicaRequest = z.infer<typeof AddReplicaRequestSchema>;
