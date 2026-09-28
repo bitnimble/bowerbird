@@ -44,7 +44,7 @@ export function PopoverButton({
         </Popover.Trigger>
       </Tooltip>
       <Popover.Portal>
-        <Popover.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align={align}>
+        <Popover.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align={align} sticky>
           <Popover.Popup {...stylex.props(menuStyles.popup, menuStyles.popupPad)}>
             <PanelsInPopup.Provider value>{children}</PanelsInPopup.Provider>
           </Popover.Popup>

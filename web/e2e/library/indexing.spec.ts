@@ -19,12 +19,16 @@ test('a library added and scanned in Settings shows a rendition for every RAW fi
   await forgetLibrary(page, INDEX_PHOTOS_DIR);
   await page.goto(route(PathSegment.settings()));
   await page.getByRole('button', { name: 'Add library' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add library' });
+  await dialog.getByRole('button', { name: 'Choose folder' }).click();
+  const chooser = page.getByRole('dialog', { name: 'Choose folder' });
   // The picker writes the folder it opened at into this box, so a path typed
   // before that lands would be overwritten by it.
-  const dialog = page.getByRole('dialog', { name: 'Add library' });
-  const path = dialog.getByLabel('Library root');
+  const path = chooser.getByRole('textbox', { name: 'Library root' });
   await expect(path).not.toHaveValue('');
   await path.fill(INDEX_PHOTOS_DIR);
+  await chooser.getByRole('button', { name: 'Choose folder' }).click();
+  await expect(chooser).toHaveCount(0);
   // The camera's JPEG rather than the default render, which is minutes of work per frame, and
   // no stacking, which would collapse the fixture's identical frames into one tile.
   await dialog.getByRole('checkbox', { name: 'Automatically pre-render imported photos' }).uncheck();

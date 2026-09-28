@@ -85,7 +85,7 @@ export function OverflowMenu({
         </Menu.Trigger>
       </Tooltip>
       <Menu.Portal>
-        <Menu.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="end">
+        <Menu.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="end" sticky>
           <Menu.Popup {...stylex.props(menuStyles.popup)}>
             {/* Absent rather than empty: a menu of nothing but destructive actions would
                 otherwise open on a blank group and a rule above its first row. */}

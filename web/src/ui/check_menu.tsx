@@ -40,7 +40,7 @@ export function CheckMenu<T extends string>({
         </Menu.Trigger>
       </Tooltip>
       <Menu.Portal>
-        <Menu.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="end">
+        <Menu.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="end" sticky>
           <Menu.Popup {...stylex.props(menuStyles.popup)}>
             {options.map((option) => (
               <MenuCheckItem

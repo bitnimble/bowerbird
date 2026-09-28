@@ -150,7 +150,7 @@ const ModelFilter = observer(function ModelFilter({
         <ChevronRight size={ICON} {...stylex.props(styles.caret, selected.length === 0 && styles.caretAlone)} />
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner {...stylex.props(menuStyles.positioner)} side="right" align="start" sideOffset={4}>
+        <Popover.Positioner {...stylex.props(menuStyles.positioner)} side="right" align="start" sideOffset={4} sticky>
           <Popover.Popup {...stylex.props(menuStyles.popup, styles.models)} aria-label={label}>
             {options.map((model) => (
               <label key={model} {...stylex.props(menuStyles.item, styles.check)}>
@@ -205,7 +205,7 @@ const LabelFilter = observer(function LabelFilter({
         <ChevronRight size={ICON} {...stylex.props(styles.caret, selected.length === 0 && styles.caretAlone)} />
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner {...stylex.props(menuStyles.positioner)} side="right" align="start" sideOffset={4}>
+        <Popover.Positioner {...stylex.props(menuStyles.positioner)} side="right" align="start" sideOffset={4} sticky>
           <Popover.Popup {...stylex.props(menuStyles.popup, styles.models)} aria-label={PhotoDetailStrings.labels()}>
             <button
               type="button"

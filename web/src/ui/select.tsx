@@ -28,6 +28,7 @@ export function Select<T extends string>({
   /** On the trigger. */
   style?: stylex.StyleXStyles;
 }): JSX.Element {
+  const selectedIndex = options.findIndex((option) => option.value === value);
   return (
     <BaseSelect.Root
       value={value}
@@ -46,7 +47,18 @@ export function Select<T extends string>({
         )}
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
-        <BaseSelect.Positioner {...stylex.props(menuStyles.positioner)} sideOffset={4} align="start">
+        <BaseSelect.Positioner
+          {...stylex.props(menuStyles.positioner)}
+          sideOffset={({ side, anchor, positioner }): number => {
+            if (selectedIndex < 0 || positioner.height < options.length * anchor.height) return 4;
+            const rowOffset = (selectedIndex - (options.length - 1) / 2) * anchor.height;
+            const overlap = (anchor.height + positioner.height) / 2;
+            return (side === 'top' ? rowOffset : -rowOffset) - overlap;
+          }}
+          align="start"
+          alignItemWithTrigger={false}
+          sticky
+        >
           <BaseSelect.Popup {...stylex.props(menuStyles.popup)}>
             {options.map((option) => (
               <BaseSelect.Item key={option.value} value={option.value} {...stylex.props(menuStyles.item)}>
