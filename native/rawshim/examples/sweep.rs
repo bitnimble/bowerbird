@@ -53,11 +53,12 @@ fn main() {
     paths.truncate(limit);
 
     println!(
-        "{:<18} {:>7} {:>8} {:>8} {:>8} {:>4} {:>8} {:>9} {:>9}  camera exposure, curve (max u error)",
-        "frame", "deltaE", "percept", "classed", "relative", "map", "neutrals", "drift g-r", "drift b-r"
+        "{:<18} {:>7} {:>8} {:>8} {:>8} {:>8} {:>4} {:>8} {:>9} {:>9}  camera exposure, curve (max u error)",
+        "frame", "deltaE", "percept", "plain", "classed", "relative", "map", "neutrals", "drift g-r", "drift b-r"
     );
     let mut worst: Vec<(f64, String)> = Vec::new();
     let mut rendered: Vec<f64> = Vec::new();
+    let mut plain: Vec<f64> = Vec::new();
     let mut classed: Vec<f64> = Vec::new();
     let mut rendered_relative: Vec<f64> = Vec::new();
     let mut curve_errors: Vec<f64> = Vec::new();
@@ -67,10 +68,11 @@ fn main() {
             None => println!("{name:<18} {:>7} {:>8} {:>8} {:>4}", "declined", "-", "-", "-"),
             Some(r) => {
                 println!(
-                    "{name:<18} {:>7.3} {:>8.3} {:>8.3} {:>8.3} {:>4} {:>8} {:>+9.1} {:>+9.1}  \
+                    "{name:<18} {:>7.3} {:>8.3} {:>8.3} {:>8.3} {:>8.3} {:>4} {:>8} {:>+9.1} {:>+9.1}  \
                      {:+.3} stops, {:?} ({:.6})",
                     r.delta_e,
                     r.rendered,
+                    r.plain,
                     r.classed,
                     r.rendered_relative,
                     match r.map {
@@ -95,6 +97,7 @@ fn main() {
                 }
                 worst.push((r.drift_gr.hypot(r.drift_br), name));
                 rendered.push(r.rendered);
+                plain.push(r.plain);
                 classed.push(r.classed);
                 rendered_relative.push(r.rendered_relative);
                 curve_errors.push(r.curve_error);
@@ -104,8 +107,9 @@ fn main() {
 
     let scored = rendered.len().max(1) as f64;
     println!(
-        "\nrendered against the camera, mean over set: perceptual {:.4}, classed {:.4}, relative colorimetric {:.4}, over {} frames",
+        "\nrendered against the camera, mean over set: perceptual {:.4}, plain CIEDE2000 {:.4}, classed {:.4}, relative colorimetric {:.4}, over {} frames",
         rendered.iter().sum::<f64>() / scored,
+        plain.iter().sum::<f64>() / scored,
         classed.iter().sum::<f64>() / scored,
         rendered_relative.iter().sum::<f64>() / scored,
         rendered.len(),
@@ -123,10 +127,12 @@ fn main() {
 
 struct Report {
     delta_e: f64,
-    /// The rendered picture against the camera's own as a mean CIEDE2000, which is the claim a
-    /// lattice size is actually making. `delta_e` beside it is the fit scoring itself on its own
-    /// pairs.
+    /// The rendered picture against the camera's own as a mean of the error the fit is scored in
+    /// (`fit_score.slang`), which is the claim a lattice size is actually making. `delta_e` beside
+    /// it is the fit scoring itself on its own pairs.
     rendered: f64,
+    /// The same as a mean CIEDE2000.
+    plain: f64,
     /// The same, with every colour class the frame holds counting once whatever its area: a mean
     /// over pixels cannot see a small red object turn purple.
     classed: f64,
@@ -170,6 +176,7 @@ fn measure(path: &str) -> Option<Report> {
     Some(Report {
         delta_e: matched.colour.as_ref()?.delta_e,
         rendered: perceptual.rendered,
+        plain: perceptual.plain,
         classed: perceptual.classed,
         classes: perceptual.classes,
         rendered_relative: relative.rendered,
@@ -185,6 +192,7 @@ fn measure(path: &str) -> Option<Report> {
 
 struct Rendered {
     rendered: f64,
+    plain: f64,
     classed: f64,
     classes: Vec<Option<f64>>,
     neutrals: usize,
@@ -287,6 +295,7 @@ fn against_camera(
     let blocks = pollster::block_on(scoring.partials(&rawshim::fit_score::Shape::Saturation, &neutral))?
         .remove(0);
     let rendered = blocks.iter().map(|b| b.flat).sum::<f64>() / shown.max(1) as f64;
+    let plain = blocks.iter().map(|b| b.plain).sum::<f64>() / shown.max(1) as f64;
     let classes: Vec<Option<f64>> = (0..blocks.first().map_or(0, |b| b.class_seen.len()))
         .map(|k| {
             let seen: f64 = blocks.iter().map(|b| b.class_seen[k]).sum();
@@ -298,5 +307,5 @@ fn against_camera(
     let classed = present.iter().sum::<f64>() / present.len().max(1) as f64;
 
     let n = count.max(1) as f64;
-    Some(Rendered { rendered, classed, classes, neutrals: count, drift_gr: gr / n, drift_br: br / n })
+    Some(Rendered { rendered, plain, classed, classes, neutrals: count, drift_gr: gr / n, drift_br: br / n })
 }

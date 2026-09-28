@@ -264,7 +264,14 @@ float3 reconstructed(float3 camera, float3 fill)
         camera.g * camera.g / max(camera.b, edge),
         sqrt(max(camera.r * camera.b, 0.0)),
         camera.g * camera.g / max(camera.r, edge)), top);
-    let held = lerp(camera, max(camera, zero_tint), smoothstep(BLOWN_FROM, SATURATED_AT, fill));
+    let running_out = smoothstep(BLOWN_FROM, SATURATED_AT, fill);
+    let estimated = lerp(camera, max(camera, zero_tint), running_out);
+    // Two clipped channels tie the zero-tint estimates to their ceilings. Normalize the remaining
+    // channel weights so a partly clipped blue cannot leave a blue ring around a neutral light.
+    let left = 1.0 - running_out;
+    let still = dot(camera, left) / max(left.r + left.g + left.b, edge);
+    let held = lerp(estimated, max(estimated, float3(still)),
+        running_out * smoothstep(BLOWN_FROM, SATURATED_AT, mid));
 
     // Two channels gone leaves the equation a measurement short and the third is all there is, so
     // the pull to neutral follows the *second* fill - which is exactly the one whose crossing used

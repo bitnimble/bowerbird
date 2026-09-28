@@ -1,7 +1,7 @@
 // Phase 1(c): the four channel sigmas, unified by RMS.
 //
 // Everything downstream works in units of this one number, and
-// `k16_inverse_fused` multiplies it back at the end.
+// `restore_mosaic` multiplies it back at the end.
 import prelude;
 
 [vk::binding(0, 0)] RWStructuredBuffer<float> params;

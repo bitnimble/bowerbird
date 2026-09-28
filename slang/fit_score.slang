@@ -55,19 +55,31 @@ struct Params {
 /// `hdr_fit::BIAS_BUCKETS`, three bands of the camera's chroma against three of its lightness.
 static const int BIAS_BUCKETS = 9;
 /// `hdr_fit::COLOUR_CLASSES`: the neutrals, then each sector of the camera's hue as a muted
-/// class and a vivid one.
+/// class, a vivid one and a deep one.
 static const int HUE_SECTORS = 12;
-static const int COLOUR_CLASSES = 1 + 2 * HUE_SECTORS;
+static const int COLOUR_CLASSES = 1 + 3 * HUE_SECTORS;
+/// Chroma per unit of lightness past which a vivid colour is deep. A tungsten-lit room's dark
+/// wood floor is vivid at 1.6 and a red pair of shorts deep at 3.3, and in one class the floor's
+/// thousand pairs improving hid the shorts turning pink.
+static const float DEEP = 2.0;
+/// What a unit of CIEDE2000's lightness and chroma terms counts for against one of hue in the
+/// visible error: a colour turned towards its neighbour is a different colour, one a little darker
+/// is the same colour in other light, and one a little duller the least of the three.
+static const float LIGHTNESS_SHARE = 0.5;
+static const float CHROMA_SHARE = 0.33;
+/// The L* at which the fade towards black counts a difference at half its full weight.
+static const float DARK_FADE = 10.0;
 /// The trusted balance summed, every balance's magnitude summed, the trusted pairs counted, the
 /// pairs counted, then the tally per bucket and per class.
 static const int INVARIANT = 4 + BIAS_BUCKETS + COLOUR_CLASSES;
-/// Four sums, a signed chroma pair per bucket, the deltaE per class, then the block's invariant.
+/// Four sums, a signed chroma pair per bucket, the error per class, the plain CIEDE2000 sum, then
+/// the block's invariant.
 ///
 /// **The invariant is copied in rather than accumulated.** The hue balance's sum and the tally
 /// per bucket do not depend on the probe, and accumulating them in `fit_score` is ten more floats
 /// live in every thread - which on a small adapter is the difference between the accumulators
 /// living in registers and living in memory. `fit_target` sums them once per block instead.
-static const int PARTIAL = 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES + INVARIANT;
+static const int PARTIAL = 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES + 1 + INVARIANT;
 
 /// A probe scales the chroma about the pair's luma, which is `fitted_saturation`'s blend.
 static const int SHAPE_SATURATION = 0;
@@ -111,7 +123,8 @@ int class_of(float3 lab)
 {
     if (chroma_of(lab) < NEUTRAL_CHROMA) { return 0; }
     let sector = min(int(degrees_of(atan2(lab.z, lab.y)) * (float(HUE_SECTORS) / 360.0)), HUE_SECTORS - 1);
-    return 1 + 2 * sector + select(vivid(lab), 1, 0);
+    let band = chroma_of(lab) >= DEEP * lab.x ? 2 : select(vivid(lab), 1, 0);
+    return 1 + 3 * sector + band;
 }
 
 /// `t`'s four cosines by angle addition from one direction.
@@ -133,7 +146,32 @@ float hue_t(float cos_h, float sin_h)
         - 0.20 * (cos4 * COS63 + sin4 * SIN63);
 }
 
-/// CIEDE2000 between two Lab triples, `kL = kC = kH = 1`.
+/// The L* a grey as light as `v`'s brightest channel has: how far from black a colour is to the
+/// eye, where its own L* puts a vivid dark red beside a black.
+float seen_lightness(float3 v)
+{
+    let y = clamp(max(v.x, max(v.y, v.z)), 0.0, 1.0);
+    return y > 0.008856 ? 116.0 * pow(y, 1.0 / 3.0) - 16.0 : 903.3 * y;
+}
+
+float lab_unf(float f) { return f > 0.206893 ? f * f * f : (f - 16.0 / 116.0) / 7.787; }
+
+/// Linear sRGB of a Lab triple, `lab_of` undone.
+float3 linear_of(float3 lab)
+{
+    let fy = (lab.x + 16.0) / 116.0;
+    let fx = fy + lab.y / 500.0;
+    let fz = fy - lab.z / 200.0;
+    let x = 0.95047 * lab_unf(fx);
+    let y = lab_unf(fy);
+    let z = 1.08883 * lab_unf(fz);
+    return float3(
+        3.2404542 * x - 1.5371385 * y - 0.4985314 * z,
+        -0.9692660 * x + 1.8760108 * y + 0.0415560 * z,
+        0.0556434 * x - 0.2040259 * y + 1.0572252 * z);
+}
+
+/// Plain CIEDE2000, visible distance, and its signed chromatic residual in shared a/b axes.
 ///
 /// What the weighting functions buy over dE76, and the reason the fit scores in this: `SC` and
 /// `SH` grow with chroma, so at `C* ~ 60` the divisor reaches ~3.7 where a neutral's is 1. The
@@ -148,7 +186,7 @@ float hue_t(float cos_h, float sin_h)
 /// short-arc mean - which is exactly what the wrapped average is defined to be. Only `rt`'s
 /// exponential keeps an `atan2`: it is centred on hue 275 and its argument reaches -275, so a
 /// wrapped formulation would smooth away the discontinuity the standard puts at hue 0.
-float delta_e2000(float3 p, float3 q)
+float4 delta_e2000(float3 p, float3 q, float seen)
 {
     let l1 = p.x; let a1 = p.y; let b1 = p.z;
     let l2 = q.x; let a2 = q.y; let b2 = q.z;
@@ -181,6 +219,7 @@ float delta_e2000(float3 p, float3 q)
     float dbig_hp;
     float t;
     float hbarp;
+    float2 direction;
     if (literal) {
         let h1p = c1p == 0.0 ? 0.0 : degrees_of(atan2(b1, a1p));
         let h2p = c2p == 0.0 ? 0.0 : degrees_of(atan2(b2, a2p));
@@ -201,13 +240,15 @@ float delta_e2000(float3 p, float3 q)
         }
         let radians = hbarp * 0.017453292519943295;
         dbig_hp = 2.0 * sqrt(c1p * c2p) * sin(dhp * 0.017453292519943295 * 0.5);
-        t = hue_t(cos(radians), sin(radians));
+        direction = float2(cos(radians), sin(radians));
+        t = hue_t(direction.x, direction.y);
     } else {
         let cross = ux * vy - uy * vx;
         let chord = len2(vx - ux, vy - uy);
         let sign = cross < 0.0 ? -1.0 : 1.0;
         let cos_h = (ux + vx) / bisector;
         let sin_h = (uy + vy) / bisector;
+        direction = float2(cos_h, sin_h);
         dbig_hp = sign * chord * sqrt(c1p * c2p);
         t = hue_t(cos_h, sin_h);
         hbarp = degrees_of(atan2(sin_h, cos_h));
@@ -226,7 +267,17 @@ float delta_e2000(float3 p, float3 q)
     let tl = dlp / sl;
     let tc = dcp / sc;
     let th = dbig_hp / sh;
-    return sqrt(tl * tl + tc * tc + th * th + rt * tc * th);
+    let ql = tl * LIGHTNESS_SHARE;
+    let qc = tc * CHROMA_SHARE;
+    let fade = seen / (seen + DARK_FADE) * ((50.0 + DARK_FADE) / 50.0);
+    // Preserve the chromatic metric's cross term in a signed vector; lightness cannot tint it.
+    let radial = qc + 0.5 * rt * th;
+    let tangent = th * sqrt(max(1.0 - 0.25 * rt * rt, 0.0));
+    let bias = -fade * (radial * direction + tangent * float2(-direction.y, direction.x));
+    return float4(
+        sqrt(tl * tl + tc * tc + th * th + rt * tc * th),
+        fade * sqrt(max(ql * ql + qc * qc + th * th + rt * qc * th, 0.0)),
+        bias);
 }
 
 float3 mul3(int at, float3 v)
@@ -365,6 +416,7 @@ void fit_score(uint3 id : SV_DispatchThreadID)
 
     var balanced = 0.0;
     var flat = 0.0;
+    var plain = 0.0;
     var gamut_balanced = 0.0;
     var gamut_flat = 0.0;
     float bias_a[BIAS_BUCKETS];
@@ -388,9 +440,12 @@ void fit_score(uint3 id : SV_DispatchThreadID)
         gamut_flat += past;
         if (t.w < 0.0) { continue; }
         let ours = lab_of(lit);
-        let e = delta_e2000(ours, t.xyz);
+        let seen = max(seen_lightness(lit), seen_lightness(linear_of(t.xyz)));
+        let both = delta_e2000(ours, t.xyz, seen);
+        let e = both.y;
         balanced += t.w * e;
         flat += e;
+        plain += both.x;
 
         // **Accumulated by a select over all nine rather than by a subscript**, so the two arrays
         // keep constant indices and stay in registers: a dynamically-indexed local array gets a
@@ -402,8 +457,8 @@ void fit_score(uint3 id : SV_DispatchThreadID)
         [ForceUnroll]
         for (int i = 0; i < BIAS_BUCKETS; i++) {
             let mine = at == i;
-            bias_a[i] = select(mine, bias_a[i] + (ours.y - t.y), bias_a[i]);
-            bias_b[i] = select(mine, bias_b[i] + (ours.z - t.z), bias_b[i]);
+            bias_a[i] = select(mine, bias_a[i] + both.z, bias_a[i]);
+            bias_b[i] = select(mine, bias_b[i] + both.w, bias_b[i]);
         }
         let in_class = class_of(t.xyz);
         [ForceUnroll]
@@ -426,8 +481,9 @@ void fit_score(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < COLOUR_CLASSES; i++) {
         partial[out + 4 + 2 * BIAS_BUCKETS + i] = class_error[i];
     }
+    partial[out + 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES] = plain;
     [ForceUnroll]
     for (int j = 0; j < INVARIANT; j++) {
-        partial[out + 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES + j] = invariant[b * INVARIANT + j];
+        partial[out + 4 + 2 * BIAS_BUCKETS + COLOUR_CLASSES + 1 + j] = invariant[b * INVARIANT + j];
     }
 }

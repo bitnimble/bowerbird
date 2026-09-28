@@ -28,7 +28,8 @@
 //   rendition size, which is what the colour smoothing did - and what the descriptor window did
 //   the moment a burst began searching on half the plane a pan does.
 //   Print frame borders use a share of the photo's short edge, identical on all four sides.
-// - *Absolute, on the mosaic.* `rcd.slang`'s `REACH_*`, `galosh`'s windows, `defocus.slang`'s
+// - *Absolute, on the mosaic.* `rcd.slang`'s `REACH_*`, `galosh`'s windows,
+//   `galosh/reconstruct_bayer`'s `HALO`, `defocus.slang`'s
 //   `STRIDE` and `pixel_shift_align.slang`'s tile, patch, search and outlier reaches. A photosite is a photosite, so a count of them is a
 //   quantity and `exact` takes it.
 // - *Scale-exact by construction.* `chroma_smooth`'s `SIGMA` and `REACH` in texels of a grid that
@@ -39,7 +40,8 @@
 //   every size, so a share of the picture would be the wrong answer at every size but one.
 // - *A distance in units that are not pixels of anything.* `dust.slang`'s `SPAN` is 2.5 *blob
 //   radii*, a multiplier of a measured axis; `sharpen.slang`'s `RADIUS` is a count of *taps*,
-//   whose sigma is what spans a picture. Each carries its own unit, `BlobRadius` and `Tap`, even
+//   whose sigma is what spans a picture. `galosh/prelude`'s `COLOUR_GUIDE_RADIUS` is in
+//   taps of its pyramid level. Each carries its own unit, `BlobRadius` and `Tap`, even
 //   where one constant is the unit's only inhabitant - because a distance that reads as pixels
 //   and is not is the one a later edit turns into pixels by accident. `repair_solve`'s `GROW`,
 //   `REACH` and `GUARD` are the same kind: counts of cells, a cell being `repair::CELLS_ACROSS`

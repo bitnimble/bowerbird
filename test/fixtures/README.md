@@ -45,10 +45,24 @@ decode is unchanged by it - same levels, same matrices, same sample sum.
 
 ## DSC05726.ARW
 
-The project's own, a second ILCE-7CR frame: a street of old wooden buildings at night under warm
-lamps, with a red awning and red lanterns. The camera crushes blue across most of the frame, which
-is the case the colour fit's matrix has to be kept from - taken as a level, that blue fits a matrix
-that puts blue on red and renders the awning pink (`a_crushed_blue_does_not_put_blue_on_red`).
+Project-owned ILCE-7CR night street, warm lamps, red awning and lanterns. Crushed blue across most
+of the frame must constrain the matrix as a bound; treating it as a level turns reds pink
+(`a_crushed_blue_does_not_put_blue_on_red`).
 
-**Scrubbed by `examples/scrub.rs`**: `scrub::scrubbed` for the standard identifying tags and the GPS
-IFD, then every enciphered Sony maker note block but `0x9416`, as above. The fit is unchanged by it.
+**Scrubbed with `examples/scrub.rs`:** standard identity tags, GPS and encrypted Sony maker-note
+blocks cleared, except lens-data block `0x9416`. Fit unchanged.
+
+## IMG_8789.CR3
+
+Project-owned Canon EOS R10 frame: two brown dogs, lawn and wall. Dominant grass must not tint
+the dogs or neutrals green (`a_lawn_does_not_tint_the_dogs_green`).
+
+**Scrubbed with `examples/scrub.rs`:** standard identity tags, XMP, `CMT4` GPS, Canon owner/body
+identifiers (`0x0009`, `0x000c`, `0x0028`, `0x0096`) and the first five bytes of `0x4019` (lens serial)
+cleared. Technical lens data and fit unchanged.
+
+## mosaics/red-plate-rim.f32
+
+Approved crop only: upright 720×208 conditioned photosites covering red plate, blue rim and white
+plates; no metadata. Row-major little-endian f32, GBRG. `galosh.rs` supplies the noise fit and
+dark references in spatial slot order.

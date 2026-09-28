@@ -1,14 +1,16 @@
 // Phase 7: chroma regressed on luma over a 15x15 window, at one pyramid level.
 //
 // A degree-1 weighted least squares of each chroma term against the luma guide, the weights
-// bilateral on the guide - so the colour is smoothed along whatever the luma says is one
-// surface, and stops at the edge rather than bleeding across it. The clamp holds the
+// bilateral on the guide and a local colour pilot. The clamp holds the
 // regression inside the window's own chroma range, which is what a degree-1 fit will
 // otherwise extrapolate past.
 //
 // The tile is 16: 24x24 would be 576 invocations, over the 256 a portable workgroup is
 // allowed. The answer does not depend on it - every read is a gather
 // with a reflected boundary - only the halo's share of the work does.
+
+import "../px.slang";
+import prelude;
 
 [vk::binding(0, 0)] StructuredBuffer<float> y_guide;
 [vk::binding(1, 0)] StructuredBuffer<float> c1_in;
@@ -24,6 +26,9 @@ struct Push {
     float strength_c;
     /// `galosh::RATIO_FLOOR`.
     float ratio_floor;
+    /// A sample's noise at this level, as a share of the half-resolution plane's.
+    float level_noise;
+    float green_sign;
 };
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
 
@@ -38,6 +43,8 @@ groupshared float t_y[900];
 groupshared float t_c1[900];
 groupshared float t_c2[900];
 groupshared float t_c3[900];
+groupshared float t_p1[900];
+groupshared float t_p2[900];
 
 /// What a colour difference is divided by to become a share of the luma; one where the floor is
 /// zero, which is the pyramid on the differences themselves.
@@ -46,33 +53,55 @@ float share_of(float luma)
     return pc.ratio_floor > 0.0 ? max(luma, pc.ratio_floor) : 1.0;
 }
 
+int reflect_index(int at, int size)
+{
+    if (at < 0) { at = -at; }
+    if (at >= size) { at = 2 * size - at - 2; }
+    return clamp(at, 0, size - 1);
+}
+
 [shader("compute")]
 [numthreads(16, 16, 1)]
 void loess_chroma_3p_tiled(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
 {
+    if (pc.width <= 0 || pc.height <= 0) { return; }
     let tile_x = int(group.x) * TILE_DIM;
     let tile_y = int(group.y) * TILE_DIM;
     let lx = int(local.x);
     let ly = int(local.y);
     let lid = ly * TILE_DIM + lx;
     let wg_size = TILE_DIM * TILE_DIM;
+    let independent = pc.green_sign != 0.0;
+    let pilot_radius = independent ? int(COLOUR_GUIDE_RADIUS.n) : 0;
+    let pilot_side = 2 * pilot_radius + 1;
+    let pilot_width = min(pilot_side, pc.width);
+    let pilot_height = min(pilot_side, pc.height);
+    let pilot_area = float(pilot_width * pilot_height);
+    let exclude_centre = pilot_area > 1.0 ? 1.0 : 0.0;
+    let pilot_samples = pilot_area - exclude_centre;
 
     for (int i = lid; i < TILE_PIX; i += wg_size) {
         let tx = i % TILE_W;
         let ty = i / TILE_W;
-        var gx = tile_x - R + tx;
-        var gy = tile_y - R + ty;
-        if (gx < 0) { gx = -gx; }
-        if (gx >= pc.width) { gx = 2 * pc.width - gx - 2; }
-        gx = clamp(gx, 0, pc.width - 1);
-        if (gy < 0) { gy = -gy; }
-        if (gy >= pc.height) { gy = 2 * pc.height - gy - 2; }
-        gy = clamp(gy, 0, pc.height - 1);
+        let gx = reflect_index(tile_x - R + tx, pc.width);
+        let gy = reflect_index(tile_y - R + ty, pc.height);
         let gp = gy * pc.width + gx;
         t_y[i] = y_guide[gp];
         t_c1[i] = c1_in[gp];
         t_c2[i] = c2_in[gp];
         t_c3[i] = c3_in[gp];
+        let pilot_x = clamp(gx - pilot_radius, 0, pc.width - pilot_width);
+        let pilot_y = clamp(gy - pilot_radius, 0, pc.height - pilot_height);
+        var pilot = float2(0.0);
+        for (int py = 0; py < pilot_height; py++) {
+            for (int px = 0; px < pilot_width; px++) {
+                let at = (pilot_y + py) * pc.width + pilot_x + px;
+                pilot += colour_axes(float3(c1_in[at], c2_in[at], c3_in[at]), pc.green_sign)
+                    / share_of(y_guide[at]);
+            }
+        }
+        t_p1[i] = pilot.x;
+        t_p2[i] = pilot.y;
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -95,8 +124,16 @@ void loess_chroma_3p_tiled(uint3 group : SV_GroupID, uint3 local : SV_GroupThrea
         t_c1[cy_lds * TILE_W + cx_lds],
         t_c2[cy_lds * TILE_W + cx_lds],
         t_c3[cy_lds * TILE_W + cx_lds]) / scale_c;
-    let inv_2sigma_sq = 1.0 / (2.0 * BW * BW);
-    let inv_2chroma_sq = 1.0 / (2.0 * CHROMA_BW * CHROMA_BW);
+    let pilot_c = (float2(
+        t_p1[cy_lds * TILE_W + cx_lds],
+        t_p2[cy_lds * TILE_W + cx_lds]) - exclude_centre * colour_axes(c_c, pc.green_sign)) / pilot_samples;
+    let query_x = clamp(ox - pilot_radius, 0, pc.width - pilot_width);
+    let query_y = clamp(oy - pilot_radius, 0, pc.height - pilot_height);
+    let bw = BW * pc.level_noise;
+    let inv_2sigma_sq = 1.0 / (2.0 * bw * bw);
+    let chroma_bw = CHROMA_BW * pc.level_noise / sqrt(pilot_samples);
+    let inv_2chroma_sq = 1.0 / (2.0 * chroma_bw * chroma_bw);
+    let pilot_noise = 2.0 * pc.level_noise * pc.level_noise / pilot_samples;
 
     var sum_w = 0.0;
     var sum_y = 0.0;
@@ -108,37 +145,40 @@ void loess_chroma_3p_tiled(uint3 group : SV_GroupID, uint3 local : SV_GroupThrea
 
     for (int dy = -R; dy <= R; dy++) {
         let ty_lds = cy_lds + dy;
-        // **Every other tap, offset a column each row, so the window is read as a checkerboard.**
-        // 113 samples of the same 15x15 rather than 225: the support and the bandwidth are
-        // unchanged, and a subsample of a weighted least squares is unbiased - only the estimator's
-        // variance rises. The taps are the whole cost of this kernel, its arithmetic measuring at
-        // 42ms of 334, so this is the only thing that moves it.
-        //
-        // Measured against the full window with `pixdiff`: a mean of 1.0-1.6 counts of 255 on a
-        // base-ISO frame and 2.7-4.9 at ISO 25600.
-        let first = -R + ((dy + R) & 1);
-        for (int dx = first; dx <= R; dx += 2) {
+        let first = independent ? -R : -R + ((dy + R) & 1);
+        let stride = independent ? 1 : 2;
+        for (int dx = first; dx <= R; dx += stride) {
             let p = ty_lds * TILE_W + (cx_lds + dx);
             let yi = t_y[p];
-            let ci = float3(t_c1[p], t_c2[p], t_c3[p]) / share_of(yi);
+            let scale_i = share_of(yi);
+            let ci = float3(t_c1[p], t_c2[p], t_c3[p]) / scale_i;
             cmin = min(cmin, ci);
             cmax = max(cmax, ci);
             let dy_g = yi - y_c;
-            // **On the colour, not only on its lightness.** A guide that is luma alone calls a
-            // blue floral and the vermilion beam behind it one surface wherever the two are
-            // equally light, and the regression then predicts the beam's chroma for the floral -
-            // its own tap is one of 113 and the clamp cannot save it, the beam being inside the
-            // window's range.
-            //
-            // Its own bandwidth, and it cannot borrow the guide's: `y_guide` is the shrinkage's
-            // output where these three planes are `chroma_extract_halfres` off the frame that went
-            // into it, so the guide's residual noise is a fraction of theirs however alike the two
-            // were in the GAT. Divided by three as well, being three squared differences against
-            // the guide's one - without that a chroma difference the size of the noise reads three
-            // times as far as an equal one in luma.
-            // Back in the difference's own units at this pixel, which is what the bandwidth is.
-            let dc = (ci - c_c) * scale_c;
-            let w = exp(-dy_g * dy_g * inv_2sigma_sq - dot(dc, dc) * inv_2chroma_sq / 3.0);
+            let pilot_i = (float2(t_p1[p], t_p2[p])
+                - exclude_centre * colour_axes(ci, pc.green_sign)) / pilot_samples;
+            let dc = (pilot_i - pilot_c) * scale_c;
+            let candidate_x = reflect_index(ox + dx, pc.width);
+            let candidate_y = reflect_index(oy + dy, pc.height);
+            let pilot_x = clamp(candidate_x - pilot_radius, 0, pc.width - pilot_width);
+            let pilot_y = clamp(candidate_y - pilot_radius, 0, pc.height - pilot_height);
+            let overlap_width = max(min(query_x + pilot_width, pilot_x + pilot_width) - max(query_x, pilot_x), 0);
+            let overlap_height = max(min(query_y + pilot_height, pilot_y + pilot_height) - max(query_y, pilot_y), 0);
+            let query_in_candidate = ox >= pilot_x && ox < pilot_x + pilot_width
+                && oy >= pilot_y && oy < pilot_y + pilot_height;
+            let candidate_in_query = candidate_x >= query_x && candidate_x < query_x + pilot_width
+                && candidate_y >= query_y && candidate_y < query_y + pilot_height;
+            let same_centre = candidate_x == ox && candidate_y == oy;
+            let overlap = float(overlap_width * overlap_height) - exclude_centre
+                * (float(query_in_candidate) + float(candidate_in_query) - float(same_centre));
+            let noise_scale = scale_c / scale_i;
+            let expected_noise = pilot_noise * (1.0 + noise_scale * noise_scale
+                - 2.0 * noise_scale * overlap / pilot_samples);
+            let sample_difference = (ci - c_c) * scale_c;
+            let distance = independent
+                ? max(dot(dc, dc) - expected_noise, 0.0) / 2.0 * inv_2chroma_sq
+                : dot(sample_difference, sample_difference) * inv_2chroma_sq / 3.0;
+            let w = exp(-dy_g * dy_g * inv_2sigma_sq - distance);
             sum_w += w;
             sum_y += w * yi;
             sum_yy += w * yi * yi;

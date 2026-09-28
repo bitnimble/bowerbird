@@ -30,6 +30,7 @@ struct Push {
     uint packed2;
     float gain_c1;
     float gain_c2;
+    int is_bayer;
 };
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
 
@@ -41,7 +42,7 @@ void forward_l_stride1(uint3 id : SV_DispatchThreadID)
     let y = int(id.y);
     if (x >= pc.width || y >= pc.height) { return; }
 
-    if (pc.period_w == 2 && pc.period_h == 2) {
+    if (pc.is_bayer != 0) {
         var yb = y + 1;
         if (yb >= pc.height) { yb = pc.height - 2; }
         if (yb < 0) { yb = 0; }
@@ -58,12 +59,12 @@ void forward_l_stride1(uint3 id : SV_DispatchThreadID)
     }
 
     Pattern pat = { pc.period_w, pc.period_h, pc.packed0, pc.packed1, pc.packed2 };
-    // The site's own chroma, which is the value `k16_inverse_fused` will add back at this pixel -
+    // The site's own chroma, which is the value `restore_mosaic` will add back at this pixel -
     // so with nothing shrunk and nothing smoothed the pair is the identity.
     let site = (y >> 1) * pc.halfwidth + (x >> 1);
     let w = chroma_weights(cfa_colour(pat, y, x));
     // The axes arrive normalised to one photosite's sigma, so the offset is taken at their own
-    // scale - the same undoing `k16_inverse_fused` applies when it puts the offset back.
+    // scale - the same undoing `restore_mosaic` applies when it puts the offset back.
     l_cs[y * pc.width + x] = in_gat_full[y * pc.width + x]
         - (w.x * c1_h[site] * pc.gain_c1 + w.y * c2_h[site] * pc.gain_c2);
 }

@@ -1,12 +1,12 @@
 //! The camera match's normal equations, summed where the pairs already are.
 //!
-//! `slang/fit_moments.slang` is the fold. What crosses back is eighteen floats a block, rather
-//! than a colour per pair - 150k of them, three times a fit - for the host to sum the same
-//! eighteen numbers itself. The 3x3 solve stays on the host: it reads those eighteen and nothing
-//! else, so a dispatch for it would be all round trip and no work.
+//! `slang/fit_moments.slang` is the fold. What crosses back is thirty-six floats a block and
+//! matrix, rather than a colour per pair - 150k of them, three times a fit - for the host to sum
+//! the same numbers itself. The 3x3 solve stays on the host: it reads those and nothing else, so
+//! a dispatch for it would be all round trip and no work.
 
-/// Nine for `A^T A` and nine for `A^T b`, which is `Moments` exactly.
-pub(crate) const MOMENT_WORDS: usize = 18;
+/// Twenty-seven for the three rows' `A^T A` and nine for `A^T b`, which is `Moments` exactly.
+pub(crate) const MOMENT_WORDS: usize = 36;
 
 struct Kernel {
     layout: wgpu::BindGroupLayout,
@@ -36,6 +36,7 @@ fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
                 entry(0, read),
                 entry(1, read),
                 entry(2, wgpu::BufferBindingType::Storage { read_only: false }),
+                entry(3, read),
                 entry(20, wgpu::BufferBindingType::Uniform),
             ],
         });
@@ -58,7 +59,8 @@ fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     })
 }
 
-/// The per-block partials of `A^T A` and `A^T b`, in block order.
+/// Per matrix, the per-block partials of each row's `A^T A` and of `A^T b`, in block order, with
+/// every crushed channel counted where that matrix overshoots it.
 ///
 /// Returned rather than folded here so the caller sums them in the order it chose, which is what
 /// makes the answer the same on every adapter.
@@ -68,12 +70,13 @@ pub(crate) async fn partials(
     target: &crate::gpu::Buffer,
     pairs: usize,
     block: usize,
-) -> Option<Vec<[f64; MOMENT_WORDS]>> {
-    if pairs == 0 {
-        return Some(Vec::new());
+    matrices: &[[[f64; 3]; 3]],
+) -> Option<Vec<Vec<[f64; MOMENT_WORDS]>>> {
+    if pairs == 0 || matrices.is_empty() {
+        return Some(vec![Vec::new(); matrices.len()]);
     }
     let blocks = pairs.div_ceil(block);
-    let words = blocks * MOMENT_WORDS;
+    let words = matrices.len() * blocks * MOMENT_WORDS;
 
     let mut recording = gpu.record();
     recording.holding(below);
@@ -84,11 +87,27 @@ pub(crate) async fn partials(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    let mut push = [(pairs as i32), (blocks as i32), (block as i32)]
-        .iter()
-        .flat_map(|v| v.to_ne_bytes())
-        .collect::<Vec<u8>>();
-    push.resize(16, 0);
+    let matrices_on = recording.init(&wgpu::util::BufferInitDescriptor {
+        label: Some("fit moments matrices"),
+        contents: &matrices
+            .iter()
+            .flatten()
+            .flatten()
+            .flat_map(|v| (*v as f32).to_ne_bytes())
+            .collect::<Vec<u8>>(),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let push: Vec<u8> = [
+        (pairs as i32).to_ne_bytes(),
+        (blocks as i32).to_ne_bytes(),
+        (block as i32).to_ne_bytes(),
+        (crate::hdr_fit::CAMERA_CRUSHED as f32).to_ne_bytes(),
+        (matrices.len() as i32).to_ne_bytes(),
+        [0; 4],
+        [0; 4],
+        [0; 4],
+    ]
+    .concat();
     let push = recording.init(&wgpu::util::BufferInitDescriptor {
         label: Some("fit_moments push"),
         contents: &push,
@@ -101,6 +120,7 @@ pub(crate) async fn partials(
             wgpu::BindGroupEntry { binding: 0, resource: below.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 1, resource: target.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 2, resource: partial.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: matrices_on.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 20, resource: push.as_entire_binding() },
         ],
     });
@@ -108,7 +128,7 @@ pub(crate) async fn partials(
         let mut pass = recording.encoder().begin_compute_pass(&Default::default());
         pass.set_pipeline(&kernel(gpu).moments);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((blocks as u32).div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(((matrices.len() * blocks) as u32).div_ceil(64), 1, 1);
     }
     let staging = recording.buffer(&wgpu::BufferDescriptor {
         label: Some("fit moments out"),
@@ -127,9 +147,11 @@ pub(crate) async fn partials(
     })
     .await?;
     Some(
-        read.chunks_exact(MOMENT_WORDS)
-            .take(blocks)
-            .map(|block| std::array::from_fn(|i| block[i]))
+        read.chunks_exact(blocks * MOMENT_WORDS)
+            .take(matrices.len())
+            .map(|probe| {
+                probe.chunks_exact(MOMENT_WORDS).map(|block| std::array::from_fn(|i| block[i])).collect()
+            })
             .collect(),
     )
 }

@@ -3,7 +3,7 @@
 // Half resolution because a Bayer site has one of each colour, so this is the natural rate for
 // colour and nothing is thrown away by working at it. A 6x6 pattern is read on the same grid and
 // is oversampled there, which costs a little bandwidth and keeps every kernel above this one -
-// the pyramid, the LOESS, the guided upsample, the inverse - working at the size it already did.
+// the pyramid, the LOESS, the coarse correction, the inverse - working at the size it already did.
 //
 // **Two different transforms, because a 2x2 window of X-Trans does not span the colours.** One
 // site in nine of that pattern is four greens: no combination of the four samples under it carries
@@ -30,6 +30,7 @@ struct Push {
     uint packed2;
     float gain_c1;
     float gain_c2;
+    int is_bayer;
 };
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
 
@@ -52,7 +53,7 @@ void chroma_extract_halfres(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    if (pc.period_w == 2 && pc.period_h == 2) {
+    if (pc.is_bayer != 0) {
         let r = in_gat_full[fr * pc.width + fc];
         let gb = in_gat_full[(fr + 1) * pc.width + fc];
         let gr = in_gat_full[fr * pc.width + (fc + 1)];
