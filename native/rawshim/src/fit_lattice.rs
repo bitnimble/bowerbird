@@ -19,7 +19,7 @@ const SLICE: usize = 256;
 /// Pairs one thread of the count and the write walks.
 const BLOCK: usize = 4096;
 
-struct Kernels {
+pub(crate) struct Kernels {
     layout: wgpu::BindGroupLayout,
     land: wgpu::ComputePipeline,
     count: wgpu::ComputePipeline,
@@ -30,7 +30,7 @@ struct Kernels {
     fold: wgpu::ComputePipeline,
 }
 
-fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
+pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
     static BUILT: std::sync::OnceLock<Kernels> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

@@ -26,12 +26,12 @@ pub struct Plane {
     pub stride: usize,
 }
 
-struct Kernel {
+pub(crate) struct Kernel {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
 }
 
-fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

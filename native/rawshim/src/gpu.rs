@@ -33,6 +33,16 @@ type PipelineCell<T> = std::cell::OnceCell<T>;
 /// `frame.slang`'s `FROM_FRAME`, as the draw's two pipelines name it.
 const FROM_FRAME_ID: &str = "0";
 
+/// Every `(from_frame, entry)` pair [`Gpu::drawing`] has a pipeline for.
+const DRAWINGS: [(bool, &str); 6] = [
+    (true, "fs"),
+    (false, "fs"),
+    (true, "fs_print"),
+    (true, "fs_print_pq"),
+    (true, "fs_print_pigment"),
+    (true, "fs_print_flat"),
+];
+
 const FRAME_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/frame.wgsl"));
 const PEAK_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/peak.wgsl"));
 const DETAIL_WGSL: &str = include_str!(concat!(env!("OUT_DIR"), "/wgsl/detail.wgsl"));
@@ -1074,6 +1084,15 @@ impl Gpu {
     fn print_surface(&self) -> &print_surface::Pipelines {
         self.print_surface
             .get_or_init(|| print_surface::Pipelines::new(&self.device))
+    }
+
+    /// Builds every pipeline this device leaves to the first draw that needs it.
+    pub fn build_deferred_pipelines(&self) {
+        for (from_frame, entry) in DRAWINGS {
+            self.drawing(from_frame, entry);
+        }
+        self.print_material();
+        self.print_surface();
     }
 
     fn drawing(&self, from_frame: bool, entry: &str) -> &wgpu::RenderPipeline {
@@ -5014,14 +5033,7 @@ mod tests {
         assert!(gpu.print_surface.get().is_none());
         assert!(gpu.print_environment.get().is_none());
 
-        for (from_frame, entry) in [
-            (true, "fs"),
-            (false, "fs"),
-            (true, "fs_print"),
-            (true, "fs_print_pq"),
-            (true, "fs_print_pigment"),
-            (true, "fs_print_flat"),
-        ] {
+        for (from_frame, entry) in super::DRAWINGS {
             assert!(std::ptr::eq(
                 gpu.drawing(from_frame, entry),
                 gpu.drawing(from_frame, entry)

@@ -105,6 +105,7 @@ export const MessageSchema = z.discriminatedUnion('to', [
   z.object({ id: z.number(), to: z.literal('open'), session: z.number(), ask: OpenAskSchema }),
   z.object({ id: z.number(), to: z.literal('close'), session: z.number() }),
   z.object({ id: z.number(), to: z.literal('stage'), ask: StageAskSchema }),
+  z.object({ id: z.number(), to: z.literal('precompile') }),
 ]);
 export type Message = z.infer<typeof MessageSchema>;
 export type Addressed = DistributiveOmit<Message, 'id'>;
@@ -118,4 +119,7 @@ export const AnswerSchema = z.discriminatedUnion('ok', [
 /** A stage the message `id` asked for has begun, sent any number of times before its answer. */
 export const ProgressSchema = z.object({ id: z.number(), stage: OpenStageSchema });
 
-export const ReplySchema = z.union([ProgressSchema, AnswerSchema]);
+/** How many of the pipelines a precompile is compiling have finished, sent as each one does. */
+export const CompiledSchema = z.object({ id: z.number(), compiled: z.number(), of: z.number() });
+
+export const ReplySchema = z.union([ProgressSchema, CompiledSchema, AnswerSchema]);

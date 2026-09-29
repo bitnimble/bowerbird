@@ -34,7 +34,7 @@ const SCORE_WORDS: usize = 3;
 pub(crate) const FALLOFF_BINS: usize = 12;
 const FALLOFF_WORDS: usize = 3;
 
-struct Kernels {
+pub(crate) struct Kernels {
     layout: wgpu::BindGroupLayout,
     count: wgpu::ComputePipeline,
     group: wgpu::ComputePipeline,
@@ -47,7 +47,7 @@ struct Kernels {
     falloff: wgpu::ComputePipeline,
 }
 
-fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
+pub(crate) fn kernels(gpu: &'static crate::gpu::Gpu) -> &'static Kernels {
     static BUILT: std::sync::OnceLock<Kernels> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

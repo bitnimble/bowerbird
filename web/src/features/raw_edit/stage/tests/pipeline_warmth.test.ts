@@ -49,10 +49,14 @@ class FakeDevice {
     FakeDevice.compiled.push(code);
     return { compiled: code };
   }
+  static refusing = false;
   private static compileAsync(descriptor: object, module: GPUShaderModule): Promise<unknown> {
     FakeDevice.compiledAsync.push(descriptor as Record<string, unknown>);
     const { code } = module as unknown as Module;
-    return new Promise((resolve) => setTimeout(() => resolve({ warmed: code }), 10));
+    const refused = FakeDevice.refusing;
+    return new Promise((resolve, reject) =>
+      setTimeout(() => (refused ? reject(new Error('refused')) : resolve({ warmed: code })), 10),
+    );
   }
 }
 
@@ -99,12 +103,14 @@ function installed(store: RecipeStore): Installed {
   };
 }
 
-function memory(): RecipeStore & { kept: Recipes | null } {
+function memory(): RecipeStore & { kept: Recipes | null; saves: number } {
   const store = {
     kept: null as Recipes | null,
+    saves: 0,
     load: () => Promise.resolve(store.kept),
     save: (recipes: Recipes) => {
       store.kept = recipes;
+      store.saves++;
       return Promise.resolve();
     },
   };
@@ -142,6 +148,7 @@ function draw(device: GPUDevice, label: string, code: string): GPURenderPipeline
 function reset(): void {
   FakeDevice.compiled = [];
   FakeDevice.compiledAsync = [];
+  FakeDevice.refusing = false;
   FakePass.set = [];
 }
 
@@ -337,6 +344,88 @@ test('a pipeline created again later in the session is dispatched as its edited 
     { compiled: 'fn a() { edited(); }' },
     { compiled: 'fn a() { edited(); }' },
   ]);
+});
+
+test('a precompile compiles every pipeline created before and during it, and saves them all at once', async () => {
+  reset();
+  const store = memory();
+  const { adapter, pass, warmth } = installed(store);
+  const device = await adapter.requestDevice();
+  const made = [build(device, 'early', 'fn early() {}')];
+
+  await warmth.precompile(() => {
+    made.push(build(device, 'late', 'fn late() {}'));
+  });
+  expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn early() {}', 'fn late() {}']);
+  expect(store.kept?.recipes.map((recipe) => recipe.stages.compute)).toEqual([
+    'fn early() {}',
+    'fn late() {}',
+  ]);
+  expect(store.saves).toBe(1);
+
+  for (const pipeline of made) pass.setPipeline(pipeline);
+  expect(FakeDevice.compiled).toEqual([]);
+  expect(FakePass.set).toEqual([{ warmed: 'fn early() {}' }, { warmed: 'fn late() {}' }]);
+});
+
+test('a precompile counts each pipeline as it finishes compiling', async () => {
+  reset();
+  const { adapter, warmth } = installed(memory());
+  const device = await adapter.requestDevice();
+  build(device, 'early', 'fn early() {}');
+  const counted: [number, number][] = [];
+
+  await warmth.precompile(
+    () => build(device, 'late', 'fn late() {}'),
+    (compiled, of) => counted.push([compiled, of]),
+  );
+  expect(counted).toEqual([
+    [0, 2],
+    [1, 2],
+    [2, 2],
+  ]);
+});
+
+test('a pipeline the browser refuses still counts, and compiles at its first dispatch', async () => {
+  reset();
+  const { adapter, pass, warmth } = installed(memory());
+  const device = await adapter.requestDevice();
+  const refused = build(device, 'refused', 'fn refused() {}');
+  FakeDevice.refusing = true;
+  const counted: [number, number][] = [];
+
+  await warmth.precompile(
+    () => {},
+    (compiled, of) => counted.push([compiled, of]),
+  );
+  expect(counted.at(-1)).toEqual([1, 1]);
+  pass.setPipeline(refused);
+  expect(FakeDevice.compiled).toEqual(['fn refused() {}']);
+});
+
+test('a precompile leaves alone what was already drawn with', async () => {
+  reset();
+  const { adapter, pass, warmth } = installed(memory());
+  const device = await adapter.requestDevice();
+  pass.setPipeline(build(device, 'drawn', 'fn drawn() {}'));
+
+  await warmth.precompile(() => {});
+  expect(FakeDevice.compiledAsync).toEqual([]);
+});
+
+test('the session after a precompile warms every pipeline it compiled', async () => {
+  reset();
+  const store = memory();
+  const first = installed(store);
+  const device = await first.adapter.requestDevice();
+  await first.warmth.precompile(() => {
+    build(device, 'a', 'fn a() {}');
+    build(device, 'b', 'fn b() {}');
+  });
+  reset();
+
+  await installed(store).adapter.requestDevice();
+  expect(FakeDevice.compiledAsync.map(codeOf)).toEqual(['fn a() {}', 'fn b() {}']);
 });
 
 test('an edited pipeline dispatched before its warming finishes compiles there, and replaces its recipe', async () => {

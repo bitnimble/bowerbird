@@ -17,6 +17,8 @@ import { LabelsPresenter } from '../features/labels/labels_presenter';
 import { LabelsStore } from '../features/labels/labels_store';
 import { LibrariesPresenter } from '../features/libraries/libraries_presenter';
 import { LibrariesStore } from '../features/libraries/libraries_store';
+import { OnboardingPresenter } from '../features/onboarding/onboarding_presenter';
+import { OnboardingStore } from '../features/onboarding/onboarding_store';
 import { PhotosPresenter } from '../features/photos/photos_presenter';
 import { ListingStore } from '../features/photos/grid/listing_store';
 import { MarksStore } from '../features/photos/grid/marks_store';
@@ -42,6 +44,8 @@ import { UpdatesPresenter } from '../features/updates/updates_presenter';
 import { UpdatesStore } from '../features/updates/updates_store';
 import { SidebarPresenter } from './sidebar_presenter';
 import { SidebarStore } from './sidebar_store';
+import { inDesktopShell } from '../api/transport';
+import { gpuThread } from '../gpu/gpu_thread';
 
 // Peer stores, each with its own context: components subscribe to the one domain
 // they read, and nothing can reach a god-object of everything.
@@ -68,6 +72,7 @@ const SidebarStoreContext = createContext<SidebarStore | null>(null);
 const FrameTvStoreContext = createContext<FrameTvStore | null>(null);
 const LabelsStoreContext = createContext<LabelsStore | null>(null);
 const LabelEditorStoreContext = createContext<LabelEditorStore | null>(null);
+const OnboardingStoreContext = createContext<OnboardingStore | null>(null);
 
 interface Presenters {
   libraries: LibrariesPresenter;
@@ -90,6 +95,7 @@ interface Presenters {
   sidebar: SidebarPresenter;
   frameTv: FrameTvPresenter;
   labels: LabelsPresenter;
+  onboarding: OnboardingPresenter;
 }
 
 const PresentersContext = createContext<Presenters | null>(null);
@@ -136,6 +142,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     frameTv: new FrameTvStore(),
     labels: new LabelsStore(),
     labelEditor: new LabelEditorStore(),
+    onboarding: new OnboardingStore(),
   };
 
   // Wiring order encodes the dependency direction: shoots/albums presenters know
@@ -223,6 +230,10 @@ function build(): { stores: Stores; presenters: Presenters } {
       toasts,
     ),
     labels,
+    onboarding: new OnboardingPresenter(
+      stores.onboarding,
+      inDesktopShell() ? (onCompiled) => gpuThread().precompile(onCompiled) : null,
+    ),
   };
   return { stores, presenters };
 }
@@ -251,6 +262,7 @@ interface Stores {
   frameTv: FrameTvStore;
   labels: LabelsStore;
   labelEditor: LabelEditorStore;
+  onboarding: OnboardingStore;
 }
 
 export function StoresProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -284,7 +296,11 @@ export function StoresProvider({ children }: { children: ReactNode }): JSX.Eleme
                                                   <ConfirmStoreContext.Provider
                                                     value={stores.confirm}
                                                   >
-                                                    {children}
+                                                    <OnboardingStoreContext.Provider
+                                                      value={stores.onboarding}
+                                                    >
+                                                      {children}
+                                                    </OnboardingStoreContext.Provider>
                                                   </ConfirmStoreContext.Provider>
                                                 </LabelEditorStoreContext.Provider>
                                               </LabelsStoreContext.Provider>
@@ -362,5 +378,7 @@ export const useLabelsStore = (): LabelsStore =>
   required(useContext(LabelsStoreContext), 'LabelsStore');
 export const useLabelEditorStore = (): LabelEditorStore =>
   required(useContext(LabelEditorStoreContext), 'LabelEditorStore');
+export const useOnboardingStore = (): OnboardingStore =>
+  required(useContext(OnboardingStoreContext), 'OnboardingStore');
 export const usePresenters = (): Presenters =>
   required(useContext(PresentersContext), 'Presenters');

@@ -57,13 +57,13 @@ pub struct Partial {
     pub class_seen: [f64; COLOUR_CLASSES],
 }
 
-struct Kernel {
+pub(crate) struct Kernel {
     layout: wgpu::BindGroupLayout,
     target: wgpu::ComputePipeline,
     score: wgpu::ComputePipeline,
 }
 
-fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
+pub(crate) fn kernel(gpu: &'static crate::gpu::Gpu) -> &'static Kernel {
     static BUILT: std::sync::OnceLock<Kernel> = std::sync::OnceLock::new();
     BUILT.get_or_init(|| {
         let device = gpu.describing();

@@ -204,9 +204,13 @@ export async function openAppDataDir(): Promise<void> {
   await invoke('open_app_data_dir', {});
 }
 
+export function inDesktopShell(): boolean {
+  return shellInvoke() != null && !/Android/i.test(navigator.userAgent);
+}
+
 /** Synchronous, so a menu can decide whether to offer it. Android's shell has no chooser to show. */
 export function canOpenOriginalWith(): boolean {
-  return shellInvoke() != null && !/Android/i.test(navigator.userAgent);
+  return inDesktopShell();
 }
 
 /** macOS has no chooser dialog, so the shell pops a menu of applications at the pointer instead. */
@@ -256,7 +260,7 @@ export function followCaptionPointer(handler: (pointer: CaptionPointer) => void)
 
 /** Android's shell has no file manager to show a file in. */
 export function canRevealFile(): boolean {
-  return shellInvoke() != null && !/Android/i.test(navigator.userAgent);
+  return inDesktopShell();
 }
 
 /** Selects the file in the reader's own file manager. */

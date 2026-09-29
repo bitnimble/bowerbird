@@ -18,7 +18,7 @@ const PipelineRecipeSchema = z.object({
   /** The code of each stage's module, by the descriptor field it sat in. */
   stages: z.record(z.string(), z.string()),
   groups: z.array(BindGroupLayoutSchema.nullable()),
-  /** When a session last drew with it, in milliseconds since the epoch. */
+  /** When a session last drew with it or precompiled it, in milliseconds since the epoch. */
   lastUsed: z.number(),
 });
 export type PipelineRecipe = z.infer<typeof PipelineRecipeSchema>;
@@ -40,6 +40,7 @@ type Class<T> = { prototype: T };
 type Deferred = {
   recipe: PipelineRecipe | null;
   build: () => object;
+  compile: (() => Promise<object>) | null;
   pipeline?: object;
   warmed?: object;
 };
@@ -75,6 +76,7 @@ export class PipelineWarmth {
   /** A pipeline compiled from each recipe as it stands, for the next stand-in built from the same code. */
   private readonly compiled = new Map<string, object>();
   private readonly warming = new Set<Promise<unknown>>();
+  private readonly handedOut = new Set<WeakRef<Deferred>>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly opened = Date.now();
 
@@ -90,12 +92,11 @@ export class PipelineWarmth {
     const { createShaderModule, createBindGroupLayout, createPipelineLayout } = device;
     const { requestDevice } = adapter;
     const created: Created = { createShaderModule, createBindGroupLayout, createPipelineLayout };
-    const { modules, groups, layouts } = this;
+    const { modules, groups, layouts, handedOut } = this;
     const deferred = new WeakMap<object, Deferred>();
     const recipeOf = (build: string, descriptor: PipelineDescriptor): PipelineRecipe | null =>
       this.recipeOf(build, descriptor);
-    const arrived = (wait: Deferred, compile: (() => Promise<object>) | null): void =>
-      this.arrived(wait, compile);
+    const arrived = (wait: Deferred): void => this.arrived(wait);
     const built = (recipe: PipelineRecipe | null, pipeline: object): void =>
       this.built(recipe, pipeline);
     const warm = (opened: GPUDevice): Promise<void> => this.warm(opened, created);
@@ -132,9 +133,11 @@ export class PipelineWarmth {
         const wait: Deferred = {
           recipe: recipeOf(name, descriptor),
           build: () => build.call(this, descriptor),
+          compile: buildAsync == null ? null : () => buildAsync.call(this, descriptor),
         };
         deferred.set(standIn, wait);
-        arrived(wait, buildAsync == null ? null : () => buildAsync.call(this, descriptor));
+        handedOut.add(new WeakRef(wait));
+        arrived(wait);
         return standIn;
       };
     }
@@ -163,10 +166,57 @@ export class PipelineWarmth {
   }
 
   /**
+   * Compiles every pipeline `build` creates, and every one created before it and not yet drawn
+   * with, keeping each as a recipe that later sessions warm. A pipeline the browser refuses still
+   * counts as compiled; its first use builds it and reports why.
+   */
+  async precompile(
+    build: () => void,
+    onCompiled: (compiled: number, of: number) => void = () => {},
+  ): Promise<void> {
+    await this.settled();
+    build();
+    await this.settled();
+    const waits = this.undrawn();
+    let compiled = 0;
+    const finished = (): void => onCompiled(++compiled, waits.length);
+    onCompiled(0, waits.length);
+    for (const wait of waits) {
+      if (wait.warmed != null) {
+        this.built(wait.recipe, wait.warmed);
+        finished();
+      } else if (wait.compile != null) {
+        this.track(
+          wait
+            .compile()
+            .then((pipeline) => {
+              wait.warmed = pipeline;
+              this.built(wait.recipe, pipeline);
+            })
+            .finally(finished),
+        );
+      } else finished();
+    }
+    await this.settled();
+    if (this.saveTimer != null) clearTimeout(this.saveTimer);
+    await this.save();
+  }
+
+  private undrawn(): Deferred[] {
+    const waits: Deferred[] = [];
+    for (const held of this.handedOut) {
+      const wait = held.deref();
+      if (wait == null || wait.pipeline != null) this.handedOut.delete(held);
+      else waits.push(wait);
+    }
+    return waits;
+  }
+
+  /**
    * Hands a stand-in an earlier session drew with the pipeline already compiled for it, or compiles
    * one now where its shaders or layout have changed since.
    */
-  private arrived(wait: Deferred, compile: (() => Promise<object>) | null): void {
+  private arrived(wait: Deferred): void {
     const recipe = wait.recipe;
     const kept = recipe == null ? undefined : this.recipes.get(recipe.identity);
     if (recipe == null || kept == null) return;
@@ -174,15 +224,20 @@ export class PipelineWarmth {
       wait.warmed = this.compiled.get(recipe.identity);
       return;
     }
-    if (compile == null) return;
-    const compiling = compile()
-      .then((pipeline) => {
+    if (wait.compile == null) return;
+    this.track(
+      wait.compile().then((pipeline) => {
         wait.warmed = pipeline;
-      })
+      }),
+    );
+  }
+
+  private track(compiling: Promise<void>): void {
+    const tracked = compiling
       // Refused here, the first use builds it synchronously and reports why through wgpu.
       .catch(() => undefined)
-      .finally(() => this.warming.delete(compiling));
-    this.warming.add(compiling);
+      .finally(() => this.warming.delete(tracked));
+    this.warming.add(tracked);
   }
 
   private recipeOf(build: string, descriptor: PipelineDescriptor): PipelineRecipe | null {
