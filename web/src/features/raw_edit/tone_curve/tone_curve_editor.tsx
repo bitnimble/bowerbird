@@ -169,23 +169,13 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
         }}
         onPointerMove={(event) => {
           const active = drag.current;
-          if (active == null || active.pointerId !== event.pointerId || active.index < 0) return;
+          if (active == null || active.pointerId !== event.pointerId) return;
           const current = edit.doc?.toneCurve?.points ?? points;
           if (active.index >= current.length) return;
           const [x, y] = position(event, active.bounds);
-          if (
-            active.index > 0 &&
-            active.index < current.length - 1 &&
-            (x < -0.15 || x > 1.15 || y < -0.15 || y > 1.15)
-          ) {
-            presenter.previewToneCurve(storedCurve(removePoint(current, active.index)));
-            active.index = -1;
-            setActiveIndex(null);
-          } else {
-            const next = movePoint(current, active.index, clamp(x, 0, 1), clamp(y, 0, 1));
-            if (next === current) return;
-            presenter.previewToneCurve(storedCurve(next));
-          }
+          const next = movePoint(current, active.index, clamp(x, 0, 1), clamp(y, 0, 1));
+          if (next === current) return;
+          presenter.previewToneCurve(storedCurve(next));
           active.changed = true;
         }}
         onPointerUp={end}

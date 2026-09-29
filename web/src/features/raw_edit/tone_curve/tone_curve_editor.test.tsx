@@ -275,7 +275,7 @@ test('curve press inserts a point and release settles once', () => {
   ]);
 });
 
-test('dragging an interior point off the plot removes it', () => {
+test('dragging an interior point off the plot holds it at the edge', () => {
   const { calls } = open(CAMERA);
   const svg = plot();
   expect(
@@ -288,23 +288,34 @@ test('dragging an interior point off the plot removes it', () => {
     }),
   ).toBe(false);
   fireEvent.pointerMove(svg, { pointerId: 1, isPrimary: true, clientX: 130, clientY: 45 });
+  fireEvent.pointerMove(svg, { pointerId: 1, isPrimary: true, clientX: 50, clientY: -80 });
+  fireEvent.pointerUp(svg, { pointerId: 1, isPrimary: true });
   expect(calls).toEqual([
     {
       kind: 'preview',
       curve: curve([
         [0, 0.1],
+        [1 - 1 / 1024, 0.55],
+        [1, 1],
+      ]),
+    },
+    {
+      kind: 'preview',
+      curve: curve([
+        [0, 0.1],
+        [0.5, 1],
+        [1, 1],
+      ]),
+    },
+    {
+      kind: 'settle',
+      curve: curve([
+        [0, 0.1],
+        [0.5, 1],
         [1, 1],
       ]),
     },
   ]);
-  fireEvent.pointerUp(svg, { pointerId: 1, isPrimary: true });
-  expect(calls.at(-1)).toEqual({
-    kind: 'settle',
-    curve: curve([
-      [0, 0.1],
-      [1, 1],
-    ]),
-  });
 });
 
 test('pointercancel restores starting curve without settling', () => {

@@ -290,7 +290,7 @@ test('the crop rectangle takes a drag, and the drag reaches the document', async
   await expect.poll(async () => savedRev(page, photoId), { timeout: 30_000 }).not.toBe(cropped);
 });
 
-test('tone curve points drag and drag off the plot', async ({ page }) => {
+test('tone curve points drag, stop at the plot edge, and go on double-click', async ({ page }) => {
   const editsUrl = route(PathSegment.api(), PathSegment.photos(), photoId, PathSegment.edits());
   const state = async () => EditStateSchema.parse(await (await page.request.get(editsUrl)).json());
   const original = await state();
@@ -372,22 +372,19 @@ test('tone curve points drag and drag off the plot', async ({ page }) => {
     expect(movedState.rev).toBeGreaterThan(seededState.rev);
 
     const movedBox = await point.boundingBox();
-    if (movedBox == null) throw new Error('tone curve point disappeared before removal');
+    if (movedBox == null) throw new Error('tone curve point disappeared before the edge drag');
     await page.mouse.move(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2);
-    const removedSave = savedByEditor();
+    const edgeSave = savedByEditor();
     await page.mouse.down();
     await page.mouse.move(plotBox.x - plotBox.width * 0.2, plotBox.y + plotBox.height / 2, {
       steps: 8,
     });
     await page.mouse.up();
 
-    await expect(plot.getByRole('slider', { name: /^Curve point/ })).toHaveCount(0);
-    const removedState = EditStateSchema.parse(await (await removedSave).json());
-    expect(removedState.doc.toneCurve?.points).toHaveLength(2);
-    expect(removedState.rev).toBeGreaterThan(movedState.rev);
-    const reinsertedSave = savedByEditor();
-    await page.mouse.click(plotBox.x + plotBox.width / 2, plotBox.y + plotBox.height / 2);
-    await reinsertedSave;
+    const edgeState = EditStateSchema.parse(await (await edgeSave).json());
+    expect(edgeState.doc.toneCurve?.points).toHaveLength(3);
+    expect(edgeState.doc.toneCurve?.points[1]?.[0]).toBeLessThan(0.01);
+    expect(edgeState.rev).toBeGreaterThan(movedState.rev);
     const doubleClickSave = savedByEditor();
     await plot.getByRole('slider', { name: /^Curve point 1,/ }).dblclick();
     const doubleClickedState = EditStateSchema.parse(await (await doubleClickSave).json());
@@ -1029,12 +1026,10 @@ test('print mode rotates with a real pointer and keyboard without saving a photo
   const rendered = (await readbacks()).find((frame) => frame.id === readbackId);
   if (rendered == null) throw new Error('The print framebuffer was not read back');
   expect(Math.max(...rendered.rgb)).toBeGreaterThan(1.5);
-  await test
-    .info()
-    .attach('print-canvas-hdr.json', {
-      body: JSON.stringify(rendered),
-      contentType: 'application/json',
-    });
+  await test.info().attach('print-canvas-hdr.json', {
+    body: JSON.stringify(rendered),
+    contentType: 'application/json',
+  });
   const compositing = await print.getByRole('img', { name: 'Edit preview' }).evaluate((canvas) => {
     const layers = [];
     for (let element: Element | null = canvas; element != null; element = element.parentElement) {
