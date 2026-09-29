@@ -173,7 +173,7 @@ export const JobSchema = z.object({
    */
   measure: z.boolean().optional(),
   /**
-   * Count this job's steps in the library's own cell, for `jobProgress` to read from this thread.
+   * Count this job's steps in the library's own cell, for `RunningJob.progress` to read from this thread.
    *
    * Only an export asks: there is one cell for the process, so a job nobody is watching would
    * report over the one somebody is.

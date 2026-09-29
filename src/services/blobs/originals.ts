@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
@@ -9,6 +8,7 @@ import type { BackupLocations } from '../backup/backup_locations';
 import { mirrorReady } from '../backup/backup_root';
 import { passivePeerOf } from '../backup/passive_peers';
 import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_paths_repository';
+import { isOnDisk } from './blob_store';
 import type { TransferService } from './transfer_service';
 
 const log = new Logger('blobs');
@@ -49,7 +49,7 @@ export class Originals {
    */
   here(library: LibraryConfiguration, photo: BasicPhoto): string | null {
     const abs = originalPathOf(library, photo);
-    return abs != null && existsSync(abs) ? abs : null;
+    return abs != null && isOnDisk(abs) ? abs : null;
   }
 
   /**
@@ -63,7 +63,7 @@ export class Originals {
   async open(library: LibraryConfiguration, photo: BasicPhoto): Promise<string | null> {
     const abs = originalPathOf(library, photo);
     if (abs == null) return null;
-    if (existsSync(abs)) {
+    if (isOnDisk(abs)) {
       this.touch(photo.id);
       return abs;
     }
@@ -71,7 +71,7 @@ export class Originals {
     // The path is the row's, and a fetch lands the file at the row's *current* path - so a photo
     // binned while its original was in flight is read from the bin, not from where it used to be.
     const landed = originalPathOf(library, photo);
-    if (landed == null || !existsSync(landed)) return null;
+    if (landed == null || !isOnDisk(landed)) return null;
     this.touch(photo.id);
     return landed;
   }

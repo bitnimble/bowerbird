@@ -17,7 +17,7 @@ import { pairedPeers, syncsOriginals } from '../replication/pairing';
 import { replicates } from '../replication/tombstones';
 import type { BlobLocations } from './blob_locations';
 import { contentHash } from '../../utils/hash';
-import { appendToStage } from './blob_store';
+import { appendToStage, isOnDisk } from './blob_store';
 import { RenditionCache } from './rendition_cache';
 import type { PeerTransport } from './peer';
 import type { RenditionWritten } from '../processing/workers/processing_types';
@@ -163,7 +163,7 @@ export class RenditionFetchService {
 
   private originalHere(library: Library, photo: BasicPhoto): boolean {
     const original = originalPathOf(library, photo);
-    return original != null && existsSync(original);
+    return original != null && isOnDisk(original);
   }
 
   private async fetchIfStale(

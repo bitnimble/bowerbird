@@ -10,6 +10,7 @@ import { peerId, stamp } from '../replication/stamps';
 import { replicates } from '../replication/tombstones';
 import { LibraryActivity } from '../activity/library_activity';
 import { inChunks } from '../photos/photo_batches';
+import { isOnDisk } from './blob_store';
 
 const log = new Logger('blobs');
 const RECONCILE_BATCH_SIZE = 64;
@@ -246,7 +247,7 @@ export class BlobLocations {
             this.retract(library.id, row.id);
             continue;
           }
-          if (existsSync(libraryPath(library, row.file_path))) this.record(library.id, row.id);
+          if (isOnDisk(libraryPath(library, row.file_path))) this.record(library.id, row.id);
           else this.retract(library.id, row.id);
         }
       }

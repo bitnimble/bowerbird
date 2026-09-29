@@ -11,7 +11,7 @@ import { deleteStagedBlob } from '../../utils/deletions';
 import { ensureDir } from '../../utils/files';
 import { contentHash } from '../../utils/hash';
 import { containsPath } from '../../utils/paths';
-import { occupant } from '../blobs/blob_store';
+import { isOnDisk, occupant } from '../blobs/blob_store';
 import type { TransferService } from '../blobs/transfer_service';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import { linkLibrary, registerPeer } from '../replication/pairing';
@@ -331,7 +331,7 @@ export class Mirror {
     for (const copy of this.backups.misplaced(peer.libraryId, peer.peerId)) {
       const from = backupPath(peer.root, copy.was_at);
       const to = backupPath(peer.root, copy.belongs_at);
-      if (!existsSync(from)) {
+      if (!isOnDisk(from)) {
         this.backups.drop(peer.libraryId, peer.peerId, copy.photo_id);
         continue;
       }

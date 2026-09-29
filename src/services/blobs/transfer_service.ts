@@ -31,7 +31,7 @@ import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_pat
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import type { BlobLocations } from './blob_locations';
 import type { PeerTransport } from './peer';
-import { appendToStage, materialise, stagePath, stagedSize, stagingDir } from './blob_store';
+import { appendToStage, isOnDisk, materialise, stagePath, stagedSize, stagingDir } from './blob_store';
 import { unsettled } from '../replication/materialise';
 import { isEvicting, whileEvicting } from './evicting';
 import { LibraryActivity } from '../activity/library_activity';
@@ -240,7 +240,7 @@ export class TransferService {
   fetchOriginal(photoId: string, from?: string): Transfer | null {
     const photo = this.photo(photoId);
     const library = this.library(photo.library_id);
-    if (existsSync(originalToTransfer(library, photo))) return null;
+    if (isOnDisk(originalToTransfer(library, photo))) return null;
     const holders = from == null ? this.otherHolders(library.id, photoId) : [from];
     if (holders.length === 0) throw new AppError('NOT_FOUND', `no peer is recorded as holding ${photoId}`);
     const peer = this.dialable(holders)[0];
@@ -596,7 +596,7 @@ export class TransferService {
         // A row composed out of others holds no original, so there is nothing here an eviction
         // would free: what it costs this device is its renditions, which the cache sweeps.
         if (at == null || abs == null) return 'this photograph is composed rather than imported, so it has no original to evict';
-        if (!existsSync(abs)) return 'the original is not on this device';
+        if (!isOnDisk(abs)) return 'the original is not on this device';
         return await this.removeLocalCopy(photo, library, at, abs, recorded, peer);
       }),
     );
@@ -671,7 +671,7 @@ export class TransferService {
 
   private async push(item: Transfer, photo: BasicPhoto, library: Library, signal: AbortSignal): Promise<void> {
     const abs = originalToTransfer(library, photo);
-    if (!existsSync(abs)) throw new AppError('NOT_FOUND', `original not on disk: ${photo.id}`);
+    if (!isOnDisk(abs)) throw new AppError('NOT_FOUND', `original not on disk: ${photo.id}`);
     const file = Bun.file(abs);
     const size = file.size;
 
@@ -740,7 +740,7 @@ export class TransferService {
     // this the second downloads the whole thing again and then finds its target
     // occupied - by the copy the first one just put there - so it flags a collision
     // against itself, fails, and does it again on every retry.
-    if (existsSync(originalToTransfer(library, photo))) return;
+    if (isOnDisk(originalToTransfer(library, photo))) return;
     const stage = stagePath(library, photo.id);
     let done = stagedSize(stage);
 

@@ -19,6 +19,7 @@ import type {
 } from '../../../schemas/photos';
 import { isComposite } from '../../../schemas/recipes';
 import type { AlbumsRepository } from '../../albums/albums_repository';
+import { isOnDisk } from '../../blobs/blob_store';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import type { ProcessingService } from '../../processing/pipeline/processing_service';
 import { readEmbeddedJpeg } from '../../processing/rawshim/raw_decoder';
@@ -137,7 +138,7 @@ export class PhotoReadService {
       return {
         ...photo,
         original_path: original,
-        has_original: original != null && existsSync(original),
+        has_original: original != null && isOnDisk(original),
         has_embedded: ctx.hasEmbedded,
         shown_rendition: shown,
         rendition_to_build: resolveRenditionToBuild(ctx),
@@ -154,7 +155,7 @@ export class PhotoReadService {
       // A synthesised row's tile is composed rather than rendered from a file, so the repair for
       // one is the queue's rebuild rather than this.
       const raw = originalPathOf(library, photo);
-      if (raw == null || !existsSync(raw)) return; // nothing to render from; the photo reads as missing
+      if (raw == null || !isOnDisk(raw)) return; // nothing to render from; the photo reads as missing
   
       this.repairing.add(photo.id);
       void this.processing

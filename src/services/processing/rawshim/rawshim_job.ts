@@ -89,31 +89,40 @@ function replied(call: (reply: Uint8Array) => number): JobOutcome {
   };
 }
 
-/**
- * How far the job counting itself right now has got, or null where none is.
- *
- * Read from the main thread while a worker is inside its job: the call that does the work blocks
- * the thread that made it for as long as it takes, so the count comes out of the library rather
- * than out of the call.
- */
-function jobProgress(): { done: number; total: number } | null {
-  const packed = BigInt(shim().bb_job_progress());
-  const total = Number(packed & 0xffffffffn);
-  return total === 0 ? null : { done: Number(packed >> 32n), total };
-}
-
 /** `assembly_planes::CANCELLED`: the whole of what a job a cancel reached fails with. */
 export const JOB_CANCELLED = 'cancelled';
 
-/**
- * Tells whatever job is running right now to stop at its next boundary.
- *
- * Seen only by a job reporting progress, and cleared as one starts - so a cancel that
- * arrives between two jobs stops neither. The job it reaches fails with `JOB_CANCELLED`.
- */
-export function cancelJob(): void {
-  shim().bb_cancel_job();
+/** The job a worker is inside, as the main thread reaches it. */
+export interface RunningJob {
+  /**
+   * How far the job counting itself right now has got, or null where none is.
+   *
+   * The call that does the work blocks the thread that made it for as long as it takes, so the
+   * count comes out of the library rather than out of the call.
+   */
+  progress(): { done: number; total: number } | null;
+  /**
+   * Stops it at its next boundary.
+   *
+   * Seen only by a job reporting progress, and cleared as one starts - so a cancel that
+   * arrives between two jobs stops neither. The job it reaches fails with `JOB_CANCELLED`.
+   */
+  cancel(): void;
 }
+
+export const nativeRunningJob: RunningJob = {
+  progress: () => {
+    const packed = BigInt(shim().bb_job_progress());
+    const total = Number(packed & 0xffffffffn);
+    return total === 0 ? null : { done: Number(packed >> 32n), total };
+  },
+  cancel: () => {
+    shim().bb_cancel_job();
+  },
+};
+
+/** For a caller whose workers are mocks, so the native library is never loaded. */
+export const NO_RUNNING_JOB: RunningJob = { progress: () => null, cancel: () => {} };
 
 /**
  * `run`, with what each render allocates kept for the next until it settles.
@@ -134,6 +143,7 @@ const POLL_MS = 250;
 
 /** One job, with `report` told how far into it the native side is until it ends. */
 export async function watchingJobProgress<T>(
+  job: RunningJob,
   before: number,
   share: number,
   report: (fraction: number) => void,
@@ -141,7 +151,7 @@ export async function watchingJobProgress<T>(
 ): Promise<T> {
   report(before);
   const timer = setInterval(() => {
-    const counted = jobProgress();
+    const counted = job.progress();
     if (counted != null) report(before + share * (counted.done / counted.total));
   }, POLL_MS);
   try {

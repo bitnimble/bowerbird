@@ -33,7 +33,7 @@ import {
 } from '../../services/processing/renditions/renditions';
 import { isComposite } from '../../schemas/recipes';
 import type { PhotoRenditionService } from '../../services/photos/renditions/photo_rendition_service';
-import { appendToStage, stagedSize, stagePath, stagingDir } from '../../services/blobs/blob_store';
+import { appendToStage, isOnDisk, stagedSize, stagePath, stagingDir } from '../../services/blobs/blob_store';
 import { contentHash } from '../../utils/hash';
 import { acceptVerifiedBlob, type TransferService } from '../../services/blobs/transfer_service';
 import { deleteStagedBlob } from '../../utils/deletions';
@@ -140,7 +140,7 @@ export class BlobsApi {
     const { photo, library } = this.locate(c);
     const abs = this.originalPath(library, photo);
     const file = Bun.file(abs);
-    if (!(await file.exists())) throw new AppError('NOT_FOUND', `original not on disk: ${photo.id}`);
+    if (!isOnDisk(abs)) throw new AppError('NOT_FOUND', `original not on disk: ${photo.id}`);
     const size = file.size;
     const offset = rangeOffset(c.req.method === 'GET' ? c.req.header('range') : undefined);
     if (offset > size) throw new AppError('VALIDATION_ERROR', `range starts at ${offset} of a ${size}-byte file`);
@@ -268,7 +268,7 @@ export class BlobsApi {
     // A first transfer that crashed between the stream and the store lands here:
     // the receiver holds the bytes and asks what they should hash to.
     const abs = this.originalPath(library, photo);
-    if (!existsSync(abs) || this.transfers.isUnsettled(library.id, photo.id)) {
+    if (!isOnDisk(abs) || this.transfers.isUnsettled(library.id, photo.id)) {
       // Unsettled means what is at the row's path may be somebody else's file, and
       // what this writes is the hash every peer will hold this photograph to -
       // stamped into the imported unit and replicated. Hashed from an occupant it
@@ -292,7 +292,7 @@ export class BlobsApi {
     // file is still there, so answering off the filesystem alone tells the asker to
     // go ahead and delete theirs - and the two of them each keeping it "on the
     // other" is how the last two copies go together (§7.6).
-    if (this.transfers.isEvicting(library.id, photo.id) || !existsSync(abs)) {
+    if (this.transfers.isEvicting(library.id, photo.id) || !isOnDisk(abs)) {
       return c.json(respond(BlobVerifyResponseSchema, { held: false }));
     }
     return c.json(respond(BlobVerifyResponseSchema, {
@@ -306,7 +306,7 @@ export class BlobsApi {
     return c.json(
       respond(BlobStageResponseSchema, {
         staged: stagedSize(stagePath(library, photo.id)),
-        held: existsSync(this.originalPath(library, photo)),
+        held: isOnDisk(this.originalPath(library, photo)),
       }),
     );
   }

@@ -203,7 +203,7 @@ Choose by what the claim needs.
 | `cargo test` | `bun run test:native <name>` | Native decode, fit, warp, grade, WGSL agreement |
 | `bun test` (root) | `bun run test` | Server and schemas (`src`, `scripts`) |
 | `bun test` (web) | `bun run --cwd web test` | `web/src` outside browser |
-| Platform tests | `bun run test:platform [path filter]` | OS-sensitive filesystem, paths, network, native addons, shell adapters and updater behaviour, before release builds |
+| Platform tests | `bun run test:platform [path filter]` | Single tests whose behaviour differs by OS or filesystem (watching, case-folding, links, permissions, rename semantics, processes, updater), split from their unit file; never librawshim |
 | `bun test` + jsdom | the web one, via `registerDom()` | React control behaviour |
 | `bun test` + the budget | `bun run test:bench` | Stage costs against `test/fixtures/bench.budget.json` |
 | Playwright | `bun run --cwd web test:e2e` | Claims needing real browser or GPU |
@@ -308,7 +308,7 @@ Where logic exists twice, pin agreement:
 - `the_draw_places_a_pixel_where_the_gather_does`: every output pixel across geometries,
   `image::Plan::at` versus `geometry.slang`.
 - `module-json.json`: three worker-boundary shapes, decoded by `module_json.rs`, rebuilt by
-  `module_json.platform.test.ts`. One-sided renames yield `missing
+  `module_json.test.ts`. One-sided renames yield `missing
   field` and a black stage.
 - `display-size.txt`: `hdr::cropped_size` versus `schemas/display_size.ts`, used by grid layout.
 - `gpu_fixture.rs`, `edit-words.txt`, `detail-passes.txt`, `reduction-words.txt`: grade snapshots/tables.

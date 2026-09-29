@@ -41,7 +41,7 @@ import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_pat
 import type { PhotoProcessingRepository } from '../photos/renditions/photo_processing_repository';
 import type { ProcessingService } from '../processing/pipeline/processing_service';
 import type { CompositeWorker } from '../processing/workers/composite_worker';
-import { cancelJob, JOB_CANCELLED, watchingJobProgress } from '../processing/rawshim/rawshim_job';
+import { JOB_CANCELLED, NO_RUNNING_JOB, type RunningJob, watchingJobProgress } from '../processing/rawshim/rawshim_job';
 import type { CompositeJobSource } from '../processing/workers/processing_types';
 import { owedOf, renditionVariant } from '../processing/renditions/renditions';
 import type { RenditionsRepository } from '../processing/renditions/renditions_repository';
@@ -147,6 +147,8 @@ export class CompositesService {
     /** The way to a frame's bytes, which may be on a backup rather than on this disk (§14.4). */
     private readonly originals: Originals,
     private readonly activity: LibraryActivity = new LibraryActivity(),
+    /** `rawshim_job.nativeRunningJob`. Defaulted so a test, whose workers are mocks, never loads the native library. */
+    private readonly runningJob: RunningJob = NO_RUNNING_JOB,
   ) {}
 
   /**
@@ -203,7 +205,7 @@ export class CompositesService {
 
   /**
    * `work` once everything queued before it has settled. One at a time: two composites would hold
-   * the device against each other for minutes, and there is one counter behind `jobProgress`, so
+   * the device against each other for minutes, and there is one counter behind `RunningJob.progress`, so
    * two at once report each other's progress.
    */
   private serially<T>(photoIds: readonly string[], work: () => Promise<T>): Promise<T> {
@@ -330,7 +332,7 @@ export class CompositesService {
     if (this.assemblyJobs.get(id)?.status !== 'analysing') return;
     this.cancelledJobs.add(id);
     // Only the job inside a native call can hear a signal, and the next job's start clears it.
-    if (this.analysing === id) cancelJob();
+    if (this.analysing === id) this.runningJob.cancel();
   }
 
   private keep(job: AssemblyJob): void {
@@ -365,7 +367,7 @@ export class CompositesService {
       await mkdir(drafts, { recursive: true });
       const analysedShare = 1 - LAYERS_SHARE;
       const analyse = async (): Promise<string> => {
-        const answer = await watchingJobProgress(0, analysedShare, report, () =>
+        const answer = await watchingJobProgress(this.runningJob, 0, analysedShare, report, () =>
           this.processing.analyseAssembly(library.id, sources, library, on, pendingVolume),
         );
         stopIfCancelled();
@@ -834,7 +836,7 @@ export class CompositesService {
   ): Promise<T> {
     const before = PHASES.slice(0, at).reduce((sum, phase) => sum + phase.share, 0);
     const { phase, share } = PHASES[at]!;
-    return await watchingJobProgress(before, share, (fraction) => this.report({ ...watching, phase, fraction }), run);
+    return await watchingJobProgress(this.runningJob, before, share, (fraction) => this.report({ ...watching, phase, fraction }), run);
   }
 
   private report(progress: CompositeProgress): void {

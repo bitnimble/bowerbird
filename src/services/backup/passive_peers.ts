@@ -11,7 +11,7 @@ import { deleteStagedBlob, unlinkMovedFile } from '../../utils/deletions';
 import { ensureDir } from '../../utils/files';
 import { contentHash } from '../../utils/hash';
 import { originalPathOf } from '../../utils/paths';
-import { appendToStage, occupant, stagedSize } from '../blobs/blob_store';
+import { appendToStage, isOnDisk, occupant, stagedSize } from '../blobs/blob_store';
 import type { PeerTransport } from '../blobs/peer';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotoMetadataRepository } from '../photos/metadata/photo_metadata_repository';
@@ -142,7 +142,7 @@ export class PassivePeers implements PeerTransport {
   /** This device's own copy, hashed, and kept as the photograph's hash once it is. */
   private async hereIs(library: Library, photo: BasicPhoto): Promise<string | null> {
     const abs = originalPathOf(library, photo);
-    if (abs == null || !existsSync(abs)) return null;
+    if (abs == null || !isOnDisk(abs)) return null;
     const here = await contentHash(abs);
     this.photoMetadata.setContentHash(photo.id, here);
     return here;

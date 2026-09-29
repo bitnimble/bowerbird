@@ -5,7 +5,7 @@ import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { ReplicatedPathSchema } from '../../schemas/replication';
 import { libraryPath } from '../../utils/paths';
 import type { BlobLocations } from '../blobs/blob_locations';
-import { materialise } from '../blobs/blob_store';
+import { isOnDisk, materialise } from '../blobs/blob_store';
 
 // Disk catching up with a merge (docs/replication.md §7.4).
 //
@@ -185,7 +185,7 @@ async function settle(
   const from = libraryPath(library, wasAt);
   // Either the move already happened or this peer never held the original; both
   // mean the tree already agrees with the catalogue as far as this peer can.
-  if (!existsSync(from)) {
+  if (!isOnDisk(from)) {
     locations.clearFlag(library.id, photoId);
     return 'settled';
   }

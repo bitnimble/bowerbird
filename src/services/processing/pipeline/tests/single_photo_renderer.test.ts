@@ -123,8 +123,6 @@ describe('single-photo rendering', () => {
     }
   });
 
-
-
   it('hands over the descriptor from a tile repaired on demand, not just a queued one', async () => {
     // The repair path builds a grid tile outside the queue (§18.6), so it computes a
     // descriptor exactly as an import does. Dropping it leaves a photo whose tile has

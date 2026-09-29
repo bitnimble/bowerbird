@@ -3,7 +3,7 @@
 // The shapes only, because the rules are the module's - what a stop means, which uniform slot a
 // slider lands in, what a null half of the balance does. These cross as JSON and are read by
 // `gpu::Region`, `gpu::Adjust` and `image::Geometry`, so a name that drifts is `missing field` at
-// the first tick: a black stage and a `failed` panel. `tests/module_json.platform.test.ts` is the pin.
+// the first tick: a black stage and a `failed` panel. `tests/module_json.test.ts` is the pin.
 
 import { z } from 'zod';
 import type { ColourProfile, ToneCurve } from '../../../../src/schemas/photo_edits';

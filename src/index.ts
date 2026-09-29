@@ -94,7 +94,7 @@ import { PruneService, ScheduledPrune } from './services/maintenance/prune_servi
 import { BackupService, ScheduledBackup } from './services/maintenance/backup_service';
 import { ProcessingService } from './services/processing/pipeline/processing_service';
 import { shim } from './services/processing/rawshim/rawshim';
-import { holdingRenderMemory } from './services/processing/rawshim/rawshim_job';
+import { holdingRenderMemory, nativeRunningJob } from './services/processing/rawshim/rawshim_job';
 import { config } from './config';
 import { Logger, setLogLevel } from './logger';
 import { LibraryActivity } from './services/activity/library_activity';
@@ -386,11 +386,20 @@ const compositesService: CompositesService = new CompositesService(
   photoEditsRepo,
   originals,
   activity,
+  nativeRunningJob,
 );
 compositesService.onProgress((progress) => eventsApi.announce('composite', progress));
 const compositesApi = new CompositesApi(compositesService, photoReadService);
 const assembliesApi = new AssembliesApi(compositesService);
-const exportService = new ExportService(photoRenditionService, processingService, originals, settingsRepo, compositesService, activity);
+const exportService = new ExportService(
+  photoRenditionService,
+  processingService,
+  originals,
+  settingsRepo,
+  compositesService,
+  activity,
+  nativeRunningJob,
+);
 const shareService = new ShareService(photoRenditionService, exportService, activity);
 const frameTvService = new FrameTvService(
   settingsRepo,

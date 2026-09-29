@@ -24,7 +24,7 @@ import type { EditDoc } from './photo_edits';
  * across that boundary rather than pulling a validation library into the bundle. Splitting it
  * out is what lets the editor share the one implementation instead of keeping a second.
  *
- * **`hdr::cropped_size` is the other host's copy**, and `display_size_parity.platform.test.ts` holds the two
+ * **`hdr::cropped_size` is the other host's copy**, and `display_size_parity.test.ts` holds the two
  * to `display-size.txt`. They cannot be one implementation: this runs in the catalogue's layout for
  * every tile on the wall and on the server for every row it writes, neither of which has the wasm
  * module in reach - so what is shared is the answer rather than the code.

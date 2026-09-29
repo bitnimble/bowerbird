@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { AppError } from '../../../errors';
 import type { Library } from '../../../schemas/libraries';
@@ -7,6 +6,7 @@ import { soleInputOf } from '../../../schemas/recipes';
 import { ensureDir, moveIntoDir } from '../../../utils/files';
 import { getBinPath, libraryPath, originalPathOf, toLibraryRelative } from '../../../utils/paths';
 import { shootContains } from '../../../utils/shoots';
+import { isOnDisk } from '../../blobs/blob_store';
 import { ensureBinFolder } from '../../libraries/bin_folder';
 import type { LibrariesRepository } from '../../libraries/libraries_repository';
 import { libraryMutex } from '../../sync/coordination/library_mutex';
@@ -93,7 +93,7 @@ export class PhotoMutationService {
                 // no file of its own: nothing moves, the recipe is left alone, and
                 // `deleted_from_path` ends up equal to it (§12.1).
                 const binDir = library.read_only || was == null ? null : getBinPath(library, path.dirname(was));
-                if (binDir == null || from == null || !existsSync(from)) {
+                if (binDir == null || from == null || !isOnDisk(from)) {
                   moved.push({ id: photo.id, from, to: from, binRelPath: was, wasAt: was });
                   continue;
                 }
@@ -235,7 +235,7 @@ export class PhotoMutationService {
                 // has gone goes live with `is_missing` cleared and nothing behind
                 // it, and the renditions make the grid look fine while every
                 // original 404s.
-                if (!existsSync(from)) throw new AppError('IO_ERROR', `the file is no longer there: ${was}`);
+                if (!isOnDisk(from)) throw new AppError('IO_ERROR', `the file is no longer there: ${was}`);
   
                 // Binned in place: the file is already where it belongs. It cannot
                 // merely skip the move - `moveIntoDir` would claim the name the file

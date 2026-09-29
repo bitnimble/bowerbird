@@ -1,7 +1,7 @@
 // The validation boundary a replicated row crosses (docs/replication.md §11.2).
 //
 // Every clause gets a case that ONLY it rejects. The end-to-end poison suite in
-// `replication_api.platform.test.ts` proves the boundary is wired up at all; it cannot
+// `replication_api.test.ts` proves the boundary is wired up at all; it cannot
 // prove which refinement fired, and its inputs are caught by several at once - so
 // deleting the drive-letter test, or the NUL, or the "bin cannot be `..`" clause
 // leaves it green while a peer lands a path outside the library root.

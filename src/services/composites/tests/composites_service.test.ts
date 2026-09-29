@@ -635,7 +635,7 @@ describe('CompositesService.startAssembly', () => {
   });
 
   // §3.9: one at a time. Two carves would hold the device against each other for minutes, and
-  // there is one counter behind `jobProgress`, so two at once report each other's progress.
+  // there is one counter behind `RunningJob.progress`, so two at once report each other's progress.
   it('queues a second carve behind the first rather than running both', async () => {
     heldOpen = true;
     const firstStarted = waitForHeldCarve();

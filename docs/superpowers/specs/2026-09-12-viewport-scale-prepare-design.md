@@ -309,7 +309,7 @@ called in process, so nothing here forecloses it and nothing here builds it.
   `composite_job::MAX_LONG_EDGE` there is no rendition to compare against at all, so a level below that
   cap is editor-only and the loupe's claim to be the export's own pixels does not reach it.
 - `module-json.json` gains the prepare request's shape, deserialised by `module_json.rs` and
-  rebuilt by `module_json.platform.test.ts`, because a field renamed on one side is a black stage at the
+  rebuilt by `module_json.test.ts`, because a field renamed on one side is a black stage at the
   first tick.
 - `gpu_fixture`'s pins are regenerated once, deliberately, in the commit that moves the single-file
   path onto the composite gather, and the bench budget is re-recorded in the same commit if a

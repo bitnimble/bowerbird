@@ -579,10 +579,15 @@ bun run test:platform
 bun run test:platform watcher
 ```
 
-`*.platform.test.ts` and `*.platform.test.tsx` mark tests whose filesystem, paths, timestamps,
-network, native bindings or host adapters can differ across operating systems. They remain in
-their normal unit suites and run in separate Bun processes here so module mocks cannot leak into
-real watcher tests. The runner also tests the updater and lens database crates and compiles the
+`*.platform.test.ts` and `*.platform.test.tsx` hold only the tests whose behaviour can differ
+across operating systems or filesystems: file watching, case-folding and Unicode normalisation of
+names, host path semantics, links and permissions, rename and unlink semantics, timestamp
+resolution, processes, native addons, updater staging, and a few tests of the network transport
+itself. Reading and writing files in a temp directory is not such a test, and neither is one that
+only uses a local server as a fixture. A file mixing both kinds is split: the rest stay in a
+`*.test.ts` beside it, sharing setup through a `*_test_helpers.ts` module. Platform tests never
+load librawshim, which this suite does not build. They remain in their normal unit suites and run
+in separate Bun processes here so module mocks cannot leak into real watcher tests. The runner also tests the updater and lens database crates and compiles the
 shell's shared export-path module directly with Rust, without building the GUI or image pipeline.
 The frozen root and web installs, Rust toolchain and `assets/reference_frame.ARW` from Git LFS
 are enough to run it. The release workflow requires this suite to pass on Linux, macOS and Windows

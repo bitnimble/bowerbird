@@ -126,7 +126,7 @@ export interface RenditionJob extends Developed {
    */
   measure?: boolean;
   /**
-   * Count the job's steps where another thread can read them (`jobProgress`).
+   * Count the job's steps where another thread can read them (`RunningJob.progress`).
    *
    * Only what a reader is watching asks - an export, and a merge's own jobs: there is one counter
    * for the process, so a pool of four building tiles would report over it.

@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { link, open } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
@@ -74,6 +74,27 @@ export function occupant(dir: string, name: string): string | null {
   }
   const want = folded(name);
   return entries.find((entry) => folded(entry) === want) ?? null;
+}
+
+/**
+ * Whether `file` is on disk under its own name. `existsSync` alone also answers for a case-folded
+ * match, which on macOS and Windows is somebody else's file (§7.7).
+ */
+export function isOnDisk(file: string): boolean {
+  const own = path.basename(file).normalize('NFC');
+  try {
+    const entry = lstatSync(file);
+    // realpath names a symlink's target, not the link
+    if (entry.isSymbolicLink()) {
+      return (
+        statSync(file, { throwIfNoEntry: false })?.isFile() === true &&
+        readdirSync(path.dirname(file)).some((name) => name.normalize('NFC') === own)
+      );
+    }
+    return entry.isFile() && path.basename(realpathSync.native(file)).normalize('NFC') === own;
+  } catch {
+    return false;
+  }
 }
 
 export type Placement = { placed: true } | { placed: false; occupiedBy: string };

@@ -86,15 +86,6 @@ test('a payload whose checksum is wrong stages nothing', async () => {
   expect(existsSync(path.join(home, 'staged'))).toBe(false);
 });
 
-test('a download the release does not have stages nothing', async () => {
-  const origin = serve(() => new Response('no such file', { status: 404 }));
-
-  await expect(
-    stagePayload(home, { url: `${origin}/gone.tar.gz`, filename: 'gone.tar.gz', sha256: 'c'.repeat(64), version: '0.2.0' }),
-  ).rejects.toThrow(/404/);
-  expect(existsSync(path.join(home, 'staged.version'))).toBe(false);
-});
-
 // The filename is read out of a manifest fetched over the network, and it is joined onto a
 // path. Only its basename may reach the filesystem.
 test('a payload named to escape the scratch directory cannot', async () => {

@@ -12,7 +12,14 @@ import type { PhotoRenditionService } from '../../photos/renditions/photo_rendit
 import type { SettingsRepository } from '../../settings/settings_repository';
 import type { ProcessingService } from '../pipeline/processing_service';
 import { encoderQuality } from '../analysis/quality';
-import { exportStill, transcodeJpeg, watchingJobProgress, writeGainMap } from '../rawshim/rawshim_job';
+import {
+  exportStill,
+  NO_RUNNING_JOB,
+  type RunningJob,
+  transcodeJpeg,
+  watchingJobProgress,
+  writeGainMap,
+} from '../rawshim/rawshim_job';
 import { LibraryActivity } from '../../activity/library_activity';
 
 // Perceived quality for a share, which nobody is offered a dialog for: the picture is going to
@@ -59,6 +66,8 @@ export class ExportService {
      */
     private readonly panoramas?: CompositesService,
     private readonly activity: LibraryActivity = new LibraryActivity(),
+    /** `rawshim_job.nativeRunningJob`. Defaulted so a test, whose workers are mocks, never loads the native library. */
+    private readonly runningJob: RunningJob = NO_RUNNING_JOB,
   ) {}
 
   /**
@@ -75,7 +84,7 @@ export class ExportService {
      * How far through this photograph the export is, 0 to 1, called as it moves.
      *
      * The render is one blocking call in a worker, so what moves this is the count the job keeps
-     * for the thread that is not inside it (`jobProgress`).
+     * for the thread that is not inside it (`RunningJob.progress`).
      */
     onProgress?: (fraction: number) => void,
   ): Promise<ExportedFile> {
@@ -254,7 +263,7 @@ export class ExportService {
     run: () => Promise<T>,
   ): Promise<T> {
     if (report == null) return await run();
-    return await watchingJobProgress(before, share, report, run);
+    return await watchingJobProgress(this.runningJob, before, share, report, run);
   }
 
   private async encode(rendered: string, options: ExportOptions): Promise<Uint8Array> {
