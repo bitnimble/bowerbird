@@ -17,7 +17,7 @@ const PipelineRecipeSchema = z.object({
   descriptor: z.record(z.string(), z.unknown()),
   /** The code of each stage's module, by the descriptor field it sat in. */
   stages: z.record(z.string(), z.string()),
-  groups: z.array(BindGroupLayoutSchema.nullable()),
+  groups: z.array(BindGroupLayoutSchema),
   /** When a session last drew with it or precompiled it, in milliseconds since the epoch. */
   lastUsed: z.number(),
 });
@@ -38,9 +38,9 @@ type Builder = GPUDevice & Record<string, Build | BuildAsync>;
 type Setter = { setPipeline: (pipeline: object) => void };
 type Class<T> = { prototype: T };
 type Deferred = {
-  recipe: PipelineRecipe | null;
+  recipe: PipelineRecipe;
   build: () => object;
-  compile: (() => Promise<object>) | null;
+  compile: () => Promise<object>;
   pipeline?: object;
   warmed?: object;
 };
@@ -68,10 +68,7 @@ const KEPT_UNUSED_MS = 30 * 24 * 60 * 60 * 1000;
 export class PipelineWarmth {
   private readonly modules = new WeakMap<GPUShaderModule, string>();
   private readonly groups = new WeakMap<GPUBindGroupLayout, GPUBindGroupLayoutDescriptor>();
-  private readonly layouts = new WeakMap<
-    GPUPipelineLayout,
-    (GPUBindGroupLayoutDescriptor | null)[]
-  >();
+  private readonly layouts = new WeakMap<GPUPipelineLayout, GPUBindGroupLayoutDescriptor[]>();
   private readonly recipes = new Map<string, PipelineRecipe>();
   /** A pipeline compiled from each recipe as it stands, for the next stand-in built from the same code. */
   private readonly compiled = new Map<string, object>();
@@ -94,11 +91,13 @@ export class PipelineWarmth {
     const created: Created = { createShaderModule, createBindGroupLayout, createPipelineLayout };
     const { modules, groups, layouts, handedOut } = this;
     const deferred = new WeakMap<object, Deferred>();
-    const recipeOf = (build: string, descriptor: PipelineDescriptor): PipelineRecipe | null =>
-      this.recipeOf(build, descriptor);
+    const recipeOf = (
+      build: string,
+      descriptor: PipelineDescriptor,
+      layout: GPUPipelineLayout,
+    ): PipelineRecipe => this.recipeOf(build, descriptor, layout);
     const arrived = (wait: Deferred): void => this.arrived(wait);
-    const built = (recipe: PipelineRecipe | null, pipeline: object): void =>
-      this.built(recipe, pipeline);
+    const built = (recipe: PipelineRecipe, pipeline: object): void => this.built(recipe, pipeline);
     const warm = (opened: GPUDevice): Promise<void> => this.warm(opened, created);
 
     device.createShaderModule = function (this: GPUDevice, descriptor) {
@@ -115,9 +114,7 @@ export class PipelineWarmth {
       const layout = createPipelineLayout.call(this, descriptor);
       layouts.set(
         layout,
-        [...descriptor.bindGroupLayouts].map((group) =>
-          group == null ? null : (groups.get(group) ?? null),
-        ),
+        [...descriptor.bindGroupLayouts].map((group) => recorded(groups, group)),
       );
       return layout;
     };
@@ -126,14 +123,15 @@ export class PipelineWarmth {
     // automatically is the exception: its layout is read back off the object itself.
     for (const name of methodsOf(device).filter((name) => BUILDS.test(name))) {
       const build = device[name] as Build;
-      const buildAsync = device[`${name}Async`] as BuildAsync | undefined;
+      const buildAsync = device[`${name}Async`] as BuildAsync;
       device[name] = function (this: GPUDevice, descriptor: PipelineDescriptor) {
-        if (descriptor.layout === 'auto') return build.call(this, descriptor);
+        const { layout } = descriptor;
+        if (layout === 'auto') return build.call(this, descriptor);
         const standIn = {};
         const wait: Deferred = {
-          recipe: recipeOf(name, descriptor),
+          recipe: recipeOf(name, descriptor, layout),
           build: () => build.call(this, descriptor),
-          compile: buildAsync == null ? null : () => buildAsync.call(this, descriptor),
+          compile: () => buildAsync.call(this, descriptor),
         };
         deferred.set(standIn, wait);
         handedOut.add(new WeakRef(wait));
@@ -174,7 +172,6 @@ export class PipelineWarmth {
     build: () => void,
     onCompiled: (compiled: number, of: number) => void = () => {},
   ): Promise<void> {
-    await this.settled();
     build();
     await this.settled();
     const waits = this.undrawn();
@@ -185,17 +182,17 @@ export class PipelineWarmth {
       if (wait.warmed != null) {
         this.built(wait.recipe, wait.warmed);
         finished();
-      } else if (wait.compile != null) {
-        this.track(
-          wait
-            .compile()
-            .then((pipeline) => {
-              wait.warmed = pipeline;
-              this.built(wait.recipe, pipeline);
-            })
-            .finally(finished),
-        );
-      } else finished();
+        continue;
+      }
+      this.track(
+        wait
+          .compile()
+          .then((pipeline) => {
+            wait.warmed = pipeline;
+            this.built(wait.recipe, pipeline);
+          })
+          .finally(finished),
+      );
     }
     await this.settled();
     if (this.saveTimer != null) clearTimeout(this.saveTimer);
@@ -217,14 +214,13 @@ export class PipelineWarmth {
    * one now where its shaders or layout have changed since.
    */
   private arrived(wait: Deferred): void {
-    const recipe = wait.recipe;
-    const kept = recipe == null ? undefined : this.recipes.get(recipe.identity);
-    if (recipe == null || kept == null) return;
+    const { recipe } = wait;
+    const kept = this.recipes.get(recipe.identity);
+    if (kept == null) return;
     if (sameRecipe(kept, recipe)) {
       wait.warmed = this.compiled.get(recipe.identity);
       return;
     }
-    if (wait.compile == null) return;
     this.track(
       wait.compile().then((pipeline) => {
         wait.warmed = pipeline;
@@ -240,10 +236,11 @@ export class PipelineWarmth {
     this.warming.add(tracked);
   }
 
-  private recipeOf(build: string, descriptor: PipelineDescriptor): PipelineRecipe | null {
-    if (descriptor.layout === 'auto') return null;
-    const groups = this.layouts.get(descriptor.layout);
-    if (groups == null) return null;
+  private recipeOf(
+    build: string,
+    descriptor: PipelineDescriptor,
+    layout: GPUPipelineLayout,
+  ): PipelineRecipe {
     const stages: Record<string, string> = {};
     const kept: Record<string, unknown> = {};
     for (const [field, value] of Object.entries(descriptor)) {
@@ -253,9 +250,7 @@ export class PipelineWarmth {
         kept[field] = JSON.parse(JSON.stringify(value));
         continue;
       }
-      const code = this.modules.get(stage.module);
-      if (code == null) return null;
-      stages[field] = code;
+      stages[field] = recorded(this.modules, stage.module);
       kept[field] = JSON.parse(JSON.stringify({ ...stage, module: undefined }));
     }
     return {
@@ -263,7 +258,7 @@ export class PipelineWarmth {
       build,
       descriptor: kept,
       stages,
-      groups,
+      groups: recorded(this.layouts, layout),
       lastUsed: this.opened,
     };
   }
@@ -291,8 +286,7 @@ export class PipelineWarmth {
     });
   }
 
-  private built(recipe: PipelineRecipe | null, pipeline: object): void {
-    if (recipe == null) return;
+  private built(recipe: PipelineRecipe, pipeline: object): void {
     this.compiled.set(recipe.identity, pipeline);
     const kept = this.recipes.get(recipe.identity);
     if (kept != null && kept.lastUsed === this.opened && sameRecipe(kept, recipe)) return;
@@ -313,8 +307,7 @@ export class PipelineWarmth {
     const modules = new Map<string, GPUShaderModule>();
     const compiling: Promise<unknown>[] = [];
     for (const recipe of this.recipes.values()) {
-      const build = (device as Builder)[`${recipe.build}Async`] as BuildAsync | undefined;
-      if (build == null) continue;
+      const build = (device as Builder)[`${recipe.build}Async`] as BuildAsync;
       const descriptor: Record<string, unknown> = { ...recipe.descriptor };
       for (const [field, code] of Object.entries(recipe.stages)) {
         let module = modules.get(code);
@@ -328,7 +321,7 @@ export class PipelineWarmth {
       }
       descriptor.layout = created.createPipelineLayout.call(device, {
         bindGroupLayouts: recipe.groups.map((group) =>
-          group == null ? null : created.createBindGroupLayout.call(device, group),
+          created.createBindGroupLayout.call(device, group),
         ),
       });
       compiling.push(
@@ -345,6 +338,14 @@ export class PipelineWarmth {
     this.saveTimer = null;
     await this.store.save({ recipes: [...this.recipes.values()] }).catch(() => undefined);
   }
+}
+
+/** What the device's patched creators recorded for `held`, which every module and layout passes through. */
+function recorded<K extends object, V>(records: WeakMap<K, V>, held: K | null | undefined): V {
+  const record = held == null ? undefined : records.get(held);
+  if (record == null)
+    throw new Error('PipelineWarmth: a GPU object was not created through its device');
+  return record;
 }
 
 function isPlain(value: object): boolean {
