@@ -412,8 +412,7 @@ describe('ProcessingService.processUnprocessed', () => {
       markProcessingFailed: jest.fn(),
     } as unknown as PhotoProcessingRepository;
 
-    // Must resolve (not hang): applyResult swallows the throw so the pool's
-    // assignNext/terminate bookkeeping still runs for every job.
+    // Must resolve (not hang): applyResult swallows the throw.
     await expect(
       makeProcessingService(repo, settings).processUnprocessed({ libraryId: 'lib' }),
     ).resolves.toBeUndefined();
@@ -698,6 +697,41 @@ describe('ProcessingService.processUnprocessed', () => {
       null,
       'full',
     );
+  });
+
+  it('holds every library to one shared worker limit, taking turns between them', async () => {
+    const handedOut: string[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    class SlowWorker extends MockWorker {
+      override postMessage(job: RenditionJob | CompositeJob): void {
+        handedOut.push(photoStage(job));
+        peak = Math.max(peak, ++inFlight);
+        setTimeout(() => {
+          inFlight--;
+          super.postMessage(job);
+        }, 1);
+      }
+    }
+    (globalThis as { Worker?: unknown }).Worker = SlowWorker;
+    const repo = {
+      listPendingProcessing: jest.fn((libraryId: string) =>
+        [1, 2, 3].map((n) => pending(`${libraryId}${n}`)),
+      ),
+      markTileBuilt: jest.fn(),
+      markRenditionsBuilt: jest.fn(),
+      markProcessingFailed: jest.fn(),
+    } as unknown as PhotoProcessingRepository;
+    const service = makeProcessingService(repo, settings);
+
+    await Promise.all([
+      service.processUnprocessed({ libraryId: 'a' }),
+      service.processUnprocessed({ libraryId: 'b' }),
+    ]);
+
+    expect(peak).toBe(2);
+    expect(handedOut).toHaveLength(12);
+    expect(handedOut.indexOf('b1:grid')).toBeLessThan(handedOut.indexOf('a3:grid'));
   });
 
   it('leaves jobs pending (no hang, no throw) when a worker cannot be spawned', async () => {

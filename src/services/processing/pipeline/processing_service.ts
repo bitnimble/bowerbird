@@ -29,7 +29,7 @@ import {
   sourceFor,
 } from '../renditions/renditions';
 import { readStages, withStagesOff } from '../renditions/render_stages';
-import { runProcessingPool } from '../workers/processing_pool';
+import { ProcessingPool } from '../workers/processing_pool';
 import { developed } from './developed';
 import { RenderService } from './render_service';
 import { LibraryActivity } from '../../activity/library_activity';
@@ -75,6 +75,7 @@ export class ProcessingService extends RenderService {
   // drain loop knows to stop.
   private readonly queued = new Map<string, Set<string> | null>();
   private readonly active = new Map<string, Map<string, string>>();
+  private readonly pool = new ProcessingPool(() => this.settings.get().processing_concurrency);
 
   constructor(
     photoProcessing: PhotoProcessingRepository,
@@ -287,7 +288,6 @@ export class ProcessingService extends RenderService {
         photos: staged.length,
         tiles: staged.filter((p) => p.tile != null).length,
         renditions: staged.filter((p) => p.renditions != null).length,
-        workers: Math.min(this.settings.get().processing_concurrency, staged.length),
       });
       await this.runStaged(staged, active, stopped);
       active.clear();
@@ -425,9 +425,8 @@ export class ProcessingService extends RenderService {
       if (photo.tile == null && photo.renditions == null) active.delete(photo.photoId);
     }
 
-    await runProcessingPool(
+    await this.pool.run(
       staged.flatMap((photo) => (photo.tile == null ? [] : [photo.tile])),
-      this.settings.get().processing_concurrency,
       (result, job) => {
         const photo = byId.get(result.photoId) ?? null;
         if (!result.success) {
@@ -450,9 +449,8 @@ export class ProcessingService extends RenderService {
     );
     if (pending.length === 0 || stopped?.() === true) return;
 
-    await runProcessingPool(
+    await this.pool.run(
       pending.map((photo) => photo.renditions as RenditionJob),
-      this.settings.get().processing_concurrency,
       (result, job) => {
         const photo = byId.get(result.photoId) ?? null;
         active.delete(result.photoId);
@@ -497,9 +495,8 @@ export class ProcessingService extends RenderService {
      */
     tile: Made = { from: 'embedded', matched: false },
   ): void {
-    // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
-    // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
-    // batch forever. On a DB write failure, log and leave the flag set.
+    // Never throw: this runs inside a worker's onmessage/onerror, where nothing
+    // catches it. On a DB write failure, log and leave the flag set.
     try {
       const version = new Date().toISOString();
       if (stage === 'tile') {
@@ -697,9 +694,8 @@ export class ProcessingService extends RenderService {
     job: RenditionJob,
     photo: StagedPhoto | null,
   ): void {
-    // Never throw: this runs inside a worker's onmessage/onerror, and a throw here
-    // would skip the pool's assignNext/terminate/live-- bookkeeping and hang the
-    // batch forever. On a DB write failure, log and leave the flags set.
+    // Never throw: this runs inside a worker's onmessage/onerror, where nothing
+    // catches it. On a DB write failure, log and leave the flags set.
     try {
       this.photoProcessing.forgetBuilt(
         result.photoId,
