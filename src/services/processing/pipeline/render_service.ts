@@ -1,4 +1,4 @@
-import { rename } from 'node:fs/promises';
+import { replaceFile } from '../../../utils/files';
 import type { ProcessingStage } from '../../../schemas/common';
 import type { AssemblyRecipe } from '../../../schemas/assembly';
 import type { ExportOptions } from '../../../schemas/export';
@@ -160,7 +160,7 @@ export abstract class RenderService {
       const descriptor = await Bun.file(descriptorPath)
         .bytes()
         .catch(() => undefined);
-      await rename(staged, renditionPathFor(dataPath, photoId, 'grid', false));
+      await replaceFile(staged, renditionPathFor(dataPath, photoId, 'grid', false));
       await Bun.file(descriptorPath)
         .delete()
         .catch(() => {});

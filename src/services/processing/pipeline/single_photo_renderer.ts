@@ -1,4 +1,4 @@
-import { rename } from 'node:fs/promises';
+import { replaceFile } from '../../../utils/files';
 import path from 'node:path';
 import { Logger } from '../../../logger';
 import { newId } from '../../../schemas/id';
@@ -285,7 +285,7 @@ export class SinglePhotoRenderer {
           ...job,
           targets: [{ ...target, outputPath: temporary }],
         });
-        await rename(temporary, target.outputPath);
+        await replaceFile(temporary, target.outputPath);
       } finally {
         await deleteGeneratedFile(job.dataPath, temporary).catch(() => undefined);
       }

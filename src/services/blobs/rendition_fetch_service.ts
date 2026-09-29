@@ -1,6 +1,5 @@
 import type { Database } from '../../db/driver';
 import { existsSync } from 'node:fs';
-import { rename } from 'node:fs/promises';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
 import { newId } from '../../schemas/id';
@@ -8,6 +7,7 @@ import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { PathSegment, route } from '../../schemas/route';
 import { stampWithinSkew } from '../replication/stamps';
 import { deleteGeneratedFile } from '../../utils/deletions';
+import { replaceFile } from '../../utils/files';
 import { getDataPath, getRenditionPath, originalPathOf } from '../../utils/paths';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_paths_repository';
@@ -348,7 +348,12 @@ export class RenditionFetchService {
     const replaced = existsSync(target);
     // Staged beside its target so this is one atomic replace: a reader mid-serve
     // keeps the old bytes, and a stale cached copy needs no separate delete.
-    await rename(staging, target);
+    try {
+      await replaceFile(staging, target);
+    } catch (error) {
+      await deleteGeneratedFile(getDataPath(library), staging);
+      throw error;
+    }
     const builtAt = this.record(photo.id, rendition, hdr, builtFrom);
     // A first copy is already on its way to whoever asked for it; announced, every tile scrolled
     // past would be fetched twice.

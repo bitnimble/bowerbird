@@ -1,8 +1,9 @@
-import { mkdir, readdir, rename, stat } from 'node:fs/promises';
+import { mkdir, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { Logger } from '../../logger';
 import { LibraryActivity } from '../activity/library_activity';
 import { deleteBackupFile } from '../../utils/deletions';
+import { replaceFile } from '../../utils/files';
 import { backupsDir } from '../../utils/paths';
 import type { BackupJob, BackupOutcome } from './backup_worker';
 import { workerEntry } from '../worker_entry';
@@ -200,7 +201,12 @@ export class BackupService {
         await deleteBackupFile(dir, temp).catch(() => {});
         throw err;
       }
-      await rename(temp, target);
+      try {
+        await replaceFile(temp, target);
+      } catch (err) {
+        await deleteBackupFile(dir, temp).catch(() => {});
+        throw err;
+      }
 
       // After the snapshot is safely in place, and never fatal to it: a snapshot that
       // exists must not be reported as a failed backup because an *old* file would not

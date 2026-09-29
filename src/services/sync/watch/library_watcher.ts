@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { subscribe, type AsyncSubscription } from '@parcel/watcher';
@@ -185,10 +185,13 @@ export class LibraryWatcher implements LibraryLifecycleListener {
       return;
     }
 
+    // Events name the resolved path, so through a symlinked root (macOS `/var` is
+    // `/private/var`) every one would read as outside the library and be dropped.
+    const watched = { ...library, root_path: resolvedRoot(library.root_path) };
     const establishing = this.activity
       .track(library.id, 'checking_files', 'watch', () =>
         subscribe(
-          library.root_path,
+          watched.root_path,
           (err, events) => {
             if (err != null) {
               // A watch error (e.g. inotify ENOSPC) kills this watch; drop it and
@@ -200,7 +203,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
             let recorded = 0;
             for (const event of events) {
               const relPath = path
-                .relative(library.root_path, event.path)
+                .relative(watched.root_path, event.path)
                 .split(path.sep)
                 .join('/');
               if (relPath === '' || relPath.startsWith('..')) continue;
@@ -215,7 +218,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
             if (recorded === 0) {
               log.debug('fs events, none in scope', {
                 library: library.id,
-                events: describe(events, library.root_path),
+                events: describe(events, watched.root_path),
               });
               return;
             }
@@ -223,7 +226,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
               library: library.id,
               recorded,
               ignored: events.length - recorded,
-              events: describe(events, library.root_path),
+              events: describe(events, watched.root_path),
             });
             this.schedule(library.id);
           },
@@ -233,7 +236,7 @@ export class LibraryWatcher implements LibraryLifecycleListener {
             // an inotify watch per directory inside it. The callback still applies
             // the scan's rules (§9.1), so this is an optimisation and not the
             // correctness boundary.
-            ignore: this.ignoredPaths(library, scope),
+            ignore: this.ignoredPaths(watched, scope),
           },
         ),
       )
@@ -535,6 +538,15 @@ function changedFolders(
 // explainable; the count is what says how big it was.
 function describe(events: readonly { type: string; path: string }[], rootPath: string): string[] {
   return events.slice(0, SAMPLE).map((e) => `${e.type} ${path.relative(rootPath, e.path)}`);
+}
+
+/** The root as the kernel names it, or as given where it cannot be resolved (not there yet). */
+function resolvedRoot(rootPath: string): string {
+  try {
+    return realpathSync(rootPath);
+  } catch {
+    return rootPath;
+  }
 }
 
 // What the watch was established with, so a settings change can be compared

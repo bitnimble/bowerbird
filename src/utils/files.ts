@@ -1,5 +1,5 @@
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, link, mkdir } from 'node:fs/promises';
+import { copyFile, link, mkdir, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../errors';
 import { unlinkMovedFile } from './deletions';
@@ -33,6 +33,28 @@ export async function moveIntoDir(from: string, dir: string, filename: string): 
     }
     await unlinkMovedFile(from, candidate);
     return candidate;
+  }
+}
+
+const REPLACE_RETRY_MS = 1000;
+
+/**
+ * Renames `from` over `to`. Windows refuses to replace a file another handle has open, such as
+ * a rendition being served or a second fetch landing, so there a refusal is retried for a second.
+ */
+export async function replaceFile(from: string, to: string): Promise<void> {
+  const deadline = performance.now() + REPLACE_RETRY_MS;
+  for (let wait = 10; ; wait = Math.min(wait * 2, 100)) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const busy =
+        process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY');
+      if (!busy || performance.now() >= deadline) throw err;
+      await Bun.sleep(wait);
+    }
   }
 }
 

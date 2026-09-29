@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { mkdir, rename } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
@@ -34,6 +34,7 @@ import {
 } from '../../schemas/recipes';
 import { existsSync } from 'node:fs';
 import { deleteGeneratedFile } from '../../utils/deletions';
+import { replaceFile } from '../../utils/files';
 import {
   draftLayerPath,
   draftPreviewPath,
@@ -440,7 +441,7 @@ export class CompositesService {
       );
       const volumePath = draftVolumePath(getDataPath(library), seamVolume);
       await mkdir(path.dirname(volumePath), { recursive: true });
-      await rename(pendingVolume, volumePath);
+      await replaceFile(pendingVolume, volumePath);
       const analysed = { ...parsed.data, recipe: { ...parsed.data.recipe, seamVolume } };
       const layers = await this.layersFor(analysed.recipe, library, on, (share) => {
         stopIfCancelled();
