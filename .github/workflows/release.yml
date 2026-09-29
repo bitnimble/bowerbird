@@ -250,7 +250,9 @@ jobs:
         with:
           cache-on-failure: true
           save-if: ${{ env.SAVE_CACHES == 'true' }}
-          workspaces: native/rawshim
+          workspaces: |
+            native/rawshim
+            native/avif_planes
       - name: The pinned trees, from last time
         id: pinned-cache
         uses: actions/cache/restore@v6
