@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { hostTriple } from './host-triple.ts';
+import { ensureIcons } from './make-icons.ts';
 import { elfClosure, machNames } from './native_closure';
 
 const ROOT = join(import.meta.dir, '..');
@@ -228,6 +229,26 @@ function carry(from: string, into: string): string {
   return at;
 }
 
+/**
+ * The runtime under Bowerbird's name and icon, which is what Task Manager shows for it.
+ *
+ * Bun writes those only into a compiled executable, and only when compiling on Windows, so this
+ * is a compiled stub that the shell runs as plain Bun (`BUN_BE_BUN` in `server.rs`).
+ */
+function nameTheWindowsRuntime(runtime: string, to: string): void {
+  ensureIcons();
+  run('bun', [
+    'build',
+    '--compile',
+    `--compile-executable-path=${runtime}`,
+    `--windows-icon=${join(ROOT, 'src-tauri', 'icons', 'icon.ico')}`,
+    '--windows-title=Bowerbird',
+    '--windows-description=Bowerbird',
+    `--outfile=${to}`,
+    join(ROOT, 'scripts', 'sidecar_stub.ts'),
+  ]);
+}
+
 function run(command: string, args: string[]): void {
   const result = spawnSync(command, args, { stdio: 'inherit', cwd: ROOT });
   if (result.status !== 0) process.exit(result.status ?? 1);
@@ -300,7 +321,12 @@ const sidecar = join(BINARIES, `bowerbird-server-${triple}${suffix}`);
 // fails with ETXTBSY. Removing the name first leaves that process with its own
 // inode and this build with a clean one.
 rmSync(sidecar, { force: true });
-copyFileSync(runtime, sidecar);
+// `release:check`'s cross-build from Linux cannot name it, and ships Bun's own name and icon.
+if (triple.includes('windows') && process.platform === 'win32') {
+  nameTheWindowsRuntime(runtime, sidecar);
+} else {
+  copyFileSync(runtime, sidecar);
+}
 chmodSync(sidecar, 0o755);
 
 const library = nativeLibrary(triple);
