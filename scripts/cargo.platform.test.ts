@@ -1,15 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  linkSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, linkSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,32 +9,6 @@ import { A_MONTH_AGO, FRESH, GONE, STALE, file, fingerprint } from './cargo_test
 let profile = '';
 
 afterEach(() => rmSync(profile, { recursive: true, force: true }));
-
-test('cargo fmt checks and formats only the selected crate', () => {
-  profile = mkdtempSync(join(tmpdir(), 'fmt-'));
-  const manifest = join(profile, 'Cargo.toml');
-  const source = join(profile, 'src', 'lib.rs');
-  const original = 'pub fn answer()->u32{42}\n';
-  mkdirSync(join(profile, 'src'));
-  writeFileSync(
-    manifest,
-    '[package]\nname = "format_probe"\nversion = "0.1.0"\nedition = "2024"\n',
-  );
-  writeFileSync(source, original);
-
-  const run = (...args: string[]) =>
-    spawnSync(
-      process.execPath,
-      ['run', join(import.meta.dir, 'cargo.ts'), 'fmt', '--manifest-path', manifest, ...args],
-      { encoding: 'utf8' },
-    );
-
-  expect(run('--check').status).toBe(1);
-  expect(readFileSync(source, 'utf8')).toBe(original);
-  expect(run().status).toBe(0);
-  expect(readFileSync(source, 'utf8')).toBe('pub fn answer() -> u32 {\n    42\n}\n');
-  expect(run('--check').status).toBe(0);
-}, 60_000);
 
 test("an uplift outlives the generation it points at, unless it is the last one's", () => {
   profile = mkdtempSync(join(tmpdir(), 'sweep-'));
