@@ -232,6 +232,9 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
         command.env("WEB_DIST", web_root(app)?);
     }
     let child = command
+        // Windows' sidecar is a compiled stub carrying our name and icon; without this it runs
+        // the stub rather than the bundle (`build-sidecar.ts`).
+        .env("BUN_BE_BUN", "1")
         .arg(&bundle)
         .env("PORT", port.to_string())
         .env("HOST", "127.0.0.1")

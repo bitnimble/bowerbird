@@ -1,3 +1,5 @@
+# `release:check`'s local cross-builds only. What users run is built natively per platform by
+# `.github/workflows/release.yml`.
 FROM debian:trixie-slim AS bun
 ARG TARGETARCH
 RUN apt-get update \
