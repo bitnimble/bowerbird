@@ -42,9 +42,19 @@ getrandom = "0.3"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 
-# The application chooser "Open in…" shows (`open_with.rs`), one table per platform.
+# The application chooser "Open in…" shows (`open_with.rs`) and, on Windows, the caption
+# buttons' window (`caption.rs`); one table per platform.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Com", "Win32_UI_Shell"] }
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
 raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -12,6 +12,7 @@ import {
 import { type Ordering } from '../../../../../src/schemas/common';
 import { useIsMobile } from '../../../app/device';
 import { useListingStore, usePresenters } from '../../../app/stores_context';
+import { CLEARS_CAPTION_BUTTONS } from '../../../ui/caption_buttons';
 import { ICON } from '../../../ui/icon';
 import type { Option } from '../../../ui/option';
 import { ShowSidebarButton } from '../../../ui/page';
@@ -99,7 +100,10 @@ export const GridControls = observer(function GridControls({
   const mobile = useIsMobile();
 
   return (
-    <Row {...(withSidebarButton && DRAGS_WINDOW)} style={styles.controls}>
+    <Row
+      {...(withSidebarButton && DRAGS_WINDOW)}
+      style={[styles.controls, withSidebarButton && CLEARS_CAPTION_BUTTONS]}
+    >
       {withSidebarButton && <ShowSidebarButton />}
       {/* A phone gets the two a cull is actually made from. The other three are a
           press further into the panel beside them, which is where the reader who

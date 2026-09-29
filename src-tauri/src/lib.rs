@@ -8,6 +8,7 @@
 
 mod api;
 mod app_log;
+mod caption;
 mod display;
 /// The one call that is not request/response, and so cannot go through `api.rs`. Android's.
 #[cfg_attr(desktop, allow(dead_code))]
@@ -77,6 +78,7 @@ pub fn run() {
             api::ui_scale,
             api::set_ui_scale,
             app_log::app_logs,
+            caption::set_caption_buttons,
             display::display_is_hdr,
             events::events_following,
             export::pick_export_folder,
@@ -142,6 +144,13 @@ fn main_window(app: &tauri::AppHandle<Runtime>, url: tauri::WebviewUrl) -> tauri
         .cloned()
         .expect("tauri.conf.json declares the main window");
     config.url = url;
-    tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+    // Windows has no overlay title bar, so the page draws its own caption buttons.
+    if cfg!(target_os = "windows") {
+        config.decorations = false;
+    }
+    let window = tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+    if let Err(why) = caption::attach(&window) {
+        app_log::error(why);
+    }
     Ok(())
 }

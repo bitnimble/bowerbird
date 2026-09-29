@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { PanelLeftOpen } from 'lucide-react';
 import { createContext, useContext, type ReactNode } from 'react';
 import { Button } from './button';
+import { CLEARS_CAPTION_BUTTONS } from './caption_buttons';
 import { HeadingInRow } from './heading';
 import { ICON } from './icon';
 import { PageStrings } from './page.strings';
@@ -75,7 +76,10 @@ export function PageHead({
   children?: ReactNode;
 }): JSX.Element {
   return (
-    <Row {...(withSidebarButton && DRAGS_WINDOW)} style={styles.head}>
+    <Row
+      {...(withSidebarButton && DRAGS_WINDOW)}
+      style={[styles.head, withSidebarButton && CLEARS_CAPTION_BUTTONS]}
+    >
       {withSidebarButton && <ShowSidebarButton />}
       <HeadingInRow.Provider value>{children}</HeadingInRow.Provider>
     </Row>

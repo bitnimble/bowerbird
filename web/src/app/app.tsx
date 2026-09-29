@@ -26,6 +26,7 @@ import { SidebarResizer } from '../features/sidebar/sidebar_resizer';
 import { Toasts } from '../features/toasts/toasts';
 import { ConfirmDialog } from '../features/confirm/confirm_dialog';
 import { UpdateDialog } from '../features/updates/update_dialog';
+import { CaptionButtons } from '../ui/caption_buttons';
 import { ShowSidebar } from '../ui/page';
 import { drawer } from './drawer.stylex';
 import { HdrOutput } from './hdr_output';
@@ -216,6 +217,7 @@ export const App = observer(function App(): JSX.Element {
         <Toasts />
         <ConfirmDialog />
         <OnboardingPage />
+        <CaptionButtons />
       </>
     );
   }
@@ -342,6 +344,7 @@ export const App = observer(function App(): JSX.Element {
           </ShowSidebar.Provider>
         </main>
       </div>
+      <CaptionButtons />
     </div>
   );
 });

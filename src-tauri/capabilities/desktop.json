@@ -8,9 +8,13 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
     "allow-ui-scale",
     "allow-set-ui-scale",
     "allow-app-logs",
+    "allow-set-caption-buttons",
     "allow-display-is-hdr",
     "allow-pick-export-folder",
     "allow-export-to-folder",

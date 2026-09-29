@@ -9,6 +9,7 @@ fn main() {
         "ui_scale",
         "set_ui_scale",
         "app_logs",
+        "set_caption_buttons",
         "display_is_hdr",
         "events_following",
         "pick_export_folder",
