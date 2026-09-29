@@ -3,7 +3,7 @@ import { link, open } from 'node:fs/promises';
 import path from 'node:path';
 import { AppError } from '../../errors';
 import type { LibraryConfiguration } from '../../schemas/libraries';
-import { unlinkMovedFile } from '../../utils/deletions';
+import { deleteEmptyStagingDirectory, unlinkMovedFile } from '../../utils/deletions';
 import { ensureDir } from '../../utils/files';
 import { containsPath, libraryPath } from '../../utils/paths';
 
@@ -42,7 +42,11 @@ export async function appendToStage(
   if (staged !== offset) {
     throw new AppError('CONFLICT', `${path.basename(stageFile)} holds ${staged} staged bytes, not ${offset}`);
   }
-  const handle = await open(stageFile, 'a');
+  const handle = await open(stageFile, 'a').catch(async (error: unknown) => {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
+    await ensureDir(path.dirname(stageFile));
+    return open(stageFile, 'a');
+  });
   try {
     const reader = body.getReader();
     for (;;) {
@@ -132,5 +136,6 @@ export async function materialise(library: LibraryConfiguration, filePath: strin
     throw new AppError('IO_ERROR', `failed to materialise ${filePath}: ${(err as Error).message}`);
   }
   await unlinkMovedFile(stageFile, target);
+  await deleteEmptyStagingDirectory(stagingDir(library));
   return { placed: true };
 }

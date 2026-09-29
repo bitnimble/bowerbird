@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { PathSegment, route } from '../../../schemas/route';
-import { stagePath, stagedSize } from '../blob_store';
+import { stagePath, stagedSize, stagingDir } from '../blob_store';
 import { addPhoto, forgetPeers, LIB, library, makePeer } from './blob_transfers_test_helpers';
 
 afterEach(forgetPeers);
@@ -63,6 +63,7 @@ describe('push', () => {
     // The staged copy is kept, so the retry after the user resolves the
     // collision resumes without re-sending a byte.
     expect(stagedSize(stagePath(library(b), 'photo1'))).toBe(7);
+    expect(existsSync(stagingDir(library(b)))).toBe(true);
 
     rmSync(path.join(b.root, 'ONE.ARW'));
     a.sent.length = 0;
@@ -73,5 +74,6 @@ describe('push', () => {
     expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe('RAW-one');
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(true);
     expect(b.locations.flags(LIB)).toEqual([]);
+    expect(existsSync(stagingDir(library(b)))).toBe(false);
   });
 });

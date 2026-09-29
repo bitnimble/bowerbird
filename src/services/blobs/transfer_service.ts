@@ -19,11 +19,12 @@ import { newId } from '../../schemas/id';
 import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { soleInputOf } from '../../schemas/recipes';
 import { PathSegment, route } from '../../schemas/route';
-import { deleteBackedUpOriginal, deleteEvictedOriginal, deleteStagedBlob } from '../../utils/deletions';
+import { deleteBackedUpOriginal, deleteEmptyStagingDirectory, deleteEvictedOriginal, deleteStagedBlob } from '../../utils/deletions';
 import { contentHash } from '../../utils/hash';
 import { originalPathOf } from '../../utils/paths';
 import type { BackupLocations } from '../backup/backup_locations';
-import { backupPath, mirrorReady } from '../backup/backup_root';
+import { BackupError, backupIssueCode } from '../backup/backup_error';
+import { assertMirrorOf, backupPath } from '../backup/backup_root';
 import { passivePeerOf } from '../backup/passive_peers';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import type { PhotoMetadataRepository } from '../photos/metadata/photo_metadata_repository';
@@ -60,8 +61,9 @@ function originalToTransfer(library: Library, photo: BasicPhoto): string {
 
 const PUSH_CHUNK = 8 * 1024 * 1024;
 const PROGRESS_EVERY = 4 * 1024 * 1024;
+const PROGRESS_NOTIFY_MS = 1000;
 
-const COLUMNS = 'id, library_id, photo_id, peer_id, direction, state, bytes_done, bytes_total, error';
+const COLUMNS = 'id, library_id, photo_id, peer_id, direction, state, bytes_done, bytes_total, error, error_code';
 
 /**
  * A verified staged blob becoming the photograph's original: renamed to the
@@ -125,6 +127,8 @@ export class TransferService {
   private readonly anyHolderWillDo = new Set<string>();
   /** Who is waiting on one entry rather than on the queue (see {@link settled}). */
   private readonly waiting = new Map<string, ((item: Transfer) => void)[]>();
+  private readonly listeners = new Set<(libraryId: string) => void>();
+  private readonly progressNotifiedAt = new Map<string, number>();
 
   constructor(
     private readonly db: Database,
@@ -146,41 +150,44 @@ export class TransferService {
   /**
    * Staged bytes no transfer is waiting on (§7.7).
    *
-   * Every path that clears a stage file is the receiving side of a *pull* or a
-   * refused commit. A push the sender abandons - its process died, the person
-   * cancelled it there, the queue never came back to it - leaves the receiver
-   * holding a partial it will never hear about again, inside the library root,
-   * where nothing else ever looks. A few thousand of those is tens of gigabytes of
+   * A push the sender abandons - its process died, the person cancelled it
+   * there, the queue never came back to it - leaves the receiver holding a
+   * partial it will never hear about again, inside the library root, where
+   * nothing else ever looks. A few thousand of those is tens of gigabytes of
    * somebody's photographs volume spent on transfers that are not happening.
-   *
-   * Only what nothing is waiting on: a queued or paused entry's staged bytes are
-   * what lets it resume where it stopped rather than start again.
    */
   async sweepAbandonedStages(): Promise<number> {
     let swept = 0;
     for (const library of this.libraries.listConfigurations()) {
       const dir = stagingDir(library);
       if (!existsSync(dir)) continue;
-      const finish = this.activity.begin(library.id, 'pruning', 'staged-originals');
-      try {
-        const waiting = new Set(
-          (
-            this.db
-              .query("SELECT photo_id FROM blob_transfers WHERE library_id = ? AND state IN ('queued', 'paused')")
-              .all(library.id) as { photo_id: string }[]
-          ).map((row) => row.photo_id),
-        );
-        for (const name of readdirSync(dir)) {
-          const photoId = name.endsWith('.partial') ? name.slice(0, -'.partial'.length) : null;
-          if (photoId == null || waiting.has(photoId)) continue;
-          await deleteStagedBlob(dir, path.join(dir, name));
-          swept += 1;
-        }
-      } finally {
-        finish();
-      }
+      swept += await this.activity.track(library.id, 'pruning', 'staged-originals', () => this.sweepStages(dir, library.id));
     }
     if (swept > 0) log.info('swept staged originals nothing was waiting on', { files: swept });
+    return swept;
+  }
+
+  /** Deletes partials in `dir` that no queued, active, paused or failed transfer can resume. */
+  async sweepStages(dir: string, libraryId: string, peerId: string | null = null): Promise<number> {
+    if (!existsSync(dir)) return 0;
+    const waiting = new Set(
+      (
+        this.db
+          .query(
+            `SELECT photo_id FROM blob_transfers WHERE library_id = ?1 AND (?2 IS NULL OR peer_id = ?2)
+               AND state IN ('queued', 'active', 'paused', 'failed')`,
+          )
+          .all(libraryId, peerId) as { photo_id: string }[]
+      ).map((row) => row.photo_id),
+    );
+    let swept = 0;
+    for (const name of readdirSync(dir)) {
+      const photoId = name.endsWith('.partial') ? name.slice(0, -'.partial'.length) : null;
+      if (photoId == null || waiting.has(photoId)) continue;
+      await deleteStagedBlob(dir, path.join(dir, name));
+      swept += 1;
+    }
+    await deleteEmptyStagingDirectory(dir);
     return swept;
   }
 
@@ -326,6 +333,14 @@ export class TransferService {
       .all(libraryId) as Transfer[];
   }
 
+  onChanged(listener: (libraryId: string) => void): void {
+    this.listeners.add(listener);
+  }
+
+  private changed(libraryId: string): void {
+    for (const listener of this.listeners) listener(libraryId);
+  }
+
   get(id: string): Transfer {
     const row = this.db.query(`SELECT ${COLUMNS} FROM blob_transfers WHERE id = ?`).get(id) as Transfer | null;
     if (row == null) throw new AppError('NOT_FOUND', `transfer not found: ${id}`);
@@ -336,6 +351,7 @@ export class TransferService {
     const item = this.get(id);
     if (item.state !== 'queued' && item.state !== 'active') return;
     this.db.query("UPDATE blob_transfers SET state = 'paused' WHERE id = ?").run(id);
+    this.changed(item.library_id);
     this.aborts.get(id)?.abort();
     // A paused entry is one nothing will finish, so whoever was waiting on the picture is told
     // now rather than left holding a request until somebody resumes it.
@@ -345,7 +361,8 @@ export class TransferService {
   resume(id: string): void {
     const item = this.get(id);
     if (item.state !== 'paused' && item.state !== 'failed') return;
-    this.db.query("UPDATE blob_transfers SET state = 'queued', error = NULL WHERE id = ?").run(id);
+    this.db.query("UPDATE blob_transfers SET state = 'queued', error = NULL, error_code = NULL WHERE id = ?").run(id);
+    this.changed(item.library_id);
     this.kick();
   }
 
@@ -353,6 +370,7 @@ export class TransferService {
     const item = this.get(id);
     if (item.state === 'done') return;
     this.db.query("UPDATE blob_transfers SET state = 'cancelled' WHERE id = ?").run(id);
+    this.changed(item.library_id);
     this.aborts.get(id)?.abort();
     this.wake(id);
     if (item.direction === 'pull') {
@@ -473,9 +491,13 @@ export class TransferService {
     const evicted: string[] = [];
     const refused: EvictResult['refused'] = [];
     for (const photoId of photoIds) {
-      const reason = await this.evictOne(photoId, peer);
-      if (reason == null) evicted.push(photoId);
-      else refused.push({ photo_id: photoId, reason });
+      try {
+        const reason = await this.evictOne(photoId, peer);
+        if (reason == null) evicted.push(photoId);
+        else refused.push({ photo_id: photoId, reason });
+      } catch (error) {
+        refused.push({ photo_id: photoId, reason: error instanceof Error ? error.message : String(error), error_code: backupIssueCode(error) });
+      }
     }
     return { evicted, refused };
   }
@@ -511,14 +533,22 @@ export class TransferService {
     const backup = passivePeerOf(this.db, peer);
     if (backup != null) {
       const entry = this.backups.entry(library.id, backup.peerId, photo.id);
-      if (entry == null) return 'the backup holds no copy of this photo';
-      if (!mirrorReady(backup.root, library.id)) return `the backup folder is not there: ${backup.root}`;
-      return await this.refusable(() =>
-        libraryMutex.run(library.id, async () => {
+      if (entry == null) throw new BackupError('backup_missing', 'No backup copy is recorded. Run the backup again.');
+      return await libraryMutex.run(library.id, async () => {
+        assertMirrorOf(backup.root, library.id, library.name, backup.peerId);
+        try {
           await deleteBackedUpOriginal(library.root_path, abs, backupPath(backup.root, entry.rel_path), recorded);
-          this.retire(library.id, photo.id, at);
-        }),
-      );
+        } catch (error) {
+          const code = backupIssueCode(error);
+          if (code === 'backup_missing') this.backups.mark(library.id, backup.peerId, photo.id, 'missing');
+          if (code === 'backup_changed') this.backups.mark(library.id, backup.peerId, photo.id, 'changed');
+          if (code === 'local_changed') this.backups.setIssue(library.id, backup.peerId, photo.id, { code, phase: 'offloading', photo_id: photo.id, path: at });
+          throw error;
+        }
+        this.backups.clearLocalIssues(library.id, photo.id);
+        this.retire(library.id, photo.id, at);
+        return null;
+      });
     }
 
     let confirmation: BlobVerifyResponse;
@@ -562,6 +592,7 @@ export class TransferService {
   private retire(libraryId: string, photoId: string, at: string): void {
     this.locations.retract(libraryId, photoId);
     this.photoMetadata.setMissing(photoId, at);
+    this.changed(libraryId);
   }
 
   private async evictOne(photoId: string, peer: string): Promise<string | null> {
@@ -573,7 +604,7 @@ export class TransferService {
     } catch (error) {
       return (error as Error).message;
     }
-    if (library.read_only) return `library ${library.name} is read-only`;
+    if (library.read_only) throw new BackupError('read_only', `library ${library.name} is read-only`);
     // Marked before the peer is asked and held until the file is gone, because the
     // question being asked of the peer is the one being asked of this device at the
     // same moment. Two peers each keeping a photograph "on the other" both hear yes
@@ -626,11 +657,12 @@ export class TransferService {
             .run(newId(), libraryId, photoId, peer, direction, new Date().toISOString());
           queued += 1;
         } else if (existing.state === 'failed' || existing.state === 'cancelled' || existing.state === 'done') {
-          this.db.query("UPDATE blob_transfers SET state = 'queued', error = NULL WHERE id = ?").run(existing.id);
+          this.db.query("UPDATE blob_transfers SET state = 'queued', error = NULL, error_code = NULL, bytes_done = 0, bytes_total = NULL WHERE id = ?").run(existing.id);
           queued += 1;
         }
       }
     })();
+    if (queued > 0) this.changed(libraryId);
     return queued;
   }
 
@@ -647,17 +679,18 @@ export class TransferService {
     const finish = this.activity.begin(item.library_id, kind, item.photo_id);
     try {
       this.db.query("UPDATE blob_transfers SET state = 'active' WHERE id = ?").run(item.id);
+      this.changed(item.library_id);
       const photo = this.photo(item.photo_id);
       const library = this.library(item.library_id);
       if (item.direction === 'push') await this.push(item, photo, library, abort.signal);
       else await this.pull(item, photo, library, abort.signal);
-      this.db.query("UPDATE blob_transfers SET state = 'done', error = NULL WHERE id = ?").run(item.id);
+      if (!abort.signal.aborted) this.db.query("UPDATE blob_transfers SET state = 'done', error = NULL, error_code = NULL WHERE id = ? AND state = 'active'").run(item.id);
     } catch (error) {
       // pause() and cancel() abort the in-flight request having already written
       // the state they wanted; overwriting it here would resurrect the item.
       if (abort.signal.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
-      this.db.query("UPDATE blob_transfers SET state = 'failed', error = ? WHERE id = ?").run(message, item.id);
+      this.db.query("UPDATE blob_transfers SET state = 'failed', error = ?, error_code = ? WHERE id = ?").run(message, backupIssueCode(error), item.id);
       // Queued rather than run here, so it is the drain that takes it and the
       // retry is bounded by the same single worker as everything else.
       if (this.anyHolderWillDo.has(item.id)) this.tryNextHolder(item);
@@ -666,12 +699,13 @@ export class TransferService {
       this.aborts.delete(item.id);
       this.anyHolderWillDo.delete(item.id);
       this.wake(item.id);
+      this.changed(item.library_id);
     }
   }
 
   private async push(item: Transfer, photo: BasicPhoto, library: Library, signal: AbortSignal): Promise<void> {
     const abs = originalToTransfer(library, photo);
-    if (!isOnDisk(abs)) throw new AppError('NOT_FOUND', `original not on disk: ${photo.id}`);
+    if (!isOnDisk(abs)) throw new BackupError('local_missing', `The local original for ${soleInputOf(photo.recipe) ?? photo.id} is missing. Restore it before backing it up.`);
     const file = Bun.file(abs);
     const size = file.size;
 
@@ -679,7 +713,7 @@ export class TransferService {
     if (!stagedRes.ok) throw new AppError('IO_ERROR', `peer answered ${stagedRes.status} for staged size`);
     const { staged, held } = BlobStageResponseSchema.parse(await stagedRes.json());
     if (held) {
-      this.progress(item.id, size, size);
+      this.progress(item, size, size);
       return;
     }
     if (staged > size) throw new AppError('CONFLICT', `peer holds ${staged} staged bytes of a ${size}-byte file`);
@@ -689,7 +723,7 @@ export class TransferService {
     const hasher = new Bun.CryptoHasher('sha256');
     if (staged > 0) hasher.update(await file.slice(0, staged).arrayBuffer());
     let sent = staged;
-    this.progress(item.id, sent, size);
+    this.progress(item, sent, size);
     while (sent < size) {
       const chunk = await file.slice(sent, Math.min(sent + PUSH_CHUNK, size)).arrayBuffer();
       // A file truncated under a running push yields nothing past its new end, and
@@ -708,13 +742,14 @@ export class TransferService {
       });
       if (!res.ok) throw new AppError('IO_ERROR', `peer refused bytes at ${sent}: ${res.status}`);
       sent += chunk.byteLength;
-      this.progress(item.id, sent, size);
+      this.progress(item, sent, size);
     }
     const computed = hasher.digest('hex');
     const recorded = this.photoMetadata.contentHashOf(photo.id);
     if (recorded != null && computed !== recorded) {
-      throw new AppError('CONFLICT', `this copy no longer matches its recorded content hash`);
+      throw new BackupError('local_changed', 'The local original has changed. Check the file before backing it up.');
     }
+    if (recorded != null) this.backups.clearLocalIssues(library.id, photo.id);
 
     const commit = await this.transport.request(item.peer_id, route(photo.id, PathSegment.commit()), {
       method: 'POST',
@@ -735,13 +770,33 @@ export class TransferService {
 
   private async pull(item: Transfer, photo: BasicPhoto, library: Library, signal: AbortSignal): Promise<void> {
     if (library.read_only) throw new AppError('READ_ONLY', `library ${library.name} is read-only`);
+    const stage = stagePath(library, photo.id);
+    const original = originalToTransfer(library, photo);
     // Two peers holding the same original queue two pulls of it, the entries
     // differing only by which peer they name. The first lands the file; without
     // this the second downloads the whole thing again and then finds its target
     // occupied - by the copy the first one just put there - so it flags a collision
     // against itself, fails, and does it again on every retry.
-    if (isOnDisk(originalToTransfer(library, photo))) return;
-    const stage = stagePath(library, photo.id);
+    if (isOnDisk(original)) {
+      const recorded = this.photoMetadata.contentHashOf(photo.id);
+      if (recorded == null) {
+        await deleteEmptyStagingDirectory(stagingDir(library));
+        return;
+      }
+      if ((await contentHash(original)) !== recorded) throw new BackupError('path_conflict', 'A different file occupies the local path. Move it before restoring the original.');
+      signal.throwIfAborted();
+      if (existsSync(stage)) await deleteStagedBlob(stagingDir(library), stage);
+      const newlyArrived = !this.locations.heldBy(library.id, photo.id, this.locations.selfId())
+        || this.db.query('SELECT 1 FROM photos WHERE id = ? AND is_missing = 1').get(photo.id) != null;
+      this.locations.record(library.id, photo.id);
+      this.locations.clearFlag(library.id, photo.id);
+      this.backups.clearLocalIssues(library.id, photo.id);
+      if (newlyArrived) {
+        this.photoMetadata.markOriginalArrived(photo.id);
+        this.build([photo.id]);
+      }
+      return;
+    }
     let done = stagedSize(stage);
 
     const res = await this.transport.request(item.peer_id, route(photo.id, PathSegment.original()), {
@@ -753,25 +808,35 @@ export class TransferService {
     }
     const remaining = Number(res.headers.get('content-length'));
     const total = Number.isFinite(remaining) && remaining > 0 ? done + remaining : null;
-    this.progress(item.id, done, total);
+    this.progress(item, done, total);
     let sinceWrite = 0;
     await appendToStage(stage, done, res.body, (bytes) => {
       done += bytes;
       sinceWrite += bytes;
       if (sinceWrite >= PROGRESS_EVERY) {
         sinceWrite = 0;
-        this.progress(item.id, done, total);
+        this.progress(item, done, total);
       }
     });
-    this.progress(item.id, done, total ?? done);
+    this.progress(item, done, total ?? done);
 
     const expected = this.photoMetadata.contentHashOf(photo.id) ?? (await this.senderHash(item.peer_id, photo.id));
     const computed = await contentHash(stage);
+    signal.throwIfAborted();
     if (computed !== expected) {
       await deleteStagedBlob(stagingDir(library), stage);
+      const backup = passivePeerOf(this.db, item.peer_id);
+      if (backup != null) {
+        if ((await this.senderHash(item.peer_id, photo.id)) !== expected) {
+          this.backups.mark(library.id, backup.peerId, photo.id, 'changed');
+          throw new BackupError('backup_changed', `The backup copy of ${soleInputOf(photo.recipe) ?? photo.id} has changed. Check the backup file and try again.`);
+        }
+        throw new BackupError('transfer_failed', 'The restored copy did not match the original. Try again to copy it from the start.');
+      }
       throw new AppError('VALIDATION_ERROR', `discarded download of ${photo.id}: bytes hash ${computed}, expected ${expected}`);
     }
     await acceptVerifiedBlob(this.photoPaths, this.photoMetadata, this.locations, library, photo.id, stage, this.build);
+    this.backups.clearLocalIssues(library.id, photo.id);
   }
 
   private async senderHash(peer: string, photoId: string): Promise<string> {
@@ -780,8 +845,14 @@ export class TransferService {
     return BlobHashResponseSchema.parse(await res.json()).content_hash;
   }
 
-  private progress(id: string, done: number, total: number | null): void {
-    this.db.query('UPDATE blob_transfers SET bytes_done = ?, bytes_total = ? WHERE id = ?').run(done, total, id);
+  private progress(item: Transfer, done: number, total: number | null): void {
+    this.db.query('UPDATE blob_transfers SET bytes_done = ?, bytes_total = ? WHERE id = ?').run(done, total, item.id);
+    // performance.now, not Date.now: a clock set backwards would silence progress until it caught up.
+    const now = performance.now();
+    if (now - (this.progressNotifiedAt.get(item.library_id) ?? Number.NEGATIVE_INFINITY) >= PROGRESS_NOTIFY_MS) {
+      this.progressNotifiedAt.set(item.library_id, now);
+      this.changed(item.library_id);
+    }
   }
 
   private photo(photoId: string): BasicPhoto {

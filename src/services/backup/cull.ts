@@ -1,7 +1,8 @@
 import type { Database } from '../../db/driver';
 import { Logger } from '../../logger';
 import type { TransferService } from '../blobs/transfer_service';
-import { mirrorReady } from './backup_root';
+import type { EvictResult } from '../../schemas/blobs';
+import { assertMirrorOf } from './backup_root';
 import type { PassivePeer } from './passive_peers';
 
 const log = new Logger('mirror');
@@ -43,6 +44,11 @@ export class Cull {
     return row?.local_budget_bytes ?? null;
   }
 
+  budgetUnmet(libraryId: string): boolean {
+    const budget = this.budget(libraryId);
+    return budget != null && this.localBytes(libraryId) > budget;
+  }
+
   /**
    * Gives local copies back until the library fits its ceiling, least recently wanted first.
    *
@@ -56,35 +62,39 @@ export class Cull {
    * disagree - so a cull against a half-written backup removes nothing and says why, per
    * photograph.
    */
-  async toBudget(peer: PassivePeer): Promise<number> {
+  async toBudget(peer: PassivePeer, progress: (done: number, total: number) => void = () => {}): Promise<EvictResult> {
+    const evicted: string[] = [];
+    const refused: EvictResult['refused'] = [];
     const ceiling = this.budget(peer.libraryId);
-    if (ceiling == null) return 0;
+    if (ceiling == null) return { evicted, refused };
     let held = this.localBytes(peer.libraryId);
-    if (held <= ceiling) return 0;
+    if (held <= ceiling) return { evicted, refused };
     // Once, before a photograph is picked: every eviction would refuse against an unplugged drive,
     // and reporting that as ten thousand refusals is a log nobody reads and a pass that took
     // minutes to do nothing.
-    if (!mirrorReady(peer.root, peer.libraryId)) {
-      log.warn('skipping the cull: the backup folder is not there', { library: peer.libraryId, at: peer.root });
-      return 0;
-    }
+    assertMirrorOf(peer.root, peer.libraryId, peer.name, peer.peerId);
 
     let offloaded = 0;
-    for (const candidate of this.candidates(peer)) {
+    const candidates = this.candidates(peer);
+    progress(0, candidates.length);
+    for (const candidate of candidates) {
       if (held <= ceiling) break;
       const result = await this.transfers.evict([candidate.id], peer.peerId);
       const refusal = result.refused[0];
       if (refusal != null) {
         log.warn('a local copy stayed', { photo: candidate.id, why: refusal.reason });
+        refused.push(refusal);
         continue;
       }
       held -= candidate.size;
       offloaded += 1;
+      evicted.push(candidate.id);
+      progress(offloaded, candidates.length);
     }
     if (offloaded > 0) {
       log.info('gave local copies back to the backup', { library: peer.libraryId, photos: offloaded, held });
     }
-    return offloaded;
+    return { evicted, refused };
   }
 
   /**
@@ -101,6 +111,7 @@ export class Cull {
            JOIN backup_locations b ON b.library_id = p.library_id AND b.photo_id = p.id AND b.peer_id = ?
           WHERE p.library_id = ? AND p.is_missing = 0 AND json_extract(p.recipe, '$.kind') = 'file'
             AND p.content_hash IS NOT NULL AND p.content_hash = b.content_hash
+            AND b.health = 'held'
           ORDER BY COALESCE(p.last_accessed_at, p.date_added), p.id`,
       )
       .all(peer.peerId, peer.libraryId) as Candidate[];

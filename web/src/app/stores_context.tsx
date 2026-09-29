@@ -178,7 +178,8 @@ function build(): { stores: Stores; presenters: Presenters } {
   // Labels a photo through the photos presenter, so the open photograph shows it, and drops a
   // deleted label from the grid's filter the same way.
   const labels = new LabelsPresenter(stores.labels, stores.labelEditor, photos, toasts);
-  const events = new EventsPresenter(photos, replication, stackTriage, exportPhotos, labels);
+  const backup = new BackupPresenter(stores.backup, photos, toasts);
+  const events = new EventsPresenter(photos, replication, stackTriage, exportPhotos, labels, backup);
   const presenters: Presenters = {
     libraries,
     photos,
@@ -186,8 +187,7 @@ function build(): { stores: Stores; presenters: Presenters } {
     albums,
     scan,
     replication,
-    // The grid says which photographs have no local copy, so a pass that removes one reloads it.
-    backup: new BackupPresenter(stores.backup, photos, toasts),
+    backup,
     toasts,
     confirm: new ConfirmPresenter(stores.confirm),
     appSettings,

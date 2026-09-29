@@ -15,8 +15,5 @@ export const ScanStripStrings = {
   syncing: () => 'syncing',
   fetching: () => 'fetching',
   rendering: (count: number) => `rendering ${count} ${count === 1 ? 'photo' : 'photos'}`,
-  fetchingFromBackup: () => 'fetching originals from the backup',
   sending: (count: number) => `sending ${originals(count)}`,
-  backingUp: (count: number) => `backing up ${originals(count)}`,
-  backingUpNow: () => 'backing up',
 };

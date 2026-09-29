@@ -108,7 +108,7 @@ export function summaryColumns(): string {
 // is what separates the two halves of `is_missing`: a file nobody can find, and one this device
 // gave back on purpose and can fetch again.
 const IS_OFFLOADED = `(photos.is_missing = 1 AND EXISTS (
-    SELECT 1 FROM backup_locations b WHERE b.library_id = photos.library_id AND b.photo_id = photos.id))`;
+    SELECT 1 FROM backup_locations b WHERE b.library_id = photos.library_id AND b.photo_id = photos.id AND b.health = 'held'))`;
 
 // How wide a stack counts in a listing (§19.5.2).
 //

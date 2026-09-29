@@ -31,6 +31,15 @@ async function readChunk(reader: { read(): Promise<{ value?: Uint8Array }> }): P
 }
 
 describe('EventsApi', () => {
+  it('streams backup changes to connected clients', async () => {
+    const { app, api } = build();
+    const res = await app.request(route(PathSegment.api(), PathSegment.events()));
+    const reader = res.body!.getReader();
+    await readChunk(reader);
+    api.announce('backup', { library_id: 'lib' });
+    expect(await readChunk(reader)).toBe('event: backup\ndata: {"library_id":"lib"}\nid: 1\n\n');
+    await reader.cancel();
+  });
   // A byte the moment the stream opens, which is what lets a client say it is connected.
   // Without it the next one is a heartbeat away: a shell that waits for the first byte
   // before reporting the library reachable waited twenty seconds to do it, and every view

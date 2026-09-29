@@ -97,11 +97,11 @@ describe('library photo counts', () => {
     recordHolder('self', peerId(db));
     recordHolder('binned', 'peer0001');
     db.query(
-      `INSERT INTO backup_locations (library_id, photo_id, peer_id, rel_path, content_hash, size, verified_at)
+      `INSERT INTO backup_locations (library_id, photo_id, peer_id, rel_path, content_hash, size, checked_at)
          VALUES (?, 'backup', ?, 'backup.arw', 'hash', 100, ?)`,
     ).run(LIBRARY, 'drive001', BUILT_AT);
     db.query(
-      `INSERT INTO backup_locations (library_id, photo_id, peer_id, rel_path, content_hash, size, verified_at)
+      `INSERT INTO backup_locations (library_id, photo_id, peer_id, rel_path, content_hash, size, checked_at)
          VALUES (?, 'backup', ?, 'backup.arw', 'hash', 100, ?)`,
     ).run(LIBRARY, 'drive002', BUILT_AT);
     renditions.markBuilt('local', 'grid', BUILT_AT, null, { from: 'embedded', matched: false });
@@ -167,12 +167,15 @@ describe('library photo counts', () => {
   it('requires a known backup peer for a recorded backup copy', () => {
     insertPhoto('backup', true);
     db.query(
-      `INSERT INTO backup_locations (library_id, photo_id, peer_id, rel_path, content_hash, size, verified_at)
+      `INSERT INTO backup_locations (library_id, photo_id, peer_id, rel_path, content_hash, size, checked_at)
          VALUES (?, 'backup', 'drive001', 'backup.arw', 'hash', 100, ?)`,
     ).run(LIBRARY, BUILT_AT);
     expect(counts()).toEqual({ photos: 1, missing: 0, unavailable: 1, rendered: 0 });
     pair('drive001', 'passive');
     expect(counts()).toEqual({ photos: 1, missing: 1, unavailable: 0, rendered: 0 });
+    db.query("UPDATE backup_locations SET health = 'missing' WHERE photo_id = 'backup'").run();
+    expect(counts()).toEqual({ photos: 1, missing: 0, unavailable: 1, rendered: 0 });
+    db.query("UPDATE backup_locations SET health = 'held' WHERE photo_id = 'backup'").run();
     db.query('DELETE FROM replication_peers WHERE library_id = ?').run(LIBRARY);
     expect(counts()).toEqual({ photos: 1, missing: 0, unavailable: 1, rendered: 0 });
   });

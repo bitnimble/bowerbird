@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import path from 'node:path';
 import { BlobsApi } from '../../../api/blobs/blobs_api';
 import { applyErrorHandler } from '../../../api/error_handler';
+import { BlobStageResponseSchema } from '../../../schemas/blobs';
 import { PathSegment, route } from '../../../schemas/route';
 import { PhotoProcessingRepository } from '../../photos/renditions/photo_processing_repository';
 import { RenditionsRepository } from '../../processing/renditions/renditions_repository';
@@ -107,6 +108,50 @@ function sha256(data: string): string {
 }
 
 describe('push', () => {
+  it('discards a redundant stage when the receiver verifies its existing original', async () => {
+    const a = makePeer('a');
+    const b = makePeer('b');
+    addPhoto(a, 'photo1', 'one.arw', 'RAW-one');
+    addPhoto(b, 'photo1', 'one.arw', 'RAW-one');
+    b.photoMetadata.setContentHash('photo1', sha256('RAW-one'));
+    const dir = stagingDir(library(b));
+    mkdirSync(dir);
+    writeFileSync(stagePath(library(b), 'photo1'), 'RAW');
+
+    expect(await a.transfers.pushDiff(LIB, b.id, { library: true })).toBe(1);
+    await a.transfers.drain();
+
+    expect(a.transfers.list(LIB)[0]!.state).toBe('done');
+    expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe('RAW-one');
+    expect(existsSync(dir)).toBe(false);
+
+    mkdirSync(dir);
+    b.db.query('UPDATE photos SET content_hash = NULL WHERE id = ?').run('photo1');
+    expect(await a.transfers.pushDiff(LIB, b.id, { library: true })).toBe(1);
+    await a.transfers.drain();
+    expect(a.transfers.list(LIB)[0]!.state).toBe('done');
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('keeps staged bytes when an existing original differs or has no recorded hash', async () => {
+    for (const { bytes, hash } of [
+      { bytes: 'users own', hash: sha256('RAW-one') },
+      { bytes: 'RAW-one', hash: null },
+    ]) {
+      const b = makePeer('b');
+      addPhoto(b, 'photo1', 'one.arw', bytes);
+      b.db.query('UPDATE photos SET content_hash = ? WHERE id = ?').run(hash, 'photo1');
+      mkdirSync(stagingDir(library(b)));
+      writeFileSync(stagePath(library(b), 'photo1'), 'RAW-one');
+
+      const response = await b.routes.request(route('photo1', PathSegment.stage()));
+
+      expect(BlobStageResponseSchema.parse(await response.json())).toEqual({ staged: 7, held: true });
+      expect(readFileSync(stagePath(library(b), 'photo1'), 'utf8')).toBe('RAW-one');
+      expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe(bytes);
+    }
+  });
+
   it('computes the content hash at first transfer, and the receiver verifies, materialises and records', async () => {
     const a = makePeer('a');
     const b = makePeer('b');
@@ -133,6 +178,7 @@ describe('push', () => {
 
     // The receiver holds the verified bytes at the row's path.
     expect(readFileSync(path.join(b.root, 'Day1/one.arw'), 'utf8')).toBe('RAW-one');
+    expect(existsSync(stagingDir(library(b)))).toBe(false);
     // §7.2: its own location row, written after the rename; §7.8: the pipeline
     // is handed the arrival.
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(true);
@@ -227,10 +273,65 @@ describe('push', () => {
     expect(existsSync(path.join(b.root, 'one.arw'))).toBe(false);
     expect(stagedSize(stagePath(library(b), 'photo1'))).toBe(0);
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(false);
+    expect(existsSync(stagingDir(library(b)))).toBe(false);
   });
 });
 
 describe('pull', () => {
+  it('discards a redundant stage when a matching original arrives before the queued pull', async () => {
+    const a = makePeer('a');
+    const b = makePeer('b');
+    addPhoto(a, 'photo1', 'one.arw', 'RAW-one');
+    addPhoto(b, 'photo1', 'one.arw');
+    knowsHolder(b, 'photo1', a.id);
+    b.photoMetadata.setContentHash('photo1', sha256('RAW-one'));
+    const dir = stagingDir(library(b));
+    mkdirSync(dir);
+    writeFileSync(stagePath(library(b), 'photo1'), 'RAW');
+    expect(await b.transfers.pullDiff(LIB, a.id, { library: true })).toBe(1);
+    writeFileSync(path.join(b.root, 'one.arw'), 'RAW-one');
+
+    await b.transfers.drain();
+
+    expect(b.transfers.list(LIB)[0]!.state).toBe('done');
+    expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe('RAW-one');
+    expect(existsSync(dir)).toBe(false);
+    expect(b.sent).toEqual([]);
+
+    expect(b.built).toEqual(['photo1']);
+    mkdirSync(dir);
+    b.db.query('UPDATE photos SET content_hash = NULL WHERE id = ?').run('photo1');
+    expect(b.transfers.queuePull(LIB, a.id, ['photo1'])).toBe(1);
+    await b.transfers.drain();
+    expect(b.transfers.list(LIB)[0]!.state).toBe('done');
+    expect(existsSync(dir)).toBe(false);
+    expect(b.built).toEqual(['photo1']);
+  });
+
+  it('keeps a queued pull stage when the newly occupied original differs or has no recorded hash', async () => {
+    for (const { bytes, hash } of [
+      { bytes: 'users own', hash: sha256('RAW-one') },
+      { bytes: 'RAW-one', hash: null },
+    ]) {
+      const a = makePeer('a');
+      const b = makePeer('b');
+      addPhoto(a, 'photo1', 'one.arw', 'RAW-one');
+      addPhoto(b, 'photo1', 'one.arw');
+      knowsHolder(b, 'photo1', a.id);
+      b.db.query('UPDATE photos SET content_hash = ? WHERE id = ?').run(hash, 'photo1');
+      mkdirSync(stagingDir(library(b)));
+      writeFileSync(stagePath(library(b), 'photo1'), 'RAW-one');
+      expect(await b.transfers.pullDiff(LIB, a.id, { library: true })).toBe(1);
+      writeFileSync(path.join(b.root, 'one.arw'), bytes);
+
+      await b.transfers.drain();
+
+      expect(b.transfers.list(LIB)[0]!.state).toBe(hash == null ? 'done' : 'failed');
+      expect(readFileSync(stagePath(library(b), 'photo1'), 'utf8')).toBe('RAW-one');
+      expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe(bytes);
+    }
+  });
+
   it('resumes from the staged byte offset', async () => {
     const a = makePeer('a');
     const b = makePeer('b');
@@ -247,6 +348,7 @@ describe('pull', () => {
     expect(b.transfers.list(LIB)[0]!.state).toBe('done');
     expect(b.sent.find((r) => r.path === route('photo1', PathSegment.original()))?.range).toBe('bytes=5-');
     expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe('ABCDEFGHIJ');
+    expect(existsSync(stagingDir(library(b)))).toBe(false);
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(true);
     // The holder had never transferred it before, so serving this pull is what
     // made it compute and record the hash (§7.1).
@@ -277,6 +379,7 @@ describe('pull', () => {
     expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe('RAW-one');
     // Fetched once. The second entry finished without asking anybody for bytes.
     expect(b.sent.filter((r) => r.path === route('photo1', PathSegment.original()))).toHaveLength(1);
+    expect(b.built).toEqual(['photo1']);
     expect(b.db.query('SELECT COUNT(*) AS n FROM materialisation_flags').get()).toEqual({ n: 0 });
   });
 
@@ -298,6 +401,7 @@ describe('pull', () => {
     expect(existsSync(path.join(b.root, 'one.arw'))).toBe(false);
     expect(stagedSize(stagePath(library(b), 'photo1'))).toBe(0);
     expect(b.locations.heldBy(LIB, 'photo1', b.id)).toBe(false);
+    expect(existsSync(stagingDir(library(b)))).toBe(false);
   });
 
   it('fetch-on-open pulls from a recorded holder and keeps it; a local original needs nothing', async () => {
@@ -398,6 +502,7 @@ describe('pull', () => {
     await b.transfers.cancel(item.id);
     expect(b.transfers.get(item.id).state).toBe('cancelled');
     expect(stagedSize(stagePath(library(b), 'photo1'))).toBe(0);
+    expect(existsSync(stagingDir(library(b)))).toBe(false);
   });
 });
 
@@ -431,11 +536,48 @@ describe('queue durability', () => {
     expect(readFileSync(path.join(b.root, 'one.arw'), 'utf8')).toBe('RAW-one');
   });
 
+  it('removes empty and abandoned staging directories during the sweep', async () => {
+    const b = makePeer('b');
+    const dir = stagingDir(library(b));
+    mkdirSync(dir);
+    expect(await b.transfers.sweepAbandonedStages()).toBe(0);
+    expect(existsSync(dir)).toBe(false);
+
+    mkdirSync(dir);
+    writeFileSync(stagePath(library(b), 'abandoned'), 'half a RAW');
+    expect(await b.transfers.sweepAbandonedStages()).toBe(1);
+    expect(existsSync(dir)).toBe(false);
+    expect(existsSync(b.root)).toBe(true);
+  });
+
+  it('keeps queued, active, paused and failed stages and unrelated files during the sweep', async () => {
+    const a = makePeer('a');
+    const b = makePeer('b');
+    const dir = stagingDir(library(b));
+    mkdirSync(dir);
+    for (const state of ['queued', 'active', 'paused', 'failed']) {
+      addPhoto(b, state, `${state}.arw`);
+      writeFileSync(stagePath(library(b), state), `${state} bytes`);
+      b.db.query(
+        `INSERT INTO blob_transfers (id, library_id, photo_id, peer_id, direction, state, queued_at)
+           VALUES (?, ?, ?, ?, 'pull', ?, '2026-01-01T00:00:00.000Z')`,
+      ).run(state, LIB, state, a.id, state);
+    }
+    writeFileSync(path.join(dir, 'keep.arw'), 'users own');
+    writeFileSync(stagePath(library(b), 'abandoned'), 'orphan');
+
+    expect(await b.transfers.sweepAbandonedStages()).toBe(1);
+
+    for (const state of ['queued', 'active', 'paused', 'failed']) {
+      expect(readFileSync(stagePath(library(b), state), 'utf8')).toBe(`${state} bytes`);
+    }
+    expect(readFileSync(path.join(dir, 'keep.arw'), 'utf8')).toBe('users own');
+  });
+
   /**
-   * Every path that clears a stage file is the receiving side of a pull, or a
-   * refused commit. A push the sender abandons leaves the receiver holding bytes it
-   * will never hear about again - inside the library root, where nothing else
-   * looks, at the size of a RAW apiece.
+   * A push the sender abandons leaves the receiver holding bytes it will never
+   * hear about again - inside the library root, where nothing else looks, at the
+   * size of a RAW apiece.
    */
   it('sweeps staged bytes nothing is waiting on, and keeps the ones something is', async () => {
     const a = makePeer('a');

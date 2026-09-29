@@ -28,6 +28,7 @@ import { BulkBarStrings } from '../photos/grid/bulk_bar.strings';
 import { PhotoDetailStrings } from '../photos/viewer/photo_detail_page.strings';
 import { BackupPanel } from '../backup/backup_panel';
 import { BackupStrings } from '../backup/backup_panel.strings';
+import { BackupStrip } from '../backup/backup_strip';
 import { SyncedDevicesPanel } from '../replication/synced_devices_panel';
 import { SyncedDevicesStrings } from '../replication/synced_devices_panel.strings';
 import { ScanStrip } from '../scan/scan_strip';
@@ -137,6 +138,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
   const params = useParams();
   const settingsOpen = params.libraryId === library.id;
   const syncSection = useRef<HTMLDivElement>(null);
+  const backupSection = useRef<HTMLDivElement>(null);
   const setSettingsOpen = (open: boolean): void =>
     navigate(
       open ?
@@ -165,6 +167,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
         {SettingsStrings.libraryPhotoCount(library)}
       </Text>
       <ScanStrip library={library} status={libraryStore.statuses.get(library.id)} activities={activities} />
+      <BackupStrip libraryId={library.id} />
       <LibraryJobs library={library} />
 
       <Row style={styles.actions}>
@@ -212,7 +215,7 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         title={SettingsStrings.librarySettingsTitle(libraryLabel(library))}
-        initialFocus={params.section === PathSegment.sync() ? syncSection : undefined}
+        initialFocus={params.section === PathSegment.sync() ? syncSection : params.section === PathSegment.backup() ? backupSection : undefined}
       >
         <DialogBody wide>
           <DialogColumns>
@@ -226,7 +229,9 @@ const LibraryTile = observer(function LibraryTile({ library }: { library: Librar
             </div>
             <div>
               <RenderStagesPanel library={library} />
-              <BackupPanel library={library} />
+              <div ref={backupSection} role="region" aria-label={BackupStrings.heading()} tabIndex={-1} {...stylex.props(styles.focusTarget)}>
+                <BackupPanel library={library} />
+              </div>
             </div>
           </DialogColumns>
         </DialogBody>
@@ -581,7 +586,8 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
   const activity = store.activities.get(library.id) ?? [];
   const renders = library.rendition_source === 'render';
   const syncing = activity.some((work) => work.kind === 'syncing') || replication.replicating === library.id;
-  const backingUp = activity.some((work) => work.kind === 'backing_up' || work.kind === 'restoring_backup') || backupStore.running === library.id;
+  const backupStatus = backupStore.statusOf(library.id);
+  const backingUp = activity.some((work) => work.kind === 'backing_up' || work.kind === 'restoring_backup') || backupStore.busy(library.id);
 
   return (
     <details>
@@ -603,7 +609,7 @@ const LibraryJobs = observer(function LibraryJobs({ library }: { library: Librar
           </SettingRow>
         )}
 
-        {backupStore.statusOf(library.id) != null && (
+        {backupStatus?.configured === true && (
           <SettingRow label={SettingsStrings.backUpOriginals()} disabledReason={backingUp ? SettingsStrings.jobBusy() : undefined}>
             <Button disabled={backingUp} onClick={() => void backup.runNow(library.id)}>
               <HardDriveUpload size={ICON} />

@@ -3,6 +3,8 @@ import { rm, rmdir, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AppError } from '../errors';
+import { BackupError } from '../services/backup/backup_error';
+import { Logger } from '../logger';
 import type { BlobVerifyResponse } from '../schemas/blobs';
 import type { Library } from '../schemas/libraries';
 import { contentHash } from './hash';
@@ -19,6 +21,7 @@ import { findOriginalsAnywhere, isStrayOriginal } from './scan';
 // only ones a file may be deleted from one at a time. Everything else under
 // there - a stray the user left - is not ours to remove.
 const GENERATED_DIRS = ['renditions', 'hdr', 'drafts'];
+const log = new Logger('deletions');
 
 /**
  * A scratch directory this process made under the OS temp directory, and everything in it.
@@ -153,6 +156,18 @@ export async function deleteStagedBlob(stagingDir: string, target: string): Prom
     throw new AppError('IO_ERROR', `refusing to delete ${target}: not a staged blob in ${stagingDir}`);
   }
   await rm(target, { force: true });
+  await deleteEmptyStagingDirectory(stagingDir);
+}
+
+export async function deleteEmptyStagingDirectory(target: string): Promise<void> {
+  if (path.basename(path.resolve(target)) !== '.bowerbird-staging') {
+    throw new AppError('IO_ERROR', `refusing to remove ${target}: not a blob staging directory`);
+  }
+  await rmdir(target).catch((error: unknown) => {
+    const code = error instanceof Error && 'code' in error ? error.code : null;
+    if (code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EEXIST') return;
+    log.warn('could not remove empty staging directory', { path: target, error: String(error) });
+  });
 }
 
 // The one deliberate deletion of an original: manual eviction (docs/replication.md
@@ -205,15 +220,15 @@ export async function deleteBackedUpOriginal(
     throw new AppError('IO_ERROR', `refusing to give up ${target}: outside the library root`);
   }
   if (!existsSync(backupCopy)) {
-    throw new AppError('CONFLICT', `refusing to give up ${target}: the backup has no copy at ${backupCopy}`);
+    throw new BackupError('backup_missing', `The backup copy of ${path.basename(target)} is missing. Run the backup again before removing its local copy.`);
   }
   const onBackup = await contentHash(backupCopy);
   if (onBackup !== recordedHash) {
-    throw new AppError('CONFLICT', `refusing to give up ${target}: the backup's copy hashes ${onBackup}`);
+    throw new BackupError('backup_changed', `The backup copy of ${path.basename(target)} has changed. Keep the local copy and check the backup file.`);
   }
   const here = await contentHash(target);
   if (here !== recordedHash) {
-    throw new AppError('CONFLICT', `refusing to give up ${target}: this copy hashes ${here}, not ${recordedHash}`);
+    throw new BackupError('local_changed', `The local copy of ${path.basename(target)} has changed. Check the local file before removing it.`);
   }
   await unlink(target);
 }

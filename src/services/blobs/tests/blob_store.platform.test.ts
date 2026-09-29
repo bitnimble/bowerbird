@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { appendToStage, materialise, occupant, stagePath, stagedSize } from '../blob_store';
+import { appendToStage, materialise, occupant, stagePath, stagedSize, stagingDir } from '../blob_store';
 import { library, stream, withRoot } from './blob_store_test_helpers';
 
 describe('occupant', () => {
@@ -28,6 +28,35 @@ describe('materialise', () => {
     expect(outcome).toEqual({ placed: true });
     expect(readFileSync(path.join(root, 'Day1/one.arw'), 'utf8')).toBe('bytes');
     expect(stagedSize(stage)).toBe(0);
+    expect(existsSync(stagingDir(lib))).toBe(false);
+  }));
+
+  it('keeps other staged bytes and files when one original lands', withRoot(async (root) => {
+    const lib = library(root);
+    const stage = stagePath(lib, 'photo1');
+    await appendToStage(stage, 0, stream('bytes'));
+    await appendToStage(stagePath(lib, 'photo2'), 0, stream('unfinished'));
+    writeFileSync(path.join(stagingDir(lib), 'keep.arw'), 'users own');
+
+    expect(await materialise(lib, 'one.arw', stage)).toEqual({ placed: true });
+
+    expect(readFileSync(path.join(root, 'one.arw'), 'utf8')).toBe('bytes');
+    expect(readFileSync(stagePath(lib, 'photo2'), 'utf8')).toBe('unfinished');
+    expect(readFileSync(path.join(stagingDir(lib), 'keep.arw'), 'utf8')).toBe('users own');
+  }));
+
+  it('keeps the source folder when moving an original already in the library', withRoot(async (root) => {
+    const lib = library(root);
+    const sourceDir = path.join(root, 'Day1');
+    const original = path.join(sourceDir, 'one.arw');
+    mkdirSync(sourceDir);
+    writeFileSync(original, 'bytes');
+
+    expect(await materialise(lib, 'Day2/one.arw', original)).toEqual({ placed: true });
+
+    expect(readFileSync(path.join(root, 'Day2/one.arw'), 'utf8')).toBe('bytes');
+    expect(existsSync(original)).toBe(false);
+    expect(existsSync(sourceDir)).toBe(true);
   }));
 
   it('skips an occupied target and never suffixes', withRoot(async (root) => {

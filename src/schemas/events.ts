@@ -25,11 +25,13 @@ export type RenditionFetchEvent = z.infer<typeof RenditionFetchEventSchema>;
 /** A library's peers changed underneath the session. */
 export const ReplicationEventSchema = z.object({ library_id: z.string() });
 export type ReplicationEvent = z.infer<typeof ReplicationEventSchema>;
+export const BackupEventSchema = z.object({ library_id: z.string() });
 
 export const LibraryEventSchemas = {
   rendition: RenditionEventSchema,
   rendition_fetch: RenditionFetchEventSchema,
   replication: ReplicationEventSchema,
+  backup: BackupEventSchema,
   composite: CompositeProgressSchema,
   export: ExportProgressSchema,
 };

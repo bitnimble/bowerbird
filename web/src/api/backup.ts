@@ -15,7 +15,7 @@ import { NothingSchema, request } from './request';
 // Backing a library's originals up to a folder (§14).
 export const backupApi = {
   list: (): Promise<{ backups: BackupStatus[] }> =>
-    request(BackupStatusesSchema, 'GET', route(PathSegment.api(), PathSegment.backup())),
+    request(BackupStatusesSchema, 'GET', route(PathSegment.api(), PathSegment.backup()), undefined, { activity: 'background' }),
   setFolder: (libraryId: string, path: string): Promise<BackupStatus> =>
     request(
       BackupStatusSchema,

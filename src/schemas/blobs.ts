@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BackupIssueCodeSchema } from './backup';
 import { IdSchema } from './common';
 import { PhotoTargetSchema } from './photos';
 
@@ -55,6 +56,7 @@ export const TransferSchema = z.object({
   bytes_done: z.number().int(),
   bytes_total: z.number().int().nullable(),
   error: z.string().nullable(),
+  error_code: BackupIssueCodeSchema.nullable(),
 });
 export type Transfer = z.infer<typeof TransferSchema>;
 
@@ -66,7 +68,7 @@ export const BlobAppendQuerySchema = z.object({ offset: z.coerce.number().int().
 
 export const EvictResultSchema = z.object({
   evicted: z.array(z.string()),
-  refused: z.array(z.object({ photo_id: z.string(), reason: z.string() })),
+  refused: z.array(z.object({ photo_id: z.string(), reason: z.string(), error_code: BackupIssueCodeSchema.optional() })),
 });
 export type EvictResult = z.infer<typeof EvictResultSchema>;
 

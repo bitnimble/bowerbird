@@ -47,7 +47,7 @@ const ORIGINAL_ON_PEER = `(
        AND b.peer_id <> (SELECT peer_id FROM replication_identity WHERE singleton = 1)))
   OR EXISTS (SELECT 1 FROM backup_locations b
     JOIN replication_peers rp ON rp.library_id = b.library_id AND rp.peer_id = b.peer_id AND rp.kind = 'passive'
-    WHERE b.library_id = p.library_id AND b.photo_id = p.id))`;
+    WHERE b.library_id = p.library_id AND b.photo_id = p.id AND b.health = 'held'))`;
 
 // photo_count excludes binned photos: it answers "how big is this library", and
 // the Bin has its own count in the UI.

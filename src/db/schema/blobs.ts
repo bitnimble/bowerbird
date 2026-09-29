@@ -42,15 +42,17 @@ export const backupLocations = sqliteTable(
     relPath: text('rel_path').notNull(),
     contentHash: text('content_hash').notNull(),
     size: integer('size').notNull(),
-    // When this device last saw the copy, which the scrub reads oldest first (§14.3). Written by
-    // the copy that made it and by every later check of it, so it means "known good at", not
-    // "copied at" - a backup nobody has looked at in a month is the thing worth looking at.
-    verifiedAt: text('verified_at').notNull(),
+    checkedAt: text('checked_at').notNull(),
+    health: text('health').notNull().default('held'),
+    currentIssues: text('current_issues').notNull().default('[]'),
   },
   // Photo before peer, which is the other way round from `blob_locations`: what a grid page asks
   // is whether *this photograph* is on a backup, once per row, and a key that leads with the peer
   // answers it by walking every row the library has.
-  (t) => [primaryKey({ columns: [t.libraryId, t.photoId, t.peerId] })],
+  (t) => [
+    primaryKey({ columns: [t.libraryId, t.photoId, t.peerId] }),
+    check('backup_locations_health', oneOf(t.health, ['held', 'missing', 'changed'])),
+  ],
 );
 
 export const BLOB_TRANSFER_DIRECTIONS = ['push', 'pull'] as const;
@@ -81,6 +83,7 @@ export const blobTransfers = sqliteTable(
     bytesDone: integer('bytes_done').notNull().default(0),
     bytesTotal: integer('bytes_total'),
     error: text('error'),
+    errorCode: text('error_code'),
     queuedAt: text('queued_at').notNull(),
   },
   (t) => [

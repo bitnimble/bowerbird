@@ -36,7 +36,7 @@ import type { PhotoRenditionService } from '../../services/photos/renditions/pho
 import { appendToStage, isOnDisk, stagedSize, stagePath, stagingDir } from '../../services/blobs/blob_store';
 import { contentHash } from '../../utils/hash';
 import { acceptVerifiedBlob, type TransferService } from '../../services/blobs/transfer_service';
-import { deleteStagedBlob } from '../../utils/deletions';
+import { deleteEmptyStagingDirectory, deleteStagedBlob } from '../../utils/deletions';
 import { respond } from '../respond';
 import { takeAsLongAsItTakes } from '../long_requests';
 import type { PhotoMetadataRepository } from '../../services/photos/metadata/photo_metadata_repository';
@@ -301,12 +301,21 @@ export class BlobsApi {
     }));
   }
 
-  private stageStatus(c: Context): Response {
+  private async stageStatus(c: Context): Promise<Response> {
     const { photo, library } = this.locate(c);
+    const stage = stagePath(library, photo.id);
+    const original = this.originalPath(library, photo);
+    const held = isOnDisk(original);
+    const recorded = this.photoMetadata.contentHashOf(photo.id);
+    if (held && recorded != null && existsSync(stage)
+      && (await this.activity.track(library.id, 'checking_files', photo.id, () => contentHash(original))) === recorded) {
+      await deleteStagedBlob(stagingDir(library), stage);
+    }
+    await deleteEmptyStagingDirectory(stagingDir(library));
     return c.json(
       respond(BlobStageResponseSchema, {
-        staged: stagedSize(stagePath(library, photo.id)),
-        held: isOnDisk(this.originalPath(library, photo)),
+        staged: stagedSize(stage),
+        held,
       }),
     );
   }

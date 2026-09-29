@@ -1117,13 +1117,20 @@ Catalogue queries are active-only: `reachablePeers`, `pairedPeers`, `assertPaire
 no sessions or vectors. **Both kinds share transfer queue, staging, hashes and materialisation.**
 `PassivePeers` implements the blob protocol (`GET /<photo>/stage`, `PUT`, `POST /<photo>/commit`,
 `GET /<photo>/original`, `GET /<photo>/hash`) on the mount. `Peers` selects transport;
-`TransferService` remains unaware. Never duplicate verification on a path whose result permits
+`TransferService` knows a folder only where a failure must mark the copy unhealthy. Never duplicate verification on a path whose result permits
 original deletion.
 
 Read **`.bowerbird-backup.json` before any write**. Its library identity distinguishes a mounted
 backup from an empty mountpoint that would otherwise receive the whole library on local disk.
 Reject other-library markers, preventing shared mirror trees. Moving a backup between machines
-retains its peer id through the marker, avoiding duplicate identity and retransfers.
+retains its peer id through the marker, avoiding duplicate identity and retransfers. A marker whose
+peer id names a device (an active peer, or this device) is refused before anything is written:
+registering it would turn that device's row passive.
+
+**A pass never writes a marker.** Only selecting the folder does, so a missing marker blocks every
+write until somebody chooses the folder again; an empty mountpoint looks exactly like a cleared
+backup. Missing folder, missing marker, unreadable marker, malformed marker, another library's
+marker and another backup's peer id are separate `BackupAccess` states, each with its own remedy.
 
 A backup folder may not be inside its library, or hold it. The scan walks everything under the
 root, so a mirror there is imported as a second copy of every photograph - which is then backed up
@@ -1141,21 +1148,32 @@ sole-holder checks (§8.4).
 `rel_path` records the actual backup location, which can lag bin or shoot moves until replay.
 Finding that copy requires its old path, not the catalogue's new one.
 
+`health` is `held`, `missing` or `changed`. **Only `held` counts**: as a holder a fetch can use, a
+cull candidate, a covered original. An unhealthy row is kept rather than deleted, because for an
+offloaded photograph it is the only evidence an original was lost; dropping it would take the photo
+out of both "backed up" and "to copy" and the loss would read as nothing. `record` restores `held`.
+`current_issues` holds up to two unresolved problems per copy (a blocked move, a local copy that
+failed its hash at eviction) until a later check proves them gone.
+
 ### 14.3 A pass: follow, copy, cull
 
 `Mirror.run` is one pass over one library, and runs after any scan that changed something (which
 covers every import), every fifteen minutes, and when somebody presses the button. In that order,
 and the order is load-bearing:
 
-1. **Follow the moves.** Every copy whose `rel_path` is not the photograph's current path is
+1. **Follow the moves.** Every held copy whose `rel_path` is not the photograph's current path is
    renamed on the mount. That includes a bin move and a restore: the Bin is a folder inside the
-   library, so mirroring the tree mirrors the binning for free.
+   library, so mirroring the tree mirrors the binning for free. The source is hashed first, so a
+   same-size damaged copy is marked `changed` instead of moved; a destination already holding the
+   right bytes is adopted and the source left alone; an occupied destination becomes a current
+   issue on that copy.
 2. **Look again at the copies gone longest unchecked** - five hundred of them, oldest first, so a
    library is covered a couple of times a day without a pass that never ends. A row saying a file
    was copied in March is evidence about March, and a drive somebody tidied says nothing until
-   something looks. Existence and size, not a hash: reading every byte of a library on a timer is
-   not a check, it is a job. A copy that is not there is **forgotten**, which puts the photograph
-   back among what the folder is owed and copies it again.
+   something looks. Existence and size for a held copy, not a hash: reading every byte of a library
+   on a timer is not a check, it is a job. An unhealthy copy is hashed, since only that can clear
+   it. A copy that is not there is marked **`missing`**, which puts a photograph still on this
+   device back among what the folder is owed; one that is offloaded stays reported as lost.
 3. **Copy what is owed**, which is every photograph this device holds that the folder has no
    current copy of: never copied, hash no longer the one the catalogue records, or size moved.
 4. **Cull to the ceiling** (§14.5), once the queue has drained - what may be given back is what the
@@ -1163,8 +1181,10 @@ and the order is load-bearing:
 
 **Nothing here ever deletes from the backup.** A photograph removed from the library leaves its
 copy on the drive, which is what a backup is for; a file somebody takes off the drive by hand is
-forgotten from `backup_locations` and copied again by the next pass. The only deletions on the
-mount are part-copied files in its staging directory that no queued transfer is waiting to finish.
+marked `missing` and copied again by the next pass if this device still has it. The only deletions
+on the mount are part-copied files in its staging directory that no queued, active, paused or
+failed transfer is waiting to finish, and the staging directory itself once it is empty. Removing
+the backup or switching folders sweeps the old folder's staging the same way.
 
 **Pairing discovers existing copies by hash, never name alone.** Only bytes matching the
 catalogue count as a backup eligible to permit eviction. This also makes unpairing reversible:
@@ -1172,7 +1192,13 @@ offloaded photos have no local copy or pending transfer, so re-pairing must redi
 
 **Stopping offers to restore offloaded originals first.** Fetch under the pass exclusion to
 prevent simultaneous cull. Forget the folder only after every sole backup copy returns; failures
-keep it paired and report the remaining count.
+keep it paired and report the remaining count. Only `done` pulls count as restored.
+
+**Choosing another folder is refused while an original would be stranded.** Every photo the current
+backup holds must be in the new folder (by hash) or on this device (by hash) first; `is_missing`
+alone misses a local file deleted since the last scan. An unmarked folder gets a new peer id.
+Selecting, removing, restoring and a pass share one per-library operation, so a target never
+changes under a pass that captured the old root.
 
 Nothing overwrites, either. A name already taken by something that is not this photograph is
 skipped and reported, as §7.7 has it.
@@ -1213,13 +1239,35 @@ because it promises nothing.
 immediately before unlink. Require agreement among backup bytes, local bytes and recorded hash.
 Never omit the local read: a good backup is evidence only if it is this file's copy, and local
 rot must refuse deletion. Two passes over two files are acceptable for disk-full eviction,
-outside hot paths.
+outside hot paths. A refusal is typed (`backup_missing`, `backup_changed`, `local_changed`): the
+first two mark the copy unhealthy, the last stays on the copy as a current issue until a scrub
+hashes the local file back to the recorded hash. A cull against a folder that is not there blocks
+the pass.
 
 Leave `is_missing` plus `backup_locations`, exposed as `is_offloaded`: tile snowflake, detail
 status and backup count. Local renditions preserve viewing, sorting, rating and culling;
 editing or other RAW consumers fetch it once.
 
-### 14.6 What is not built here
+### 14.6 What the reader is told
+
+`Mirror.status` is the one answer for the library strip, the Backup panel and the API: access,
+activity, coverage, transfer counts, current issues, and one `status` chosen in this order:
+unavailable, working, attention, paused, waiting, then empty or current. Precedence lives on the
+server so a manual run, a scheduled one, a reload and a second window all agree.
+
+**Current issues come from current facts; reports are history.** Issues are rebuilt on every read
+from folder access, unhealthy rows, per-copy `current_issues`, this peer's stopped transfers and
+missing originals with no held copy. A later successful pass therefore cannot erase an unresolved
+problem, and a resolved one disappears without anything having to clear it. Each pass, restore and
+selection also writes a report (`last_backup_report`, `last_restore_report` on the peer row): what
+was copied, moved, offloaded or restored, and issue totals by code with ten samples. Copies are
+counted from transfers that finished with a held row. Issues carry codes, not sentences; the client
+words them.
+
+`backup` on the event stream carries only a library id; clients re-read status. A busy or
+unconfigured run is `CONFLICT` or `NOT_FOUND`.
+
+### 14.7 What is not built here
 
 - **Reading a region off the mount.** A fetch brings the whole file back, so the first loupe tile
   over an offloaded photograph costs the whole RAW where a local one costs a partial unpack -

@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs/promises';
 import path from 'node:path';
+import { deleteEmptyStagingDirectory } from '../../../utils/deletions';
 import { contentHash } from '../../../utils/hash';
-import { appendToStage, materialise, occupant, stagePath, stagedSize } from '../blob_store';
+import { appendToStage, materialise, occupant, stagePath, stagedSize, stagingDir } from '../blob_store';
 import { library, stream, withRoot } from './blob_store_test_helpers';
 
 describe('contentHash', () => {
@@ -14,6 +16,22 @@ describe('contentHash', () => {
 });
 
 describe('appendToStage', () => {
+  it('recreates staging when cleanup removes it between mkdir and open', withRoot(async (root) => {
+    const lib = library(root);
+    const stage = stagePath(lib, 'photo1');
+    const open = fs.open;
+    const opening = spyOn(fs, 'open').mockImplementationOnce(async (file, flags, mode) => {
+      await deleteEmptyStagingDirectory(stagingDir(lib));
+      return open(file, flags, mode);
+    });
+    try {
+      expect(await appendToStage(stage, 0, stream('bytes'))).toBe(5);
+      expect(readFileSync(stage, 'utf8')).toBe('bytes');
+    } finally {
+      opening.mockRestore();
+    }
+  }));
+
   it('appends only at exactly the staged size', withRoot(async (root) => {
     const stage = stagePath(library(root), 'photo1');
     expect(await appendToStage(stage, 0, stream('hello '))).toBe(6);

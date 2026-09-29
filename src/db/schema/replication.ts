@@ -125,6 +125,8 @@ export const replicationPeers = sqliteTable(
     // Why the last session with this peer did not happen (§8.6). Replication that has quietly
     // stopped working is the failure the trip depends on seeing.
     lastError: text('last_error'),
+    lastBackupReport: text('last_backup_report'),
+    lastRestoreReport: text('last_restore_report'),
     wantsOriginals: integer('wants_originals').notNull().default(1),
     // The build the peer last said it runs, refused handshakes included, so either end can say
     // which device to update. NULL until a handshake has happened.

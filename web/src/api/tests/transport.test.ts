@@ -136,6 +136,7 @@ describe('subscribeEvents', () => {
       rendition: () => {},
       rendition_fetch: () => {},
       replication: () => {},
+      backup: () => {},
       composite: () => {},
       export: () => {},
       ...watching,
@@ -221,6 +222,7 @@ describe('subscribeEvents', () => {
         open: () => seen.push('open'),
         rendition: (data) => seen.push(`rendition:${data}`),
         replication: (data) => seen.push(`replication:${data}`),
+        backup: (data) => seen.push(`backup:${data}`),
       }),
     );
     await shell.settled();
@@ -229,10 +231,11 @@ describe('subscribeEvents', () => {
     shell.deliver({ kind: 'open', data: '' });
     shell.deliver({ kind: 'rendition', data: '{"id":"a"}' });
     shell.deliver({ kind: 'replication', data: '{"library_id":"lib"}' });
+    shell.deliver({ kind: 'backup', data: '{"library_id":"lib"}' });
     // A kind the page does not know is ignored rather than thrown on, so a newer shell
     // emitting a second event type does not break an older page.
     shell.deliver({ kind: 'something-later', data: 'x' });
-    expect(seen).toEqual(['open', 'rendition:{"id":"a"}', 'replication:{"library_id":"lib"}']);
+    expect(seen).toEqual(['open', 'rendition:{"id":"a"}', 'replication:{"library_id":"lib"}', 'backup:{"library_id":"lib"}']);
   });
 
   test('stops listening once closed', async () => {

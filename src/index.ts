@@ -300,14 +300,13 @@ const replicationRunner = new ReplicationRunner(
   activity,
 );
 const replicationService = new ReplicationService(db, blobLocations, Date.now, rebuildEdited, replicationChanged);
-const mirror = new Mirror(db, librariesRepo, backupLocations, transferService, new Cull(db, transferService), activity);
+const mirror = new Mirror(db, librariesRepo, backupLocations, transferService, new Cull(db, transferService), activity,
+  (libraryId) => eventsApi.announce('backup', { library_id: libraryId }));
 // Every import is a scan, so this is what covers "back up what just arrived" as well as what a
 // rename or a bin move owes the mirror (§14.3). The periodic pass is the backstop.
 scanService.onSettled((libraryId, changed) => {
   if (!changed) return;
-  void mirror.run(libraryId).catch((err: unknown) => {
-    log.warn('a backup pass failed after a scan', { library: libraryId, err: String(err) });
-  });
+  void mirror.runScheduled(libraryId);
 });
 mirror.start();
 const blobsApi = new BlobsApi(

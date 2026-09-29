@@ -1,53 +1,81 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { rename } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { Logger } from '../../logger';
-import type { BackupRunResponse, BackupStatus, FetchBackProgress } from '../../schemas/backup';
+import {
+  BackupReportSchema,
+  type BackupAccess, type BackupActivity, type BackupCoverage, type BackupIssue, type BackupIssues, type BackupPhase,
+  type BackupReport, type BackupRunResponse, type BackupStatus, type ConfiguredBackupStatus, type FetchBackProgress,
+} from '../../schemas/backup';
+import type { ActivityKind } from '../../schemas/activity';
+import type { Transfer } from '../../schemas/blobs';
 import { newId } from '../../schemas/id';
-import type { Library } from '../../schemas/libraries';
-import { deleteStagedBlob } from '../../utils/deletions';
+import type { LibraryConfiguration as Library } from '../../schemas/libraries';
 import { ensureDir } from '../../utils/files';
 import { contentHash } from '../../utils/hash';
 import { containsPath } from '../../utils/paths';
-import { isOnDisk, occupant } from '../blobs/blob_store';
+import { LibraryActivity } from '../activity/library_activity';
+import { isOnDisk } from '../blobs/blob_store';
 import type { TransferService } from '../blobs/transfer_service';
 import type { LibrariesRepository } from '../libraries/libraries_repository';
 import { linkLibrary, registerPeer } from '../replication/pairing';
-import type { BackupLocations } from './backup_locations';
-import { assertMirrorOf, backupPath, backupStagingDir, markerPath, mirrorReady, readMarker } from './backup_root';
+import { libraryMutex } from '../sync/coordination/library_mutex';
+import { BackupError, backupIssueCode, transferIssueCode } from './backup_error';
+import type { BackupEntry, BackupLocations } from './backup_locations';
+import { assertMirrorOf, backupPath, backupStagingDir, markerPath, mirrorAccess, readMarker } from './backup_root';
 import type { Cull } from './cull';
-import { passivePeersOf, type PassivePeer } from './passive_peers';
-import { LibraryActivity } from '../activity/library_activity';
+import { passivePeersOf, placeInMirror, type PassivePeer } from './passive_peers';
 
-// `backup` is the catalogue's own snapshots (§4.9), which this is not: one scope for two
-// subsystems is a log nobody can narrow.
 const log = new Logger('mirror');
-
-// Keeping a library's originals on a folder that is not a Bowerbird device (docs/replication.md
-// §14): a drive, a share, a directory somewhere else on this machine.
-//
-// What this owns is the *policy* - which copies the backup is owed, which have been moved out from
-// under it, and when to look. Moving the bytes is the transfer queue's job, exactly as it is for a
-// device, and giving a local copy back is the cull's.
-
-/** How often a backup that nobody has touched looks at what it owes. */
 const PASS_EVERY_MS = 15 * 60 * 1000;
-
-/**
- * How many copies one pass looks at again.
- *
- * A stat apiece, which is milliseconds over a network mount, so this is what one pass is willing
- * to spend rather than a number anything depends on. At a pass every quarter of an hour it covers
- * about fifty thousand photographs a day.
- */
 const SCRUB_PER_PASS = 500;
+const ISSUE_SAMPLES = 10;
+
+interface Operation {
+  activity: BackupActivity;
+  transfers: ReadonlySet<string>;
+}
+
+class IssueTally {
+  readonly issues: BackupIssues = { total: 0, counts: [], samples: [] };
+  private readonly seen = new Set<string>();
+
+  add(issue: BackupIssue): void {
+    const key = JSON.stringify([issue.code, issue.photo_id ?? issue.path]);
+    if (this.seen.has(key)) return;
+    this.seen.add(key);
+    this.issues.total += 1;
+    const count = this.issues.counts.find((item) => item.code === issue.code);
+    if (count == null) this.issues.counts.push({ code: issue.code, count: 1 });
+    else count.count += 1;
+    if (this.issues.samples.length < ISSUE_SAMPLES) this.issues.samples.push(issue);
+  }
+}
+
+function issueOf(error: unknown, phase: BackupPhase, photoId: string | null = null, at: string | null = null): BackupIssue {
+  return { code: backupIssueCode(error), phase, photo_id: photoId, path: at };
+}
+
+function overallStatus(
+  access: BackupAccess,
+  activity: BackupActivity | null,
+  issues: BackupIssues,
+  pending: readonly Transfer[],
+  coverage: BackupCoverage,
+): ConfiguredBackupStatus['status'] {
+  if (access !== 'ready') return 'unavailable';
+  if (activity != null) return 'working';
+  if (issues.counts.some((issue) => issue.code !== 'paused')) return 'attention';
+  if (pending.some((item) => item.state === 'paused')) return 'paused';
+  if (coverage.pending > 0 || pending.some((item) => item.state === 'queued')) return 'waiting';
+  return coverage.originals === 0 ? 'empty' : 'current';
+}
 
 export class Mirror {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private readonly running = new Set<string>();
-  private readonly fetchingBack = new Map<string, readonly string[]>();
+  private readonly operations = new Map<string, Operation>();
+  private readonly finishes = new Map<string, () => void>();
 
   constructor(
     private readonly db: Database,
@@ -56,15 +84,11 @@ export class Mirror {
     private readonly transfers: TransferService,
     private readonly cull: Cull,
     private readonly activity = new LibraryActivity(),
-  ) {}
+    private readonly changed: (libraryId: string) => void = () => {},
+  ) {
+    this.transfers.onChanged((libraryId) => this.changed(libraryId));
+  }
 
-  /**
-   * Starts the periodic pass.
-   *
-   * A pass is also run whenever a scan changes anything, which is what covers an import; this is
-   * the backstop for everything else - a drive plugged back in, a transfer that failed while the
-   * network was down, a ceiling lowered while nothing else was happening.
-   */
   start(): void {
     this.timer ??= setInterval(() => void this.runAll(), PASS_EVERY_MS);
   }
@@ -74,165 +98,269 @@ export class Mirror {
     this.timer = null;
   }
 
-  /**
-   * A pass over every library that has a folder.
-   *
-   * One library's failure is one library's: an unplugged drive is the ordinary case, and it says
-   * nothing about the other libraries' folders. What went wrong is on the peer row either way
-   * (§8.6), which is what the panel reads.
-   */
   async runAll(): Promise<void> {
-    for (const library of this.libraries.list()) {
-      try {
-        await this.run(library.id);
-      } catch (err) {
-        log.warn('a backup pass stopped', { library: library.id, err: String(err) });
-      }
+    for (const library of this.libraries.listConfigurations()) await this.runScheduled(library.id);
+  }
+
+  async runScheduled(libraryId: string): Promise<void> {
+    if (this.targetOf(libraryId) == null || this.operations.has(libraryId)) return;
+    try {
+      await this.run(libraryId);
+    } catch (error) {
+      log.warn('a backup pass stopped', { library: libraryId, err: String(error) });
     }
   }
 
-  /** Nothing to do where the library has no backup, which is most of them. */
   private targetOf(libraryId: string): PassivePeer | null {
     return passivePeersOf(this.db, libraryId)[0] ?? null;
   }
 
-  status(libraryId: string): BackupStatus | null {
+  status(libraryId: string): BackupStatus {
+    const library = this.library(libraryId);
     const peer = this.targetOf(libraryId);
-    if (peer == null) return null;
-    const row = this.db
-      .query('SELECT name, last_error, last_replicated_at FROM replication_peers WHERE library_id = ? AND peer_id = ?')
-      .get(libraryId, peer.peerId) as { name: string; last_error: string | null; last_replicated_at: string | null };
+    if (peer == null) return { library_id: libraryId, configured: false };
+    const row = this.db.query(
+      'SELECT name, last_backup_report, last_restore_report FROM replication_peers WHERE library_id = ? AND peer_id = ?',
+    ).get(libraryId, peer.peerId) as { name: string; last_backup_report: string | null; last_restore_report: string | null };
+    const items = this.transfers.list(libraryId).filter((item) => item.peer_id === peer.peerId);
+    const pending = this.pendingTransfers(libraryId, peer.peerId, items);
+    const access = mirrorAccess(peer.root, libraryId, library.name, peer.peerId);
+    const coverage = this.backups.coverage(libraryId, peer.peerId);
+    const activity = this.activityOf(libraryId, items);
+    const tally = new IssueTally();
+    if (access !== 'ready') tally.add({ code: access, phase: 'checking', photo_id: null, path: peer.root });
+    for (const item of pending) {
+      if (item.state === 'failed' || item.state === 'paused' || item.state === 'cancelled') {
+        tally.add(this.transferIssue(item, item.direction === 'pull' ? 'restoring' : 'copying'));
+      }
+    }
+    this.standingIssues(libraryId, peer.peerId, tally);
+    const budget = this.cull.budget(libraryId);
     return {
-      library_id: libraryId,
-      peer_id: peer.peerId,
-      name: row.name,
-      path: peer.root,
-      available: mirrorReady(peer.root, libraryId),
-      owed: this.backups.owed(libraryId, peer.peerId).length,
-      backed_up: this.backups.count(libraryId, peer.peerId),
-      local_bytes: this.cull.localBytes(libraryId),
-      local_budget_bytes: this.cull.budget(libraryId),
-      offloaded: this.backups.offloaded(libraryId),
-      last_run_at: row.last_replicated_at,
-      last_error: row.last_error,
+      library_id: libraryId, configured: true, peer_id: peer.peerId, name: row.name, path: peer.root,
+      status: overallStatus(access, activity, tally.issues, pending, coverage),
+      access, activity, coverage, issues: tally.issues,
+      transfers: {
+        queued: pending.filter((item) => item.state === 'queued').length,
+        active: items.filter((item) => item.state === 'active').length,
+        paused: pending.filter((item) => item.state === 'paused').length,
+        failed: pending.filter((item) => item.state === 'failed').length,
+        cancelled: pending.filter((item) => item.state === 'cancelled').length,
+      },
+      local_bytes: this.cull.localBytes(libraryId), local_budget_bytes: budget, budget_unmet: this.cull.budgetUnmet(libraryId),
+      last_backup_report: this.readReport(row.last_backup_report), last_restore_report: this.readReport(row.last_restore_report),
     };
+  }
+
+  /** Transfers to this backup whose photo still needs them: pushes of owed originals, pulls of missing ones. */
+  private pendingTransfers(libraryId: string, peerId: string, items: readonly Transfer[]): Transfer[] {
+    const owed = new Set(this.backups.owed(libraryId, peerId).map((photo) => photo.photo_id));
+    const missing = new Set((this.db.query(
+      "SELECT id FROM photos WHERE library_id = ? AND is_missing = 1 AND json_extract(recipe, '$.kind') = 'file'",
+    ).all(libraryId) as { id: string }[]).map((photo) => photo.id));
+    return items.filter((item) => item.direction === 'pull' ? missing.has(item.photo_id) : owed.has(item.photo_id));
+  }
+
+  private activityOf(libraryId: string, items: readonly Transfer[]): BackupActivity | null {
+    const operation = this.operations.get(libraryId);
+    if (operation != null && operation.transfers.size > 0) {
+      const tracked = items.filter((item) => operation.transfers.has(item.id));
+      return {
+        ...operation.activity,
+        done: tracked.filter((item) => item.state === 'done').length, total: tracked.length, current: this.current(tracked),
+      };
+    }
+    if (operation != null) return operation.activity;
+    const moving = items.find((item) => item.state === 'active');
+    if (moving == null) return null;
+    return { phase: moving.direction === 'pull' ? 'restoring' : 'copying', done: 0, total: 1, current: this.current([moving]) };
+  }
+
+  private standingIssues(libraryId: string, peerId: string, tally: IssueTally): void {
+    for (const copy of this.backups.unhealthy(libraryId, peerId)) {
+      tally.add({ code: copy.health === 'missing' ? 'backup_missing' : 'backup_changed', phase: 'checking', photo_id: copy.photo_id, path: copy.rel_path });
+    }
+    for (const issue of this.backups.issues(libraryId, peerId)) tally.add(issue);
+    for (const photo of this.backups.lost(libraryId, peerId)) {
+      tally.add({ code: 'local_missing', phase: 'checking', photo_id: photo.photo_id, path: photo.rel_path });
+    }
+    if (this.cull.budgetUnmet(libraryId)) tally.add({ code: 'budget_unmet', phase: 'offloading', photo_id: null, path: null });
+  }
+
+  private readReport(serialized: string | null): BackupReport | null {
+    if (serialized == null) return null;
+    try {
+      const parsed = BackupReportSchema.safeParse(JSON.parse(serialized));
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
   }
 
   list(): BackupStatus[] {
-    return this.libraries
-      .list()
-      .map((library) => this.status(library.id))
-      .filter((status): status is BackupStatus => status != null);
+    return this.libraries.listConfigurations().map((library) => this.status(library.id));
   }
 
-  /**
-   * Points a library at a folder, or moves it to another one.
-   *
-   * The marker is written before anything else is recorded: it is what tells a later pass that the
-   * drive it is looking at is the one that was chosen, and a folder with no marker is how an
-   * unmounted share looks (§14.1).
-   */
   async setTarget(libraryId: string, root: string, name?: string): Promise<BackupStatus> {
     const library = this.library(libraryId);
-    const at = path.resolve(root);
-    this.assertUsable(library, at);
-    await ensureDir(at);
-
-    const existing = this.targetOf(libraryId);
-    const marker = readMarker(at);
-    if (marker != null && marker.library_id !== libraryId) {
-      throw new AppError('CONFLICT', `${at} is already the backup of another library ("${marker.library_name}")`);
+    this.begin(libraryId, 'configuring', 'backing_up');
+    const { report, tally } = this.report('configure');
+    try {
+      const at = path.resolve(root);
+      this.assertUsable(library, at);
+      const existing = this.targetOf(libraryId);
+      await libraryMutex.run(libraryId, async () => {
+        const marker = readMarker(at);
+        if (marker != null && marker.library_id !== libraryId) {
+          throw new BackupError('wrong_library', `This folder backs up "${marker.library_name}". Choose another folder.`);
+        }
+        const peerId = marker?.peer_id ?? newId();
+        if (this.db.query("SELECT 1 FROM replication_peers WHERE peer_id = ? AND (kind <> 'passive' OR library_id <> ?) LIMIT 1").get(peerId, libraryId) != null
+          || this.db.query('SELECT 1 FROM replication_identity WHERE peer_id = ?').get(peerId) != null) {
+          throw new BackupError('wrong_backup', 'This backup marker names a device. Choose another folder or restore its backup marker.');
+        }
+        const photos = this.originalPhotos(libraryId);
+        const problems = existing == null ? [] : this.backups.issues(libraryId, existing.peerId);
+        const localVerified = new Set<string>();
+        const verified = new Map<string, { at: string; size: number; hash: string }>();
+        const evidence = new Map<string, BackupEntry>();
+        for (const photo of photos) {
+          const old = existing == null ? null : this.backups.entry(libraryId, existing.peerId, photo.id);
+          if (old == null && photo.is_missing === 0) continue;
+          if (old != null && existing?.root === at) evidence.set(photo.id, old);
+          const expected = photo.content_hash ?? old?.content_hash ?? null;
+          const paths = [...new Set([photo.path, old?.rel_path].filter((value): value is string => value != null))];
+          for (const relative of paths) {
+            const copy = backupPath(at, relative);
+            if (!isOnDisk(copy) || expected == null || (await contentHash(copy)) !== expected) continue;
+            verified.set(photo.id, { at: relative, size: Bun.file(copy).size, hash: expected });
+            break;
+          }
+          const local = backupPath(library.root_path, photo.path);
+          if (expected != null && isOnDisk(local) && (await contentHash(local)) === expected) localVerified.add(photo.id);
+          if (existing != null && existing.root !== at && old != null && !verified.has(photo.id) && !localVerified.has(photo.id)) {
+            throw new BackupError('local_missing', 'Some originals are only on the current backup. Restore them before choosing another folder.');
+          }
+        }
+        await ensureDir(at);
+        // Hashing above can take minutes, long enough for another device sharing the folder to claim it.
+        const stillSelected = readMarker(at);
+        if (stillSelected?.peer_id !== marker?.peer_id || stillSelected?.library_id !== marker?.library_id) {
+          throw new BackupError('wrong_backup', 'The backup marker changed while selecting the folder. Select it again.');
+        }
+        await Bun.write(markerPath(at), `${JSON.stringify({ library_id: libraryId, library_name: library.name, peer_id: peerId }, null, 2)}\n`);
+        linkLibrary(this.db, libraryId);
+        if (existing != null) {
+          await this.transfers.cancelFor(libraryId, existing.peerId);
+          if (existing.root !== at) await this.transfers.sweepStages(backupStagingDir(existing.root), libraryId, existing.peerId);
+          if (existing.peerId !== peerId) this.forget(libraryId, existing.peerId);
+        }
+        registerPeer(this.db, libraryId, peerId, name ?? path.basename(at), at, 'passive');
+        this.backups.forget(libraryId, peerId);
+        for (const [photoId, copy] of verified) this.backups.record(libraryId, peerId, photoId, copy.at, copy.hash, copy.size);
+        for (const [photoId, copy] of evidence) {
+          if (verified.has(photoId)) continue;
+          this.backups.record(libraryId, peerId, photoId, copy.rel_path, copy.content_hash, copy.size);
+          this.backups.mark(libraryId, peerId, photoId, isOnDisk(backupPath(at, copy.rel_path)) ? 'changed' : 'missing');
+        }
+        for (const photo of photos) {
+          if (verified.has(photo.id)) continue;
+          const copy = backupPath(at, photo.path);
+          if (!isOnDisk(copy)) continue;
+          const local = backupPath(library.root_path, photo.path);
+          const expected = photo.content_hash ?? (isOnDisk(local) ? await contentHash(local) : null);
+          if (expected != null && (await contentHash(copy)) === expected) {
+            if (photo.content_hash != null) this.backups.record(libraryId, peerId, photo.id, photo.path, expected, Bun.file(copy).size);
+          } else {
+            tally.add({ code: 'path_conflict', phase: 'configuring', photo_id: photo.id, path: photo.path });
+          }
+        }
+        for (const photo of photos) {
+          if (photo.is_missing === 1 && !verified.has(photo.id)) tally.add({ code: 'local_missing', phase: 'configuring', photo_id: photo.id, path: photo.path });
+        }
+        for (const problem of problems) {
+          if (problem.photo_id == null) continue;
+          const copy = this.backups.entry(libraryId, peerId, problem.photo_id);
+          if (copy == null) continue;
+          if (problem.code === 'local_changed' ? !localVerified.has(problem.photo_id)
+            : problem.phase === 'moving' && existing?.root === at && copy.rel_path !== problem.path) {
+            this.backups.setIssue(libraryId, peerId, problem.photo_id, problem);
+            tally.add(problem);
+          }
+        }
+        this.finish({ libraryId, peerId, name: library.name, root: at }, report);
+      });
+    } finally {
+      this.end(libraryId);
     }
-    // The folder's own marker wins where it has one, so a backup carried to another machine - or
-    // re-paired after the catalogue was restored - is adopted rather than made a second time under
-    // a new id, which would leave every file on it looking like one nothing has copied yet.
-    const peerId = marker?.peer_id ?? existing?.peerId ?? newId();
-    await Bun.write(
-      markerPath(at),
-      `${JSON.stringify({ library_id: libraryId, library_name: library.name, peer_id: peerId }, null, 2)}\n`,
-    );
-
-    // A library gets its replication row here as it does when a device is paired: the backup is a
-    // peer, and what `blob_locations` records about this device's own holdings is what a later
-    // fetch and a later cull both read.
-    linkLibrary(this.db, libraryId);
-    if (existing != null && existing.peerId !== peerId) this.forget(libraryId, existing.peerId);
-    registerPeer(this.db, libraryId, peerId, name ?? path.basename(at), at, 'passive');
-    await this.activity.track(libraryId, 'backing_up', 'adopt',
-      () => this.rediscover({ libraryId, peerId, name: library.name, root: at }));
-    log.info('a library has a backup folder', { library: libraryId, at });
-    const status = this.status(libraryId);
-    if (status == null) throw new AppError('INTERNAL_ERROR', `the backup folder for ${libraryId} did not record`);
-    return status;
+    return this.status(libraryId);
   }
 
-  /**
-   * Forgets the folder. Nothing on it is touched: a backup somebody unpairs is a backup they still
-   * have, and this app has never deleted from one (§14.3).
-   *
-   * @param fetchFirst brings back every original only the folder holds before forgetting it, and
-   * forgets nothing if any of them did not come back.
-   */
   async removeTarget(libraryId: string, fetchFirst: boolean): Promise<void> {
+    const library = this.library(libraryId);
     const peer = this.targetOf(libraryId);
-    if (peer == null) throw new AppError('NOT_FOUND', `library ${libraryId} has no backup folder`);
-    if (fetchFirst) await this.fetchBack(peer);
-    await this.transfers.cancelFor(libraryId, peer.peerId);
-    this.forget(libraryId, peer.peerId);
+    if (peer == null) throw new AppError('NOT_FOUND', 'No backup folder is selected. Select one before removing it.');
+    this.begin(libraryId, fetchFirst ? 'restoring' : 'configuring', fetchFirst ? 'restoring_backup' : null);
+    try {
+      if (fetchFirst) await this.fetchBack(peer, library);
+      await this.transfers.cancelFor(libraryId, peer.peerId);
+      await libraryMutex.run(libraryId, async () => {
+        await this.transfers.sweepStages(backupStagingDir(peer.root), libraryId, peer.peerId);
+        this.forget(libraryId, peer.peerId);
+      });
+    } finally {
+      this.end(libraryId);
+    }
   }
 
-  /** Null unless `removeTarget` is fetching this library's originals back. */
   fetchBackProgress(libraryId: string): FetchBackProgress | null {
-    const pulls = this.fetchingBack.get(libraryId);
-    if (pulls == null) return null;
-    const tracked = new Set(pulls);
-    const items = this.transfers.list(libraryId).filter((t) => tracked.has(t.id));
-    const moving = items.find((t) => t.state === 'active');
+    const operation = this.operations.get(libraryId);
+    if (operation?.activity.phase !== 'restoring') return null;
+    const items = this.transfers.list(libraryId).filter((item) => operation.transfers.has(item.id));
     return {
-      done: items.filter((t) => t.state !== 'queued' && t.state !== 'active').length,
-      total: items.length,
-      current:
-        moving == null ? null : (
-          { path: this.pathOf(moving.photo_id), bytes_done: moving.bytes_done, bytes_total: moving.bytes_total }
-        ),
+      done: items.filter((item) => item.state === 'done').length, total: items.length,
+      failed: items.filter((item) => item.state === 'failed').length,
+      paused: items.filter((item) => item.state === 'paused').length,
+      cancelled: items.filter((item) => item.state === 'cancelled').length,
+      current: this.current(items),
     };
   }
 
+  private current(items: readonly Transfer[]): BackupActivity['current'] {
+    const moving = items.find((item) => item.state === 'active');
+    return moving == null ? null : { path: this.pathOf(moving.photo_id), bytes_done: moving.bytes_done, bytes_total: moving.bytes_total };
+  }
+
   private pathOf(photoId: string): string {
-    const row = this.db.query("SELECT json_extract(recipe, '$.path') AS path FROM photos WHERE id = ?").get(photoId) as {
-      path: string | null;
-    } | null;
+    const row = this.db.query("SELECT json_extract(recipe, '$.path') AS path FROM photos WHERE id = ?").get(photoId) as { path: string | null } | null;
     return row?.path ?? photoId;
   }
 
-  private async fetchBack(peer: PassivePeer): Promise<void> {
-    // Held like a pass, so the cull cannot give copies back while this is fetching them.
-    if (this.running.has(peer.libraryId)) {
-      throw new AppError('CONFLICT', 'A backup is running for this library. Try again when it finishes.');
-    }
-    this.running.add(peer.libraryId);
-    const finish = this.activity.begin(peer.libraryId, 'restoring_backup');
+  private async fetchBack(peer: PassivePeer, library: Library): Promise<void> {
+    const { report, tally } = this.report('restore');
+    let finished = false;
     try {
-      assertMirrorOf(peer.root, peer.libraryId, this.library(peer.libraryId).name);
+      assertMirrorOf(peer.root, peer.libraryId, library.name, peer.peerId);
       const owed = new Set(this.backups.offloadedTo(peer.libraryId, peer.peerId));
       this.transfers.queuePull(peer.libraryId, peer.peerId, [...owed]);
-      // Each of these pulls rather than the whole queue, which may hold other libraries' work.
-      const pulls = this.transfers
-        .list(peer.libraryId)
-        .filter((t) => t.direction === 'pull' && t.peer_id === peer.peerId && owed.has(t.photo_id));
-      this.fetchingBack.set(peer.libraryId, pulls.map((t) => t.id));
-      await Promise.all(pulls.map((t) => this.transfers.settled(t.id)));
-      const left = this.backups.offloadedTo(peer.libraryId, peer.peerId).length;
-      if (left > 0) {
-        throw new AppError(
-          'CONFLICT',
-          `${left} ${left === 1 ? "photo didn't" : "photos didn't"} come back from ${peer.root}. It's still your backup folder. Check it's connected and try again.`,
-        );
+      const pulls = this.transfers.list(peer.libraryId).filter((item) => item.direction === 'pull' && item.peer_id === peer.peerId && owed.has(item.photo_id));
+      this.track(peer.libraryId, pulls.map((item) => item.id), 'restoring');
+      const settled = await Promise.all(pulls.map((item) => this.transfers.settled(item.id)));
+      const left = new Set(this.backups.offloadedTo(peer.libraryId, peer.peerId));
+      report.restored = settled.filter((item) => item.state === 'done' && !left.has(item.photo_id)).length;
+      for (const item of settled) if (item.state !== 'done') tally.add(this.transferIssue(item, 'restoring'));
+      if (left.size > 0 && tally.issues.total === 0) tally.add({ code: 'transfer_failed', phase: 'restoring', photo_id: null, path: null });
+      this.finish(peer, report);
+      finished = true;
+      if (left.size > 0) {
+        throw new AppError('CONFLICT', `${left.size} ${left.size === 1 ? 'original' : 'originals'} couldn't be restored. Your backup folder is still selected. Check its details and try again.`);
       }
-    } finally {
-      finish();
-      this.running.delete(peer.libraryId);
-      this.fetchingBack.delete(peer.libraryId);
+    } catch (error) {
+      if (!finished) {
+        tally.add(issueOf(error, 'restoring'));
+        this.finish(peer, report, true);
+      }
+      throw error;
     }
   }
 
@@ -244,199 +372,170 @@ export class Mirror {
   setBudget(libraryId: string, bytes: number | null): void {
     this.library(libraryId);
     linkLibrary(this.db, libraryId);
-    this.db
-      .query('UPDATE replication_libraries SET local_budget_bytes = ? WHERE library_id = ?')
-      .run(bytes, libraryId);
+    this.db.query('UPDATE replication_libraries SET local_budget_bytes = ? WHERE library_id = ?').run(bytes, libraryId);
+    this.changed(libraryId);
   }
 
-  /**
-   * One pass: follow the moves, send what is owed, then give back what does not fit.
-   *
-   * In that order for a reason. A photograph the catalogue has moved is still on the backup under
-   * its old name, so replaying the move first is what keeps the next step from sending a second
-   * copy of it - and the cull runs last because a copy is only safe to give back once the pass
-   * that would have sent it has had its go.
-   *
-   * Throws what stopped it, having recorded it on the peer row first. The person who pressed the
-   * button is told; the timer and the scan that call this on their own are the ones that swallow
-   * it, because a drive that is not plugged in is not an error either of them can do anything
-   * about.
-   */
   async run(libraryId: string): Promise<BackupRunResponse> {
+    const library = this.library(libraryId);
     const peer = this.targetOf(libraryId);
-    const nothing = { copied: 0, moved: 0, offloaded: 0 };
-    if (peer == null || this.running.has(libraryId)) return nothing;
-    this.running.add(libraryId);
-    const finish = this.activity.begin(libraryId, 'backing_up');
+    if (peer == null) throw new AppError('NOT_FOUND', 'No backup folder is selected. Select one before running a backup.');
+    this.begin(libraryId, 'checking', 'backing_up');
+    const { report, tally } = this.report('backup');
     try {
-      const library = this.library(libraryId);
-      assertMirrorOf(peer.root, libraryId, library.name);
-      const moved = await this.follow(peer);
-      this.scrub(peer);
-      await this.sweepStages(peer);
-      const owed = this.backups.owed(libraryId, peer.peerId).map((each) => each.photo_id);
-      this.transfers.queuePush(libraryId, peer.peerId, owed);
-      // After the queue has emptied rather than beside it: what the cull may give back is what the
-      // backup holds *now*, and half of it is still in flight until the drain finishes.
-      await this.transfers.drain();
-      // What is still owed is what did not make it: `drain` resolves on an empty queue whether each
-      // push landed or failed, so counting what was sent would report a full drive as a backup.
-      const stillOwed = new Set(this.backups.owed(libraryId, peer.peerId).map((each) => each.photo_id));
-      const copied = owed.filter((photoId) => !stillOwed.has(photoId)).length;
-      const offloaded = await this.cull.toBudget(peer);
-      this.note(libraryId, peer.peerId, null);
-      return { copied, moved, offloaded };
+      assertMirrorOf(peer.root, libraryId, library.name, peer.peerId);
+      await this.follow(peer, report);
+      await this.scrub(peer, library, tally);
+      await this.transfers.sweepStages(backupStagingDir(peer.root), libraryId, peer.peerId);
+      const owed = new Set(this.backups.owed(libraryId, peer.peerId).map((photo) => photo.photo_id));
+      this.transfers.queuePush(libraryId, peer.peerId, [...owed]);
+      const pushes = this.transfers.list(libraryId).filter((item) => item.direction === 'push' && item.peer_id === peer.peerId && owed.has(item.photo_id));
+      this.track(libraryId, pushes.map((item) => item.id), 'copying');
+      const settled = await Promise.all(pushes.map((item) => this.transfers.settled(item.id)));
+      report.copied = settled.filter((item) => item.state === 'done' && this.backups.entry(libraryId, peer.peerId, item.photo_id)?.health === 'held').length;
+      for (const item of settled) if (item.state !== 'done') tally.add(this.transferIssue(item, 'copying'));
+      this.phase(libraryId, 'offloading');
+      const culled = await this.cull.toBudget(peer, (done, total) => this.phase(libraryId, 'offloading', done, total));
+      report.offloaded = culled.evicted.length;
+      for (const refusal of culled.refused) {
+        tally.add({ code: refusal.error_code ?? 'transfer_failed', phase: 'offloading', photo_id: refusal.photo_id, path: this.pathOf(refusal.photo_id) });
+      }
+      this.standingIssues(libraryId, peer.peerId, tally);
+      this.finish(peer, report);
     } catch (error) {
-      this.note(libraryId, peer.peerId, error instanceof Error ? error.message : String(error));
-      throw error;
+      tally.add(issueOf(error, this.operations.get(libraryId)?.activity.phase ?? 'checking'));
+      this.finish(peer, report, true);
     } finally {
-      finish();
-      this.running.delete(libraryId);
+      this.end(libraryId);
     }
+    return { status: this.status(libraryId), report };
   }
 
-  /**
-   * Takes up the copies a folder already holds of photographs this device has given back.
-   *
-   * What makes unpairing a backup reversible. Those photographs have no local bytes, so nothing
-   * would ever send them again, and their rows went when the folder was forgotten - so without
-   * this, re-pairing the same drive leaves the only copy of each sitting on it, unreachable.
-   *
-   * Hashed rather than matched by name, because it is the same question the cull will ask later:
-   * whether the file on the drive is this photograph's.
-   */
-  private async rediscover(peer: PassivePeer): Promise<number> {
-    let found = 0;
-    for (const lost of this.backups.stranded(peer.libraryId, peer.peerId)) {
-      const copy = backupPath(peer.root, lost.rel_path);
-      if (!existsSync(copy)) continue;
-      if ((await contentHash(copy)) !== lost.content_hash) continue;
-      this.backups.record(peer.libraryId, peer.peerId, lost.photo_id, lost.rel_path, lost.content_hash, Bun.file(copy).size);
-      found += 1;
-    }
-    if (found > 0) log.info('the backup already held originals this device has given back', { photos: found });
-    return found;
-  }
-
-  /**
-   * Replays onto the backup the moves the library has made: a rename, a photo binned, one
-   * restored (§14.3).
-   *
-   * Never over an occupied name, and never a delete. A copy whose source has gone - somebody
-   * tidied the drive by hand - is forgotten rather than chased, which puts the photograph back
-   * among what the backup is owed and copies it again.
-   */
-  private async follow(peer: PassivePeer): Promise<number> {
-    let moved = 0;
-    for (const copy of this.backups.misplaced(peer.libraryId, peer.peerId)) {
-      const from = backupPath(peer.root, copy.was_at);
-      const to = backupPath(peer.root, copy.belongs_at);
-      if (!isOnDisk(from)) {
-        this.backups.drop(peer.libraryId, peer.peerId, copy.photo_id);
-        continue;
+  private async follow(peer: PassivePeer, report: BackupReport): Promise<void> {
+    const copies = this.backups.misplaced(peer.libraryId, peer.peerId);
+    this.phase(peer.libraryId, 'moving', 0, copies.length);
+    for (const copy of copies) {
+      try {
+        const entry = this.backups.entry(peer.libraryId, peer.peerId, copy.photo_id);
+        if (entry == null) continue;
+        const from = backupPath(peer.root, copy.was_at);
+        const to = backupPath(peer.root, copy.belongs_at);
+        if (isOnDisk(to) && (await contentHash(to)) === entry.content_hash) {
+          this.backups.record(peer.libraryId, peer.peerId, copy.photo_id, copy.belongs_at, entry.content_hash, Bun.file(to).size);
+          this.backups.clearIssue(peer.libraryId, peer.peerId, copy.photo_id, 'moving');
+          report.moved += 1;
+        } else if (!isOnDisk(from)) {
+          this.backups.mark(peer.libraryId, peer.peerId, copy.photo_id, 'missing');
+        } else if ((await contentHash(from)) !== entry.content_hash) {
+          this.backups.mark(peer.libraryId, peer.peerId, copy.photo_id, 'changed');
+        } else {
+          await placeInMirror(from, to, copy.belongs_at);
+          this.backups.moved(peer.libraryId, peer.peerId, copy.photo_id, copy.belongs_at);
+          report.moved += 1;
+        }
+      } catch (error) {
+        this.backups.setIssue(peer.libraryId, peer.peerId, copy.photo_id, issueOf(error, 'moving', copy.photo_id, copy.belongs_at));
       }
-      await ensureDir(path.dirname(to));
-      const taken = occupant(path.dirname(to), path.basename(to));
-      if (taken != null) {
-        log.warn('a backup copy stayed where it was', { photo: copy.photo_id, at: copy.was_at, blocked: taken });
-        continue;
+      this.phase(peer.libraryId, 'moving', report.moved, copies.length);
+    }
+  }
+
+  private async scrub(peer: PassivePeer, library: Library, tally: IssueTally): Promise<void> {
+    const copies = this.backups.stalest(peer.libraryId, peer.peerId, SCRUB_PER_PASS);
+    this.phase(peer.libraryId, 'checking', 0, copies.length);
+    let checked = 0;
+    for (const copy of copies) {
+      try {
+        const at = backupPath(peer.root, copy.rel_path);
+        const found = isOnDisk(at) ? statSync(at) : null;
+        if (found == null) this.backups.mark(peer.libraryId, peer.peerId, copy.photo_id, 'missing');
+        else if (found.size !== copy.size) this.backups.mark(peer.libraryId, peer.peerId, copy.photo_id, 'changed');
+        else if (copy.health === 'held' || (await contentHash(at)) === copy.content_hash) this.backups.mark(peer.libraryId, peer.peerId, copy.photo_id, 'held');
+        else this.backups.mark(peer.libraryId, peer.peerId, copy.photo_id, 'changed');
+        if (this.backups.issuesFor(peer.libraryId, peer.peerId, copy.photo_id).some((issue) => issue.code === 'local_changed')) {
+          const local = backupPath(library.root_path, this.pathOf(copy.photo_id));
+          if (isOnDisk(local) && (await contentHash(local)) === copy.content_hash) this.backups.clearLocalIssues(peer.libraryId, copy.photo_id);
+        }
+      } catch (error) {
+        tally.add(issueOf(error, 'checking', copy.photo_id, copy.rel_path));
       }
-      await rename(from, to);
-      this.backups.moved(peer.libraryId, peer.peerId, copy.photo_id, copy.belongs_at);
-      moved += 1;
-    }
-    return moved;
-  }
-
-  /**
-   * Looks again at the copies gone longest unchecked, and forgets the ones that are not there.
-   *
-   * A backup is only worth what is still on it, and a row saying a file was copied in March is
-   * evidence about March. Somebody tidies the drive, a filesystem loses a directory, a share is
-   * remounted at a different path: none of that says anything here until something asks, and by
-   * then what asks is a person who has lost the photograph.
-   *
-   * A forgotten copy is one the next pass owes, so a file that has gone is copied again rather
-   * than reported - and a size that has changed is the same answer, because the bytes are no
-   * longer the ones the row vouches for. Existence and size only: hashing what is on the mount is
-   * what the cull does to the one photograph it is about to give up, and doing it to a library
-   * would read every byte of it on a timer.
-   */
-  private scrub(peer: PassivePeer): void {
-    let dropped = 0;
-    for (const copy of this.backups.stalest(peer.libraryId, peer.peerId, SCRUB_PER_PASS)) {
-      const at = backupPath(peer.root, copy.rel_path);
-      const found = statSync(at, { throwIfNoEntry: false });
-      if (found?.size === copy.size) {
-        this.backups.verified(peer.libraryId, peer.peerId, copy.photo_id);
-        continue;
-      }
-      this.backups.drop(peer.libraryId, peer.peerId, copy.photo_id);
-      dropped += 1;
-    }
-    if (dropped > 0) log.warn('the backup no longer holds what it was recorded as holding', { photos: dropped });
-  }
-
-  /**
-   * Part-copied files on the backup that nothing is waiting to finish.
-   *
-   * A transfer that was cancelled or whose photograph has since gone leaves its staged bytes on
-   * the drive, where nothing else ever looks - and the whole point of the drive is that it has
-   * room. What a queued or paused entry staged is left alone: that is what lets it carry on from
-   * where it stopped rather than start the file again.
-   */
-  private async sweepStages(peer: PassivePeer): Promise<void> {
-    const dir = backupStagingDir(peer.root);
-    if (!existsSync(dir)) return;
-    const waiting = new Set(
-      (
-        this.db
-          .query(
-            `SELECT photo_id FROM blob_transfers
-              WHERE library_id = ? AND peer_id = ? AND state IN ('queued', 'active', 'paused')`,
-          )
-          .all(peer.libraryId, peer.peerId) as { photo_id: string }[]
-      ).map((row) => row.photo_id),
-    );
-    for (const name of readdirSync(dir)) {
-      const photoId = name.endsWith('.partial') ? name.slice(0, -'.partial'.length) : null;
-      if (photoId == null || waiting.has(photoId)) continue;
-      await deleteStagedBlob(dir, path.join(dir, name));
+      checked += 1;
+      this.phase(peer.libraryId, 'checking', checked, copies.length, false);
     }
   }
 
-  private note(libraryId: string, peerId: string, error: string | null): void {
-    this.db
-      .query('UPDATE replication_peers SET last_error = ?, last_replicated_at = ? WHERE library_id = ? AND peer_id = ?')
-      .run(error, new Date().toISOString(), libraryId, peerId);
+  private begin(libraryId: string, phase: BackupPhase, kind: ActivityKind | null): void {
+    if (this.operations.has(libraryId)) throw new AppError('CONFLICT', 'A backup operation is running. Try again when it finishes.');
+    this.operations.set(libraryId, { activity: { phase, done: 0, total: 0, current: null }, transfers: new Set() });
+    if (kind != null) this.finishes.set(libraryId, this.activity.begin(libraryId, kind));
+    this.changed(libraryId);
   }
 
-  /**
-   * Where a backup may not be put.
-   *
-   * Inside the library is the one that would be found out slowly: the scan walks everything under
-   * the root, so a mirror there is imported as a second copy of every photograph, which then gets
-   * backed up in turn.
-   */
+  private phase(libraryId: string, phase: BackupPhase, done = 0, total = 0, notify = true): void {
+    this.operations.set(libraryId, { activity: { phase, done, total, current: null }, transfers: new Set() });
+    if (notify) this.changed(libraryId);
+  }
+
+  private track(libraryId: string, ids: readonly string[], phase: BackupPhase): void {
+    this.operations.set(libraryId, { activity: { phase, done: 0, total: ids.length, current: null }, transfers: new Set(ids) });
+    this.changed(libraryId);
+  }
+
+  private end(libraryId: string): void {
+    this.operations.delete(libraryId);
+    this.finishes.get(libraryId)?.();
+    this.finishes.delete(libraryId);
+    this.changed(libraryId);
+  }
+
+  private report(operation: BackupReport['operation']): { report: BackupReport; tally: IssueTally } {
+    const tally = new IssueTally();
+    const report: BackupReport = {
+      operation, started_at: new Date().toISOString(), finished_at: '', outcome: 'complete',
+      copied: 0, moved: 0, offloaded: 0, restored: 0, issues: tally.issues,
+    };
+    return { report, tally };
+  }
+
+  private transferIssue(item: Transfer, phase: BackupPhase): BackupIssue {
+    return { code: transferIssueCode(item), phase, photo_id: item.photo_id, path: this.pathOf(item.photo_id) };
+  }
+
+  private finish(peer: PassivePeer, report: BackupReport, blocked = false): void {
+    report.finished_at = new Date().toISOString();
+    report.outcome = blocked ? 'blocked' : report.issues.total > 0 ? 'partial' : 'complete';
+    if (report.operation === 'restore') {
+      this.db.query('UPDATE replication_peers SET last_restore_report = ? WHERE library_id = ? AND peer_id = ?')
+        .run(JSON.stringify(report), peer.libraryId, peer.peerId);
+    } else {
+      this.db.query('UPDATE replication_peers SET last_backup_report = ?, last_replicated_at = ? WHERE library_id = ? AND peer_id = ?')
+        .run(JSON.stringify(report), report.finished_at, peer.libraryId, peer.peerId);
+    }
+    this.changed(peer.libraryId);
+  }
+
+  private originalPhotos(libraryId: string): { id: string; path: string; content_hash: string | null; is_missing: number }[] {
+    return this.db.query(
+      "SELECT id, json_extract(recipe, '$.path') AS path, content_hash, is_missing FROM photos WHERE library_id = ? AND json_extract(recipe, '$.kind') = 'file' ORDER BY id",
+    ).all(libraryId) as { id: string; path: string; content_hash: string | null; is_missing: number }[];
+  }
+
   private assertUsable(library: Library, at: string): void {
-    if (!path.isAbsolute(at)) {
-      throw new AppError('VALIDATION_ERROR', `the backup folder has to be an absolute path: ${at}`);
-    }
-    if (containsPath(library.root_path, at) || containsPath(at, library.root_path)) {
-      throw new AppError('VALIDATION_ERROR', `the backup folder cannot be inside the library, or hold it: ${at}`);
-    }
-    for (const other of this.libraries.list()) {
+    for (const other of this.libraries.listConfigurations()) {
+      if (containsPath(other.root_path, at) || containsPath(at, other.root_path)) {
+        throw new AppError('VALIDATION_ERROR', 'The backup folder overlaps a library. Choose a separate folder.');
+      }
       if (other.id === library.id) continue;
-      const theirs = passivePeersOf(this.db, other.id)[0];
+      const theirs = this.targetOf(other.id);
       if (theirs != null && (containsPath(theirs.root, at) || containsPath(at, theirs.root))) {
-        throw new AppError('CONFLICT', `${at} is already the backup folder of "${other.name}"`);
+        throw new AppError('CONFLICT', `This folder overlaps the backup for "${other.name}". Choose another folder.`);
       }
     }
   }
 
   private library(libraryId: string): Library {
-    const library = this.libraries.getById(libraryId);
-    if (library == null) throw new AppError('NOT_FOUND', `library not found: ${libraryId}`);
+    const library = this.libraries.getConfiguration(libraryId);
+    if (library == null) throw new AppError('NOT_FOUND', `Library not found: ${libraryId}`);
     return library;
   }
 }

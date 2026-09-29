@@ -5,6 +5,7 @@ import type { LibraryConfiguration } from '../../schemas/libraries';
 import { isComposite, sourcesOf } from '../../schemas/recipes';
 import { originalPathOf } from '../../utils/paths';
 import type { BackupLocations } from '../backup/backup_locations';
+import { BackupError, transferIssueCode } from '../backup/backup_error';
 import { mirrorReady } from '../backup/backup_root';
 import { passivePeerOf } from '../backup/passive_peers';
 import type { BasicPhoto, PhotoPathsRepository } from '../photos/paths/photo_paths_repository';
@@ -114,18 +115,22 @@ export class Originals {
    * for by name (§7.5). A backup is the opposite case: this device put the copy there, it is on a
    * mount rather than a network, and nothing else is going to bring it back.
    *
-   * False where there is no copy to bring back. A folder that holds one and is not plugged in
-   * throws instead, because that is the one case somebody can do something about.
+   * False where no backup records a copy; throws where one does and it can't come back.
    *
    * ponytail: the whole file comes back, so a loupe tile over an offloaded photograph costs the
    * whole RAW rather than the region decode the fork exists for. Ranged reads straight off the
    * mount are the upgrade, and they want an IO seam that reaches through the FFI.
    */
   private async fetchFromBackup(library: LibraryConfiguration, photo: BasicPhoto): Promise<boolean> {
-    for (const peerId of this.backups.holders(library.id, photo.id)) {
+    const holders = this.backups.holders(library.id, photo.id);
+    const damage = holders.length === 0 ? this.backups.damageOf(library.id, photo.id) : null;
+    if (damage === 'missing') throw new BackupError('backup_missing', 'This original is missing from the backup. Restore it from another copy.');
+    if (damage === 'changed') throw new BackupError('backup_changed', 'This backup copy has changed. Restore the original from another copy.');
+    let failure: BackupError | null = null;
+    for (const peerId of holders) {
       const peer = passivePeerOf(this.db, peerId);
       if (peer == null) continue;
-      if (!mirrorReady(peer.root, library.id)) {
+      if (!mirrorReady(peer.root, library.id, peer.name, peer.peerId)) {
         throw new AppError(
           'UNAVAILABLE',
           `this photo's RAW is on the backup "${peer.name}", which is not available. Connect ${peer.root} and try again.`,
@@ -138,7 +143,9 @@ export class Originals {
       const settled = await this.transfers.settled(transfer.id);
       if (settled.state === 'done') return true;
       log.warn('an original did not come back', { photo: photo.id, state: settled.state, err: settled.error });
+      failure = new BackupError(transferIssueCode(settled), settled.error ?? "The original couldn't be restored. Check the backup and try again.");
     }
+    if (failure != null) throw failure;
     return false;
   }
 }

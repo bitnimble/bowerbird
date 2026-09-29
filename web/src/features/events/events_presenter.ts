@@ -7,16 +7,18 @@ import type { LabelsPresenter } from '../labels/labels_presenter';
 import type { PhotosPresenter } from '../photos/photos_presenter';
 import type { ReplicationPresenter } from '../replication/replication_presenter';
 import type { StackTriagePresenter } from '../photos/stack_triage/stack_triage_presenter';
+import type { BackupPresenter } from '../backup/backup_presenter';
 
 export class EventsPresenter {
   private stream: EventStream | null = null;
 
   constructor(
-    private readonly photos: PhotosPresenter,
+    private readonly photos: Pick<PhotosPresenter, 'serverReachable' | 'renditionsRebuilt' | 'renditionFetch' | 'compositeProgressed'>,
     private readonly replication: Pick<ReplicationPresenter, 'libraryChanged' | 'reload'>,
     private readonly stackTriage: Pick<StackTriagePresenter, 'renditionsRebuilt'>,
     private readonly exports: Pick<ExportPresenter, 'progressed'>,
     private readonly labels: Pick<LabelsPresenter, 'load'>,
+    private readonly backup: Pick<BackupPresenter, 'load' | 'refresh' | 'dispose'>,
   ) {}
 
   // One stream for the session, opened by the shell. Whichever transport carries it
@@ -37,6 +39,7 @@ export class EventsPresenter {
       // page renders from its embedded bundle against a library that is not running, and the
       // connect that follows is exactly the news these views are waiting for.
       open: (reconnect) => {
+        this.backup.refresh();
         if (!reconnect) return;
         this.photos.serverReachable();
         void this.replication.reload('background');
@@ -61,6 +64,7 @@ export class EventsPresenter {
         void this.replication.libraryChanged(library_id);
         void this.labels.load('background');
       },
+      backup: () => this.backup.refresh(),
       // A merge is minutes of work behind one request, so what the grid draws while it runs -
       // the frames dimmed, the bar in the toast - comes from here rather than from the call.
       composite: (payload) => this.composited(payload),
@@ -68,6 +72,7 @@ export class EventsPresenter {
       // cannot come back in the answer: the file is the answer.
       export: (payload) => this.exports.progressed(ExportProgressSchema.parse(JSON.parse(payload))),
     });
+    void this.backup.load();
   }
 
   composited(payload: string): void {
@@ -77,5 +82,6 @@ export class EventsPresenter {
   disconnect(): void {
     this.stream?.close();
     this.stream = null;
+    this.backup.dispose();
   }
 }

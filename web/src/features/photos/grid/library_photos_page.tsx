@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { usePresenters } from '../../../app/stores_context';
 import { Page } from '../../../ui/page';
+import { BackupStrip } from '../../backup/backup_strip';
 import { BulkBar } from './bulk_bar';
 import { GridControls } from './grid_controls';
 import { LibraryPhotosPageStrings } from './library_photos_page.strings';
@@ -26,6 +27,7 @@ export const LibraryPhotosPage = observer(function LibraryPhotosPage(): JSX.Elem
   return (
     <Page fill>
       <GridControls withSidebarButton />
+      <BackupStrip libraryId={libraryId} />
       <BulkBar />
       <PhotoGrid emptyHint={LibraryPhotosPageStrings.emptyHint()} />
     </Page>

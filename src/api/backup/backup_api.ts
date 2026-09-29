@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { AppError } from '../../errors';
 import {
   BackupRunResponseSchema,
   BackupStatusSchema,
@@ -71,9 +70,7 @@ export class BackupApi {
   }
 
   private status(libraryId: string | undefined): BackupStatus {
-    const status = this.backups.status(this.libraryId(libraryId));
-    if (status == null) throw new AppError('NOT_FOUND', `library ${libraryId} has no backup folder`);
-    return status;
+    return this.backups.status(this.libraryId(libraryId));
   }
 
   private libraryId(value: string | undefined): string {

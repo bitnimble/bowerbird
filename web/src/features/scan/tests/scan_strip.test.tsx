@@ -49,6 +49,7 @@ const PULL: Transfer = {
   bytes_done: 0,
   bytes_total: 100,
   error: null,
+  error_code: null,
 };
 
 function Transfers({ transfers }: { transfers: Transfer[] }): null {

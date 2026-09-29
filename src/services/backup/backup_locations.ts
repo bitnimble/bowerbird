@@ -1,4 +1,5 @@
 import type { Database } from '../../db/driver';
+import { BackupCopyIssuesSchema, type BackupCoverage, type BackupIssue, type BackupPhase } from '../../schemas/backup';
 
 // What each passive peer holds (docs/replication.md §14.2). `blob_locations`' opposite number, and
 // unlike it a purely local table: a directory cannot assert anything about itself, so every row
@@ -9,9 +10,9 @@ export interface BackupEntry {
   rel_path: string;
   content_hash: string;
   size: number;
+  health: 'held' | 'missing' | 'changed';
 }
 
-/** A photograph the backup does not hold the current bytes of, and where those bytes are. */
 export interface OwedOriginal {
   photo_id: string;
   rel_path: string;
@@ -30,7 +31,7 @@ export class BackupLocations {
   entry(libraryId: string, peerId: string, photoId: string): BackupEntry | null {
     return this.db
       .query(
-        `SELECT photo_id, rel_path, content_hash, size FROM backup_locations
+        `SELECT photo_id, rel_path, content_hash, size, health FROM backup_locations
           WHERE library_id = ? AND peer_id = ? AND photo_id = ?`,
       )
       .get(libraryId, peerId, photoId) as BackupEntry | null;
@@ -40,7 +41,7 @@ export class BackupLocations {
   holders(libraryId: string, photoId: string): string[] {
     return (
       this.db
-        .query('SELECT peer_id FROM backup_locations WHERE library_id = ? AND photo_id = ? ORDER BY peer_id')
+        .query("SELECT peer_id FROM backup_locations WHERE library_id = ? AND photo_id = ? AND health = 'held' ORDER BY peer_id")
         .all(libraryId, photoId) as { peer_id: string }[]
     ).map((row) => row.peer_id);
   }
@@ -55,10 +56,10 @@ export class BackupLocations {
   record(libraryId: string, peerId: string, photoId: string, relPath: string, contentHash: string, size: number): void {
     this.db
       .query(
-        `INSERT INTO backup_locations (library_id, peer_id, photo_id, rel_path, content_hash, size, verified_at)
+        `INSERT INTO backup_locations (library_id, peer_id, photo_id, rel_path, content_hash, size, checked_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (library_id, photo_id, peer_id) DO UPDATE SET rel_path = excluded.rel_path,
-           content_hash = excluded.content_hash, size = excluded.size, verified_at = excluded.verified_at`,
+           content_hash = excluded.content_hash, size = excluded.size, checked_at = excluded.checked_at, health = 'held'`,
       )
       .run(libraryId, peerId, photoId, relPath, contentHash, size, new Date().toISOString());
   }
@@ -74,17 +75,32 @@ export class BackupLocations {
   stalest(libraryId: string, peerId: string, limit: number): BackupEntry[] {
     return this.db
       .query(
-        `SELECT photo_id, rel_path, content_hash, size FROM backup_locations
-          WHERE library_id = ? AND peer_id = ? ORDER BY verified_at, photo_id LIMIT ?`,
+        `SELECT photo_id, rel_path, content_hash, size, health FROM backup_locations
+          WHERE library_id = ? AND peer_id = ? ORDER BY checked_at, photo_id LIMIT ?`,
       )
       .all(libraryId, peerId, limit) as BackupEntry[];
   }
 
-  /** Seen, and as recorded. */
-  verified(libraryId: string, peerId: string, photoId: string): void {
+  unhealthy(libraryId: string, peerId: string): BackupEntry[] {
+    return this.db
+      .query(
+        `SELECT photo_id, rel_path, content_hash, size, health FROM backup_locations
+          WHERE library_id = ? AND peer_id = ? AND health <> 'held' ORDER BY photo_id`,
+      )
+      .all(libraryId, peerId) as BackupEntry[];
+  }
+
+  damageOf(libraryId: string, photoId: string): 'missing' | 'changed' | null {
+    const row = this.db
+      .query("SELECT health FROM backup_locations WHERE library_id = ? AND photo_id = ? AND health <> 'held' ORDER BY health DESC LIMIT 1")
+      .get(libraryId, photoId) as { health: 'missing' | 'changed' } | null;
+    return row?.health ?? null;
+  }
+
+  mark(libraryId: string, peerId: string, photoId: string, health: BackupEntry['health']): void {
     this.db
-      .query('UPDATE backup_locations SET verified_at = ? WHERE library_id = ? AND peer_id = ? AND photo_id = ?')
-      .run(new Date().toISOString(), libraryId, peerId, photoId);
+      .query('UPDATE backup_locations SET checked_at = ?, health = ? WHERE library_id = ? AND peer_id = ? AND photo_id = ?')
+      .run(new Date().toISOString(), health, libraryId, peerId, photoId);
   }
 
   /** Where the copy now sits, after the pass has moved it to follow a rename or a bin (§14.3). */
@@ -92,13 +108,45 @@ export class BackupLocations {
     this.db
       .query('UPDATE backup_locations SET rel_path = ? WHERE library_id = ? AND peer_id = ? AND photo_id = ?')
       .run(relPath, libraryId, peerId, photoId);
+    this.clearIssue(libraryId, peerId, photoId, 'moving');
   }
 
-  /** Forgets one copy, for a file somebody has taken off the backup by hand (§14.3). */
-  drop(libraryId: string, peerId: string, photoId: string): void {
-    this.db
-      .query('DELETE FROM backup_locations WHERE library_id = ? AND peer_id = ? AND photo_id = ?')
-      .run(libraryId, peerId, photoId);
+  issues(libraryId: string, peerId: string): BackupIssue[] {
+    const rows = this.db.query(
+      "SELECT current_issues FROM backup_locations WHERE library_id = ? AND peer_id = ? AND current_issues <> '[]' ORDER BY photo_id",
+    ).all(libraryId, peerId) as { current_issues: string }[];
+    return rows.flatMap((row) => BackupCopyIssuesSchema.parse(JSON.parse(row.current_issues)));
+  }
+
+  issuesFor(libraryId: string, peerId: string, photoId: string): BackupIssue[] {
+    const row = this.db.query(
+      'SELECT current_issues FROM backup_locations WHERE library_id = ? AND peer_id = ? AND photo_id = ?',
+    ).get(libraryId, peerId, photoId) as { current_issues: string } | null;
+    return row == null ? [] : BackupCopyIssuesSchema.parse(JSON.parse(row.current_issues));
+  }
+
+  setIssue(libraryId: string, peerId: string, photoId: string, issue: BackupIssue): void {
+    const issues = this.issuesFor(libraryId, peerId, photoId).filter((existing) => existing.phase !== issue.phase);
+    this.writeIssues(libraryId, peerId, photoId, [...issues, issue]);
+  }
+
+  clearIssue(libraryId: string, peerId: string, photoId: string, phase: BackupPhase): void {
+    this.writeIssues(libraryId, peerId, photoId, this.issuesFor(libraryId, peerId, photoId).filter((issue) => issue.phase !== phase));
+  }
+
+  clearLocalIssues(libraryId: string, photoId: string): void {
+    const copies = this.db.query(
+      "SELECT peer_id FROM backup_locations WHERE library_id = ? AND photo_id = ? AND current_issues <> '[]'",
+    ).all(libraryId, photoId) as { peer_id: string }[];
+    for (const copy of copies) {
+      this.writeIssues(libraryId, copy.peer_id, photoId,
+        this.issuesFor(libraryId, copy.peer_id, photoId).filter((issue) => issue.code !== 'local_changed'));
+    }
+  }
+
+  private writeIssues(libraryId: string, peerId: string, photoId: string, issues: readonly BackupIssue[]): void {
+    this.db.query('UPDATE backup_locations SET current_issues = ? WHERE library_id = ? AND peer_id = ? AND photo_id = ?')
+      .run(JSON.stringify(BackupCopyIssuesSchema.parse(issues)), libraryId, peerId, photoId);
   }
 
   /**
@@ -109,14 +157,6 @@ export class BackupLocations {
    */
   forget(libraryId: string, peerId: string): void {
     this.db.query('DELETE FROM backup_locations WHERE library_id = ? AND peer_id = ?').run(libraryId, peerId);
-  }
-
-  count(libraryId: string, peerId: string): number {
-    return (
-      this.db
-        .query('SELECT COUNT(*) AS held FROM backup_locations WHERE library_id = ? AND peer_id = ?')
-        .get(libraryId, peerId) as { held: number }
-    ).held;
   }
 
   /**
@@ -135,7 +175,7 @@ export class BackupLocations {
            LEFT JOIN backup_locations b
              ON b.library_id = p.library_id AND b.peer_id = ? AND b.photo_id = p.id
           WHERE p.library_id = ? AND p.is_missing = 0 AND json_extract(p.recipe, '$.kind') = 'file'
-            AND (b.photo_id IS NULL
+            AND (b.photo_id IS NULL OR b.health <> 'held'
                  OR (p.content_hash IS NOT NULL AND p.content_hash <> b.content_hash)
                  OR (p.file_size IS NOT NULL AND p.file_size <> b.size))
           ORDER BY p.date_added, p.id`,
@@ -143,27 +183,19 @@ export class BackupLocations {
       .all(peerId, libraryId) as OwedOriginal[];
   }
 
-  /**
-   * Photographs this device no longer holds and has no copy recorded for, with the hash their
-   * bytes are known to have.
-   *
-   * What a folder is asked about when it is paired (§14.3): a backup that has been unpaired, or
-   * carried to another machine, holds the only copy of everything that was offloaded to it, and
-   * those rows are not `owed` - there is nothing here to send. Without this they would stay
-   * unreachable with the file sitting right there on the drive.
-   */
-  stranded(libraryId: string, peerId: string): { photo_id: string; rel_path: string; content_hash: string }[] {
+  /** Originals missing from this device that this backup has no record of either. */
+  lost(libraryId: string, peerId: string): OwedOriginal[] {
     return this.db
       .query(
-        `SELECT p.id AS photo_id, json_extract(p.recipe, '$.path') AS rel_path, p.content_hash
+        `SELECT p.id AS photo_id, json_extract(p.recipe, '$.path') AS rel_path
            FROM photos p
            LEFT JOIN backup_locations b
              ON b.library_id = p.library_id AND b.peer_id = ? AND b.photo_id = p.id
           WHERE p.library_id = ? AND p.is_missing = 1 AND json_extract(p.recipe, '$.kind') = 'file'
-            AND p.content_hash IS NOT NULL AND b.photo_id IS NULL
+            AND b.photo_id IS NULL
           ORDER BY p.id`,
       )
-      .all(peerId, libraryId) as { photo_id: string; rel_path: string; content_hash: string }[];
+      .all(peerId, libraryId) as OwedOriginal[];
   }
 
   /** The copies the catalogue has moved out from under: a rename, a bin, a restore (§14.3). */
@@ -172,7 +204,7 @@ export class BackupLocations {
       .query(
         `SELECT b.photo_id, b.rel_path AS was_at, json_extract(p.recipe, '$.path') AS belongs_at
            FROM backup_locations b JOIN photos p ON p.id = b.photo_id
-          WHERE b.library_id = ? AND b.peer_id = ? AND json_extract(p.recipe, '$.kind') = 'file'
+          WHERE b.library_id = ? AND b.peer_id = ? AND b.health = 'held' AND json_extract(p.recipe, '$.kind') = 'file'
             AND json_extract(p.recipe, '$.path') <> b.rel_path
           ORDER BY b.photo_id`,
       )
@@ -185,22 +217,27 @@ export class BackupLocations {
       this.db
         .query(
           `SELECT p.id FROM photos p JOIN backup_locations b ON b.library_id = p.library_id AND b.photo_id = p.id
-            WHERE p.library_id = ? AND b.peer_id = ? AND p.is_missing = 1 ORDER BY p.id`,
+            WHERE p.library_id = ? AND b.peer_id = ? AND p.is_missing = 1 AND json_extract(p.recipe, '$.kind') = 'file' ORDER BY p.id`,
         )
         .all(libraryId, peerId) as { id: string }[]
     ).map((row) => row.id);
   }
 
-  /** How many of this library's originals live only on a backup now (§14.5). */
-  offloaded(libraryId: string): number {
-    return (
-      this.db
-        .query(
-          `SELECT COUNT(*) AS gone FROM photos p
-            WHERE p.library_id = ? AND p.is_missing = 1
-              AND EXISTS (SELECT 1 FROM backup_locations b WHERE b.library_id = p.library_id AND b.photo_id = p.id)`,
-        )
-        .get(libraryId) as { gone: number }
-    ).gone;
+  coverage(libraryId: string, peerId: string): BackupCoverage {
+    return this.db.query(
+      `SELECT COUNT(*) AS originals,
+        COALESCE(SUM(b.health = 'held' AND (p.content_hash IS NULL OR p.content_hash = b.content_hash)
+          AND (p.file_size IS NULL OR p.file_size = b.size)), 0) AS backed_up,
+        COALESCE(SUM(p.is_missing = 0 AND (b.photo_id IS NULL OR b.health <> 'held'
+          OR (p.content_hash IS NOT NULL AND p.content_hash <> b.content_hash)
+          OR (p.file_size IS NOT NULL AND p.file_size <> b.size))), 0) AS pending,
+        COALESCE(SUM(p.is_missing = 1 AND b.health = 'held'), 0) AS offloaded,
+        COALESCE(SUM(b.health = 'missing'), 0) AS missing,
+        COALESCE(SUM(b.health = 'changed'), 0) AS changed,
+        COALESCE(SUM(p.is_missing = 1 AND (b.photo_id IS NULL OR b.health <> 'held')), 0) AS missing_originals
+       FROM photos p LEFT JOIN backup_locations b
+         ON b.library_id = p.library_id AND b.photo_id = p.id AND b.peer_id = ?
+       WHERE p.library_id = ? AND json_extract(p.recipe, '$.kind') = 'file'`,
+    ).get(peerId, libraryId) as BackupCoverage;
   }
 }

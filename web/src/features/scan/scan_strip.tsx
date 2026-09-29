@@ -1,7 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { type Library, type LibraryScanStatus } from '../../../../src/schemas/libraries';
-import type { Activity as ServerActivity } from '../../../../src/schemas/activity';
+import type { ActivityKind, Activity as ServerActivity } from '../../../../src/schemas/activity';
 import { ActivityStrips } from '../activity/activity_strips';
 import { useBackupStore, useReplicationStore, useScanStore } from '../../app/stores_context';
 import { durationLabel } from '../../ui/format';
@@ -36,6 +36,7 @@ const styles = stylex.create({
 // Cap the cells so a 50k-photo import doesn't render 50k nodes; past that the
 // strip reads as a proportion bar and the mono count carries the exact figure.
 const MAX_CELLS = 48;
+const BACKUP_WORK: ReadonlySet<ActivityKind> = new Set(['backing_up', 'restoring_backup']);
 
 export const ScanStrip = observer(function ScanStrip({ library, status: current, activities }: {
   library: Library;
@@ -47,7 +48,9 @@ export const ScanStrip = observer(function ScanStrip({ library, status: current,
   const status = reported?.status === 'processing' ? reported : null;
   const rendering = reported?.photos_processing ?? 0;
   const moving = useMoving(library.id);
-  const serverActivity = activities?.filter((activity) => activity.kind !== 'rendering');
+  const backupStripShown = useBackupStore().statusOf(library.id)?.configured === true;
+  const serverActivity = activities?.filter((activity) =>
+    activity.kind !== 'rendering' && !(backupStripShown && BACKUP_WORK.has(activity.kind)));
   if (status == null && rendering === 0 && (serverActivity?.length ?? moving.length) === 0) return null;
 
   const progress = status == null || status.photos_to_scan === 0 ? null : {
@@ -108,24 +111,20 @@ export const ScanStrip = observer(function ScanStrip({ library, status: current,
   );
 });
 
-type Activity = { kind: 'syncing' | 'fetching' | 'sending' | 'backup'; text: string };
+type Activity = { kind: 'syncing' | 'fetching' | 'sending'; text: string };
 
 function useMoving(libraryId: string): Activity[] {
   const replication = useReplicationStore();
-  const backup = useBackupStore();
-  const backupPeer = backup.statusOf(libraryId)?.peer_id;
+  const backup = useBackupStore().statusOf(libraryId);
+  const backupPeer = backup?.configured === true ? backup.peer_id : null;
   const inFlight = replication
     .transfersOf(libraryId)
-    .filter((t) => t.state === 'queued' || t.state === 'active');
+    .filter((t) => t.peer_id !== backupPeer && (t.state === 'queued' || t.state === 'active'));
   const fetching = inFlight.some((t) => t.direction === 'pull');
-  const sending = inFlight.filter((t) => t.direction === 'push' && t.peer_id !== backupPeer).length;
-  const backingUp = inFlight.filter((t) => t.direction === 'push' && t.peer_id === backupPeer).length;
+  const sending = inFlight.filter((t) => t.direction === 'push').length;
   const activities: Activity[] = [];
   if (replication.replicating === libraryId) activities.push({ kind: 'syncing', text: ScanStripStrings.syncing() });
   if (fetching) activities.push({ kind: 'fetching', text: ScanStripStrings.fetching() });
-  else if (backup.fetchingBack === libraryId) activities.push({ kind: 'fetching', text: ScanStripStrings.fetchingFromBackup() });
   if (sending > 0) activities.push({ kind: 'sending', text: ScanStripStrings.sending(sending) });
-  if (backingUp > 0) activities.push({ kind: 'backup', text: ScanStripStrings.backingUp(backingUp) });
-  else if (backup.running === libraryId) activities.push({ kind: 'backup', text: ScanStripStrings.backingUpNow() });
   return activities;
 }
