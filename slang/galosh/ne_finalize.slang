@@ -1,10 +1,10 @@
-// Phase 0(b): the blind α, from the block statistics.
+// Phase 0(b): green's α and σ², from the block statistics.
 //
-// One workgroup of 256, eight of them to each of the 32 mean bins: a bin keeps the
+// One workgroup of 256, eight of them to each of the 32 mean bins, spaced on the square root of
+// the mean so that a night frame's few codes above black get most of them: a bin keeps the
 // 5th-to-20th percentile of its own variance histogram - the envelope, which is what a bin's
 // *noise* is once its textured blocks are excluded - and a Huber-weighted least squares over
-// the 32 (mean, variance) pairs gives the slope. σ² is a placeholder here and comes from
-// `ne_dark_finalize`.
+// the (mean, variance) pairs gives the slope and the intercept.
 //
 // No early return on a degenerate range: WGSL will not admit a workgroup barrier past a branch
 // on workgroup memory, and falling through lands on the fallback anyway, because a range that
@@ -26,11 +26,32 @@ static const int NBINS = 32;
 static const int VAR_BINS = 128;
 static const int WG = 256;
 
+/// The 5th to 20th percentile of block variances over the variance at which PMRID lifts nothing
+/// (`examples/noise_alpha.rs`). Iid noise alone reads 0.71.
+static const float ENVELOPE_RATIO = 1.34;
+
+float axis(float mean)
+{
+    return sqrt(max(mean, 0.0));
+}
+
+/// Under the ceiling and not flat: a block whose Laplacians are mostly zero is a masked border or a
+/// clipped patch, and at zero variance its inverse weight would be every other bin's many times.
+bool usable(float mean, float variance)
+{
+    return mean < BLOCK_MEAN_CEILING && variance > 0.0 && variance < 1e9;
+}
+
+/// Which of the 32 bins a block's mean falls in, bins `bw` wide along [`axis`].
+int bin_of(float mean, float bw)
+{
+    return min(int(axis(mean) / bw), NBINS - 1);
+}
+
 groupshared float bin_mean_arr[32];
 groupshared float bin_var_arr[32];
 groupshared int bin_cnt_arr[32];
 groupshared int bin_valid[32];
-groupshared float global_min;
 groupshared float global_max;
 groupshared Atomic<int> lds_var_hist[4096];
 groupshared float l_msum[32];
@@ -66,40 +87,21 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
     let sub = lid % tpb;
 
     {
-        var gmin = FLT_MAX;
         var gmax = 0.0;
-        var nv = 0;
         for (int i = lid; i < pc.total_blocks; i += WG) {
-            let bm = blk_mean[i];
-            let bv = blk_var[i];
-            if (bm > BLOCK_MEAN_FLOOR && bm < BLOCK_MEAN_CEILING && bv < 1e9) {
-                gmin = min(gmin, bm);
-                gmax = max(gmax, bm);
-                nv++;
-            }
+            if (usable(blk_mean[i], blk_var[i])) { gmax = max(gmax, axis(blk_mean[i])); }
         }
-        r_b[lid] = gmin;
         r_c[lid] = gmax;
-        r_cnt[lid] = nv;
         GroupMemoryBarrierWithGroupSync();
         for (int s = WG >> 1; s > 0; s >>= 1) {
-            if (lid < s) {
-                r_b[lid] = min(r_b[lid], r_b[lid + s]);
-                r_c[lid] = max(r_c[lid], r_c[lid + s]);
-                r_cnt[lid] += r_cnt[lid + s];
-            }
+            if (lid < s) { r_c[lid] = max(r_c[lid], r_c[lid + s]); }
             GroupMemoryBarrierWithGroupSync();
         }
-        if (lid == 0) {
-            global_min = r_b[0];
-            global_max = r_c[0];
-        }
+        if (lid == 0) { global_max = r_c[0]; }
         GroupMemoryBarrierWithGroupSync();
     }
 
-    let bw = (global_max - global_min) / float(NBINS);
-    let bin_lo = global_min + float(bin) * bw;
-    let bin_hi = bin_lo + bw;
+    let bw = max(global_max, 1e-12) / float(NBINS);
 
     {
         var msum = 0.0;
@@ -115,7 +117,7 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
             for (int k = sub; k < span; k += tpb) {
                 let bm = st_mean[k];
                 let bv = st_var[k];
-                if (bm >= bin_lo && bm < bin_hi && bm > BLOCK_MEAN_FLOOR && bm < BLOCK_MEAN_CEILING && bv < 1e9) {
+                if (usable(bm, bv) && bin_of(bm, bw) == bin) {
                     msum += bm;
                     cnt++;
                     vmin = min(vmin, bv);
@@ -150,10 +152,11 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
 
     let cnt = l_cnt[bin];
     let msum = l_msum[bin];
-    let vmin = l_vmin[bin];
-    let vmax = l_vmax[bin];
-    let vrange = max(vmax - vmin, 1e-12);
-    let vscale = float(VAR_BINS) / vrange;
+    // **Log-spaced**: a bin's variances run from its noise to its texture, several decades, and in
+    // linear steps across that the whole envelope lands in the first step, read as its centre.
+    let vmin = max(l_vmin[bin], 1e-14);
+    let vmax = max(l_vmax[bin], vmin);
+    let vscale = float(VAR_BINS) / max(log(vmax / vmin), 1e-6);
 
     for (int i = sub; i < VAR_BINS; i += tpb) {
         lds_var_hist[bin * VAR_BINS + i].store(0);
@@ -172,8 +175,8 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
             for (int k = sub; k < span; k += tpb) {
                 let bm = st_mean[k];
                 let bv = st_var[k];
-                if (bm >= bin_lo && bm < bin_hi && bm > BLOCK_MEAN_FLOOR && bm < BLOCK_MEAN_CEILING && bv < 1e9) {
-                    var vbin = int((bv - vmin) * vscale);
+                if (usable(bm, bv) && bin_of(bm, bw) == bin) {
+                    var vbin = int(log(max(bv, vmin) / vmin) * vscale);
                     vbin = clamp(vbin, 0, VAR_BINS - 1);
                     lds_var_hist[bin * VAR_BINS + vbin].add(1);
                 }
@@ -200,12 +203,13 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
             var vsum = 0.0;
             var vcnt = 0;
             for (int i = p5_bin; i <= p20_bin; i++) {
-                let bin_center = vmin + (float(i) + 0.5) / vscale;
+                let bin_center = vmin * exp((float(i) + 0.5) / vscale);
                 let n = lds_var_hist[bin * VAR_BINS + i].load();
                 vsum += bin_center * float(n);
                 vcnt += n;
             }
-            bin_var_arr[bin] = select(vcnt > 0, vsum / float(vcnt), vmin + 0.5 / vscale);
+            let envelope = select(vcnt > 0, vsum / float(vcnt), vmin * exp(0.5 / vscale));
+            bin_var_arr[bin] = envelope / ENVELOPE_RATIO;
             bin_mean_arr[bin] = msum / float(cnt);
             bin_cnt_arr[bin] = max(vcnt, 1);
             bin_valid[bin] = 1;
@@ -215,9 +219,19 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
 
     if (lid != 0) { return; }
 
+    float weight[32];
+    for (int b = 0; b < NBINS; b++) { weight[b] = 0.0; }
     var n_valid = 0;
+    var most = 0.0;
+    var least = FLT_MAX;
     for (int b = 0; b < NBINS; b++) {
-        if (bin_valid[b] != 0) { n_valid++; }
+        if (bin_valid[b] == 0 || bin_var_arr[b] <= 0.0) { continue; }
+        // Noise never falls as light rises: a collapse is clipping, and past it the slope flattens.
+        if (bin_var_arr[b] < 0.5 * most) { break; }
+        most = max(most, bin_var_arr[b]);
+        least = min(least, bin_var_arr[b]);
+        weight[b] = float(bin_cnt_arr[b]);
+        n_valid++;
     }
     if (n_valid < 4) {
         params[P_ALPHA] = 1e-4;
@@ -227,13 +241,30 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
 
     var alpha_est = 0.01;
     var sigma_sq_est = 0.0;
-    for (int iter = 0; iter < 5; iter++) {
+    var fitted = false;
+    for (int iter = 0; iter < 8; iter++) {
         var huber_k = 1e10;
+        // By count first, then by the inverse of the variance the line predicts there: texture only
+        // adds variance, and by count the few bright, busy bins set the slope. The prediction
+        // rather than the bin's own reading, which on a clean frame is quantised low and would
+        // hand the darkest bins everything.
+        float relative[32];
+        var heaviest = 0.0;
+        for (int b = 0; b < NBINS; b++) {
+            relative[b] = weight[b];
+            if (iter > 0 && weight[b] > 0.0) {
+                let pred = max(alpha_est * bin_mean_arr[b] + sigma_sq_est, least);
+                relative[b] = weight[b] / (pred * pred);
+            }
+            heaviest = max(heaviest, relative[b]);
+        }
+        // Relative, so the sums below stay inside what f32 holds: a clean frame's variances are 1e-9.
+        for (int b = 0; b < NBINS; b++) { relative[b] /= heaviest; }
         if (iter > 0) {
             float resids[32];
             var nr = 0;
             for (int b = 0; b < NBINS; b++) {
-                if (bin_valid[b] == 0) { continue; }
+                if (weight[b] == 0.0) { continue; }
                 resids[nr] = abs(bin_var_arr[b] - (alpha_est * bin_mean_arr[b] + sigma_sq_est));
                 nr++;
             }
@@ -257,8 +288,8 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
         var sxx = 0.0;
         var sxy = 0.0;
         for (int b = 0; b < NBINS; b++) {
-            if (bin_valid[b] == 0) { continue; }
-            var w = float(bin_cnt_arr[b]);
+            if (weight[b] == 0.0) { continue; }
+            var w = relative[b];
             if (iter > 0) {
                 let pred = alpha_est * bin_mean_arr[b] + sigma_sq_est;
                 let resid = abs(bin_var_arr[b] - pred);
@@ -276,11 +307,25 @@ void ne_finalize(uint3 local : SV_GroupThreadID)
         if (abs(det) > 1e-30) {
             let new_alpha = (sw * sxy - sx * sy) / det;
             let new_sq = (sxx * sy - sx * sxy) / det;
-            if (new_alpha > 0.0) { alpha_est = new_alpha; }
-            if (new_sq >= 0.0) { sigma_sq_est = new_sq; }
+            if (new_alpha > 0.0) {
+                alpha_est = new_alpha;
+                sigma_sq_est = max(new_sq, 0.0);
+                fitted = true;
+            }
         }
     }
+    if (!fitted) {
+        params[P_ALPHA] = 1e-4;
+        params[P_SIGMA_SQ] = 1e-6;
+        return;
+    }
+
+    // The darkest bin is the read noise measured nearly directly, where the intercept is only
+    // extrapolated to, and on a clean frame's quantised envelope extrapolated below zero.
+    var darkest = 0;
+    while (weight[darkest] == 0.0) { darkest++; }
+    let read_floor = bin_var_arr[darkest] - alpha_est * max(bin_mean_arr[darkest], 0.0);
 
     params[P_ALPHA] = max(alpha_est, ALPHA_MIN);
-    params[P_SIGMA_SQ] = 0.0;
+    params[P_SIGMA_SQ] = max(sigma_sq_est, read_floor);
 }

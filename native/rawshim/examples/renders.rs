@@ -1766,10 +1766,10 @@ fn sweep_grid(
     let model = measured.model();
     let (want_luma, want_colour) = model.suggested_amounts();
     eprintln!(
-        "  measured alpha {:.6} sigma_sq {:.8} read {:.5} at_white {:.4} gains {:.3}/{:.3}/{:.3}",
+        "  measured alpha {:.6} sigma_sq {:.8} shadow {:.5} at_white {:.4} gains {:.3}/{:.3}/{:.3}",
         model.alpha,
         model.sigma_sq,
-        model.read_noise(),
+        model.shadow_noise(),
         model.at_white(),
         measured_gains[0],
         measured_gains[1],
