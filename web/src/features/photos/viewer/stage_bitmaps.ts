@@ -13,6 +13,7 @@
 
 import { planarLayout } from './planar_layout';
 import { WebCodecs } from './image_decoder';
+import { Logger } from '../../logs/page_log';
 import {
   canDecodeAvifPlanes,
   decodeAvifPlanes,
@@ -24,6 +25,8 @@ import {
   REQUEST_ACTIVITY_HEADER,
   type RequestActivity,
 } from '../../../../../src/schemas/request_activity';
+
+const log = new Logger('stage');
 
 /** The longest edge a frame is decoded to: a 4K stage at 2x, which is past any display we draw on. */
 const DECODE_CAP = 4096;
@@ -211,8 +214,8 @@ async function decodePicture(
       // viewer ask for a rendition to be built that is already there. Fall through and let
       // the bitmap decode have it.
       if (signal.aborted) throw err;
-      console.warn(
-        `stage: ImageDecoder refused a ${blob.type}, so it is decoded as a bitmap, which tone maps HDR to SDR`,
+      log.warn(
+        `ImageDecoder refused a ${blob.type}, so it is decoded as a bitmap, which tone maps HDR to SDR`,
         err,
       );
     }
@@ -230,8 +233,8 @@ async function decodePicture(
         ? `${natural.width}x${natural.height} is past the ${MAX_CANVAS_EDGE} texture edge`
         : null;
   if (WebCodecs == null && blob.type === 'image/avif' && planesRefusal != null) {
-    console.warn(
-      `stage: no ImageDecoder and ${planesRefusal}, so the AVIF is decoded as a bitmap, which tone maps HDR to SDR`,
+    log.warn(
+      `no ImageDecoder and ${planesRefusal}, so the AVIF is decoded as a bitmap, which tone maps HDR to SDR`,
     );
   }
   if (WebCodecs == null && blob.type === 'image/avif' && planesRefusal == null) {

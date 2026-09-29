@@ -12,6 +12,7 @@ cross.Dockerfile
 bowerbird.db
 bowerbird.db-*
 bowerbird.db.*
+server.log*
 backups
 # Where a checkout's own run puts every generated file (DATA_DIR's default), plus
 # the pre-move layout that kept them under the library root.

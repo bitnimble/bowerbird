@@ -1,4 +1,7 @@
+import { Logger, pageLog } from '../features/logs/page_log';
 import { wasiImports } from './wasi';
+
+const log = new Logger('avif_planes');
 
 /** One pool worker's slot in the control words: its state, the thread's id, and its argument. */
 const SLOT_WORDS = 3;
@@ -50,7 +53,9 @@ export class ThreadPool {
     const buffer = new SharedArrayBuffer((size * SLOT_WORDS + 2) * Int32Array.BYTES_PER_ELEMENT);
     await Promise.all(
       Array.from({ length: size }, (_, slot) => {
-        const worker = new Worker(new URL('./avif_thread.ts', import.meta.url), { type: 'module' });
+        const worker = pageLog.adopted(
+          new Worker(new URL('./avif_thread.ts', import.meta.url), { type: 'module' }),
+        );
         return new Promise<void>((resolve, reject) => {
           worker.onmessage = () => resolve();
           worker.onerror = (event) => reject(new Error(event.message));
@@ -109,7 +114,7 @@ export async function serveSlot(
     try {
       start(Atomics.load(control, state + 1), Atomics.load(control, state + 2));
     } catch (err) {
-      console.error('avif_planes: a decoder thread trapped', err);
+      log.error('a decoder thread trapped', err);
     }
     Atomics.store(control, state, FREE);
     Atomics.add(control, finished, 1);

@@ -8,6 +8,7 @@ fn main() {
         "set_server_origin",
         "ui_scale",
         "set_ui_scale",
+        "app_logs",
         "display_is_hdr",
         "events_following",
         "pick_export_folder",

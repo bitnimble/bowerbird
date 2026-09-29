@@ -2,7 +2,15 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Activity, FolderOpen, FolderPlus, Link2, RefreshCw, Sparkles } from 'lucide-react';
+import {
+  Activity,
+  FolderOpen,
+  FolderPlus,
+  Link2,
+  RefreshCw,
+  ScrollText,
+  Sparkles,
+} from 'lucide-react';
 import { PathSegment, route } from '../../../../src/schemas/route';
 import { type Settings, type ViewerRenditionMode } from '../../../../src/schemas/settings';
 import {
@@ -26,6 +34,8 @@ import { DiagnosticsDialog } from '../feedback/diagnostics_dialog';
 import { DiagnosticsStrings } from '../feedback/diagnostics_dialog.strings';
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
 import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
+import { LogsDialog } from '../logs/logs_dialog';
+import { LogsDialogStrings } from '../logs/logs_dialog.strings';
 import { renditionLabel } from '../photos/renditions';
 import { AddReplicaDialog } from '../replication/add_replica_dialog';
 import { AddReplicaStrings } from '../replication/add_replica_dialog.strings';
@@ -558,6 +568,19 @@ function AppDataFolder(): JSX.Element | null {
   );
 }
 
+function LogsRow(): JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <SettingRow label={LogsDialogStrings.logs()}>
+      <Button onClick={() => setOpen(true)}>
+        <ScrollText size={ICON} />
+        {LogsDialogStrings.showLogs()}
+      </Button>
+      <LogsDialog open={open} onOpenChange={setOpen} />
+    </SettingRow>
+  );
+}
+
 function DiagnosticsRow(): JSX.Element {
   const [open, setOpen] = useState(false);
   return (
@@ -705,6 +728,7 @@ const SystemTab = observer(function SystemTab(): JSX.Element {
               </>
             )}
             <AppDataFolder />
+            <LogsRow />
             <DiagnosticsRow />
           </Panel>
         </>

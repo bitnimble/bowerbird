@@ -517,7 +517,7 @@ fn describe_if_grid(image: crate::rgb::RgbRef<'_>, target: &Target, outcome: &mu
         return;
     }
     let Some(gpu) = crate::gpu::device() else {
-        eprintln!("rawshim: no adapter, so this photograph gets no stacking descriptor");
+        crate::warn("rawshim: no adapter, so this photograph gets no stacking descriptor");
         return;
     };
     if let Some(descriptor) = stacks::describe(gpu, image) {

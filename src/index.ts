@@ -1,3 +1,5 @@
+// First, so an error while any other module loads is logged.
+import './log_to_file';
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { accessSync, constants, existsSync, mkdirSync } from 'node:fs';
@@ -55,7 +57,9 @@ import { Cull } from './services/backup/cull';
 import { Mirror } from './services/backup/mirror';
 import { PassivePeers } from './services/backup/passive_peers';
 import { extractMetadata } from './services/processing/analysis/metadata';
-import { PairedPeers, Peers } from './services/replication/peer_transport';
+import { addressedPeers, PairedPeers, Peers } from './services/replication/peer_transport';
+import { deviceName } from './services/replication/pairing';
+import { LogsApi } from './api/logs/logs_api';
 import type { Library } from './schemas/libraries';
 import { PathSegment, route } from './schemas/route';
 import { CROSS_ORIGIN_ISOLATION } from './schemas/isolation';
@@ -564,6 +568,13 @@ app.route(
     renderTimings,
     (rendition, denoiser) => processingService.benchmarkRender(rendition, denoiser, renderTimings),
     new StorageUsageService(),
+  ).routes,
+);
+app.route(
+  route(PathSegment.api(), PathSegment.logs()),
+  new LogsApi(
+    () => deviceName(db),
+    () => addressedPeers(db),
   ).routes,
 );
 app.route(

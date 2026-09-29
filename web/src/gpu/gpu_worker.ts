@@ -22,6 +22,9 @@ import { WebCodecs } from '../features/photos/viewer/image_decoder';
 import { StagePainter } from '../features/photos/viewer/stage_gpu';
 import { AnswerSchema, MessageSchema, ProgressSchema, type Message } from './gpu_protocol';
 import { canDecodeAvifPlanes, decodeAvifPlanes, type PlanarPicture } from '../avif/avif_planes';
+import { pageLog } from '../features/logs/page_log';
+
+pageLog.follow('worker');
 
 /** The other half of `GpuThread`, which says why the module is over here. */
 

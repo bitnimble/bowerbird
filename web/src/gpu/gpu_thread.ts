@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { OpenStage } from '../features/raw_edit/local_decode/local_open';
+import { pageLog } from '../features/logs/page_log';
 import { MessageSchema, ReplySchema, type Addressed } from './gpu_protocol';
 
 /**
@@ -12,9 +13,9 @@ import { MessageSchema, ReplySchema, type Addressed } from './gpu_protocol';
  * mounted until the frame arrived.
  */
 export class GpuThread {
-  private readonly worker = new Worker(new URL('./gpu_worker.ts', import.meta.url), {
-    type: 'module',
-  });
+  private readonly worker = pageLog.adopted(
+    new Worker(new URL('./gpu_worker.ts', import.meta.url), { type: 'module' }),
+  );
   private readonly waiting = new Map<
     number,
     {

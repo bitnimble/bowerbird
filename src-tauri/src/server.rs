@@ -74,7 +74,7 @@ pub(crate) fn recover(webview: &tauri::Webview<crate::Runtime>) {
     if webview.label() != "main" {
         return;
     }
-    eprintln!("[bowerbird] web content process terminated; restoring the page");
+    crate::app_log::warn("web content process terminated; restoring the page");
     let current = webview.url().ok();
     let signed_in = LOCAL.lock().ok().and_then(|held| {
         let local = held.as_ref()?;
@@ -82,11 +82,11 @@ pub(crate) fn recover(webview: &tauri::Webview<crate::Runtime>) {
         local.sign_in(&current)
     });
     let Some(signed_in) = signed_in else {
-        eprintln!("[bowerbird] could not sign the page in after its content process terminated");
+        crate::app_log::error("could not sign the page in after its content process terminated");
         return;
     };
     if webview.navigate(signed_in).is_err() {
-        eprintln!("[bowerbird] could not restore the page after its content process terminated");
+        crate::app_log::error("could not restore the page after its content process terminated");
     }
 }
 
@@ -231,7 +231,6 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     if cfg!(desktop) {
         command.env("WEB_DIST", web_root(app)?);
     }
-    let (stdout, stderr) = server_log(&data);
     let child = command
         .arg(&bundle)
         .env("PORT", port.to_string())
@@ -246,8 +245,12 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
             "BOWERBIRD_REFERENCE_FRAME",
             data.join("reference_frame.ARW"),
         )
-        .stdout(stdout)
-        .stderr(stderr)
+        .stdout(if cfg!(debug_assertions) {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        })
+        .stderr(server_stderr(&data))
         .spawn()
         .map_err(|err| format!("could not start the server at {}: {err}", sidecar.display()))?;
 
@@ -257,7 +260,7 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     }
     watch_for_update(app.clone());
     wait_until_answering(&origin)?;
-    eprintln!("[bowerbird] serving this library locally on {origin}");
+    crate::app_log::info(format!("serving this library locally on {origin}"));
     let root =
         tauri::Url::parse(&origin).map_err(|err| format!("{origin} is not an address: {err}"))?;
     let local = Local { origin, token };
@@ -270,22 +273,18 @@ pub(crate) fn start(app: &tauri::AppHandle<crate::Runtime>) -> Result<tauri::Url
     Ok(signed_in)
 }
 
-/// Where the server's log lands, the only account of what went wrong when it will not start: the
-/// terminal running a debug build.
-#[cfg(debug_assertions)]
-fn server_log(_data: &Path) -> (Stdio, Stdio) {
-    (Stdio::inherit(), Stdio::inherit())
-}
-
-/// A shipped app has no terminal, so the log is a file beside the catalogue, holding this run's.
-#[cfg(not(debug_assertions))]
-fn server_log(data: &Path) -> (Stdio, Stdio) {
-    let opened =
-        std::fs::File::create(data.join("server.log")).and_then(|log| Ok((log.try_clone()?, log)));
-    match opened {
-        Ok((stdout, stderr)) => (stdout.into(), stderr.into()),
-        Err(_) => (Stdio::null(), Stdio::null()),
+/// The terminal running a debug build. The server writes its own `server.log`; a shipped app
+/// keeps stderr too, the only record of a crash in Bun or the native library.
+fn server_stderr(data: &Path) -> Stdio {
+    if cfg!(debug_assertions) {
+        return Stdio::inherit();
     }
+    let log = data.join("server.stderr.log");
+    // The crash it records is the previous run's, which the relaunch after it would truncate.
+    let _ = std::fs::rename(&log, data.join("server.stderr.log.1"));
+    std::fs::File::create(log)
+        .map(Stdio::from)
+        .unwrap_or_else(|_| Stdio::null())
 }
 
 /// Hands the app to the updater once the server has staged an update and exited.
@@ -315,7 +314,7 @@ fn watch_for_update(app: tauri::AppHandle<crate::Runtime>) {
                     match crate::update::hand_over(&app) {
                         Ok(()) => app.exit(0),
                         Err(why) => {
-                            eprintln!("[bowerbird] {why}");
+                            crate::app_log::error(why);
                             // Without its server this window can do nothing, so it starts over rather than stay.
                             app.restart();
                         }

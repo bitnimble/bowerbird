@@ -61,6 +61,7 @@ export const PathSegment = {
   labels: segment('labels'),
   landed: segment('landed'),
   libraries: segment('libraries'),
+  logs: segment('logs'),
   mark: segment('mark'),
   merge: segment('merge'),
   bracket: segment('bracket'),

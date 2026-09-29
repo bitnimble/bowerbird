@@ -12,6 +12,7 @@ import { exportsApi } from './api/exports';
 import { folderRulesApi } from './api/folder_rules';
 import { frameTvsApi } from './api/frame_tvs';
 import { librariesApi } from './api/libraries';
+import { logsApi } from './api/logs';
 import { photoEditsApi } from './api/photo_edits';
 import { photosApi } from './api/photos';
 import { renditionsApi } from './api/renditions';
@@ -38,6 +39,7 @@ const RESTORE = [
   folderRulesApi,
   frameTvsApi,
   librariesApi,
+  logsApi,
   photoEditsApi,
   photosApi,
   renditionsApi,

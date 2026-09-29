@@ -279,10 +279,10 @@ fn admit() -> Turn {
     // somebody else's decode is the queue working, where a reader waiting alone is the decode
     // being slow. Only mentioned when it actually waited, so an idle server stays quiet.
     if waited > std::time::Duration::from_millis(50) {
-        eprintln!(
+        crate::info(&format!(
             "rawshim: an open waited {}ms for the one before it",
             waited.as_millis()
-        );
+        ));
     }
     Turn {
         _guard: guard,

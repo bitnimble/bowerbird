@@ -11,6 +11,7 @@
     "allow-set-server-origin",
     "allow-ui-scale",
     "allow-set-ui-scale",
+    "allow-app-logs",
     "allow-display-is-hdr",
     "allow-events-following",
     "allow-pick-export-folder",

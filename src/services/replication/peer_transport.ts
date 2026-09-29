@@ -50,10 +50,10 @@ export class PairedPeers implements PeerTransport {
     // uses; the timeout is in addition to it rather than instead.
     const deadline = AbortSignal.timeout(responseMs);
     const signal = init?.signal == null ? deadline : AbortSignal.any([init.signal, deadline]);
-    return fetch(
-      `${address.replace(/\/+$/, '')}${route(PathSegment.api(), PathSegment.blobs())}${path}`,
-      { ...init, signal },
-    );
+    return fetch(peerUrl(address, `${route(PathSegment.api(), PathSegment.blobs())}${path}`), {
+      ...init,
+      signal,
+    });
   }
 }
 
@@ -85,6 +85,26 @@ export class Peers implements PeerTransport {
     const transport = this.passive.handles(peerId) ? this.passive : this.active;
     return transport.request(peerId, path, init, responseMs);
   }
+}
+
+export function peerUrl(address: string, path: string): string {
+  return `${address.replace(/\/+$/, '')}${path}`;
+}
+
+export interface AddressedPeer {
+  peer_id: string;
+  name: string;
+  address: string;
+}
+
+/** Every device this one dials, once each, whichever libraries they share. */
+export function addressedPeers(db: Database): AddressedPeer[] {
+  return db
+    .query(
+      `SELECT peer_id, MIN(name) AS name, MIN(address) AS address FROM replication_peers
+       WHERE kind = 'active' AND address IS NOT NULL GROUP BY peer_id ORDER BY name`,
+    )
+    .all() as AddressedPeer[];
 }
 
 function anyAddress(db: Database, peerId: string): string | null {

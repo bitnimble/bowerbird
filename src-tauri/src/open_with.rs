@@ -281,7 +281,7 @@ fn open_in(application: &Path, file: &Path) {
         .arg(file)
         .spawn()
     {
-        eprintln!("[bowerbird] could not open {file:?} in {application:?}: {e}");
+        crate::app_log::error(format!("could not open {file:?} in {application:?}: {e}"));
     }
 }
 

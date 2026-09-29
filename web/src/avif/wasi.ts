@@ -1,6 +1,10 @@
 // The WASI `native/avif_planes` imports, which is a clock, randomness, a console and a way to start
 // a thread: no files, no arguments and no environment.
 
+import { Logger } from '../features/logs/page_log';
+
+const log = new Logger('avif_planes');
+
 const ESUCCESS = 0;
 const CLOCK_REALTIME = 0;
 const MAX_RANDOM_BYTES = 65536;
@@ -66,6 +70,6 @@ class ConsoleLines {
     this.pending += this.decoder.decode(bytes, { stream: true });
     const lines = this.pending.split('\n');
     this.pending = lines.pop() ?? '';
-    for (const line of lines) console.warn(`avif_planes: ${line}`);
+    for (const line of lines) log.warn(line);
   }
 }

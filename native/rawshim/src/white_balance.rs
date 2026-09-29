@@ -115,7 +115,7 @@ pub async fn as_shot(
         // Not kept: a device that declined once may answer the next ask, and the alternative is
         // one transient failure costing the photograph its baseline for as long as the process
         // lives.
-        eprintln!("rawshim: the illuminant was not read back, so this photograph keeps none");
+        crate::warn("rawshim: the illuminant was not read back, so this photograph keeps none");
         return None;
     };
     let answer = match read[2] > 0.0 {

@@ -393,7 +393,7 @@ async fn accumulate(gpu: &'static crate::gpu::Gpu, image: RgbRef<'_>) -> Option<
         // Said out loud, because the two ways to have no descriptor are not the same: a frame too
         // small to grid is one this photograph will never be a stacking candidate on, and a device
         // that declined is one it would have been.
-        eprintln!("rawshim: the stacking grids were not read back, so this photograph gets none");
+        crate::warn("rawshim: the stacking grids were not read back, so this photograph gets none");
         return None;
     };
     let mut grids = read.chunks_exact(words);

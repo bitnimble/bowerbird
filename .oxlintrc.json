@@ -75,6 +75,7 @@
     {
       "files": ["web/src/**"],
       "rules": {
+        "no-console": "error",
         "strings/no-jsx-text": "error",
         "strings/no-literal-props": [
           "error",
@@ -118,9 +119,16 @@
         "web/src/**/*.test.tsx"
       ],
       "rules": {
+        "no-console": "off",
         "strings/no-jsx-text": "off",
         "strings/no-literal-props": "off",
         "strings/no-literal-text": "off"
+      }
+    },
+    {
+      "files": ["web/src/features/logs/page_log.ts"],
+      "rules": {
+        "no-console": "off"
       }
     }
   ]

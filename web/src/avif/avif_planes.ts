@@ -1,4 +1,5 @@
 import { avifPlanesUrl } from '../../../native/rawshim/pkg/avif_planes';
+import { Logger, pageLog } from '../features/logs/page_log';
 
 /** `crate::planes::Layout`: where each plane is in the samples, in bytes. */
 export interface PlanesLayout {
@@ -43,6 +44,8 @@ export type DecodeReply = DecodeAnswer | { id: number; started: true };
 
 /** A decoder worker's first message: the module, compiled once for every worker the page starts. */
 export type DecoderStart = { module: WebAssembly.Module };
+
+const log = new Logger('avif_planes');
 
 /** Past this, an abort tears the decoder down rather than waiting out a decode already running. */
 const TEARDOWN_PIXELS = 20_000_000;
@@ -100,12 +103,14 @@ class AvifPlanes {
       void promoted?.then(() => this.promote(id));
     });
     if ('planes' in answer) return answer.planes;
-    if ('failed' in answer) console.warn(`avif_planes: ${answer.failed}`);
+    if ('failed' in answer) log.warn(answer.failed);
     return null;
   }
 
   private start(): Worker {
-    const worker = new Worker(new URL('./avif_worker.ts', import.meta.url), { type: 'module' });
+    const worker = pageLog.adopted(
+      new Worker(new URL('./avif_worker.ts', import.meta.url), { type: 'module' }),
+    );
     worker.onmessage = (event: MessageEvent<DecodeReply>) => {
       const reply = event.data;
       if ('started' in reply) {

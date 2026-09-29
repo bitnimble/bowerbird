@@ -1,5 +1,6 @@
 import { dlopen, FFIType } from 'bun:ffi';
 import path from 'node:path';
+import { Logger } from '../../../logger';
 
 // The Rust library (`native/rawshim`), built by `bun run build:native`. Everything
 // this app does to pixels happens in there, and it owns every decoded image for as
@@ -121,9 +122,15 @@ const SYMBOLS = {
     args: [FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.f32, FFIType.i64, FFIType.ptr],
     returns: FFIType.i32,
   },
+  // What the library had to say since it was last asked, newline-separated, each led by `I` or `W`
+  // for its level. From the first call on it holds those lines for this rather than printing them.
+  bb_take_log: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
 } as const;
 
 type Shim = ReturnType<typeof dlopen<typeof SYMBOLS>>['symbols'];
+
+const log = new Logger('rawshim');
+const LOG_BYTES = 64 * 1024;
 
 let cached: Shim | null = null;
 
@@ -135,7 +142,7 @@ export function shim(): Shim {
   const failures: string[] = [];
   for (const candidate of CANDIDATES) {
     try {
-      cached = dlopen(candidate, SYMBOLS).symbols;
+      cached = drainingLog(dlopen(candidate, SYMBOLS).symbols);
       return cached;
     } catch (error) {
       failures.push(`  ${candidate}: ${String(error)}`);
@@ -144,4 +151,34 @@ export function shim(): Shim {
   throw new Error(
     `could not load librawshim. Run \`bun run build:native\`. Tried:\n${failures.join('\n')}`,
   );
+}
+
+/** The same calls, each followed by moving the library's held lines into the server's log. */
+function drainingLog(symbols: Shim): Shim {
+  const buffer = new Uint8Array(LOG_BYTES);
+  const drain = (): void => {
+    for (;;) {
+      const written = Number(symbols.bb_take_log(buffer, LOG_BYTES));
+      if (written === 0) return;
+      for (const line of new TextDecoder().decode(buffer.subarray(0, written)).split('\n')) {
+        if (line.startsWith('I')) log.info(line.slice(1));
+        else log.warn(line.slice(1));
+      }
+    }
+  };
+  drain();
+  const wrapped = Object.fromEntries(
+    Object.entries(symbols).map(([name, call]) => [
+      name,
+      (...args: unknown[]): unknown => {
+        try {
+          return Reflect.apply(call, undefined, args);
+        } finally {
+          drain();
+        }
+      },
+    ]),
+  );
+  // Same keys, same signatures: only the entries' functions were wrapped.
+  return wrapped as unknown as Shim;
 }

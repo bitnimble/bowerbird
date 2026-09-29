@@ -29,6 +29,9 @@ import { planarLayout } from './planar_layout';
 import type { RenderingIntent } from '../../../../../src/schemas/rendering_intent';
 import type { LayerPicture, Painted, StageAsk, StagePicture } from '../../../gpu/gpu_protocol';
 import type { PlanarPicture } from '../../../avif/avif_planes';
+import { Logger } from '../../logs/page_log';
+
+const log = new Logger('stage');
 
 /**
  * Where SDR white sits, in nits (ITU-R BT.2408).
@@ -702,8 +705,8 @@ export class StagePainter {
 
   private giveUp(err: unknown): void {
     this.declined = true;
-    console.error(
-      'stage: a WebGPU draw failed, so every later frame is drawn through a 2D canvas in SDR until a reload',
+    log.error(
+      'a WebGPU draw failed, so every later frame is drawn through a 2D canvas in SDR until a reload',
       err,
     );
   }
@@ -713,7 +716,7 @@ export class StagePainter {
     const said = err instanceof Error ? `${message}: ${err.message}` : message;
     if (this.said.has(said)) return;
     this.said.add(said);
-    console.warn(`stage: ${message}`, ...(err == null ? [] : [err]));
+    log.warn(message, ...(err == null ? [] : [err]));
   }
 }
 

@@ -1,5 +1,5 @@
 # Logs
-logs
+/logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -148,6 +148,7 @@ bowerbird.db
 bowerbird.db-*
 # The catalogue a restore moves aside (§4.9), which is `.db.` rather than `.db-`.
 bowerbird.db.*
+server.log.1
 # DATA_DIR's default, i.e. every generated file when the app runs from a checkout.
 /data/
 # Backups are taken beside the catalogue (§4.9), so running from a checkout puts

@@ -155,13 +155,21 @@ export function getBinPath(
 // clear by hand to reclaim space. A backup is the one generated file for which
 // that is false.
 export function backupsDir(dbPath: string): string {
-  return path.join(path.dirname(path.resolve(dbPath)), 'backups');
+  return besideCatalogue(dbPath, 'backups');
 }
 
 // The ICC profiles a print can be proofed through, which a user puts there: beside the catalogue
 // for the reason backups are, since `DATA_DIR` is theirs to clear.
 export function printerProfilesDir(dbPath: string): string {
-  return path.join(path.dirname(path.resolve(dbPath)), 'printer-profiles');
+  return besideCatalogue(dbPath, 'printer-profiles');
+}
+
+export function serverLogPath(dbPath: string): string {
+  return besideCatalogue(dbPath, 'server.log');
+}
+
+function besideCatalogue(dbPath: string, name: string): string {
+  return path.join(path.dirname(path.resolve(dbPath)), name);
 }
 
 export async function listPrinterProfiles(directory: string): Promise<string[]> {

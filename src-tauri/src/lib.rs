@@ -7,6 +7,7 @@
 // to the server the reader names.
 
 mod api;
+mod app_log;
 mod display;
 /// The one call that is not request/response, and so cannot go through `api.rs`. Android's.
 #[cfg_attr(desktop, allow(dead_code))]
@@ -40,7 +41,7 @@ pub fn run() {
                 return Err(err.into());
             }
             if let Err(why) = api::apply_ui_scale(app.handle()) {
-                eprintln!("[bowerbird] {why}");
+                app_log::error(why);
             }
             #[cfg(target_os = "macos")]
             {
@@ -75,6 +76,7 @@ pub fn run() {
             api::set_server_origin,
             api::ui_scale,
             api::set_ui_scale,
+            app_log::app_logs,
             display::display_is_hdr,
             events::events_following,
             export::pick_export_folder,
@@ -108,7 +110,7 @@ fn open_window(app: &tauri::AppHandle<Runtime>) -> tauri::Result<()> {
     match server::start(app) {
         Ok(signed_in) => main_window(app, tauri::WebviewUrl::External(signed_in)),
         Err(why) => {
-            eprintln!("[bowerbird] could not start the local server: {why}");
+            app_log::error(format!("could not start the local server: {why}"));
             rfd::MessageDialog::new()
                 .set_level(rfd::MessageLevel::Error)
                 .set_title("Bowerbird")
@@ -124,7 +126,7 @@ fn open_window(app: &tauri::AppHandle<Runtime>) -> tauri::Result<()> {
 fn open_window(app: &tauri::AppHandle<Runtime>) -> tauri::Result<()> {
     if api::configured_origin().is_none() {
         if let Err(why) = server::start(app) {
-            eprintln!("[bowerbird] could not start the local server: {why}");
+            app_log::error(format!("could not start the local server: {why}"));
         }
     }
     events::follow(app);

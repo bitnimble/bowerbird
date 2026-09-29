@@ -113,7 +113,9 @@ pub fn follow(app: &AppHandle<crate::Runtime>) {
                 // works for everything the reader does by hand - it just stops noticing what
                 // the library does on its own - so this reports rather than gives up, and
                 // saying so is the difference from the silence it replaced.
-                Err(why) => eprintln!("[bowerbird] event stream: {why}; retrying in {wait:?}"),
+                Err(why) => {
+                    crate::app_log::warn(format!("event stream: {why}; retrying in {wait:?}"))
+                }
             }
             // Raced, not slept through. Against a server that has gone the dial fails in
             // milliseconds, so within a minute of launch this is where the follower spends

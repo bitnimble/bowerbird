@@ -10,6 +10,9 @@ import type {
 } from './avif_planes';
 import { ThreadPool } from './avif_pool';
 import { wasiImports } from './wasi';
+import { pageLog } from '../features/logs/page_log';
+
+pageLog.follow('worker');
 
 /** Past eight, a still decodes no faster and each thread holds its own buffers. */
 const MAX_THREADS = 8;

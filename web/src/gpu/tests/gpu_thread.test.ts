@@ -12,8 +12,9 @@ class FakeWorker {
     FakeWorker.last = this;
   }
 
-  postMessage(message: { id: number }): void {
-    this.posted.push(message);
+  postMessage(message: unknown): void {
+    if (typeof message !== 'object' || message == null || !('id' in message)) return;
+    if (typeof message.id === 'number') this.posted.push({ id: message.id });
   }
 
   reply(data: unknown): void {

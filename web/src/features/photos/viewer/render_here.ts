@@ -2,6 +2,9 @@ import { photosApi } from '../../../api/photos';
 import { renditionsApi } from '../../../api/renditions';
 import type { Rendition } from '../../../../../src/services/processing/renditions/renditions';
 import { LocalDecoder } from '../../raw_edit/local_decode/local_decoder';
+import { Logger } from '../../logs/page_log';
+
+const log = new Logger('render');
 
 /**
  * Builds a rendition on this device's GPU and hands the server the picture to encode and keep.
@@ -16,7 +19,7 @@ export async function renderHere(
   beginLocal: () => () => void = () => () => {},
 ): Promise<void> {
   const asked = await renditionsApi.job(photoId, rendition, force).catch((error) => {
-    console.warn('could not request a local render job, so the server is building it', error);
+    log.warn('could not request a local render job, so the server is building it', error);
     return null;
   });
   if (asked?.job == null) return renditionsApi.build(photoId, rendition, force);
@@ -27,7 +30,7 @@ export async function renderHere(
     const rendered = await decoder.render(raw, asked.job).finally(finish);
     await renditionsApi.keep(photoId, rendition, asked.builtFrom, rendered);
   } catch (error) {
-    console.warn('rendering on this device failed, so the server is building it', error);
+    log.warn('rendering on this device failed, so the server is building it', error);
     await renditionsApi.build(photoId, rendition, force);
   } finally {
     decoder.close();

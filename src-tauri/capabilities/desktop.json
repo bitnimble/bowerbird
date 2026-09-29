@@ -10,6 +10,7 @@
     "core:window:allow-start-dragging",
     "allow-ui-scale",
     "allow-set-ui-scale",
+    "allow-app-logs",
     "allow-display-is-hdr",
     "allow-pick-export-folder",
     "allow-export-to-folder",

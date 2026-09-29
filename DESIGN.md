@@ -30,7 +30,7 @@ and web clients use its REST API. This repo's web client has a separate build/de
 | RAW decoding        | `rawler`, our vendored fork, in `native/rawshim`; the demosaic and the mosaic denoise are Slang on the GPU, and there is no CPU twin of either (§2.1) |
 | Metadata extraction | rawler header parse (no pixel decode), one reader for every format                                                                                    |
 | Testing             | Bun's built-in test runner (`bun test`, run via `bun run test`)                                                                                       |
-| Logging             | `src/logger.ts`, levelled and scoped; `console` is banned everywhere else by lint (§14.3)                                                             |
+| Logging             | `src/logger.ts` and the page's `page_log.ts`, levelled and scoped; `console` is banned everywhere else by lint (§14.3)                                |
 | Package manager     | `bun install` (no npm/pnpm/yarn)                                                                                                                      |
 
 ### System Dependencies
@@ -106,7 +106,8 @@ The latter builds conditioning tables, never a second frame path;
 bowerbird/
 ├── src/
 │   ├── index.ts                    # Entry point: creates Hono app, wires dependencies, starts server
-│   ├── logger.ts                   # Levelled logging; the only module allowed to touch console (§14.3)
+│   ├── logger.ts                   # Levelled logging; with the page's `page_log.ts`, the only code allowed to touch console (§14.3)
+│   ├── log_to_file.ts              # Opens `server.log` and logs uncaught errors; imported first by `index.ts`
 │   ├── db/
 │   │   ├── driver.ts               # The connection to libSQL, and everything it does differently
 │   │   ├── connection.ts           # Opens the catalogue, sets its pragmas, applies migrations
@@ -119,6 +120,10 @@ bowerbird/
 │   │   │   ├── libraries_api.ts
 │   │   │   └── tests/
 │   │   │       └── libraries_api.test.ts
+│   │   ├── logs/
+│   │   │   ├── logs_api.ts
+│   │   │   └── tests/
+│   │   │       └── logs_api.test.ts
 │   │   ├── photos/
 │   │   │   ├── photos_api.ts
 │   │   │   └── tests/
