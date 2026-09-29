@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderPlus, Link2 } from 'lucide-react';
 import { route } from '../../../../src/schemas/route';
-import { useLibrariesStore, useOnboardingStore, usePresenters } from '../../app/stores_context';
+import { useLibrariesStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { Heading } from '../../ui/heading';
 import { ICON } from '../../ui/icon';
@@ -12,7 +12,6 @@ import { List, ListBody, ListMeta, ListName, ListRow } from '../../ui/list';
 import { Page } from '../../ui/page';
 import { Panel } from '../../ui/panel';
 import { Row, Spacer } from '../../ui/row';
-import { ProgressBar } from '../../ui/progress_bar';
 import { Text } from '../../ui/text';
 import { AddLibraryDialog } from '../libraries/add_library_dialog';
 import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
@@ -40,24 +39,6 @@ const styles = stylex.create({
   actions: {
     marginTop: '20px',
   },
-  centred: {
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '12px',
-    position: 'relative',
-  },
-  footnote: {
-    position: 'absolute',
-    insetInline: 0,
-    bottom: '32px',
-    textAlign: 'center',
-  },
-  progress: {
-    width: '280px',
-  },
 });
 
 type Step = 'library' | 'preferences';
@@ -66,8 +47,7 @@ const STEPS: Step[] = ['library', 'preferences'];
 
 export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
   const store = useLibrariesStore();
-  const { pipelinesReady } = useOnboardingStore();
-  const { libraries, onboarding } = usePresenters();
+  const { libraries } = usePresenters();
   const write = useSettingWriter();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>('library');
@@ -75,9 +55,6 @@ export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
   useEffect(() => {
     void libraries.load();
   }, [libraries]);
-  useEffect(onboarding.preparePipelines, [onboarding]);
-
-  if (!pipelinesReady) return <PreparingPipelines />;
 
   const index = STEPS.indexOf(step);
   const previous = STEPS[index - 1];
@@ -114,25 +91,6 @@ export const OnboardingPage = observer(function OnboardingPage(): JSX.Element {
           )}
         </Row>
       </Page>
-    </div>
-  );
-});
-
-const PreparingPipelines = observer(function PreparingPipelines(): JSX.Element {
-  const { pipelinesCompiled, pipelinesToCompile } = useOnboardingStore();
-  return (
-    <div {...stylex.props(styles.centred)}>
-      <Heading>{OnboardingStrings.preparing()}</Heading>
-      <Text variant="muted" as="p" style={styles.footnote}>
-        {OnboardingStrings.precompiling()}
-      </Text>
-      <ProgressBar
-        label={OnboardingStrings.preparing()}
-        value={pipelinesCompiled}
-        // Zero until the worker has counted what it will compile, and `<progress>` needs a positive max.
-        max={Math.max(pipelinesToCompile, 1)}
-        style={styles.progress}
-      />
     </div>
   );
 });
