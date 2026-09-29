@@ -313,7 +313,6 @@ export class ReplicationRunner {
   start(): void {
     this.timer ??= setInterval(() => void this.replicateAll(), AUTO_EVERY_MS);
     this.timer.unref?.();
-    void this.replicateAll();
   }
 
   stop(): void {
@@ -321,7 +320,7 @@ export class ReplicationRunner {
     this.timer = null;
   }
 
-  private async replicateAll(): Promise<void> {
+  async replicateAll(): Promise<void> {
     const rows = this.db.query('SELECT library_id FROM replication_libraries').all() as {
       library_id: string;
     }[];

@@ -1159,8 +1159,8 @@ failed its hash at eviction) until a later check proves them gone.
 ### 14.3 A pass: follow, copy, cull
 
 `Mirror.run` is one pass over one library, and runs after any scan that changed something (which
-covers every import), every fifteen minutes, and when somebody presses the button. In that order,
-and the order is load-bearing:
+covers every import), once at startup after the startup scan and sync, every fifteen minutes, and
+when somebody presses the button. In that order, and the order is load-bearing:
 
 1. **Follow the moves.** Every held copy whose `rel_path` is not the photograph's current path is
    renamed on the mount. That includes a bin move and a restore: the Bin is a folder inside the

@@ -131,14 +131,14 @@ export class ScanService implements LibraryLifecycleListener {
     this.status.clear(libraryId);
   }
 
-  async scanAll(): Promise<void> {
+  async scanAll(trigger: ScanTrigger): Promise<void> {
     // Reclaim is by expiry now (§9.7), so a container killed and restarted within
     // seconds finds its own dead run still holding the lease. Skipping silently
     // would drop that library until tomorrow, so the ones that were locked are
     // re-attempted at the end of the loop.
     const skipped: string[] = [];
     for (const library of this.libraries.list()) {
-      if (!(await this.scanOne(library.id))) skipped.push(library.id);
+      if (!(await this.scanOne(library.id, trigger))) skipped.push(library.id);
     }
     if (skipped.length === 0) return;
 
@@ -162,13 +162,13 @@ export class ScanService implements LibraryLifecycleListener {
       });
       await Bun.sleep(waitFor);
     }
-    for (const libraryId of skipped) await this.scanOne(libraryId);
+    for (const libraryId of skipped) await this.scanOne(libraryId, trigger);
   }
 
   /** False when the library was locked; every other failure is logged and swallowed. */
-  private async scanOne(libraryId: string): Promise<boolean> {
+  private async scanOne(libraryId: string, trigger: ScanTrigger): Promise<boolean> {
     try {
-      await this.scanLibrary(libraryId, undefined, 'daily');
+      await this.scanLibrary(libraryId, undefined, trigger);
       return true;
     } catch (err) {
       // Never let one library abort the batch (§9.7).
