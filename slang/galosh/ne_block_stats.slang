@@ -1,6 +1,7 @@
 // Phase 0(a): one invocation per 8x8 half-res block, its mean and its Laplacian variance.
 //
-// The blocks are CFA-aware - stride 2 in both axes off the channel's own offset - so each of the four filter positions is measured on its own.
+// The blocks are CFA-aware - the period's stride in both axes off the channel's own offset - so
+// each filter position is measured on its own, and only green's are: the fit states green's noise.
 //
 // **A workgroup takes a block at a time, together, rather than a thread taking one alone.** The
 // median is over 96 values, which is far more than a thread can hold in registers when the index
@@ -31,8 +32,17 @@ struct Push {
     /// The CFA's period: how many channels there are, and the stride each one's sub-lattice has.
     int period_w;
     int period_h;
+    /// Which of the period's positions are green, a bit each, the 33rd onwards in the second word.
+    uint green_low;
+    uint green_high;
 };
 [vk::binding(20, 0)] ConstantBuffer<Push> pc;
+
+bool green(int channel)
+{
+    let word = channel < 32 ? pc.green_low : pc.green_high;
+    return ((word >> uint(channel & 31)) & 1u) != 0u;
+}
 
 static const int BLOCK = 8;
 static const int THREADS = 64;
@@ -118,12 +128,9 @@ void ne_block_stats(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
         }
         let mean = sum / float(BLOCK * BLOCK);
 
-        // **A block the envelope fit will not read needs no median.** Every read of `blk_var` in
-        // `ne_finalize` is gated on the mean falling inside this range, so sorting one that does not
-        // is 28 barriers and a bitonic network spent on a number nothing consumes. The variance
-        // still gets written, above the `1e9` that same guard rejects, so a reader that ever did
-        // reach it would be refused rather than handed a stale slot.
-        let usable = mean > BLOCK_MEAN_FLOOR && mean < BLOCK_MEAN_CEILING;
+        // Skipped blocks still write a variance above `ne_finalize`'s `1e9` guard, so a stale slot
+        // is never read as one.
+        let usable = green(ch) && mean < BLOCK_MEAN_CEILING;
         if (!usable) {
             if (tid == 0) {
                 blk_mean[bi_global] = mean;

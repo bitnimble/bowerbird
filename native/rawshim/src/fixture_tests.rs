@@ -1421,23 +1421,21 @@ mod decode_geometry {
     #[test]
     fn the_fit_is_the_one_this_sensor_has() {
         let detail = crate::galosh::Detail::at(20.0, 30.0);
-        // alpha, sigma_sq, and the four dark reference slots, in the conditioned mosaic's own
-        // units - where full scale is the most amplified channel's saturation
-        // (`decode_rawler::channel_ceilings`), so the scale is the frame's white balance spread
-        // below what a reader might expect. `alpha` tracks it, 0.350 against 0.353 on the Sony
-        // and 0.536 against 0.524 on the Canon.
+        // alpha and sigma_sq are green's, in the conditioned mosaic's own units - where full scale
+        // is the most amplified channel's saturation (`decode_rawler::channel_ceilings`). The dark
+        // reference slots are in the stabilised domain those two define.
         let recorded = [
             (
                 sony(),
-                0.0000519686_f32,
-                0.0000005350266_f32,
-                [31.926577_f32, 31.907892, 31.890705, 31.73153],
+                0.000033906806_f32,
+                0.000000004439296_f32,
+                [2.5511618_f32, 3.2173107, 3.141663, 2.229705],
             ),
             (
                 canon(),
-                0.000018469538,
-                0.00000002887757,
-                [30.684685, 30.435102, 30.445705, 30.55717],
+                0.0000032712883,
+                0.0,
+                [0.72962385, 1.134822, 1.1687495, 0.9514519],
             ),
         ];
         for (path, alpha, sigma_sq, dark) in recorded {
@@ -1467,31 +1465,22 @@ mod decode_geometry {
     /// What the automatic Detail is chosen from ranks these six photographs the way their
     /// sensitivities do.
     ///
-    /// **The one property `read_noise` has to have, and the only one it is used for.** Nothing reads
+    /// **The one property `shadow_noise` has to have, and the only one it is used for.** Nothing reads
     /// its absolute value: `suggested_amount` ramps it between a gate and a span, so what decides
     /// whether a photograph is filtered is where it sits against the others. Six frames over 320x of
     /// ISO, two sensor patterns interleaved, and the order has to be the ISO order.
     ///
-    /// It was not. `ne_dark_finalize` took `alpha * dark_thresh * 0.5` back out of the measurement
-    /// as shot noise's share of it, and that guess at the dark population's level is five to ten
-    /// times under what the population actually sits at - so the correction landed anywhere between
-    /// 6% and 89% of the measurement depending on the frame's own histogram. The ISO 4000 X-Trans
-    /// frame lost 89% of its, came out reading like a base-ISO frame, and opened undenoised.
-    ///
     /// A strict ordering rather than a tolerance, because a rule that ramps cannot be stated as a
     /// number per frame without pinning this machine's GPU into the suite.
     ///
-    /// **Three makes, so the ordering is worth only as much as its margins.** `read_noise`'s own
-    /// doc records base-ISO frames spanning 0.17 to 0.52 of a thousandth across the 42-frame
-    /// library, which is threefold at one end of the scale - so six frames from three sensors
-    /// could in principle order by sensor rather than by sensitivity. Measured here they do not:
-    /// 0.00017, 0.00052, 0.00073, 0.00154, 0.00268, 0.00394, whose tightest neighbouring gap is the
-    /// Sony at 640 over the X-T3 at 160, and that is still 1.39x. The ISO 40000 frame over the
-    /// clipped one at 5000 is the next tightest at 1.47x, which is far less than the eightfold in
-    /// their sensitivities because the clipped frame was pushed. Nothing a reduction order moves is
-    /// near either. A frame swapped into this list wants the gaps checked again.
+    /// **Three makes, so the ordering is worth only as much as its margins.** Six frames from three
+    /// sensors could in principle order by sensor rather than by sensitivity. Measured here they do
+    /// not: 0.00021, 0.00039, 0.00069, 0.00159, 0.00214, 0.00498, whose tightest neighbouring gap
+    /// is the clipped frame at 5000 over the X-T3 at 4000, and that is still 1.34x. The Sony at 640
+    /// over the X-T3 at 160 is the next tightest at 1.77x. Nothing a reduction order moves is near
+    /// either. A frame swapped into this list wants the gaps checked again.
     #[test]
-    fn the_dark_variance_orders_the_fixtures_by_iso() {
+    fn the_shadow_noise_orders_the_fixtures_by_iso() {
         // The sensitivity each fixture was shot at, which is the premise the ordering is against.
         let frames = [
             (125, canon()),
@@ -1512,7 +1501,7 @@ mod decode_geometry {
             )
             .and_then(|frame| frame.noise)
             .expect("every fixture here has a mosaic to fit");
-            measured.push((iso, path, fit.model().read_noise()));
+            measured.push((iso, path, fit.model().shadow_noise()));
         }
         for pair in measured.windows(2) {
             let [

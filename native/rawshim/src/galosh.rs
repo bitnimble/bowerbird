@@ -6,9 +6,9 @@
 //! post-demosaic filter can separate again. Denoising first is the only place the noise is
 //! still what the sensor made.
 //!
-//! **Blind.** Phase 0 fits the sensor's own Poisson-Gaussian model off the frame - shot
-//! noise from the slope of variance against level, read noise from the Laplacians of the
-//! dark pixels - so there is no per-body noise profile to ship and no ISO to trust.
+//! **Blind.** Phase 0 fits the sensor's own Poisson-Gaussian model off the frame - shot and read
+//! noise as the slope and intercept of green's variance against level - so there is no per-body
+//! noise profile to ship and no ISO to trust.
 //!
 //! The kernels are in `slang/galosh/` with every other shader, compiled at build time and
 //! `include_str!`'d out of `OUT_DIR`. This module is the only thing that dispatches them either
@@ -51,7 +51,6 @@ const DR_WORKGROUPS: u32 = 512;
 /// Sizes of the histograms and the table `prelude.slang` declares, held against its text by
 /// `the_table_sizes_are_the_ones_the_shader_declares`.
 const SIGMA_BINS: usize = 4096;
-const DARK_HIST_BINS: usize = 4096;
 const LUT_SIZE: usize = 4096;
 
 /// `params_buf` slots, which are `prelude.slang`'s and must stay its.
@@ -259,10 +258,6 @@ struct Kernel {
 pub struct Galosh {
     ne_block_stats: Kernel,
     ne_finalize: Kernel,
-    ne_dark_thresh_hist: Kernel,
-    ne_dark_thresh_finalize: Kernel,
-    ne_dark_lap_hist: Kernel,
-    ne_dark_finalize: Kernel,
     gat_forward_full: Kernel,
     build_inv_lut: Kernel,
     lut_finalize: Kernel,
@@ -419,10 +414,6 @@ impl Galosh {
         Some(Galosh {
             ne_block_stats: kernel!("ne_block_stats", &[(0, R), (1, W), (2, W)]),
             ne_finalize: kernel!("ne_finalize", &[(0, R), (1, R), (3, W)]),
-            ne_dark_thresh_hist: kernel!("ne_dark_thresh_hist", &[(0, R), (1, W)]),
-            ne_dark_thresh_finalize: kernel!("ne_dark_thresh_finalize", &[(0, R), (1, W)]),
-            ne_dark_lap_hist: kernel!("ne_dark_lap_hist", &[(0, R), (1, R), (2, W)]),
-            ne_dark_finalize: kernel!("ne_dark_finalize", &[(0, R), (1, W)]),
             gat_forward_full: kernel!("gat_forward_full", &[(0, R), (1, W), (6, R)]),
             build_inv_lut: kernel!("build_inv_lut", &[(0, R), (1, W), (2, W), (3, W)]),
             lut_finalize: kernel!("lut_finalize", &[(0, R), (1, W)]),
@@ -540,12 +531,14 @@ pub struct Amounts {
 
 /// The sensor's noise, as Phase 0 fitted it off this frame.
 ///
-/// A physical model rather than a slider position: the variance of a photosite reading a
+/// A physical model rather than a slider position: the variance of a green photosite reading a
 /// signal `s` is `alpha * s + sigma_sq`, shot noise and read noise, both in the units the
-/// mosaic was normalised into. Fitted from the frame's own statistics - the slope of
-/// per-block variance against per-block level, and the Laplacians of the pixels its own
-/// tenth percentile calls dark - so it needs no per-body profile and does not consult the
-/// ISO, which by itself cannot tell a pushed exposure from a clean one.
+/// mosaic was conditioned into. Fitted from the frame's own statistics - the slope and intercept
+/// of per-block variance against per-block level - so it needs no per-body profile and does not
+/// consult the ISO, which by itself cannot tell a pushed exposure from a clean one.
+///
+/// Green's noise: a reader that divides a conditioning gain back out (`pmrid`,
+/// `base::noise_already_balanced`) divides green's.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoiseModel {
     pub alpha: f32,
@@ -622,6 +615,10 @@ impl NoiseFit {
     }
 }
 
+/// Where [`NoiseModel::shadow_noise`] is read, in the conditioned mosaic's units: moving it moves
+/// every automatic Detail, whose gate and span were set against the noise here.
+const SHADOW: f32 = 0.014;
+
 impl NoiseModel {
     /// The noise a mid-grey photosite carries, as a standard deviation in [0, 1].
     ///
@@ -643,19 +640,10 @@ impl NoiseModel {
         (self.alpha + self.sigma_sq).max(0.0).sqrt()
     }
 
-    /// The read-noise floor, which is what says how noisy a *photograph* is.
-    ///
-    /// **`sigma_sq` and not `alpha`, because only one of the two is measured robustly.** The slope
-    /// comes from a regression of per-block variance against per-block level, so it needs the frame
-    /// to offer a spread of levels with enough blocks in each; a night frame that is mostly black
-    /// does not, and the fit collapses. Measured over a 42-frame library, `alpha` reads 0.000005 on
-    /// an ISO 3200 frame and 0.000024 on an ISO 12800 one, against 0.001258 for another frame at
-    /// that same 12800 - fifty times under, on exactly the photographs a denoise is for. The read
-    /// term is taken instead from the Laplacians of the pixels the frame's own tenth percentile
-    /// calls dark, which is a direct estimate and needs no spread, and it stays ordered with ISO
-    /// across the whole library: 0.17 to 0.52 at base, 1.88 to 2.75 at 8000 and above (x10^-3).
-    pub fn read_noise(&self) -> f32 {
-        self.sigma_sq.max(0.0).sqrt()
+    /// The noise a shadow carries, which is what says how noisy a *photograph* is: grain shows
+    /// first a little above black, where neither term alone describes it.
+    pub fn shadow_noise(&self) -> f32 {
+        (self.alpha * SHADOW + self.sigma_sq).max(0.0).sqrt()
     }
 
     /// What the Detail sliders should read on this frame, 0 to 100, where nobody has said.
@@ -681,7 +669,7 @@ impl NoiseModel {
     pub fn suggested_amount(&self) -> f64 {
         const GATE: f32 = 0.0006;
         const SPAN: f32 = 0.00539;
-        let over = self.read_noise() - GATE;
+        let over = self.shadow_noise() - GATE;
         if over <= 0.0 {
             return 0.0;
         }
@@ -1396,8 +1384,9 @@ async fn run(
     let ne_sampled = ne_per_ch.div_ceil(ne_stride);
     let blk_mean = plane!("galosh blk_mean", slots as usize * ne_sampled);
     let blk_var = plane!("galosh blk_var", slots as usize * ne_sampled);
-    let dark_thresh_hist = plane!("galosh dark thresh hist", DARK_HIST_BINS);
-    let dark_lap_hist = plane!("galosh dark lap hist", DARK_HIST_BINS);
+    let green = (0..pw * ph)
+        .filter(|&channel| cfa.colour_at(channel / pw, channel % pw) == 1)
+        .fold(0u64, |mask, channel| mask | 1 << channel);
 
     let half = tail(hw * hh);
     let l_h_den = plane!("galosh L_h_den", half);
@@ -1448,12 +1437,6 @@ async fn run(
     });
     let mut pushes = Pushes { bytes: Vec::new() };
     let wh = pushes.add(&[Word::I(w), Word::I(h)]);
-    let wh_period = pushes.add(&[
-        Word::I(w),
-        Word::I(h),
-        Word::I(pw as i32),
-        Word::I(ph as i32),
-    ]);
     let block_stats = pushes.add(&[
         Word::I(w),
         Word::I(h),
@@ -1463,16 +1446,10 @@ async fn run(
         Word::I(ne_stride as i32),
         Word::I(pw as i32),
         Word::I(ph as i32),
+        Word::I(green as u32 as i32),
+        Word::I((green >> 32) as u32 as i32),
     ]);
     let finalize = pushes.add(&[Word::I(w), Word::I(h), Word::I(slots * ne_sampled as i32)]);
-    let thresh_slot = pushes.add(&[Word::I(15)]);
-    let lap_hist = pushes.add(&[
-        Word::I(w),
-        Word::I(h),
-        Word::I(15),
-        Word::I(pw as i32),
-        Word::I(ph as i32),
-    ]);
     let n_wg = pushes.add(&[Word::I(DR_WORKGROUPS as i32)]);
     let sigma_slice = pushes.add(&[
         Word::I(w),
@@ -1735,27 +1712,6 @@ async fn run(
                 &[(0, &blk_mean), (1, &blk_var), (3, &params)],
             );
             run(&galosh.ne_finalize, &g, finalize, 1, 1);
-            let g = bind(
-                &galosh.ne_dark_thresh_hist,
-                &[(0, &raw), (1, &dark_thresh_hist)],
-            );
-            let (tx, ty) = groups((hw + 2) / 3, (hh + 2) / 3, 16);
-            run(&galosh.ne_dark_thresh_hist, &g, wh_period, tx, ty);
-            let g = bind(
-                &galosh.ne_dark_thresh_finalize,
-                &[(0, &dark_thresh_hist), (1, &params)],
-            );
-            run(&galosh.ne_dark_thresh_finalize, &g, thresh_slot, 1, 1);
-            let g = bind(
-                &galosh.ne_dark_lap_hist,
-                &[(0, &raw), (1, &params), (2, &dark_lap_hist)],
-            );
-            run(&galosh.ne_dark_lap_hist, &g, lap_hist, hx, hy);
-            let g = bind(
-                &galosh.ne_dark_finalize,
-                &[(0, &dark_lap_hist), (1, &params)],
-            );
-            run(&galosh.ne_dark_finalize, &g, thresh_slot, 1, 1);
         }
 
         // Phase 1: into the GAT domain, and the table that comes back out of it.
@@ -2142,9 +2098,9 @@ fn fit_of(mapped: &[u8]) -> NoiseFit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACHROMATIC_RANGE, ALPHA_MIN, Amounts, COLOUR_LEAD, DARK_HIST_BINS, Denoiser, Detail,
-        LUT_SIZE, NoiseFit, NoiseModel, P_ALPHA, P_DARK_REF0, P_INV_SG, P_SIGMA_SQ,
-        P_UNIFIED_SIGMA, SIGMA_BINS, denoise, device, phases,
+        ACHROMATIC_RANGE, ALPHA_MIN, Amounts, COLOUR_LEAD, Denoiser, Detail, LUT_SIZE, NoiseFit,
+        NoiseModel, P_ALPHA, P_DARK_REF0, P_INV_SG, P_SIGMA_SQ, P_UNIFIED_SIGMA, SIGMA_BINS,
+        denoise, device, phases,
     };
 
     /// How many phases every frame is shrunk over, which is a quality decision rather than a tuning.
@@ -2202,11 +2158,7 @@ mod tests {
     #[test]
     fn the_table_sizes_are_the_ones_the_shader_declares() {
         const SLANG: &str = include_str!("../../../slang/galosh/prelude.slang");
-        for (name, here) in [
-            ("SIGMA_BINS", SIGMA_BINS),
-            ("DARK_HIST_BINS", DARK_HIST_BINS),
-            ("LUT_SIZE", LUT_SIZE),
-        ] {
+        for (name, here) in [("SIGMA_BINS", SIGMA_BINS), ("LUT_SIZE", LUT_SIZE)] {
             let opener = format!("public static const int {name} = ");
             let start = SLANG
                 .find(&opener)
@@ -2362,20 +2314,20 @@ mod tests {
     /// The pair the two halves of the Detail panel are suggested at.
     #[test]
     fn the_suggested_colour_runs_ahead_of_the_luminance() {
-        let at = |read: f32| {
+        let at = |shadow: f32| {
             NoiseModel {
                 alpha: 0.0,
-                sigma_sq: read * read,
+                sigma_sq: shadow * shadow,
             }
             .suggested_amounts()
         };
         // A base-ISO frame is declined on both halves rather than on one.
-        assert_eq!(at(0.00026), (0.0, 0.0));
+        assert_eq!(at(0.00027), (0.0, 0.0));
         // **Luminance lands well short of the end of its track and colour is at the end of its**,
         // which is the same rule read on two tracks rather than an inconsistency: what is lost to
         // under-denoising luminance is grain and still reads as a photograph, and what is lost to
         // under-denoising colour is mottle and never does. This is `DSC00982` at ISO 12800.
-        let (luma, colour) = at(0.00275);
+        let (luma, colour) = at(0.00287);
         assert!((35.0..45.0).contains(&luma), "luma {luma}");
         assert_eq!(
             colour, 100.0,
@@ -2383,15 +2335,16 @@ mod tests {
         );
 
         // A frame the ramp puts mid-track, where the lead is the lead rather than the clamp: this
-        // is `DSC05282` at ISO 4000, the frame the eighth-resolution anchor was measured on.
-        let (luma, colour) = at(0.00187);
+        // is `IMG_4138` at ISO 2000, whose colour still runs past 50, where the chroma pyramid
+        // stops an octave short of the eighth-resolution anchor.
+        let (luma, colour) = at(0.00170);
         assert!(colour > luma, "colour {colour} does not lead luma {luma}");
         assert!(
             (colour - luma * COLOUR_LEAD).abs() < 1e-6,
             "colour {colour} is not the lead"
         );
         assert!(
-            (70.0..85.0).contains(&colour),
+            (55.0..75.0).contains(&colour),
             "colour {colour} does not reach the coarse level"
         );
     }
@@ -2631,78 +2584,49 @@ mod tests {
         }
     }
 
-    /// The automatic amount against the read noise a real library actually reports.
+    /// The automatic amount against the shadow noise a real library actually reports.
     ///
-    /// Every figure here is measured by `examples/noise_survey` over 42 frames spanning ISO 100 to
-    /// 12800, so this fails if the ramp is ever moved off the photographs it was fitted to. The
-    /// alpha is zero throughout because the slope is precisely what this rule does not consult.
+    /// Every figure here is `shadow_noise` measured by `examples/noise_survey` over 43 frames
+    /// spanning ISO 50 to 25600, so this fails if the ramp is ever moved off the photographs it
+    /// was fitted to. Each is entered as `sigma_sq` alone, which reads back the same figure.
     #[test]
     fn a_clean_frame_is_left_alone_and_a_noisy_one_is_not() {
-        let at = |read: f32| {
+        let at = |shadow: f32| {
             NoiseModel {
                 alpha: 0.0,
-                sigma_sq: read * read,
+                sigma_sq: shadow * shadow,
             }
             .suggested_amount()
         };
         // Base ISO, across both libraries: the whole range is declined rather than put through
         // the chain to be left alone.
-        for clean in [0.00017, 0.00026, 0.00036, 0.00052] {
+        for clean in [0.00021, 0.00027, 0.00032, 0.00039] {
             assert_eq!(
                 at(clean),
                 0.0,
                 "a base-ISO frame at {clean} asks for nothing"
             );
         }
-        // ISO 250 is barely off the gate, and the library's noisiest frame - DSC00982 at ISO 12800
-        // - is where the track was judged against the body's JPEG. Nothing measured reaches the
-        // upper half, the ramp erring towards grain rather than towards smearing.
+        // Nothing measured reaches the upper half, the ramp erring towards grain rather than
+        // towards smearing.
         assert!(
-            (1.0..20.0).contains(&at(0.00088)),
-            "ISO 250 asks {}",
-            at(0.00088)
+            (1.0..20.0).contains(&at(0.00107)),
+            "ISO 1250 asks {}",
+            at(0.00107)
         );
         assert!(
-            (20.0..35.0).contains(&at(0.00211)),
-            "ISO 5000 asks {}",
-            at(0.00211)
+            (15.0..30.0).contains(&at(0.00179)),
+            "ISO 6400 asks {}",
+            at(0.00179)
         );
         assert!(
-            (35.0..45.0).contains(&at(0.00275)),
-            "ISO 12800 asks {}",
-            at(0.00275)
+            (40.0..50.0).contains(&at(0.00308)),
+            "ISO 25600 asks {}",
+            at(0.00308)
         );
         // Ramped rather than stepped, so two frames either side of the gate are not two
         // different photographs.
         assert!(at(0.0007) < at(0.0009));
-    }
-
-    /// The slope is what the automatic amount refuses to read, and this is why.
-    ///
-    /// Both of these are real: `DSC00982` at ISO 12800 fits a slope of 0.000024 where `DSC00981`
-    /// at the same sensitivity fits 0.001258, because the regression behind it needs a spread of
-    /// levels that a mostly-black frame does not offer. Keyed on the slope the noisier of the two
-    /// asks for less than a third of what the other does; keyed on the read floor it does not.
-    #[test]
-    fn a_collapsed_slope_does_not_decide_the_amount() {
-        let collapsed = NoiseModel {
-            alpha: 0.000024,
-            sigma_sq: 0.00000759,
-        };
-        let intact = NoiseModel {
-            alpha: 0.001258,
-            sigma_sq: 0.00000635,
-        };
-        assert!(
-            collapsed.suggested_amount() > intact.suggested_amount(),
-            "the noisier frame asks for more: {} against {}",
-            collapsed.suggested_amount(),
-            intact.suggested_amount(),
-        );
-        assert!(
-            collapsed.at_mid_grey() < intact.at_mid_grey(),
-            "the statistic this rule refuses to use is the one that inverts them",
-        );
     }
 
     /// A frame clean enough that its Poisson means run past what f32 can sum.

@@ -12,10 +12,9 @@ import prelude;
 void irls_seed(uint3 id : SV_DispatchThreadID)
 {
     if (id.x != 0) { return; }
-    // **A zero scale is not a scale, it is a stuck one.** `sigma_sq` is zero on more than the
-    // degenerate path: `ne_finalize` writes it as zero outright and the dark phase fills it in
-    // afterwards, so a frame whose dark statistics bail - too few samples - arrives here still at
-    // zero. Both bounds would then be zero too, and every later `clamp(s, S_MIN, S_MAX)` pins the
+    // **A zero scale is not a scale, it is a stuck one.** `ne_finalize` fits `sigma_sq` to zero
+    // on a clean frame whose darkest blocks read no more than shot noise. Both bounds would then be
+    // zero too, and every later `clamp(s, S_MIN, S_MAX)` pins the
     // IRLS scale at zero for the rest of the run: the residual weights all collapse, the dark
     // references come out equal, and the fixed-pattern offset this phase exists to remove is
     // subtracted and added back unchanged. Silent, because the picture is otherwise correct.

@@ -1795,19 +1795,12 @@ pub fn noise_through_balance(luma: [f64; 3], wb_gains: [f32; 3]) -> (f64, f64) {
 /// before GALOSH ever measured it.
 ///
 /// `decode_rawler::conditioned` multiplies each photosite by its channel's gain, and `Held::fit`
-/// runs over that - so the fitted `alpha` and `sigma_sq` are an average of the four CFA positions'
-/// own, `ne_block_stats` measuring each position separately and `ne_finalize` binning all of them
-/// by level together. The mean is therefore over R, G, G and B, greens twice; the per-channel
-/// terms are only a *re*-weighting once divided by this.
+/// runs over that on green's positions alone (`ne_block_stats`), so the fitted `alpha` and
+/// `sigma_sq` carry green's gain, once and squared; the per-channel terms are only a *re*-weighting
+/// once divided by these.
 pub fn noise_already_balanced(wb_gains: [f32; 3]) -> (f64, f64) {
-    let positions = [wb_gains[0], wb_gains[1], wb_gains[1], wb_gains[2]];
-    let shot = positions.iter().map(|g| f64::from(*g)).sum::<f64>() / 4.0;
-    let read = positions
-        .iter()
-        .map(|g| f64::from(*g) * f64::from(*g))
-        .sum::<f64>()
-        / 4.0;
-    (shot, read)
+    let green = f64::from(wb_gains[1]);
+    (green, green * green)
 }
 
 /// A mosaic's noise fit as the variance of a luma in coded light: `[slope, floor]`, the variance at
@@ -1817,7 +1810,7 @@ pub fn noise_already_balanced(wb_gains: [f32; 3]) -> (f64, f64) {
 /// The fit describes a photosite reading a signal `s` in the mosaic's normalisation, and the luma
 /// holds `s * full_scale_light`. The two terms move differently: only the shot term is
 /// proportional to the signal, and the balance reaches a luma weighted by `w^2` where it reached
-/// the fit averaged over the CFA's four positions.
+/// the fit as green's.
 pub fn luma_noise_in_light(
     noise: crate::galosh::NoiseModel,
     full_scale_light: f32,

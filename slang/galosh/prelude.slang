@@ -21,7 +21,6 @@ public static const int P_DARK_REF0 = 6;
 public static const int P_S_SCALE = 10;
 public static const int P_ALPHA = 13;
 public static const int P_SIGMA_SQ = 14;
-public static const int P_DARK_THRESH = 15;
 // The IRLS bounds. See `irls_seed`.
 public static const int P_S_MIN = 16;
 public static const int P_S_MAX = 17;
@@ -145,14 +144,12 @@ public float2 chroma_weights(uint colour)
     return float2(0.0, -0.25);
 }
 
-// The block mean range whose variance the envelope fit will actually read.
+// The block mean above which the envelope fit reads no variance.
 //
-// **Here rather than in `ne_finalize` alone, because two kernels now depend on the same bound.**
-// Every read of `blk_var` there is gated on the block's mean falling inside this, so a block
-// outside it has no variance worth computing and `ne_block_stats` skips its median outright.
-// Written twice the two could drift apart, and the direction that matters is a block the fit reads
-// whose variance was never computed - so they read one declaration instead.
-public static const float BLOCK_MEAN_FLOOR = 0.003;
+// **Here rather than in `ne_finalize` alone, because two kernels depend on the same bound.** Every
+// read of `blk_var` there is gated on it, so a block above it has no variance worth computing and
+// `ne_block_stats` skips its median outright. Written twice the two could drift apart, and the
+// direction that matters is a block the fit reads whose variance was never computed.
 public static const float BLOCK_MEAN_CEILING = 0.97;
 
 // The smallest shot-noise slope the GAT will divide by. Every kernel here scales by `2/alpha`,
@@ -192,8 +189,6 @@ public static const float ACHROMATIC_RANGE = 4.0;
 
 /// Each histogram and table below is written by one kernel and read by another, and sized by the
 /// host (`galosh.rs`, `the_table_sizes_are_the_ones_the_shader_declares`).
-public static const int DARK_HIST_BINS = 4096;
-public static const float DARK_LAP_MAX = 0.1;
 public static const int SIGMA_BINS = 4096;
 public static const float SIGMA_LAP_MAX = 16.0;
 public static const int LUT_SIZE = 4096;

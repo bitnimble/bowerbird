@@ -20,6 +20,10 @@ use std::collections::HashMap;
 const ANCHOR_K: f64 = 0.0005995267 * 1600.0 + 0.00868861;
 const ANCHOR_SIGMA: f64 = 7.11772e-7 * 1600.0 * 1600.0 + 6.514934e-4 * 1600.0 + 0.11492713;
 
+/// The same polynomials at ISO 100, which is as quiet a frame as this treats anything as.
+const QUIETEST_K: f64 = 0.0005995267 * 100.0 + 0.00868861;
+const QUIETEST_SIGMA: f64 = 7.11772e-7 * 100.0 * 100.0 + 6.514934e-4 * 100.0 + 0.11492713;
+
 /// The code range their `k` and `sigma` are stated over, and the scale the network's input is
 /// multiplied by once stabilised. Both are `run_benchmark.py`'s.
 const V: f64 = 959.0;
@@ -393,6 +397,12 @@ const ADD: usize = 4;
 const SOW: usize = 10;
 const REAP: usize = 11;
 const SEPARABLE: usize = 12;
+const TALLY: usize = 17;
+
+/// `LIFT_BINS`, `LIFT_QUANTUM` and `LIFT_WORDS` in `slang/pmrid.slang`.
+const LIFT_BINS: usize = 128;
+const LIFT_QUANTUM: f64 = 2048.0;
+const LIFT_WORDS: usize = 4 * LIFT_BINS * 2;
 
 /// `WIDE` and `TALL` in `slang/pmrid.slang`: a workgroup's shape in output pixels.
 const WIDE: u32 = 16;
@@ -624,6 +634,7 @@ fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], fastest:
             storage(1, false),
             storage(2, true),
             storage(3, false),
+            storage(4, false),
             uniform(20),
             uniform(21),
         ],
@@ -651,6 +662,7 @@ fn build_kernels(gpu: &'static crate::gpu::Gpu, weights: &'static [u8], fastest:
         "separable_short",
         "separable_stub",
         "separable_small",
+        "tally",
     ]
     .iter()
     .map(|name| {
@@ -995,8 +1007,92 @@ fn denoise_through(
     gains: [f32; 3],
     detail: crate::galosh::Detail,
     fit: crate::galosh::NoiseFit,
-    (window_w, window_h): (usize, usize),
+    window: (usize, usize),
 ) {
+    let (luma, colour) = detail.resolved(Some(fit));
+    let (pw, ph) = (window.0 / 2, window.1 / 2);
+    let mut held = Session::take(gpu, pmrid, pw, ph);
+    // Seeded from the caller's, so a photosite no tile keeps - the odd row or column past the last
+    // whole 2x2 site - comes back as it arrived rather than as zero.
+    let filtered = mosaic.duplicate(gpu);
+    held.bind(gpu, pmrid, mosaic, &filtered);
+    let edges = plan(
+        pmrid,
+        &held,
+        mosaic,
+        cfa,
+        gains,
+        fit,
+        (luma, colour),
+        window,
+    );
+    for tile in &edges {
+        held.run(gpu, pmrid, tile, (pw, ph), Step::Reap);
+    }
+    *mosaic = filtered;
+    held.put_back();
+}
+
+/// How far the network moves this frame's photosites on average, in noise sigmas at their level:
+/// above zero where `fit` says the frame is quieter than the network finds it, below where noisier.
+pub async fn lift(
+    gpu: &'static crate::gpu::Gpu,
+    pmrid: &Pmrid,
+    mosaic: &crate::condition::Mosaic,
+    cfa: &crate::cfa::Cfa,
+    gains: [f32; 3],
+    fit: crate::galosh::NoiseFit,
+) -> Option<f64> {
+    let window = window(gpu, pmrid, mosaic.width, mosaic.height);
+    let (pw, ph) = (window.0 / 2, window.1 / 2);
+    let mut held = Session::take(gpu, pmrid, pw, ph);
+    let unwritten = crate::condition::Mosaic::upload(gpu, &[0.0], 1, 1);
+    held.bind(gpu, pmrid, mosaic, &unwritten);
+    let edges = plan(
+        pmrid,
+        &held,
+        mosaic,
+        cfa,
+        gains,
+        fit,
+        (100.0, 100.0),
+        window,
+    );
+    let sums = tallied(gpu, pmrid, &held, &edges, (pw, ph)).await;
+    held.put_back();
+    let (sum, count) = sums?;
+    let model = fit.model();
+    let green = f64::from(gains[1]);
+    let (mut weighed, mut weight) = (0.0, 0.0);
+    for plane in 0..4 {
+        for bin in 0..LIFT_BINS {
+            if count[plane][bin] == 0 {
+                continue;
+            }
+            let raw = ((bin as f64 + 0.5) / LIFT_BINS as f64).powi(2);
+            let sigma = (f64::from(model.alpha) / green * raw
+                + f64::from(model.sigma_sq) / (green * green))
+                .sqrt();
+            let moved = sum[plane][bin] as f64 / LIFT_QUANTUM;
+            weighed += moved / sigma;
+            weight += count[plane][bin] as f64;
+        }
+    }
+    (weight > 0.0).then(|| weighed / weight)
+}
+
+/// Every tile of `mosaic` through `window`, as [`Session::run`] is handed them.
+#[allow(clippy::too_many_arguments)]
+fn plan(
+    pmrid: &Pmrid,
+    held: &Session,
+    mosaic: &crate::condition::Mosaic,
+    cfa: &crate::cfa::Cfa,
+    gains: [f32; 3],
+    fit: crate::galosh::NoiseFit,
+    (luma, colour): (f64, f64),
+    (window_w, window_h): (usize, usize),
+) -> Vec<Edges> {
     // Which of the 2x2's positions each plane takes: red, the green beside it, the other green,
     // blue, which is the order the network's four channels are in.
     let mut position_at = [0u32; 4];
@@ -1017,49 +1113,115 @@ fn denoise_through(
     });
 
     // The k-sigma transform of `run_benchmark.py`, against our own fitted model rather than their
-    // ISO polynomial: the same variance in the same units, off green, whose gain the fit carries.
+    // ISO polynomial: the fit states green's noise, so both terms come off green's gain.
     let green = f64::from(gains[1]);
     let model = fit.model();
-    let k = V * f64::from(model.alpha) / green;
     let sigma = V * V * f64::from(model.sigma_sq) / (green * green);
+    let k = (V * f64::from(model.alpha) / green).max(quietest_k(sigma));
     let cvt_k = ANCHOR_K / k;
     let cvt_b = (sigma / (k * k) - ANCHOR_SIGMA / (ANCHOR_K * ANCHOR_K)) * ANCHOR_K / V;
 
-    let (luma, colour) = detail.resolved(Some(fit));
-    let (pw, ph) = (window_w / 2, window_h / 2);
-    let mut held = Session::take(gpu, pmrid, pw, ph);
-    // Seeded from the caller's, so a photosite no tile keeps - the odd row or column past the last
-    // whole 2x2 site - comes back as it arrived rather than as zero.
-    let filtered = mosaic.duplicate(gpu);
-    held.bind(gpu, pmrid, mosaic, &filtered);
+    let across = tiles(mosaic.width, window_w);
+    tiles(mosaic.height, window_h)
+        .into_iter()
+        .flat_map(|down| across.iter().map(move |across| (down, *across)))
+        .map(|((origin_y, top, bottom), (origin_x, left, right))| Edges {
+            stride: mosaic.width as u32,
+            origin_x: origin_x as u32,
+            origin_y: origin_y as u32,
+            width: window_w as u32,
+            height: window_h as u32,
+            keep_x: (left - origin_x) as u32,
+            keep_y: (top - origin_y) as u32,
+            keep_width: (right - left) as u32,
+            keep_height: (bottom - top) as u32,
+            input_at: held.at[0] as u32,
+            predicted_at: held.at[pmrid.prediction] as u32,
+            position_at,
+            gain_at,
+            cvt_k: cvt_k as f32,
+            cvt_b: cvt_b as f32,
+            scale: INPUT_SCALE as f32,
+            luma: (luma / 100.0) as f32,
+            colour: (colour / 100.0) as f32,
+        })
+        .collect()
+}
 
-    for (origin_y, top, bottom) in tiles(mosaic.height, window_h) {
-        for (origin_x, left, right) in tiles(mosaic.width, window_w) {
-            let edges = Edges {
-                stride: mosaic.width as u32,
-                origin_x: origin_x as u32,
-                origin_y: origin_y as u32,
-                width: window_w as u32,
-                height: window_h as u32,
-                keep_x: (left - origin_x) as u32,
-                keep_y: (top - origin_y) as u32,
-                keep_width: (right - left) as u32,
-                keep_height: (bottom - top) as u32,
-                input_at: held.at[0] as u32,
-                predicted_at: held.at[pmrid.prediction] as u32,
-                position_at,
-                gain_at,
-                cvt_k: cvt_k as f32,
-                cvt_b: cvt_b as f32,
-                scale: INPUT_SCALE as f32,
-                luma: (luma / 100.0) as f32,
-                colour: (colour / 100.0) as f32,
-            };
-            held.run(gpu, pmrid, &edges, pw, ph);
-        }
+/// The least `k` that keeps a full-scale photosite's stabilised input where an ISO 100 frame's
+/// would be, for a frame whose read variance is `sigma` in `V`'s units.
+///
+/// **Past that the network paints garbage**: a base-ISO frame's fitted slope puts the input five to
+/// ten times over it, and measured there the network moves photosites by hundreds of sigmas.
+fn quietest_k(sigma: f64) -> f64 {
+    let offset = ANCHOR_SIGMA / (ANCHOR_K * ANCHOR_K) * ANCHOR_K / V;
+    let top = |k: f64, sigma: f64| ANCHOR_K / k + sigma / (k * k) * ANCHOR_K / V - offset;
+    // `top(k, sigma) = most` is a quadratic in `k`, and this is its positive root.
+    let reach = top(QUIETEST_K, QUIETEST_SIGMA) + offset;
+    let c = ANCHOR_K / V * sigma;
+    (ANCHOR_K + (ANCHOR_K * ANCHOR_K + 4.0 * reach * c).sqrt()) / (2.0 * reach)
+}
+
+/// A plane's bins, one number each.
+type Bins = [[i64; LIFT_BINS]; 4];
+
+/// What `tally` summed over every tile: the residual in quanta, and the photosites, by plane and
+/// bin.
+async fn tallied(
+    gpu: &'static crate::gpu::Gpu,
+    pmrid: &Pmrid,
+    held: &Session,
+    edges: &[Edges],
+    plane: (usize, usize),
+) -> Option<(Bins, Bins)> {
+    let words = (LIFT_WORDS * 4) as u64;
+    let mut recording = gpu.record();
+    let readback = recording.buffer(&wgpu::BufferDescriptor {
+        label: Some("pmrid tally readback"),
+        size: words * edges.len() as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    recording.submit();
+    // A slice each rather than one running sum: a tile's photosites fill an `int` to about half.
+    for (slice, tile) in edges.iter().enumerate() {
+        let mut recording = gpu.record();
+        recording.encoder().clear_buffer(&held.tally, 0, None);
+        recording.submit();
+        held.run(gpu, pmrid, tile, plane, Step::Tally);
+        let mut recording = gpu.record();
+        recording.encoder().copy_buffer_to_buffer(
+            &held.tally,
+            0,
+            &readback,
+            slice as u64 * words,
+            words,
+        );
+        recording.submit();
     }
-    *mosaic = filtered;
-    held.put_back();
+    crate::gpu::read_back(gpu, &readback, |bytes| {
+        let (mut sum, mut count) = ([[0i64; LIFT_BINS]; 4], [[0i64; LIFT_BINS]; 4]);
+        for slice in bytes.chunks_exact(LIFT_WORDS * 4) {
+            let word = |at: usize| {
+                let at = at * 4;
+                i64::from(i32::from_le_bytes([
+                    slice[at],
+                    slice[at + 1],
+                    slice[at + 2],
+                    slice[at + 3],
+                ]))
+            };
+            for plane in 0..4 {
+                for bin in 0..LIFT_BINS {
+                    let at = (plane * LIFT_BINS + bin) * 2;
+                    sum[plane][bin] += word(at);
+                    count[plane][bin] += word(at + 1);
+                }
+            }
+        }
+        (sum, count)
+    })
+    .await
 }
 
 /// The window every tile of a `width` by `height` mosaic is taken through: of those whose arena
@@ -1241,6 +1403,8 @@ struct Session {
     shape: (usize, usize, Arm),
     arena: crate::gpu::Buffer,
     edges: crate::gpu::Buffer,
+    /// `tally_sums` in `slang/pmrid.slang`.
+    tally: crate::gpu::Buffer,
     /// Held because a bind group does not: dropping these destroys the buffers under it.
     _uniforms: Vec<crate::gpu::Buffer>,
     groups: Vec<wgpu::BindGroup>,
@@ -1290,6 +1454,14 @@ impl Session {
             label: Some("pmrid edges"),
             size: std::mem::size_of::<Edges>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let tally = recording.buffer(&wgpu::BufferDescriptor {
+            label: Some("pmrid tally"),
+            size: (LIFT_WORDS * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let matrices: Vec<Option<Matrix>> = (0..net.layers.len())
@@ -1359,6 +1531,7 @@ impl Session {
             shape: (pw, ph, pmrid.arm),
             arena,
             edges,
+            tally,
             groups: Vec::new(),
             _uniforms: uniforms,
             at,
@@ -1405,6 +1578,10 @@ impl Session {
                             resource: filtered.buffer.as_entire_binding(),
                         },
                         wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: self.tally.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
                             binding: 20,
                             resource: uniform.as_entire_binding(),
                         },
@@ -1441,14 +1618,14 @@ impl Session {
         });
     }
 
-    /// One tile: the window packed, the ninety-two layers, the prediction blended back over it.
+    /// One tile: the window packed, the ninety-two layers, and then `step` over the prediction.
     fn run(
         &self,
         gpu: &'static crate::gpu::Gpu,
         pmrid: &Pmrid,
         edges: &Edges,
-        pw: usize,
-        ph: usize,
+        (pw, ph): (usize, usize),
+        step: Step,
     ) {
         gpu.queue
             .write_buffer(&self.edges, 0, bytemuck::bytes_of(edges));
@@ -1456,6 +1633,7 @@ impl Session {
         let mut recording = gpu.record();
         recording.holding(&self.arena);
         recording.holding(&self.edges);
+        recording.holding(&self.tally);
         recording.holding(&pmrid.weights);
         {
             let mut pass = recording.encoder().begin_compute_pass(&Default::default());
@@ -1585,12 +1763,24 @@ impl Session {
                 );
             }
 
-            pass.set_pipeline(&pmrid.pipelines[REAP]);
+            pass.set_pipeline(match step {
+                Step::Tally => &pmrid.pipelines[TALLY],
+                Step::Reap => &pmrid.pipelines[REAP],
+            });
             pass.set_bind_group(0, &self.groups[0], &[]);
             pass.dispatch_workgroups(sites.0, sites.1, 1);
         }
         recording.submit();
     }
+}
+
+/// What [`Session::run`] does with a tile.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Runs the network and sums what it moved, writing nothing back.
+    Tally,
+    /// Runs the network and writes the tile back.
+    Reap,
 }
 
 /// Which `spatial` kernel a convolution that is not a matrix multiply is dispatched with.
@@ -1735,6 +1925,28 @@ mod tests {
         assert_eq!(kept.take(other), None, "kept past the last release");
     }
 
+    /// At the least `k` a frame is allowed, a full-scale photosite stabilises to where an ISO 100
+    /// frame's does, whatever its read noise.
+    #[test]
+    fn the_quietest_frame_stabilises_like_iso_100() {
+        let top = |k: f64, sigma: f64| {
+            super::ANCHOR_K / k
+                + (sigma / (k * k) - super::ANCHOR_SIGMA / (super::ANCHOR_K * super::ANCHOR_K))
+                    * super::ANCHOR_K
+                    / super::V
+        };
+        let most = top(super::QUIETEST_K, super::QUIETEST_SIGMA);
+        for sigma in [0.0, 0.05, super::QUIETEST_SIGMA, 3.0, 40.0] {
+            let k = super::quietest_k(sigma);
+            assert!(
+                (top(k, sigma) / most - 1.0).abs() < 1e-9,
+                "read variance {sigma}: {} against {most}",
+                top(k, sigma)
+            );
+        }
+        assert!((super::quietest_k(super::QUIETEST_SIGMA) / super::QUIETEST_K - 1.0).abs() < 1e-9);
+    }
+
     /// Every window tried is one the halvings divide and the frame holds, and a frame they divide
     /// is tried whole.
     #[test]
@@ -1868,6 +2080,58 @@ mod tests {
         );
     }
 
+    /// Luminance alone moves every photosite of a site by the same amount once white balanced.
+    #[test]
+    fn luminance_alone_leaves_colour_where_it_was() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let network = super::device(gpu).expect("the network built");
+        let (width, height) = (256, 256);
+        let gains = [0.5, 1.0, 0.7];
+        let cfa = crate::cfa::Cfa::bayer([0, 1, 1, 2]).expect("RGGB is a pattern");
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut noise = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 40) as f32 / 16777216.0 - 0.5
+        };
+        let frame: Vec<f32> = (0..width * height)
+            .map(|at| {
+                let gain = gains[usize::from(cfa.colour_at(at / width % 2, at % width % 2))];
+                (0.3 + 0.08 * noise()) * gain
+            })
+            .collect();
+        let fit = crate::galosh::NoiseFit {
+            alpha: 4.121e-4,
+            sigma_sq: 3.494e-6,
+            unified_sigma: 0.003,
+            dark_ref: [0.0; 4],
+        };
+        let mut mosaic = crate::condition::Mosaic::upload(gpu, &frame, width, height);
+        let detail = crate::galosh::Detail::at(100.0, 0.0).using(crate::galosh::Denoiser::Pmrid);
+        super::denoise(gpu, network, &mut mosaic, &cfa, gains, detail, fit);
+        let denoised = pollster::block_on(mosaic.read(gpu)).expect("the mosaic reads back");
+
+        let (mut apart, mut together) = (0.0f64, 0.0f64);
+        for y in (0..height).step_by(2) {
+            for x in (0..width).step_by(2) {
+                let moved = [(0, 0), (0, 1), (1, 0), (1, 1)]
+                    .map(|(dy, dx)| (y + dy) * width + x + dx)
+                    .map(|at| f64::from(denoised[at] - frame[at]));
+                let mean = moved.iter().sum::<f64>() / 4.0;
+                apart += moved.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / 4.0;
+                together += mean * mean;
+            }
+        }
+        let ratio = (apart / together).sqrt();
+        assert!(
+            ratio < 0.05,
+            "a site's photosites moved apart by {ratio:.3} of what they moved together"
+        );
+    }
+
     /// A frame denoised in an arena another frame left behind comes out as it does in a new one.
     #[test]
     fn a_kept_arena_denoises_what_a_new_one_does() {
@@ -1917,6 +2181,43 @@ mod tests {
             fresh == reused,
             "the second frame read what the first left in its arena"
         );
+    }
+
+    /// The network moves the committed Bayer frames' photosites by next to nothing on average at
+    /// the fit's own noise: what it lifts is how far the fit is from the noise it finds.
+    #[cfg(feature = "fixtures")]
+    #[test]
+    fn the_fit_leaves_the_network_nothing_to_lift() {
+        let Some(gpu) = crate::gpu::device() else {
+            return;
+        };
+        let network = super::device(gpu).expect("the network built");
+        for path in [
+            crate::fixture_tests::canon(),
+            crate::fixture_tests::sony(),
+            crate::fixture_tests::clipped(),
+            crate::fixture_tests::bayer_noisy(),
+        ] {
+            let bytes = std::fs::read(&path).expect("the fixture reads");
+            let held = pollster::block_on(crate::decode_rawler::hold_bytes(&bytes)).expect("held");
+            let fit = pollster::block_on(held.fit()).expect("a Bayer frame has a noise fit");
+            let image = rawler::decode_file(&path).expect("rawler reads the coefficients");
+            let gains = crate::decode_rawler::channel_ceilings(&image);
+            let lift = pollster::block_on(super::lift(
+                gpu,
+                network,
+                held.device_mosaic(),
+                &held.cfa(),
+                gains,
+                fit,
+            ))
+            .expect("the tally reads back");
+            assert!(
+                lift.abs() < 0.25,
+                "{}: the network lifts {lift:+.3} sigma at the fit's {fit:?}",
+                path.display()
+            );
+        }
     }
 
     /// What each arm costs over a whole photograph on this adapter, and how far apart their
@@ -2048,6 +2349,22 @@ mod tests {
             read("../../slang/passthrough/pmrid_coop.slang").contains("typealias Stored = half;"),
             "the matrix units do not hold the arena in what the pass beside them does",
         );
+    }
+
+    #[test]
+    fn the_tally_is_read_back_in_the_shape_the_shader_writes() {
+        const SLANG: &str = include_str!("../../../slang/pmrid.slang");
+        for (declared, here) in [
+            ("LIFT_BINS = ", super::LIFT_BINS.to_string()),
+            ("LIFT_QUANTUM = ", format!("{:.1}", super::LIFT_QUANTUM)),
+            ("LIFT_WORDS = ", "4 * LIFT_BINS * 2".to_string()),
+        ] {
+            assert!(
+                SLANG.contains(&format!("{declared}{here};")),
+                "`slang/pmrid.slang` does not declare {declared}{here}",
+            );
+        }
+        assert_eq!(super::LIFT_WORDS, 4 * super::LIFT_BINS * 2);
     }
 
     /// Every arm this device builds answers the same picture as the `float` WGSL a page without

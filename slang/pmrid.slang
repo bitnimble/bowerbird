@@ -617,6 +617,35 @@ struct Edges {
 /// either side of its own, and read back from a plane already denoised, the network would be handed
 /// a neighbour's answer as though it were the photograph.
 [vk::binding(3, 0)] RWStructuredBuffer<float> filtered;
+/// [`tally`]'s sums, two words a bin: the residual in quanta of [`LIFT_QUANTUM`], and how many
+/// photosites landed there. Plane after plane, [`LIFT_BINS`] bins each.
+[vk::binding(4, 0)] RWStructuredBuffer<Atomic<int> > tally_sums;
+
+/// The prediction's level, binned on its square root so a night frame's few codes above black get
+/// most of the bins.
+static const uint LIFT_BINS = 128;
+static const float LIFT_QUANTUM = 2048.0;
+/// A tile's photosites times this many quanta has to fit an `int`.
+static const float LIFT_CLIP = 0.25;
+static const uint LIFT_WORDS = 4 * LIFT_BINS * 2;
+
+float raw_of(float stabilised)
+{
+    return (stabilised / edges.scale - edges.cvt_b) / edges.cvt_k;
+}
+
+uint lift_bin(float raw)
+{
+    return min(uint(sqrt(max(raw, 0.0)) * float(LIFT_BINS)), LIFT_BINS - 1);
+}
+
+/// Whether a site is this tile's own interior: the halo either side of it was denoised so that the
+/// interior had context, and the neighbouring tile writes that ground itself.
+bool kept_site(uint3 id)
+{
+    return id.x * 2 >= edges.keep_x && id.x * 2 < edges.keep_x + edges.keep_width
+        && id.y * 2 >= edges.keep_y && id.y * 2 < edges.keep_y + edges.keep_height;
+}
 
 /// The mosaic as four stabilised planes, which is what [`spatial`] reads on the first layer.
 [shader("compute")]
@@ -634,9 +663,50 @@ void sow(uint3 id : SV_DispatchThreadID)
             + edges.origin_x + id.x * 2 + position % 2;
         // The conditioning divided every photosite by the largest coefficient and multiplied it by
         // its own, so dividing that back out is what the sensor read, up to the black level.
-        let raw = clamp(mosaic[read] / edges.gain_at[plane], 0.0, 1.0);
+        // Unclamped below: cutting the noise at black off lifts the shadows before the network has
+        // done anything.
+        let raw = min(mosaic[read] / edges.gain_at[plane], 1.0);
         let at = plane * site + id.y * wide + id.x;
         put(edges.input_at + at, (raw * edges.cvt_k + edges.cvt_b) * edges.scale);
+    }
+}
+
+groupshared Atomic<int> tally_shared[LIFT_WORDS];
+
+/// What the network moved each photosite by, summed by the level it predicted.
+///
+/// **Binned on the prediction, never the input.** A denoiser that is right on average still pulls
+/// a noisy-bright photosite down and a noisy-dark one up, so by input level every bin reports a
+/// shift that is the denoise itself; by predicted level only the network's own bias is left.
+[shader("compute")]
+[numthreads(WIDE, TALL, 1)]
+void tally(uint3 id : SV_DispatchThreadID, uint lane : SV_GroupIndex)
+{
+    for (uint i = lane; i < LIFT_WORDS; i += THREADS) { tally_shared[i].store(0); }
+    GroupMemoryBarrierWithGroupSync();
+
+    let wide = edges.width / 2;
+    let tall = edges.height / 2;
+    if (id.x < wide && id.y < tall && kept_site(id)) {
+        let site = wide * tall;
+        let at = id.y * wide + id.x;
+        [ForceUnroll]
+        for (uint plane = 0; plane < 4; plane++) {
+            let was = fetch(edges.input_at + plane * site + at);
+            let predicted = fetch(edges.predicted_at + plane * site + at);
+            let bin = lift_bin(raw_of(predicted));
+            let moved = clamp(
+                (predicted - was) / (edges.scale * edges.cvt_k), -LIFT_CLIP, LIFT_CLIP);
+            let slot = (plane * LIFT_BINS + bin) * 2;
+            tally_shared[slot].add(int(round(moved * LIFT_QUANTUM)));
+            tally_shared[slot + 1].add(1);
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    for (uint i = lane; i < LIFT_WORDS; i += THREADS) {
+        let sum = tally_shared[i].load();
+        if (sum != 0) { tally_sums[i].add(sum); }
     }
 }
 
@@ -644,21 +714,16 @@ void sow(uint3 id : SV_DispatchThreadID)
 ///
 /// **What the network found is a residual, and its two halves are not equally good.** `pred = inp +
 /// x`, so subtracting the input recovers what it did; and of that, what the four photosites of a
-/// site agree on is its reading of the light, where what they disagree on is its reading of the
-/// colour. The colour half survives every strength. The light half is what melts a twig, so the two
-/// answer to separate sliders rather than to one.
+/// site agree on once white balanced is its reading of the light, where what they disagree on is
+/// its reading of the colour. The colour half survives every strength. The light half is what
+/// melts a twig, so the two answer to separate sliders rather than to one.
 [shader("compute")]
 [numthreads(WIDE, TALL, 1)]
 void reap(uint3 id : SV_DispatchThreadID)
 {
     let wide = edges.width / 2;
     let tall = edges.height / 2;
-    if (id.x >= wide || id.y >= tall) { return; }
-    // Only this tile's own interior: the halo either side of it was denoised so that the interior
-    // had context, and the neighbouring tile writes that ground itself.
-    let inside = id.x * 2 >= edges.keep_x && id.x * 2 < edges.keep_x + edges.keep_width
-        && id.y * 2 >= edges.keep_y && id.y * 2 < edges.keep_y + edges.keep_height;
-    if (!inside) { return; }
+    if (id.x >= wide || id.y >= tall || !kept_site(id)) { return; }
     let site = wide * tall;
     let at = id.y * wide + id.x;
 
@@ -669,12 +734,14 @@ void reap(uint3 id : SV_DispatchThreadID)
     for (uint plane = 0; plane < 4; plane++) {
         was[plane] = fetch(edges.input_at + plane * site + at);
         found[plane] = fetch(edges.predicted_at + plane * site + at) - was[plane];
-        light += found[plane] * 0.25;
+        light += found[plane] * edges.gain_at[plane] * 0.25;
     }
 
     [ForceUnroll]
     for (uint plane = 0; plane < 4; plane++) {
-        let kept = was[plane] + light * edges.luma + (found[plane] - light) * edges.colour;
+        // Neutral once white balanced: an equal share of every raw plane comes out magenta.
+        let neutral = light / edges.gain_at[plane];
+        let kept = was[plane] + neutral * edges.luma + (found[plane] - neutral) * edges.colour;
         let raw = (kept / edges.scale - edges.cvt_b) / edges.cvt_k;
         let position = edges.position_at[plane];
         let write = (edges.origin_y + id.y * 2 + position / 2) * edges.stride
