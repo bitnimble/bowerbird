@@ -1,5 +1,6 @@
 import type { Database } from '../../db/driver';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { z } from 'zod';
 import { AppError, type ErrorCode } from '../../errors';
 import { Logger } from '../../logger';
 import { ErrorEnvelopeSchema } from '../../schemas/error';
@@ -9,6 +10,7 @@ import {
   ChangesRequestSchema,
   HandshakeRequestSchema,
   HandshakeResponseSchema,
+  LinkFailureDetailSchema,
   PAGE_ROWS,
   PageSchema,
   PairRequestSchema,
@@ -20,7 +22,9 @@ import {
   UnpairRequestSchema,
   type BrowsedRemote,
   type HandshakeResponse,
+  type LinkFailure,
   type PairResponse,
+  type RemoteLibraries,
 } from '../../schemas/replication';
 import { assertNoDataDirectoryOverlap, isWritable } from '../libraries/libraries_service';
 import { DEFAULT_BIN_NAME } from '../../schemas/libraries';
@@ -63,9 +67,62 @@ export interface ClonedLibrary {
   peer: string;
 }
 
-/** What a peer is offering (§9.1). A read: nothing is registered on either side. */
-export async function browseRemote(base: string): Promise<BrowsedRemote> {
-  const offered = RemoteLibrariesSchema.parse(await get(base, route(PathSegment.libraries())));
+/**
+ * What a peer is offering (§9.1). A read: nothing is registered on either side.
+ *
+ * An address typed without a scheme is tried over HTTPS, then HTTP.
+ */
+export async function browseRemote(address: string): Promise<BrowsedRemote> {
+  const typed = trimmed(address);
+  if (SCHEME.test(typed)) return browseAt(peerBase(typed));
+  const secure = peerBase(`https://${typed}`);
+  try {
+    return await browseAt(secure);
+  } catch (error) {
+    if (linkFailureOf(error) !== 'unreachable') throw error;
+    return browseAt(peerBase(`http://${typed}`));
+  }
+}
+
+/** The base a peer is dialled at: trimmed, and refused unless it is an HTTP(S) URL. */
+export function peerBase(address: string): string {
+  const base = trimmed(address);
+  const url = URL.canParse(base) ? new URL(base) : null;
+  if (
+    url == null ||
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.search !== '' ||
+    url.hash !== ''
+  ) {
+    throw linkError('VALIDATION_ERROR', 'invalid_address', `not a device address: ${address}`);
+  }
+  return base;
+}
+
+const SCHEME = /^[a-z][a-z\d+.-]*:\/\//i;
+
+// A trailing slash would make every path double-slashed, which some proxies
+// answer with a redirect that drops the POST body.
+function trimmed(address: string): string {
+  return address.trim().replace(/\/+$/, '');
+}
+
+async function browseAt(base: string): Promise<BrowsedRemote> {
+  let offered: RemoteLibraries;
+  try {
+    offered = await get(
+      base,
+      route(PathSegment.libraries()),
+      RemoteLibrariesSchema,
+      BROWSE_TIMEOUT_MS,
+    );
+  } catch (error) {
+    // A route every build serves, so a Bowerbird that lacks it is another version.
+    if (error instanceof AppError && error.code === 'NOT_FOUND') {
+      throw linkError('INTERNAL_ERROR', 'different_version', `${base} has no library list`);
+    }
+    throw error;
+  }
 
   // §9: clocks that drift have usually been drifting since long before this, and
   // this is the cheapest moment to say so - a note, blocking nothing, well
@@ -77,7 +134,17 @@ export async function browseRemote(base: string): Promise<BrowsedRemote> {
       seconds: Math.round(skew / 1000),
     });
   }
-  return { ...offered, clock_skew_ms: skew };
+  return { ...offered, address: base, clock_skew_ms: skew };
+}
+
+function linkError(code: ErrorCode, link: LinkFailure, message: string): AppError {
+  return new AppError(code, message, [{ link }]);
+}
+
+function linkFailureOf(error: unknown): LinkFailure | null {
+  if (!(error instanceof AppError)) return null;
+  const detail = LinkFailureDetailSchema.safeParse(error.details?.[0]);
+  return detail.success ? detail.data.link : null;
 }
 
 /**
@@ -115,10 +182,10 @@ export function addReplica(
 ): Promise<ClonedLibrary> {
   return libraryMutex.run(libraryId, async () => {
     if (db.query('SELECT 1 FROM libraries WHERE id = ?').get(libraryId) != null) {
-      throw new AppError(
+      throw linkError(
         'CONFLICT',
-        'that library is already on this device. If its catalogue looks incomplete, it is still arriving - ' +
-          'it carries on by itself, and Replicate now asks for the rest.',
+        'already_added',
+        `library ${libraryId} is already on this device`,
       );
     }
     // The same refusal `LibrariesService.create` makes, and for a worse reason
@@ -128,18 +195,23 @@ export function addReplica(
     try {
       assertNoDataDirectoryOverlap(rootPath);
     } catch (error) {
-      throw new AppError('VALIDATION_ERROR', (error as Error).message);
+      throw linkError('VALIDATION_ERROR', 'folder_overlaps_data', (error as Error).message);
     }
     if (db.query('SELECT 1 FROM libraries WHERE root_path = ?').get(rootPath) != null) {
-      throw new AppError('CONFLICT', `library root already registered: ${rootPath}`);
+      throw linkError('CONFLICT', 'folder_in_use', `library root already registered: ${rootPath}`);
     }
     assertEmptyRoot(rootPath);
-    mkdirSync(rootPath, { recursive: true });
+    try {
+      mkdirSync(rootPath, { recursive: true });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') {
+        throw linkError('READ_ONLY', 'folder_not_writable', (error as Error).message);
+      }
+      throw error;
+    }
     if (!isWritable(rootPath)) {
-      throw new AppError(
-        'READ_ONLY',
-        `${rootPath} is not writable, and a replica has to be written to`,
-      );
+      throw linkError('READ_ONLY', 'folder_not_writable', `${rootPath} is not writable`);
     }
 
     // Inside the rollback, not before it: `post` resolving means the remote has
@@ -147,16 +219,15 @@ export function addReplica(
     // the failures the unpair exists for.
     let paired: PairResponse;
     try {
-      paired = PairResponseSchema.parse(
-        await post(
-          base,
-          route(PathSegment.pair()),
-          PairRequestSchema.parse({
-            library_id: libraryId,
-            peer_id: peerId(db),
-            name: deviceName(db),
-          }),
-        ),
+      paired = await post(
+        base,
+        route(PathSegment.pair()),
+        PairRequestSchema.parse({
+          library_id: libraryId,
+          peer_id: peerId(db),
+          name: deviceName(db),
+        }),
+        PairResponseSchema,
       );
       if (paired.library_id !== libraryId) {
         throw new AppError(
@@ -210,6 +281,7 @@ async function unpairFrom(base: string, libraryId: string, self: string): Promis
       base,
       route(PathSegment.unpair()),
       UnpairRequestSchema.parse({ library_id: libraryId, peer_id: self }),
+      NoContentSchema,
     );
   } catch (error) {
     // Retracted broadly rather than only where the pairing is known to have
@@ -227,15 +299,10 @@ async function unpairFrom(base: string, libraryId: string, self: string): Promis
 function assertEmptyRoot(rootPath: string): void {
   if (!existsSync(rootPath)) return;
   if (!statSync(rootPath).isDirectory()) {
-    throw new AppError('VALIDATION_ERROR', `not a folder: ${rootPath}`);
+    throw linkError('VALIDATION_ERROR', 'not_a_folder', `not a folder: ${rootPath}`);
   }
-  const holds = readdirSync(rootPath);
-  if (holds.length > 0) {
-    throw new AppError(
-      'CONFLICT',
-      `${rootPath} is not empty. A synced library needs a new or empty folder: anything already in this one ` +
-        'would be imported as part of the library and appear on every other device.',
-    );
+  if (readdirSync(rootPath).length > 0) {
+    throw linkError('CONFLICT', 'folder_not_empty', `${rootPath} is not empty`);
   }
 }
 
@@ -248,9 +315,9 @@ async function handshake(
   base: string,
   direction: 'pull' | 'push',
 ): Promise<HandshakeResponse> {
-  let answer: unknown;
+  let shaken: HandshakeResponse;
   try {
-    answer = await post(
+    shaken = await post(
       base,
       route(PathSegment.handshake()),
       HandshakeRequestSchema.parse({
@@ -263,6 +330,7 @@ async function handshake(
         coverage: packVector(coverage(replica.db, replica.libraryId)),
         wants_originals: syncsOriginals(replica.db, replica.libraryId),
       }),
+      HandshakeResponseSchema,
     );
   } catch (error) {
     const refusedBy =
@@ -272,7 +340,6 @@ async function handshake(
       recordPeerVersion(replica.db, replica.libraryId, peer, refusedBy.data);
     throw error;
   }
-  const shaken = HandshakeResponseSchema.parse(answer);
   recordPeerVersion(replica.db, replica.libraryId, shaken.peer_id, shaken);
   recordPeerAppetite(replica.db, replica.libraryId, shaken.peer_id, shaken.wants_originals);
   recordPeerName(replica.db, replica.libraryId, shaken.peer_id, shaken.name);
@@ -302,19 +369,18 @@ export async function openRemote(into: Replica, base: string): Promise<ChangeSou
   return {
     peer: shaken.peer_id,
     delivered: unpackVector(shaken.coverage),
-    page: async (held, cursor, limit) =>
-      PageSchema.parse(
-        await post(
-          base,
-          route(PathSegment.changes()),
-          ChangesRequestSchema.parse({
-            library_id: into.libraryId,
-            peer_id: self,
-            held: packVector(held),
-            cursor,
-            limit,
-          }),
-        ),
+    page: (held, cursor, limit) =>
+      post(
+        base,
+        route(PathSegment.changes()),
+        ChangesRequestSchema.parse({
+          library_id: into.libraryId,
+          peer_id: self,
+          held: packVector(held),
+          cursor,
+          limit,
+        }),
+        PageSchema,
       ),
   };
 }
@@ -339,12 +405,11 @@ export async function pushToRemote(
     peer: shaken.peer_id,
     held: unpackVector(shaken.coverage),
     apply: async (page) => {
-      const answer = PushPageResponseSchema.parse(
-        await post(
-          base,
-          route(PathSegment.push()),
-          PushPageRequestSchema.parse({ library_id: from.libraryId, peer_id: self, page }),
-        ),
+      const answer = await post(
+        base,
+        route(PathSegment.push()),
+        PushPageRequestSchema.parse({ library_id: from.libraryId, peer_id: self, page }),
+        PushPageResponseSchema,
       );
       return answer.deferred;
     },
@@ -357,6 +422,7 @@ export async function pushToRemote(
           peer_id: self,
           delivered: packVector(delivered),
         }),
+        NoContentSchema,
       );
     },
   };
@@ -383,6 +449,7 @@ export async function pullFromRemote(
       peer_id: peerId(into.db),
       coverage: packVector(coverage(into.db, into.libraryId)),
     }),
+    NoContentSchema,
   );
   markReplicated(into.db, into.libraryId, source.peer);
   return result;
@@ -413,37 +480,97 @@ const REMOTE_CODES: readonly ErrorCode[] = [
  */
 const REQUEST_TIMEOUT_MS = 120_000;
 
-function post(base: string, path: string, body: unknown): Promise<unknown> {
-  return send(base, path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
+const BROWSE_TIMEOUT_MS = 10_000;
 
-function get(base: string, path: string): Promise<unknown> {
-  return send(base, path, { method: 'GET' });
-}
+const NoContentSchema = z.null();
 
-async function send(base: string, path: string, init: RequestInit): Promise<unknown> {
-  const response = await fetch(
-    `${base}${route(PathSegment.api(), PathSegment.replication())}${path}`,
-    {
-      ...init,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    },
+function post<S extends z.ZodType>(
+  base: string,
+  path: string,
+  body: unknown,
+  schema: S,
+): Promise<z.output<S>> {
+  return send(
+    base,
+    path,
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+    schema,
   );
-  if (response.status === 204) return null;
-  const parsed: unknown = await response.json().catch(() => null);
-  if (response.ok) return parsed;
+}
 
-  // Handed on under the remote's own code, so a caller treats "not paired" from
-  // across the wire exactly as it would from its own service.
-  const envelope = ErrorEnvelopeSchema.safeParse(parsed);
-  const code = envelope.success ? envelope.data.error.code : undefined;
-  const known = REMOTE_CODES.find((candidate) => candidate === code) ?? 'INTERNAL_ERROR';
-  const message = envelope.success
-    ? envelope.data.error.message
-    : `replication request failed (${response.status})`;
-  throw new AppError(known, message, envelope.success ? envelope.data.error.details : undefined);
+function get<S extends z.ZodType>(
+  base: string,
+  path: string,
+  schema: S,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<z.output<S>> {
+  return send(base, path, { method: 'GET' }, schema, timeoutMs);
+}
+
+async function send<S extends z.ZodType>(
+  base: string,
+  path: string,
+  init: RequestInit,
+  schema: S,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<z.output<S>> {
+  const url = `${base}${route(PathSegment.api(), PathSegment.replication())}${path}`;
+  let status: number;
+  let text: string;
+  try {
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    status = response.status;
+    text = await response.text();
+  } catch (error) {
+    throw linkError('UNAVAILABLE', 'unreachable', `could not reach ${url}: ${String(error)}`);
+  }
+  const parsed = parseJson(text);
+
+  if (status < 200 || status >= 300) {
+    const envelope = ErrorEnvelopeSchema.safeParse(parsed);
+    if (envelope.success && envelope.data.error.code === 'UNAUTHORIZED') {
+      throw linkError('UNAVAILABLE', 'refused', `${url} only answers the app that started it`);
+    }
+    if (!envelope.success) {
+      // Bowerbird itself always answers with an envelope, so a bare 5xx is a proxy in front
+      // of it (vite, nginx) whose server behind is down.
+      throw status >= 500
+        ? linkError('UNAVAILABLE', 'not_answering', `${url} answered ${status} with no envelope`)
+        : linkError(
+            'INTERNAL_ERROR',
+            'not_bowerbird',
+            `${url} answered ${status} with no envelope`,
+          );
+    }
+    // Handed on under the remote's own code, so a caller treats "not paired" from
+    // across the wire exactly as it would from its own service.
+    const { code, message, details } = envelope.data.error;
+    const known = REMOTE_CODES.find((candidate) => candidate === code) ?? 'INTERNAL_ERROR';
+    throw new AppError(known, message, details);
+  }
+
+  const answer = schema.safeParse(status === 204 ? null : parsed);
+  if (!answer.success) {
+    throw parsed === undefined
+      ? linkError('INTERNAL_ERROR', 'not_bowerbird', `${url} did not answer with JSON`)
+      : linkError(
+          'INTERNAL_ERROR',
+          'different_version',
+          `${url} answered in a shape this build does not read: ${firstIssue(answer.error)}`,
+        );
+  }
+  return answer.data;
+}
+
+function firstIssue(error: z.ZodError): string {
+  const issue = error.issues[0];
+  return issue == null ? error.message : `${issue.path.join('.')}: ${issue.message}`;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
 }

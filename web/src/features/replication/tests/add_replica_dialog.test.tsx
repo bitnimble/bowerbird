@@ -24,6 +24,7 @@ beforeEach(() => {
     Promise.resolve({
       peer_id: 'peer000000000001',
       name: 'Desktop',
+      address: 'http://desktop:5173',
       clock_ms: Date.now(),
       clock_skew_ms: 0,
       libraries: [
@@ -39,18 +40,63 @@ async function press(name: string): Promise<void> {
 }
 
 async function chooseLibrary(): Promise<void> {
+  const field = screen.getByRole('textbox', { name: 'Device address' });
   await act(async () => {
-    fireEvent.change(screen.getByRole('textbox', { name: 'Device address' }), {
-      target: { value: 'http://desktop:5173' },
-    });
+    fireEvent.change(field, { target: { value: 'desktop:5173' } });
   });
-  await press('Next');
+  await act(async () => {
+    fireEvent.keyDown(field, { key: 'Enter' });
+  });
   expect(screen.getByText('12 photos').textContent).toBe('12 photos');
   await act(async () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Trip' }));
   });
   await press('Next');
 }
+
+test('Enter browses the trimmed address once, and not at all while it is blank', async () => {
+  const asked: string[] = [];
+  const answer = Promise.withResolvers<Awaited<ReturnType<typeof replicationApi.browseRemote>>>();
+  replicationApi.browseRemote = (address) => {
+    asked.push(address);
+    return answer.promise;
+  };
+  render(
+    <StoresProvider>
+      <AddReplicaDialog open onOpenChange={() => {}} />
+    </StoresProvider>,
+  );
+  const field = screen.getByRole('textbox', { name: 'Device address' });
+
+  for (const value of ['', '   ', ' desktop:5173 ']) {
+    await act(async () => {
+      fireEvent.change(field, { target: { value } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' });
+    });
+  }
+  await act(async () => {
+    fireEvent.keyDown(field, { key: 'Enter' });
+  });
+
+  expect(asked).toEqual(['desktop:5173']);
+});
+
+test('reconnecting to another device drops the library picked on the first', async () => {
+  render(
+    <StoresProvider>
+      <AddReplicaDialog open onOpenChange={() => {}} />
+    </StoresProvider>,
+  );
+  await chooseLibrary();
+  await press('Back');
+  await press('Back');
+  await press('Next');
+
+  expect(screen.getByRole('radio', { name: 'Trip' }).matches(':checked')).toBe(false);
+  expect(screen.getByRole('button', { name: 'Next' }).matches(':disabled')).toBe(true);
+});
 
 test('automatic original transfers start enabled and reset when connect reopens', async () => {
   const dialog = (open: boolean): JSX.Element => (

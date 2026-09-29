@@ -38,6 +38,7 @@ for (const entry of ['welcome', 'settings'] as const) {
           json: {
             peer_id: 'peer000000000001',
             name: 'Desktop',
+            address: 'http://desktop:5173',
             clock_ms: Date.now(),
             clock_skew_ms: 0,
             libraries: [

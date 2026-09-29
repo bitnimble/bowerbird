@@ -43,6 +43,21 @@ describe('a failed request', () => {
     expect(error.message).toBe('no such photo');
   });
 
+  test("carries the envelope's details", async () => {
+    answers(
+      503,
+      JSON.stringify({
+        error: {
+          code: 'UNAVAILABLE',
+          message: 'could not reach',
+          details: [{ link: 'unreachable' }],
+        },
+      }),
+    );
+    const error = (await settingsApi.get().catch((e: unknown) => e)) as ApiError;
+    expect(error.details).toEqual([{ link: 'unreachable' }]);
+  });
+
   // 204 still means "nothing", and so does a 200 that carries nothing - the shortcut is
   // right, it was only in the wrong order.
   test.each([204, 200])('returns nothing for a bodiless %i', async (status) => {

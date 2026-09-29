@@ -14,6 +14,7 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly status: number,
+    readonly details?: unknown[],
   ) {
     super(message);
     this.name = 'ApiError';
@@ -107,6 +108,7 @@ export function errorFrom(status: number, text: string): ApiError {
     // A transport carries no status text, so a bodiless error has nothing else to say.
     envelope?.error.message ?? (text.slice(0, 200) || `the API answered ${status}`),
     status,
+    envelope?.error.details,
   );
 }
 

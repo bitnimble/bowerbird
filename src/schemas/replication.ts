@@ -241,8 +241,30 @@ export const RemoteLibrariesSchema = z.object({
 });
 export type RemoteLibraries = z.infer<typeof RemoteLibrariesSchema>;
 
-export const BrowsedRemoteSchema = RemoteLibrariesSchema.extend({ clock_skew_ms: z.number() });
+export const BrowsedRemoteSchema = RemoteLibrariesSchema.extend({
+  /** Where it answered, with the scheme filled in; what adding it has to be given back. */
+  address: z.string(),
+  clock_skew_ms: z.number(),
+});
 export type BrowsedRemote = z.infer<typeof BrowsedRemoteSchema>;
+
+/** Why browsing or adding a peer's library failed, carried as an error's first detail. */
+export const LinkFailureSchema = z.enum([
+  'invalid_address',
+  'unreachable',
+  'not_answering',
+  'not_bowerbird',
+  'different_version',
+  'refused',
+  'already_added',
+  'folder_not_empty',
+  'folder_in_use',
+  'not_a_folder',
+  'folder_not_writable',
+  'folder_overlaps_data',
+]);
+export type LinkFailure = z.infer<typeof LinkFailureSchema>;
+export const LinkFailureDetailSchema = z.object({ link: LinkFailureSchema });
 
 export const DEVICE_NAME_MAX_LENGTH = 120;
 const DeviceNameTextSchema = z.string().trim().min(1).max(DEVICE_NAME_MAX_LENGTH);

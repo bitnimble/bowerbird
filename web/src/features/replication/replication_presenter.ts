@@ -7,6 +7,7 @@ import {
   type AddReplicaRequest,
   type AllPeersResponse,
   type BrowsedRemote,
+  LinkFailureDetailSchema,
   type PeersResponse,
 } from '../../../../src/schemas/replication';
 import { blobsApi } from '../../api/blobs';
@@ -29,6 +30,14 @@ type Feedback = Pick<ToastsPresenter, 'show' | 'showError'>;
 
 function message(err: unknown): string {
   return err instanceof ApiError ? err.message : (err as Error).message;
+}
+
+function linkMessage(err: unknown): string {
+  const detail =
+    err instanceof ApiError ? LinkFailureDetailSchema.safeParse(err.details?.[0]) : null;
+  return detail?.success === true
+    ? ReplicationPresenterStrings.couldNotLink(detail.data.link)
+    : message(err);
 }
 
 export class ReplicationPresenter {
@@ -195,7 +204,7 @@ export class ReplicationPresenter {
     try {
       return await replicationApi.browseRemote(address);
     } catch (err) {
-      this.failedToLink(message(err));
+      this.failedToLink(linkMessage(err));
       return null;
     }
   }
@@ -214,7 +223,7 @@ export class ReplicationPresenter {
       await this.refreshTransfers();
       return true;
     } catch (err) {
-      this.failedToLink(message(err));
+      this.failedToLink(linkMessage(err));
       // The library is committed before its catalogue arrives, so one that failed
       // partway has left one here. Re-read the list either way.
       await this.libraries.load();

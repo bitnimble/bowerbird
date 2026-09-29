@@ -15,6 +15,7 @@ import {
 import { blobsApi } from '../../../api/blobs';
 import { photoEditsApi } from '../../../api/photo_edits';
 import { replicationApi } from '../../../api/replication';
+import { ApiError } from '../../../api/request';
 import { LibrariesStore } from '../../libraries/libraries_store';
 import { ReplicationPresenter } from '../replication_presenter';
 import { ReplicationStore } from '../replication_store';
@@ -404,6 +405,7 @@ test('browsing hands back what the peer offers, without touching the library lis
     Promise.resolve({
       peer_id: PEER.peer_id,
       name: 'Desktop',
+      address: 'http://desktop:5173',
       clock_ms: 0,
       clock_skew_ms: 0,
       libraries: [
@@ -426,6 +428,20 @@ test('an address that answers nothing says so and adds no library', async () => 
 
   expect(browsed).toBeNull();
   expect(store.linkError).toContain('Unable to connect');
+});
+
+test('a failure the server names reads as what to do about it', async () => {
+  const { store, presenter } = harness();
+  replicationApi.browseRemote = () =>
+    Promise.reject(
+      new ApiError('UNAVAILABLE', 'could not reach http://nowhere:5173', 503, [
+        { link: 'unreachable' },
+      ]),
+    );
+
+  await presenter.browse('nowhere:5173');
+
+  expect(store.linkError).toBe("We couldn't reach that device.");
 });
 
 test.each([true, false])(
@@ -468,7 +484,10 @@ test.each([true, false])(
 // part-way has left one behind and the list has to be re-read either way.
 test('an add that failed still re-reads the library list', async () => {
   const { store, presenter, libraryLoads } = harness();
-  replicationApi.addReplica = () => Promise.reject(new Error('/photos/trip is not empty'));
+  replicationApi.addReplica = () =>
+    Promise.reject(
+      new ApiError('CONFLICT', '/fixture/trip is not empty', 409, [{ link: 'folder_not_empty' }]),
+    );
 
   const added = await presenter.addReplica({
     address: 'http://desktop:5173',
@@ -479,7 +498,7 @@ test('an add that failed still re-reads the library list', async () => {
   });
 
   expect(added).toBe(false);
-  expect(store.linkError).toContain('not empty');
+  expect(store.linkError).toBe("That folder isn't empty.");
   expect(libraryLoads()).toBe(1);
 });
 

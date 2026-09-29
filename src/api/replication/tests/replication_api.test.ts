@@ -518,6 +518,74 @@ describe('browse, then add (§9.1)', () => {
     expect(origin.db.query('SELECT 1 FROM replication_libraries').get()).toBeNull();
   });
 
+  it('finds the scheme for an address typed without one, and hands back the one that answered', async () => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+
+    const offered = await browseRemote(` ${origin.url.replace('http://', '')}/ `);
+
+    expect(offered.address).toBe(origin.url);
+    expect(offered.libraries).toHaveLength(1);
+  });
+
+  const envelope = (code: string): string =>
+    JSON.stringify({ error: { code, message: 'refused' } });
+  it.each([
+    ['invalid_address', 'not an address', 200, ''],
+    ['invalid_address', 'ftp://desktop:5173', 200, ''],
+    ['invalid_address', 'http://desktop:5173/?library=trip', 200, ''],
+    ['not_answering', '', 500, ''],
+    ['not_answering', '', 502, '<h1>Bad gateway</h1>'],
+    ['not_bowerbird', '', 200, '<html></html>'],
+    ['not_bowerbird', '', 404, '<h1>Not found</h1>'],
+    ['different_version', '', 200, '{"libraries": 3}'],
+    ['different_version', '', 404, envelope('NOT_FOUND')],
+    ['refused', '', 401, envelope('UNAUTHORIZED')],
+  ] as const)('names a %s failure for the dialog to explain', async (link, typed, status, body) => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response(body, { status }) });
+    try {
+      await expect(browseRemote(typed || `http://localhost:${server.port}`)).rejects.toMatchObject({
+        details: [{ link }],
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it('names an address nothing answers at on either scheme as unreachable', async () => {
+    const gone = Bun.serve({ port: 0, fetch: () => new Response() });
+    const port = gone.port;
+    gone.stop(true);
+
+    await expect(browseRemote(`localhost:${port}`)).rejects.toMatchObject({
+      details: [{ link: 'unreachable' }],
+    });
+  });
+
+  it.each([
+    ['folder_not_empty', (root: string) => writeFileSync(path.join(root, 'holiday.arw'), '')],
+    ['not_a_folder', (root: string) => writeFileSync(path.join(root, 'trip'), '')],
+    ['folder_in_use', () => {}],
+    ['already_added', () => {}],
+  ] as const)('names a %s failure for the dialog to explain', async (link, arrange) => {
+    const origin = serve(catalogue());
+    seedLibrary(origin.db, 1);
+    const clone = serve(catalogue());
+    const root = cloneRoot();
+    arrange(root);
+    const target = link === 'not_a_folder' ? path.join(root, 'trip') : root;
+    if (link === 'folder_in_use') {
+      clone.db
+        .query("INSERT INTO libraries (id, root_path, name) VALUES ('otherlib', ?, 'Squatter')")
+        .run(root);
+    }
+    if (link === 'already_added') await addReplica(clone.db, origin.url, LIB, cloneRoot(), true);
+
+    await expect(addReplica(clone.db, origin.url, LIB, target, true)).rejects.toMatchObject({
+      details: [{ link }],
+    });
+  });
+
   it('refuses a folder that already holds something, before the remote is told anything', async () => {
     const origin = serve(catalogue());
     seedLibrary(origin.db, 1);
@@ -603,6 +671,9 @@ describe('browse, then add (§9.1)', () => {
       root_path: occupied,
     });
     expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      error: { details: [{ link: 'folder_not_empty' }] },
+    });
 
     const added = await post(clone.url, route(PathSegment.replicas()), {
       address: origin.url,

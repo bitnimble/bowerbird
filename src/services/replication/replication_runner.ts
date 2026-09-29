@@ -26,7 +26,7 @@ import {
   recordPeerOutcome,
   syncsOriginals,
 } from './pairing';
-import { addReplica, browseRemote, pullFromRemote, pushToRemote } from './remote';
+import { addReplica, browseRemote, peerBase, pullFromRemote, pushToRemote } from './remote';
 import type { PullResult } from './session';
 import { LibraryActivity } from '../activity/library_activity';
 
@@ -79,14 +79,14 @@ export class ReplicationRunner {
 
   /** §9.1: what a peer is offering, which registers nothing on either side. */
   browse(address: string): Promise<BrowsedRemote> {
-    return browseRemote(trimmed(address));
+    return browseRemote(address);
   }
 
   /** §9.1: pair with one of them and take its catalogue. */
   async add(request: AddReplicaRequest): Promise<ReplicaSummary> {
     const cloned = await addReplica(
       this.db,
-      trimmed(request.address),
+      peerBase(request.address),
       request.library_id,
       request.root_path,
       request.sync_originals,
@@ -335,10 +335,4 @@ export class ReplicationRunner {
       }
     }
   }
-}
-
-// A trailing slash would make every path double-slashed, which some proxies
-// answer with a redirect that drops the POST body.
-function trimmed(address: string): string {
-  return address.trim().replace(/\/+$/, '');
 }

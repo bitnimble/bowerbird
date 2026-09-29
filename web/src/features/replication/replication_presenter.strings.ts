@@ -1,8 +1,26 @@
+import { type LinkFailure } from '../../../../src/schemas/replication';
+
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
+const LINK_FAILURES: Record<LinkFailure, () => string> = {
+  invalid_address: () => "We couldn't read that address.",
+  unreachable: () => "We couldn't reach that device.",
+  not_answering: () => "Bowerbird on that device isn't responding.",
+  not_bowerbird: () => 'Something other than Bowerbird answered at that address.',
+  different_version: () => 'That device runs a different version of Bowerbird.',
+  refused: () => "That device doesn't accept connections from other devices.",
+  already_added: () => 'That library is already on this device.',
+  folder_not_empty: () => "That folder isn't empty.",
+  folder_in_use: () => 'Another library already uses that folder.',
+  not_a_folder: () => 'That path points to a file.',
+  folder_not_writable: () => "Bowerbird can't write to that folder.",
+  folder_overlaps_data: () => 'That folder overlaps where Bowerbird keeps its own data.',
+};
+
 export const ReplicationPresenterStrings = {
+  couldNotLink: (failure: LinkFailure) => LINK_FAILURES[failure](),
   couldNotReadDevices: () => "We couldn't load this library's devices. Try again.",
   couldNotChangeWhatIsKept: () => "We couldn't change what this device keeps. Try again.",
   stoppedIncoming: (cancelled: number) =>

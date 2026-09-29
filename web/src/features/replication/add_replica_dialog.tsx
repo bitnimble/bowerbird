@@ -73,8 +73,10 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
   }, [open, replication]);
 
   const root = path;
+  const canConnect = address.trim() !== '' && !busy;
 
   async function connect(): Promise<void> {
+    if (!canConnect) return;
     const mine = opening.current;
     setBusy(true);
     const browsed = await replication.browse(address.trim());
@@ -82,15 +84,21 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     setBusy(false);
     if (browsed == null) return;
     setRemote(browsed);
+    setPicked(null);
     setStep('pick');
   }
 
+  function back(to: Step): void {
+    replication.clearError();
+    setStep(to);
+  }
+
   async function add(): Promise<void> {
-    if (picked == null) return;
+    if (picked == null || remote == null) return;
     const mine = opening.current;
     setBusy(true);
     const done = await replication.addReplica({
-      address: address.trim(),
+      address: remote.address,
       library_id: picked.id,
       root_path: root,
       sync_originals: keepOriginals,
@@ -125,6 +133,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                 value={address}
                 placeholder={AddReplicaStrings.deviceAddressPlaceholder()}
                 onChange={setAddress}
+                onKeyDown={(e) => e.key === 'Enter' && void connect()}
               />
               <Text variant="mono" as="p">
                 {AddReplicaStrings.addressHint()}
@@ -135,11 +144,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
 
             <DialogActions>
               <Button onClick={close}>{ModalStrings.cancel()}</Button>
-              <Button
-                variant="primary"
-                disabled={address.trim() === '' || busy}
-                onClick={() => void connect()}
-              >
+              <Button variant="primary" disabled={!canConnect} onClick={() => void connect()}>
                 {busy ? AddReplicaStrings.connecting() : AddReplicaStrings.next()}
               </Button>
             </DialogActions>
@@ -188,7 +193,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
             {store.linkError != null && <ErrorBanner>{store.linkError}</ErrorBanner>}
 
             <DialogActions>
-              <Button onClick={() => setStep('address')}>{AddReplicaStrings.back()}</Button>
+              <Button onClick={() => back('address')}>{AddReplicaStrings.back()}</Button>
               <Button variant="primary" disabled={picked == null} onClick={() => setStep('where')}>
                 {AddReplicaStrings.next()}
               </Button>
@@ -249,7 +254,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
             {store.linkError != null && <ErrorBanner>{store.linkError}</ErrorBanner>}
 
             <DialogActions>
-              <Button onClick={() => setStep('pick')}>{AddReplicaStrings.back()}</Button>
+              <Button onClick={() => back('pick')}>{AddReplicaStrings.back()}</Button>
               <Button
                 variant="primary"
                 disabled={root.trim() === '' || busy}

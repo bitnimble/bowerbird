@@ -4,7 +4,7 @@ export const AddReplicaStrings = {
 
   otherDevice: () => 'Other device',
   deviceAddress: () => 'Device address',
-  deviceAddressPlaceholder: () => 'http://bowerbird.local:5173',
+  deviceAddressPlaceholder: () => 'bowerbird.local:5173',
   addressHint: () => 'Connect both devices to the same network or VPN.',
   connecting: () => 'Connecting…',
   next: () => 'Next',
