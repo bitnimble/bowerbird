@@ -40,6 +40,7 @@ import {
   useViewerStore,
 } from '../../../app/stores_context';
 import { Button } from '../../../ui/button';
+import { CLEARS_CAPTION_BUTTONS } from '../../../ui/caption_buttons';
 import { ICON } from '../../../ui/icon';
 import { menuSection } from '../../../ui/menu_section';
 import { menuStyles } from '../../../ui/menu_styles';
@@ -554,7 +555,7 @@ export const DetailNav = observer(function DetailNav({
   return (
     <Row
       {...DRAGS_WINDOW}
-      style={[styles.nav, editing && styles.navEditing]}
+      style={[styles.nav, editing && styles.navEditing, CLEARS_CAPTION_BUTTONS]}
       role="group"
       aria-label={PhotoDetailStrings.controls()}
     >

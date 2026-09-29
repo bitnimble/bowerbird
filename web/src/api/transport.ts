@@ -214,6 +214,46 @@ export function opensWithAMenu(): boolean {
   return canOpenOriginalWith() && /Mac/i.test(navigator.userAgent);
 }
 
+/** Minimises, maximises or closes the app's own window, for the caption buttons drawn in place of its title bar. */
+export async function windowCommand(
+  command: 'minimize' | 'toggle_maximize' | 'close',
+): Promise<void> {
+  const invoke = shellInvoke();
+  if (invoke == null) throw new Error('the window is the desktop app’s to manage');
+  await invoke(`plugin:window|${command}`, {});
+}
+
+export async function windowIsMaximized(): Promise<boolean> {
+  const invoke = shellInvoke();
+  if (invoke == null) return false;
+  return z.boolean().parse(await invoke('plugin:window|is_maximized', {}));
+}
+
+const CaptionButtonSchema = z.enum(['minimize', 'maximize', 'close']);
+const CaptionPointerSchema = z.object({
+  hovered: CaptionButtonSchema.nullable(),
+  pressed: CaptionButtonSchema.nullable(),
+});
+export type CaptionButton = z.infer<typeof CaptionButtonSchema>;
+export type CaptionPointer = z.infer<typeof CaptionPointerSchema>;
+
+/** Sizes the shell's window over the caption buttons, in physical pixels; zero hides it. */
+export async function setCaptionButtonsSize(width: number, height: number): Promise<void> {
+  const invoke = shellInvoke();
+  if (invoke == null) return;
+  await invoke('set_caption_buttons', { width, height });
+}
+
+/** That window takes the buttons' pointer input, so the shell says which to draw hovered or pressed. */
+export function followCaptionPointer(handler: (pointer: CaptionPointer) => void): () => void {
+  const listen = listener();
+  if (listen == null) return () => {};
+  const unlisten = listen('caption-buttons', ({ payload }) =>
+    handler(CaptionPointerSchema.parse(payload)),
+  );
+  return () => void unlisten.then((stop) => stop());
+}
+
 /** Android's shell has no file manager to show a file in. */
 export function canRevealFile(): boolean {
   return shellInvoke() != null && !/Android/i.test(navigator.userAgent);

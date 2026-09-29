@@ -6,6 +6,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useDeviceSettingsStore, usePresenters } from '../../../app/stores_context';
 import { MOST_FEATHER } from '../../../../../src/schemas/assembly';
 import { Button } from '../../../ui/button';
+import { CLEARS_CAPTION_BUTTONS } from '../../../ui/caption_buttons';
 import { EmptyState } from '../../../ui/empty_state';
 import { ICON } from '../../../ui/icon';
 import { Page, PageHead, ShowSidebarButton } from '../../../ui/page';
@@ -285,7 +286,7 @@ export const MergePage = observer(function MergePage(): JSX.Element {
     <Page fill>
       {/* The editor's bar, in the editor's order: the way out and the way to keep it first, then
           the history, then whatever this page has of its own. */}
-      <Row {...DRAGS_WINDOW} style={styles.nav}>
+      <Row {...DRAGS_WINDOW} style={[styles.nav, CLEARS_CAPTION_BUTTONS]}>
         <ShowSidebarButton />
         <Button onClick={cancel}>{MergePageStrings.cancel()}</Button>
         <Button
