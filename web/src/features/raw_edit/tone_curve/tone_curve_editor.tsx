@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DIFFUSE_WHITE_CODE,
   TONE_CURVE_KIND,
+  TONE_CURVE_MAX_POINTS,
   type ToneCurve,
   type ToneCurvePoints,
 } from '../../../../../src/schemas/photo_edits';
@@ -46,12 +47,20 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
   stage: StageStore;
   presenter: CurvePresenter;
 }): JSX.Element {
+  const plot = useRef<SVGSVGElement>(null);
   const drag = useRef<Drag | null>(null);
   const lastPressed = useRef<number | null>(null);
+  const hoverBounds = useRef<DOMRect | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [hoverX, setHoverX] = useState<number | null>(null);
   const headerKnown = stage.headerKnown;
   const disabled = !headerKnown || !stage.editable;
   const points = edit.doc?.toneCurve?.points ?? stage.cameraCurve?.points ?? IDENTITY_CURVE;
+  const insertable = !disabled && points.length < TONE_CURVE_MAX_POINTS;
+  const ghost = insertable && hoverX != null ? insertPoint(points, hoverX) : null;
+  useEffect(() => {
+    if (!insertable) setHoverX(null);
+  }, [insertable]);
   const remove = (index: number | null): void => {
     if (disabled || drag.current != null || index == null) return;
     const next = removePoint(points, index);
@@ -67,10 +76,7 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
     const x = index / 128;
     return `${index === 0 ? 'M' : 'L'}${x * 100} ${100 - evaluate(points, x, slopes) * 100}`;
   }).join(' ');
-  const position = (
-    event: React.PointerEvent<SVGSVGElement>,
-    bounds: DOMRect,
-  ): [number, number] => [
+  const position = (event: React.PointerEvent, bounds: DOMRect): [number, number] => [
     (event.clientX - bounds.left) / bounds.width,
     1 - (event.clientY - bounds.top) / bounds.height,
   ];
@@ -84,6 +90,7 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
   ): void => {
     drag.current = { index, pointerId, svg, changed, before, bounds };
     setActiveIndex(index);
+    setHoverX(null);
     try {
       svg.setPointerCapture(pointerId);
     } catch {
@@ -137,7 +144,13 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
         />
       </div>
       <svg
-        {...stylex.props(styles.plot, focusRing.ring, disabled && styles.disabled)}
+        ref={plot}
+        {...stylex.props(
+          styles.plot,
+          focusRing.ring,
+          disabled && styles.disabled,
+          activeIndex != null && styles.dragging,
+        )}
         role="group"
         aria-label={strings.heading()}
         aria-disabled={disabled}
@@ -151,18 +164,8 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
             add();
           }
         }}
-        onPointerDown={(event) => {
-          if (!event.isPrimary || drag.current != null || disabled || event.button !== 0) return;
-          event.preventDefault();
+        onPointerDown={() => {
           lastPressed.current = null;
-          const svg = event.currentTarget;
-          const bounds = svg.getBoundingClientRect();
-          const [x] = position(event, bounds);
-          const inserted = insertPoint(points, x);
-          if (inserted == null) return;
-          const before = edit.doc?.toneCurve ?? null;
-          presenter.previewToneCurve(storedCurve(inserted.points));
-          start(svg, event.pointerId, inserted.index, true, before, bounds);
         }}
         onPointerMove={(event) => {
           const active = drag.current;
@@ -215,9 +218,48 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
                 {...stylex.props(styles.white)}
               />
               <path d={path} {...stylex.props(styles.curve)} />
+              {insertable && (
+                <path
+                  d={path}
+                  {...stylex.props(styles.curveTarget)}
+                  onPointerEnter={() => {
+                    hoverBounds.current = plot.current?.getBoundingClientRect() ?? null;
+                  }}
+                  onPointerMove={(event) => {
+                    if (drag.current != null || hoverBounds.current == null) return;
+                    setHoverX(position(event, hoverBounds.current)[0]);
+                  }}
+                  onPointerLeave={() => setHoverX(null)}
+                  onPointerDown={(event) => {
+                    const svg = plot.current;
+                    if (
+                      !event.isPrimary ||
+                      drag.current != null ||
+                      event.button !== 0 ||
+                      svg == null
+                    )
+                      return;
+                    event.preventDefault();
+                    const bounds = svg.getBoundingClientRect();
+                    const inserted = insertPoint(points, position(event, bounds)[0]);
+                    if (inserted == null) return;
+                    const before = edit.doc?.toneCurve ?? null;
+                    presenter.previewToneCurve(storedCurve(inserted.points));
+                    start(svg, event.pointerId, inserted.index, true, before, bounds);
+                  }}
+                />
+              )}
             </>
           )}
         </svg>
+        {ghost != null && (
+          <circle
+            cx={`${ghost.points[ghost.index]![0] * 100}%`}
+            cy={`${(1 - ghost.points[ghost.index]![1]) * 100}%`}
+            {...stylex.props(styles.ghost)}
+            aria-hidden="true"
+          />
+        )}
         {headerKnown &&
           points.map(([x, y], index) => {
             const name =
@@ -234,7 +276,7 @@ export const ToneCurveEditor = observer(function ToneCurveEditor({
                   cx={cx}
                   cy={cy}
                   r="11%"
-                  {...stylex.props(styles.pointTarget)}
+                  {...stylex.props(styles.pointTarget, disabled && styles.inert)}
                   role="slider"
                   tabIndex={disabled ? -1 : 0}
                   aria-label={strings.pointPosition(name, x, y)}

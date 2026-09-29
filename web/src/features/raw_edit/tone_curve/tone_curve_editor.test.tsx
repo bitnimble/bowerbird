@@ -3,6 +3,7 @@ import { action } from 'mobx';
 import {
   neutralEdits,
   TONE_CURVE_KIND,
+  TONE_CURVE_MAX_POINTS,
   type ToneCurve,
   type ToneCurvePoints,
 } from '../../../../../src/schemas/photo_edits';
@@ -61,6 +62,16 @@ function plot(): SVGSVGElement {
   });
   return svg;
 }
+
+const line = (svg: SVGSVGElement): SVGPathElement => svg.querySelector('svg path:last-of-type')!;
+const markers = (svg: SVGSVGElement): number => svg.querySelectorAll('circle[aria-hidden]').length;
+const diagonal = (length: number): ToneCurve =>
+  curve(
+    Array.from({ length }, (_, index): [number, number] => {
+      const at = index / (length - 1);
+      return [at, at];
+    }),
+  );
 
 test('camera curve supplies named points until document stores one', () => {
   open();
@@ -142,7 +153,63 @@ test('right click removes interior point, never endpoints, and suppresses plot m
   expect(calls).toHaveLength(1);
 });
 
-test('plot press inserts a point and release settles once', () => {
+test('pressing the plot away from the curve adds nothing', () => {
+  const { calls } = open(
+    curve([
+      [0, 0],
+      [1, 1],
+    ]),
+  );
+  fireEvent.pointerDown(plot().querySelector('rect')!, {
+    pointerId: 1,
+    isPrimary: true,
+    button: 0,
+    clientX: 25,
+    clientY: 25,
+  });
+  expect(calls).toEqual([]);
+});
+
+test('hovering the curve shows where a press would add a point', () => {
+  open(
+    curve([
+      [0, 0],
+      [1, 1],
+    ]),
+  );
+  const svg = plot();
+  expect(markers(svg)).toBe(2);
+  fireEvent.pointerEnter(line(svg), { pointerId: 1, clientX: 30, clientY: 70 });
+  fireEvent.pointerMove(line(svg), { pointerId: 1, clientX: 30, clientY: 70 });
+  const ghost = [...svg.querySelectorAll('circle[aria-hidden]')].find(
+    (circle) => circle.getAttribute('cx') === '30%',
+  );
+  expect(ghost?.getAttribute('cy')).toBe('70%');
+  fireEvent.pointerLeave(line(svg), { pointerId: 1 });
+  expect(markers(svg)).toBe(2);
+});
+
+test('a full curve offers no point to add', () => {
+  open(diagonal(TONE_CURVE_MAX_POINTS - 1));
+  expect(plot().querySelectorAll('svg path')).toHaveLength(3);
+  cleanup();
+  open(diagonal(TONE_CURVE_MAX_POINTS));
+  expect(plot().querySelectorAll('svg path')).toHaveLength(2);
+});
+
+test('filling the curve drops the hover point for good', () => {
+  open(diagonal(TONE_CURVE_MAX_POINTS - 1));
+  const svg = plot();
+  fireEvent.pointerEnter(line(svg), { pointerId: 1, clientX: 3, clientY: 97 });
+  fireEvent.pointerMove(line(svg), { pointerId: 1, clientX: 3, clientY: 97 });
+  expect(markers(svg)).toBe(TONE_CURVE_MAX_POINTS);
+  fireEvent.keyDown(svg, { key: 'Enter' });
+  expect(markers(svg)).toBe(TONE_CURVE_MAX_POINTS);
+  fireEvent.keyDown(screen.getByRole('slider', { name: /Curve point 1,/ }), { key: 'Delete' });
+  expect(markers(svg)).toBe(TONE_CURVE_MAX_POINTS - 1);
+});
+
+test('curve press inserts a point and release settles once', () => {
   const { calls } = open(
     curve([
       [0, 0],
@@ -150,7 +217,7 @@ test('plot press inserts a point and release settles once', () => {
     ]),
   );
   const svg = plot();
-  fireEvent.pointerDown(svg, {
+  fireEvent.pointerDown(line(svg), {
     pointerId: 2,
     isPrimary: false,
     button: 0,
@@ -159,7 +226,7 @@ test('plot press inserts a point and release settles once', () => {
   });
   expect(calls).toEqual([]);
   expect(
-    fireEvent.pointerDown(svg, {
+    fireEvent.pointerDown(line(svg), {
       pointerId: 1,
       isPrimary: true,
       button: 0,
@@ -177,7 +244,7 @@ test('plot press inserts a point and release settles once', () => {
       ]),
     },
   ]);
-  fireEvent.pointerDown(svg, {
+  fireEvent.pointerDown(line(svg), {
     pointerId: 3,
     isPrimary: true,
     button: 0,
@@ -243,7 +310,7 @@ test('dragging an interior point off the plot removes it', () => {
 test('pointercancel restores starting curve without settling', () => {
   const { calls, edit } = open();
   const svg = plot();
-  fireEvent.pointerDown(svg, {
+  fireEvent.pointerDown(line(svg), {
     pointerId: 1,
     isPrimary: true,
     button: 0,
@@ -374,7 +441,7 @@ test('capture failure restores insertion and permits another drag', () => {
   svg.setPointerCapture = () => {
     throw new Error('pointer gone');
   };
-  fireEvent.pointerDown(svg, {
+  fireEvent.pointerDown(line(svg), {
     pointerId: 1,
     isPrimary: true,
     button: 0,
@@ -383,7 +450,7 @@ test('capture failure restores insertion and permits another drag', () => {
   });
   expect(calls.at(-1)).toEqual({ kind: 'preview', curve: null });
   svg.setPointerCapture = capture;
-  fireEvent.pointerDown(svg, {
+  fireEvent.pointerDown(line(svg), {
     pointerId: 2,
     isPrimary: true,
     button: 0,

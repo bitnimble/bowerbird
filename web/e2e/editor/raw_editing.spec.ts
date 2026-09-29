@@ -334,6 +334,7 @@ test('tone curve points drag and drag off the plot', async ({ page }) => {
     const plotBox = await plot.boundingBox();
     if (plotBox == null) throw new Error('tone curve has no plot');
     const insertedSave = savedByEditor();
+    await page.mouse.click(plotBox.x + plotBox.width / 4, plotBox.y + plotBox.height / 4);
     await page.mouse.click(plotBox.x + plotBox.width / 2, plotBox.y + plotBox.height / 2);
     const insertedState = EditStateSchema.parse(await (await insertedSave).json());
     expect(insertedState.doc.toneCurve?.points).toHaveLength(3);

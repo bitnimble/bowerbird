@@ -20,8 +20,8 @@ export const styles = stylex.create({
     borderRadius: size.radius,
     backgroundColor: color.field,
     touchAction: 'none',
-    cursor: 'crosshair',
   },
+  dragging: { cursor: 'pointer' },
   grid: {
     stroke: color.slate,
     strokeWidth: '0.5px',
@@ -37,14 +37,30 @@ export const styles = stylex.create({
     vectorEffect: 'non-scaling-stroke',
     pointerEvents: 'none',
   },
+  curveTarget: {
+    fill: 'none',
+    stroke: 'transparent',
+    strokeWidth: { default: '14px', '@media (pointer: coarse)': '36px' },
+    vectorEffect: 'non-scaling-stroke',
+    pointerEvents: 'stroke',
+    cursor: 'pointer',
+  },
+  ghost: {
+    fill: color.bone,
+    opacity: 0.45,
+    r: `calc(${size.thumb} / 2)`,
+    pointerEvents: 'none',
+  },
   pointTarget: {
     fill: 'transparent',
-    cursor: 'grab',
+    cursor: 'pointer',
     outline: 'none',
   },
+  inert: { pointerEvents: 'none' },
   point: {
     fill: {
       default: color.bone,
+      [stylex.when.ancestor(':hover', pointMarker)]: color.satin,
       [stylex.when.ancestor(':has(:focus-visible)', pointMarker)]: color.satin,
     },
     r: `calc(${size.thumb} / 2)`,
@@ -54,5 +70,5 @@ export const styles = stylex.create({
     transitionTimingFunction: 'ease',
   },
   pointActive: { fill: color.satin },
-  disabled: { opacity: 0.4, cursor: 'default' },
+  disabled: { opacity: 0.4 },
 });
