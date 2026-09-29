@@ -29,6 +29,13 @@ async function quiet(): Promise<void> {
   await sleep(DEBOUNCE * 6 + 100);
 }
 
+const scanned = (): string[] => calls.flatMap((c) => c ?? []);
+
+// A presence waits until it is seen: FSEvents' delivery latency varies past any fixed window.
+async function scannedOnce(relPath: string): Promise<void> {
+  for (let i = 0; i < 60 && !scanned().includes(relPath); i++) await sleep(50);
+}
+
 async function start(
   over: Partial<Pick<LibraryScope, 'includeSubfolders' | 'binName' | 'excluded'>>,
 ): Promise<void> {
@@ -82,8 +89,8 @@ test('an excluded folder never wakes a scan, and its siblings still do', async (
   expect(calls).toHaveLength(0);
 
   writeFileSync(path.join(root, 'Trip', 'new.arw'), '');
-  await quiet();
-  expect(calls.flatMap((c) => c ?? [])).toContain('Trip/new.arw');
+  await scannedOnce('Trip/new.arw');
+  expect(scanned()).toContain('Trip/new.arw');
 });
 
 test('a root-only library is woken by its root and not by its subfolders', async () => {
@@ -95,8 +102,8 @@ test('a root-only library is woken by its root and not by its subfolders', async
   expect(calls).toHaveLength(0);
 
   writeFileSync(path.join(root, 'top.arw'), '');
-  await quiet();
-  expect(calls.flatMap((c) => c ?? [])).toContain('top.arw');
+  await scannedOnce('top.arw');
+  expect(scanned()).toContain('top.arw');
 });
 
 // The data directory is not under the root at all any more (§6), so what is left
@@ -124,8 +131,8 @@ test('a file of a format the library does not hold never wakes a scan', async ()
   expect(calls).toHaveLength(0);
 
   writeFileSync(path.join(root, 'Trip', 'shot.arw'), '');
-  await quiet();
-  expect(calls.flatMap((c) => c ?? [])).toEqual(['Trip/shot.arw']);
+  await scannedOnce('Trip/shot.arw');
+  expect(scanned()).toEqual(['Trip/shot.arw']);
 });
 
 // A folder is what an empty shoot's rename reports and the only thing it reports
@@ -136,8 +143,8 @@ test('a folder whose name looks like a file still wakes a scan', async () => {
   await start({});
 
   renameSync(path.join(root, 'Trip.v2'), path.join(root, 'Trip.v3'));
-  await quiet();
-  expect(calls.flatMap((c) => c ?? [])).toContain('Trip.v3');
+  await scannedOnce('Trip.v3');
+  expect(scanned()).toContain('Trip.v3');
 });
 
 // The bin is one folder at the root, so the name means nothing anywhere else: a
@@ -148,6 +155,6 @@ test('a folder called Bin below the root is watched like any other', async () =>
   await start({});
 
   writeFileSync(path.join(root, 'Trip', 'Bin', 'kept.arw'), '');
-  await quiet();
-  expect(calls.flatMap((c) => c ?? [])).toContain('Trip/Bin/kept.arw');
+  await scannedOnce('Trip/Bin/kept.arw');
+  expect(scanned()).toContain('Trip/Bin/kept.arw');
 });
