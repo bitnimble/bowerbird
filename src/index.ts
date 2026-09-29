@@ -745,6 +745,18 @@ applySettings(settingsRepo.get());
 // where they are until somebody asks (docs/replication.md §7.3).
 replicationRunner.start();
 
+// In this order because a scan and a sync take the same per-library lease, and a sync
+// refused by a scan's lease waits for the next 5-minute round.
+void (async () => {
+  try {
+    await scanService.scanAll('startup');
+    await replicationRunner.replicateAll();
+    await mirror.runAll();
+  } catch (err) {
+    log.error('the startup scan, sync and backup did not finish', { err });
+  }
+})();
+
 applyErrorHandler(app);
 
 // Bun.serve idles a request out after 10s by default, which is shorter than the

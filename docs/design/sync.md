@@ -301,7 +301,7 @@ After all changes are applied, call `ProcessingService.processUnprocessed()` to 
 
 **Scoped runs pass reconciled photos; full runs pass none, meaning the whole library.** Scoped sync passes inserted or modified ids and counts status against that set. Moves and reappearances change no pixels and owe nothing; one watcher event must not drain or report the whole backlog.
 
-That leaves the backlog to the two triggers that are _about_ the whole library: a manual `POST /sync` and the daily reconcile (§9.8). This is deliberate, and it is what picks up work a killed process left half-done; nothing runs at startup (§9.6).
+That leaves the backlog to the triggers that are _about_ the whole library: a manual `POST /sync`, the startup scan and the daily reconcile (§9.8). This is deliberate, and it is what picks up work a killed process left half-done.
 
 `ProcessingService` merges concurrent requests for one key by widening, never narrowing: a full run joining a batch a scoped run started comes away having processed the library, not that run's handful of files.
 
@@ -337,7 +337,7 @@ No generation guard on those writes, unlike the ones after the scan: the sync le
 
 `photosProcessing` counts unique queued and active photos across library batches and the generic batch that processes fetched originals. It is independent of scan ownership, so an `idle` scan may have a positive rendering count. Stopped or failed batches report zero when they settle. Persistent build flags keep unfinished work available for the next batch.
 
-**Startup does not sync.** `src/index.ts` wires watcher, daily reconcile and prune; status reads start nothing. Interrupted imports resume on user request, file changes or `SYNC_FULL_AT`. Persistent build flags describe work owed; live activity counts describe queues currently running or waiting to run.
+**Startup scans, then syncs, then backs up.** `src/index.ts` runs `scanAll('startup')`, then one replication round per replicated library, then one backup pass per library, in sequence: a scan and a replication round take the same lease, and a round refused by it waits for the next five-minute tick. Opening the desktop app starts the server, so this is what opening the app does. Status reads start nothing. Persistent build flags describe work owed; live activity counts describe queues currently running or waiting to run.
 
 `last_synced_at` is the other half of this, and the durable one: it is a column, so it survives the restart the status does not, and says how stale the catalogue is (§4.1).
 
@@ -356,7 +356,7 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the `sy
 
 ### 9.8 Sync Triggers: Creation, Manual, Scoped Watcher, Polled Root, Daily Backstop
 
-`scanLibrary` runs in five ways:
+`scanLibrary` runs in six ways:
 
 0. **On creation**, from `LibrariesService`'s lifecycle listener. A full scan, not awaited by the create: the request answers as soon as the row exists, and a first import is minutes of opening and hashing that the status endpoint reports on like any other run (§9.6). A library nobody has imported holds nothing, so making that import a second, separate button leaves the answer to "where are my photographs" sitting behind one - and the settings a create asks for (subfolders, the bin name) are exactly the ones that decide what this scan brings in, which is why they are on the dialog rather than in Settings afterwards (§18.3).
 1. **Manual**, `POST /api/libraries/:id/sync`. A full scan (whole tree).
@@ -368,6 +368,7 @@ The in-memory `SyncStatus` (§9.6) is process-local and lost on restart; the `sy
    - A folder that could not be read says nothing rather than emptying itself: only a folder actually listed contributes its rows to the diff, so a permissions error or an unmounted root leaves its photographs alone. `ENOENT` is the exception, because an empty listing against the rows recorded in it is exactly how a deleted folder becomes a folder of removals.
    - What it cannot see is a file rewritten in place under an unchanged name, which moves no folder's mtime. The daily reconcile catches those, as it does the events a watch drops.
 4. **Daily full reconcile**, `DailyScan` runs `scanAll()` once a day at `SYNC_FULL_AT` (local `HH:MM`, default `03:00`, `""` disables), overlap-guarded and re-scheduled each day so it holds its wall-clock time across DST. This is the correctness **backstop** for anything the event-driven watcher missed: dropped or coalesced events, and every edit made while the server was down. It's overnight by default because a full scan holds the library mutex (§9.9) for its whole duration.
+5. **Startup**, `scanAll('startup')` once when the server starts (§9.6), catching every edit made while it was down.
 
 **The watcher is `@parcel/watcher`, not `node:fs` and not `chokidar`.** Two independent requirements, and only one library meets both.
 

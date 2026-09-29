@@ -63,7 +63,7 @@ export class DailyScan {
     const startedAt = Date.now();
     log.info('full reconcile start');
     try {
-      await this.scan.scanAll();
+      await this.scan.scanAll('daily');
       log.info('full reconcile done', { ms: Date.now() - startedAt });
     } catch (err) {
       // scanAll isolates per-library failures; this only catches a failure

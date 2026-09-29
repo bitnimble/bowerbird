@@ -104,7 +104,7 @@ test('scanAll re-attempts a library it found locked', async () => {
     extractMetadata,
   );
 
-  await scan.scanAll();
+  await scan.scanAll('daily');
   const { count } = db.query('SELECT COUNT(*) AS count FROM photos').get() as { count: number };
   expect(count).toBe(COPIES);
   db.close();
