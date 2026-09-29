@@ -117,13 +117,13 @@ describe('PhotoEditsRepository.applyCameraMatch', () => {
   it('writes the first document, with no step to undo, as nobody in particular', () => {
     const applied = repo.applyCameraMatch(PHOTO, tone);
 
-    expect(applied?.doc).toMatchObject({
+    expect(applied?.state.doc).toMatchObject({
       exposure: 0.35,
       saturation: 17,
       toneCurve: tone.toneCurve,
-      cameraMatchApplied: true,
+      awaitsCameraMatch: false,
     });
-    expect(applied?.canUndo).toBe(false);
+    expect(applied?.state.canUndo).toBe(false);
     expect(source()).toBe('auto');
 
     save({ exposure: 0 });
@@ -134,8 +134,41 @@ describe('PhotoEditsRepository.applyCameraMatch', () => {
     save({ exposure: 1.5 });
 
     expect(repo.applyCameraMatch(PHOTO, tone)).toBeNull();
-    expect(repo.get(PHOTO).doc).toMatchObject({ exposure: 1.5, cameraMatchApplied: false });
+    expect(repo.get(PHOTO).doc.exposure).toBe(1.5);
     expect(source()).toBe('user');
+  });
+
+  it("fills in beside a merge's framing, which stays the one step to undo", () => {
+    repo.save(PHOTO, edited({ cropLeft: 0.1, awaitsCameraMatch: true }), 0, undefined, 'auto');
+
+    const framed = repo.checkpoint(PHOTO).stamp;
+    const applied = repo.applyCameraMatch(PHOTO, tone);
+
+    expect(applied?.from).toBe(framed);
+    expect(applied?.state.doc).toMatchObject({
+      cropLeft: 0.1,
+      exposure: 0.35,
+      awaitsCameraMatch: false,
+    });
+    expect(source()).toBe('auto');
+    expect(repo.undo(PHOTO, applied?.state.rev ?? 0).doc).toMatchObject({
+      cropLeft: 0,
+      exposure: 0.35,
+    });
+    expect(repo.applyCameraMatch(PHOTO, tone)).toBeNull();
+  });
+
+  it('takes a person\'s edit on a document awaiting the match as theirs, with nothing to undo back to "awaiting"', () => {
+    repo.save(PHOTO, edited({ cropLeft: 0.1, awaitsCameraMatch: true }), 0, undefined, 'auto');
+    const theirs = save({ exposure: 1 });
+
+    expect(theirs.doc.awaitsCameraMatch).toBe(false);
+    expect(source()).toBe('user');
+    expect(repo.undo(PHOTO, theirs.rev).doc).toMatchObject({
+      exposure: 0,
+      awaitsCameraMatch: false,
+    });
+    expect(repo.applyCameraMatch(PHOTO, tone)).toBeNull();
   });
 
   it('writes once, so a reset to 0 afterwards is kept', () => {

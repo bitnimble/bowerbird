@@ -109,8 +109,8 @@ describe('PhotoListingRepository summary rows', () => {
 
     // The camera match alone, written beneath the history, renders the camera's own picture.
     db.query(
-      `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at)
-         VALUES ('live', '{"cameraMatchApplied":true,"exposure":0.35}', 0, 1, '2026-01-01T00:00:00.000Z')`,
+      `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, source)
+         VALUES ('live', '{"exposure":0.35}', 0, 1, '2026-01-01T00:00:00.000Z', 'auto')`,
     ).run();
     expect(listed()).toEqual([]);
     expect(repo.getById('live')?.is_edited).toBe(false);

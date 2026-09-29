@@ -24,7 +24,7 @@ describe('tone curve document', () => {
       toneCurve: null,
       saturation: 0,
       vibrance: 0,
-      cameraMatchApplied: false,
+      awaitsCameraMatch: false,
     });
   });
 

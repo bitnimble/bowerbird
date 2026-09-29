@@ -78,20 +78,20 @@ describe('a slider reaching the picture', () => {
     expect(decoder.exposure).toBeCloseTo(1.25, 6);
   });
 
-  test("hands the module the camera's own for a default until the camera match is written", async () => {
+  test("hands the module a document's own values, and the camera's only where a merge's awaits them", async () => {
     presenter.settle({ exposure: 1.25, contrast: 20 });
     await drawn();
     expect(decoder.exposure).toBeCloseTo(1.25, 6);
 
     presenter.settle({ exposure: 0, contrast: 0 });
     await drawn();
-    expect(decoder.exposure).toBeNull();
-    expect(decoder.adjust).toMatchObject({ contrast: 0, saturation: null, toneCurve: null });
-
-    presenter.settle({ cameraMatchApplied: true });
-    await drawn();
     expect(decoder.exposure).toBe(0);
     expect(decoder.adjust).toMatchObject({ saturation: 0, toneCurve: IDENTITY_TONE_CURVE });
+
+    presenter.settle({ awaitsCameraMatch: true });
+    await drawn();
+    expect(decoder.exposure).toBeNull();
+    expect(decoder.adjust).toMatchObject({ contrast: 0, saturation: null, toneCurve: null });
   });
 
   test('puts each tone and presence slider under its own name', async () => {
@@ -117,7 +117,7 @@ describe('a slider reaching the picture', () => {
       shadows: 33,
       whites: -44,
       blacks: 55,
-      toneCurve: null,
+      toneCurve: IDENTITY_TONE_CURVE,
       texture: -66,
       clarity: 77,
       dehaze: -88.5,
@@ -146,7 +146,6 @@ describe('a slider reaching the picture', () => {
       colourProfile: 'none',
       clarity: 30,
       sharpening: 80,
-      cameraMatchApplied: true,
     });
     expect(stage.atCameraMatch).toBe(false);
 
@@ -174,7 +173,7 @@ describe('a slider reaching the picture', () => {
     };
     const matched: EditOpening = {
       ...unedited,
-      doc: { ...unedited.doc, exposure: 0.35, saturation: 17, cameraMatchApplied: true },
+      doc: { ...unedited.doc, exposure: 0.35, saturation: 17 },
       rev: 1,
       stamp: 'matched',
     };
@@ -191,7 +190,7 @@ describe('a slider reaching the picture', () => {
 
       await presenter.edit.applyCameraMatch(tone);
       expect(applied).toEqual([tone]);
-      expect(edit.doc).toMatchObject({ exposure: 0.35, saturation: 17, cameraMatchApplied: true });
+      expect(edit.doc).toMatchObject({ exposure: 0.35, saturation: 17 });
       // Nothing to put back, so no restore reaches the server.
       expect(await presenter.edit.cancel()).toBe(true);
 
@@ -204,7 +203,18 @@ describe('a slider reaching the picture', () => {
       presenter.edit.applyState(edited);
       await presenter.edit.applyCameraMatch(tone);
       expect(applied).toHaveLength(1);
-      expect(edit.doc).toMatchObject({ exposure: 1.5, cameraMatchApplied: false });
+      expect(edit.doc?.exposure).toBe(1.5);
+
+      const merged = {
+        ...unedited,
+        doc: { ...neutralEdits(), cropLeft: 0.1, awaitsCameraMatch: true },
+        rev: 1,
+      };
+      presenter.edit.begin('a-photo-id');
+      presenter.edit.opened(merged);
+      presenter.edit.applyState(merged);
+      await presenter.edit.applyCameraMatch(tone);
+      expect(applied).toHaveLength(2);
     } finally {
       photoEditsApi.applyCameraMatch = applyCameraMatch;
     }

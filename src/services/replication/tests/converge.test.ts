@@ -940,7 +940,7 @@ describe('convergence', () => {
     for (const peer of [server, laptop]) {
       expect(new PhotoEditsRepository(peer.db).get('p1').doc).toMatchObject({
         exposure: 0.5,
-        cameraMatchApplied: false,
+        saturation: 0,
       });
     }
     expect(replicatedState(laptop.db)).toBe(replicatedState(server.db));

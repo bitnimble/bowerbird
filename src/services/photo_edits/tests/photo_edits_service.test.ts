@@ -277,8 +277,23 @@ describe('PhotoEditsService.applyCameraMatch', () => {
 
     expect(service.applyCameraMatch(PHOTO, tone).doc).toMatchObject({
       exposure: 0.35,
-      cameraMatchApplied: true,
+      awaitsCameraMatch: false,
     });
+    expect(photos.queueEditedSince()).toBe(0);
+  });
+
+  it("keeps a merge's copies current once its document awaiting the match is filled", () => {
+    new PhotoEditsRepository(db).save(
+      PHOTO,
+      { ...neutralEdits(), cropLeft: 0.1, awaitsCameraMatch: true },
+      0,
+      undefined,
+      'auto',
+    );
+    built(PHOTO, 'grid', 'full');
+
+    service.applyCameraMatch(PHOTO, tone);
+
     expect(photos.queueEditedSince()).toBe(0);
   });
 
@@ -441,7 +456,7 @@ describe('PhotoEditsService', () => {
     expect(photos.queueEditedSince([PHOTO])).toBe(0);
 
     expect(matched).not.toBeNull();
-    repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, matched?.rev ?? 0);
+    repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, matched?.state.rev ?? 0);
     expect(photos.queueEditedSince([PHOTO])).toBe(1);
     expect(owingRenditions()).toEqual([PHOTO]);
   });

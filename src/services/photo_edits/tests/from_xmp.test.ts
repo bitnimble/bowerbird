@@ -3,6 +3,7 @@ import { parseXmp } from '../../processing/xmp/xmp';
 import type { XmpSettings } from '../../processing/xmp/xmp_schema';
 import { editsFromXmp } from '../from_xmp';
 import { neutralEdits } from '../../../schemas/photo_edits';
+import { exposureOf } from '../../../schemas/edit_adjust';
 
 // A real sidecar through the real parser: this mapping's whole claim is that it is
 // a pick rather than a conversion, and constructing the struct by hand would let a
@@ -228,13 +229,13 @@ describe('editsFromXmp', () => {
     expect(doc).toEqual({ ...neutralEdits(), exposure: 2.0 });
   });
 
-  it('leaves a zero exposure and saturation at their defaults, for the camera match to fill', () => {
+  it('keeps a zero exposure and saturation as zero, with no camera match beneath them', () => {
     const { doc } = editsFromXmp(
       parse(`${CURRENT} crs:Exposure2012="0" crs:Saturation="0" crs:Contrast2012="20"`),
     );
 
     expect(doc).toMatchObject({ exposure: 0, saturation: 0, contrast: 20 });
-    expect(doc?.cameraMatchApplied).toBe(false);
+    expect(doc == null ? null : exposureOf(doc)).toBe(0);
   });
 
   it('declines a sidecar whose tone sits at Camera Raw zeros and states nothing else', () => {

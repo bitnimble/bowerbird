@@ -1,15 +1,9 @@
 import type { JobAdjust } from './jobs';
-import {
-  IDENTITY_TONE_CURVE,
-  neutralEdits,
-  sameEditValue,
-  type CameraTone,
-  type EditDoc,
-} from './photo_edits';
+import { IDENTITY_TONE_CURVE, sameEditValue, type CameraTone, type EditDoc } from './photo_edits';
 
-/** The exposure a grade is handed: null is the camera match's (`EditDoc.cameraMatchApplied`). */
+/** The exposure a grade is handed: null is the camera match's (`EditDoc.awaitsCameraMatch`). */
 export function exposureOf(doc: EditDoc): number | null {
-  return doc.cameraMatchApplied || doc.exposure !== 0 ? doc.exposure : null;
+  return doc.awaitsCameraMatch && doc.exposure === 0 ? null : doc.exposure;
 }
 
 export function adjustOf(doc: EditDoc): JobAdjust {
@@ -19,9 +13,9 @@ export function adjustOf(doc: EditDoc): JobAdjust {
     shadows: doc.shadows,
     whites: doc.whites,
     blacks: doc.blacks,
-    toneCurve: doc.toneCurve ?? (doc.cameraMatchApplied ? IDENTITY_TONE_CURVE : null),
+    toneCurve: doc.toneCurve ?? (doc.awaitsCameraMatch ? null : IDENTITY_TONE_CURVE),
     vibrance: doc.vibrance,
-    saturation: doc.cameraMatchApplied || doc.saturation !== 0 ? doc.saturation : null,
+    saturation: doc.awaitsCameraMatch && doc.saturation === 0 ? null : doc.saturation,
     texture: doc.texture,
     clarity: doc.clarity,
     dehaze: doc.dehaze,
@@ -31,23 +25,17 @@ export function adjustOf(doc: EditDoc): JobAdjust {
   };
 }
 
-/** A photo's first document, where the camera match is what writes it. */
-export function cameraMatched(tone: CameraTone): EditDoc {
-  return { ...neutralEdits(), ...asEdits(tone), cameraMatchApplied: true };
+/** `doc` with the camera match filled in: a photo's first document, or one a merge wrote. */
+export function withCameraMatch(doc: EditDoc, tone: CameraTone): EditDoc {
+  return { ...doc, ...asEdits(tone), awaitsCameraMatch: false };
 }
 
-const CAMERA_MATCH_FIELDS = [
-  'exposure',
-  'saturation',
-  'toneCurve',
-  'colourProfile',
-  'cameraMatchApplied',
-] as const;
+const CAMERA_MATCH_FIELDS = ['exposure', 'saturation', 'toneCurve', 'colourProfile'] as const;
 
 export function cameraMatchReset(
   tone: CameraTone,
 ): Pick<EditDoc, (typeof CAMERA_MATCH_FIELDS)[number]> {
-  return { ...asEdits(tone), colourProfile: 'matched', cameraMatchApplied: true };
+  return { ...asEdits(tone), colourProfile: 'matched' };
 }
 
 export function atCameraMatch(doc: EditDoc, tone: CameraTone): boolean {

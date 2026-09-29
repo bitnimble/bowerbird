@@ -443,9 +443,9 @@ Candidate rows still replicate where deliverable, including to peers knowing nei
 Accepted asymmetry, by design: a two-hour session loses _provisional rendering_ to a one-slider
 tweak made later on another device; nothing is lost, both candidates sit in the conflict entry.
 
-**A person's edit beats the camera match, whatever the stamps.** A render writes the camera
-match only as a photo's first document, with `source = 'auto'` and no session; every other write
-is `source = 'user'`. Merge compares `source` before stamps: `user` over `auto` in either
+**A person's edit beats the camera match, whatever the stamps.** The camera match and a merge's
+framing write `source = 'auto'` with no session; anything a person or a sidecar writes makes the
+row `source = 'user'`, for good. Merge compares `source` before stamps: `user` over `auto` in either
 direction, the same source by last-write-wins as above. An `auto` row has no session, so it never
 parks a conflict. The order `(source, stamp)` is total, so peers converge.
 

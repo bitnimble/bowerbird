@@ -7,12 +7,12 @@ import type { Developed } from '../workers/processing_types';
 /**
  * The camera's own tone, no adjustment, whole frame: the picture as the camera made it.
  *
- * The empty document through the same mapping every stored one takes, so a default that moves in
- * `EditDocSchema` moves here too. "As metered" is about the *grade*: a photo nobody has edited is
- * still denoised and still sharpened, at whatever the sliders open at.
+ * A document still awaiting the camera match, through the same mapping every stored one takes, so
+ * a default that moves in `EditDocSchema` moves here too. "As metered" is about the *grade*: a
+ * photo nobody has edited is still denoised and still sharpened, at whatever the sliders open at.
  */
 export const AS_METERED = {
-  ...asJob(EditDocSchema.parse({}), 'galosh'),
+  ...asJob(EditDocSchema.parse({ awaitsCameraMatch: true }), 'galosh'),
   // Off, against the document's own default: finding the particles costs a whole-frame read, and a
   // photo nobody has edited has not asked for one.
   dust: dustSettings(undefined),

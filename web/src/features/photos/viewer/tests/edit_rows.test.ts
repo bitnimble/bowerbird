@@ -48,7 +48,6 @@ test('the camera match, once written, is listed as the edits it made', () => {
           [1, 1],
         ],
       },
-      cameraMatchApplied: true,
     }),
   );
   expect(rows).toEqual([

@@ -177,7 +177,7 @@ describe('the edit panel', () => {
   });
 
   test('shows the exposure and saturation the camera match wrote, and resets them to 0', () => {
-    const { calls } = open({ exposure: 0.35, saturation: 17, cameraMatchApplied: true });
+    const { calls } = open({ exposure: 0.35, saturation: 17 });
     const light = within(screen.getByRole('group', { name: 'Light' }));
     expect((light.getByRole('textbox', { name: 'Exposure value' }) as HTMLInputElement).value).toBe(
       '+0.35 EV',

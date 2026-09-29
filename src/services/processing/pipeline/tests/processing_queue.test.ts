@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileRecipe } from '../../../../schemas/recipes';
+import { IDENTITY_TONE_CURVE } from '../../../../schemas/photo_edits';
 import type { PhotoListingRepository } from '../../../photos/listing/photo_listing_repository';
 import type { PhotoPathsRepository } from '../../../photos/paths/photo_paths_repository';
 import type {
@@ -174,7 +175,7 @@ describe('ProcessingService.processUnprocessed', () => {
       shadows: 15,
       whites: 8,
       blacks: -12,
-      toneCurve: null,
+      toneCurve: IDENTITY_TONE_CURVE,
       vibrance: 30,
       saturation: -5,
       texture: 25,
@@ -277,7 +278,7 @@ describe('ProcessingService.processUnprocessed', () => {
           ...pending('matched'),
           rendition_source: null,
           library_rendition_source: 'embedded',
-          edits: JSON.stringify({ version: 1, exposure: 0.35, cameraMatchApplied: true }),
+          edits: JSON.stringify({ version: 1, exposure: 0.35 }),
         },
         {
           ...pending('edited'),

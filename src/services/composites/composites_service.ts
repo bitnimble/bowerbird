@@ -280,7 +280,7 @@ export class CompositesService {
       // The framing on the row rather than only in the recipe, so every render of this
       // photograph - a rendition, an export, the editor's own tick - trims the wedges of nothing
       // a hand-held pan leaves at the corners, and the reader can move it like any other crop.
-      this.edits.save(photoId, framingEdits(recipe), 0);
+      this.frame(photoId, recipe);
       log.info('merged a composite', { photo: photoId, kind, sources: recipe.sources.length });
 
       const made = { ...watching, photoId };
@@ -658,7 +658,7 @@ export class CompositesService {
       reference: recipe.sources[recipe.base]?.photoId ?? sources[0]!.photoId,
     });
     try {
-      this.edits.save(photoId, framingEdits(recipe), 0);
+      this.frame(photoId, recipe);
       log.info('assembled a photograph', { photo: photoId, sources: recipe.sources.length });
       await this.assembled(photoId, recipe, sources, library);
       return { photoId };
@@ -693,9 +693,29 @@ export class CompositesService {
 
     this.photoComposites.updateRecipe(photoId, recipe);
     // The framing is the recipe's, and a re-edit can have moved it.
-    this.edits.save(photoId, framingEdits(recipe), this.edits.get(photoId).rev);
+    this.frame(photoId, recipe);
     await this.assembled(photoId, recipe, sources, library);
     return { photoId };
+  }
+
+  /** The recipe's crop into the composite's document, which is otherwise left as it stands. */
+  private frame(photoId: string, recipe: Composition | AssemblyRecipe): void {
+    const { doc, rev } = this.edits.get(photoId);
+    const { cropLeft, cropTop, cropRight, cropBottom } = framingEdits(recipe);
+    this.edits.save(
+      photoId,
+      {
+        ...doc,
+        cropLeft,
+        cropTop,
+        cropRight,
+        cropBottom,
+        awaitsCameraMatch: rev === 0 || doc.awaitsCameraMatch,
+      },
+      rev,
+      undefined,
+      'auto',
+    );
   }
 
   /** `photoId`'s copies of `recipe`, built on a worker of their own and reported to whoever watches. */

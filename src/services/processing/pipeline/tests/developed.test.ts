@@ -7,10 +7,16 @@ describe('developed', () => {
     expect(developed(null, 'galosh').exposure).toBeNull();
   });
 
-  it('grades a document the camera match was written into at its own values, zeros included', () => {
-    const job = developed(JSON.stringify({ cameraMatchApplied: true }), 'galosh');
+  it('grades a document at its own values, zeros included', () => {
+    const job = developed(JSON.stringify({}), 'galosh');
     expect(job.exposure).toBe(0);
     expect(job.adjust).toMatchObject({ saturation: 0, toneCurve: IDENTITY_TONE_CURVE });
+  });
+
+  it("grades a merge's document at the camera's until the camera match is written in", () => {
+    const job = developed(JSON.stringify({ awaitsCameraMatch: true, contrast: 10 }), 'galosh');
+    expect(job.exposure).toBeNull();
+    expect(job.adjust).toMatchObject({ contrast: 10, saturation: null, toneCurve: null });
   });
 
   // A prepare for an editor previewing a Detail or dust setting it has not saved: those run before

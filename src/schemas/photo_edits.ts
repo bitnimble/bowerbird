@@ -149,11 +149,10 @@ export const EditDocSchema = z
     saturation: z.number().int().min(-100).max(100).default(0),
     colourProfile: ColourProfileSchema.default('matched'),
     /**
-     * Whether the camera match's exposure, saturation and curve are written into this document
-     * (`cameraMatched`). Where not, each of the three still at its default renders as the
-     * camera's, so a photograph looks the same either way.
+     * Set on a document a merge wrote, until the camera match fills in its exposure, saturation
+     * and curve: meanwhile each of the three still at its default renders as the camera's.
      */
-    cameraMatchApplied: z.boolean().default(false),
+    awaitsCameraMatch: z.boolean().default(false),
 
     // Detail. Both are positions on a slider rather than a strength in anything: the denoise
     // reads them as GALOSH's own two knobs (`galosh::Amounts`), on the mosaic, wherever the

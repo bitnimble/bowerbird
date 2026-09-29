@@ -2,7 +2,7 @@ import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { stamp } from '../replication/stamps';
 import { MAX_CHAIN_HOPS, parseChain, type SessionHop } from './edit_sessions';
-import { cameraMatched } from '../../schemas/edit_adjust';
+import { withCameraMatch } from '../../schemas/edit_adjust';
 import {
   EditDocSchema,
   EditHistorySchema,
@@ -32,7 +32,11 @@ interface Row {
   session_id: string | null;
   chain: string | null;
   stamp: string | null;
+  source: EditSource;
 }
+
+/** Who wrote a document: `auto` where nothing but the camera match or a merge has. */
+export type EditSource = 'user' | 'auto';
 
 /**
  * One photo's develop settings and its undo stack.
@@ -88,36 +92,57 @@ export class PhotoEditsRepository {
    * retried request is a no-op rather than an undo step that undoes to the picture
    * it redoes to.
    */
-  save(photoId: string, doc: EditDoc, rev: number, session?: string): EditState {
+  save(
+    photoId: string,
+    doc: EditDoc,
+    rev: number,
+    session?: string,
+    writer: EditSource = 'user',
+  ): EditState {
+    // A person's values are theirs as written, so the camera's never fills in beneath them.
+    const stored = writer === 'user' ? { ...doc, awaitsCameraMatch: false } : doc;
     return this.write(
       photoId,
       rev,
       (current, history, cursor) => {
-        const delta = diffEdits(current, doc);
+        // The mark is no step to undo: undoing it would put the camera's tone back beneath the edit.
+        const delta = diffEdits(
+          { ...current, awaitsCameraMatch: stored.awaitsCameraMatch },
+          stored,
+        );
         if (delta == null) return null;
         // The redo tail goes first: a new edit after an undo is a new branch, and
         // the steps it replaces are no longer reachable.
         const kept = [...history.slice(0, cursor), delta];
         const capped = kept.slice(Math.max(0, kept.length - MAX_EDIT_HISTORY));
-        return { doc, history: capped, cursor: capped.length };
+        return { doc: stored, history: capped, cursor: capped.length };
       },
       session,
+      writer,
     );
   }
 
   /**
-   * Writes the camera match as the photo's first document. Null where it already has one, whoever
-   * wrote it: nothing automatic overwrites an edit.
+   * Fills the camera match into a photo with no document, or one a merge wrote that awaits it.
+   * Null anywhere else: nothing automatic writes over what a person or a sidecar set. Otherwise
+   * the new state and the stamp the document was written from.
    */
-  applyCameraMatch(photoId: string, tone: CameraTone): EditState | null {
-    if (this.row(photoId) != null) return null;
-    return this.write(
+  applyCameraMatch(
+    photoId: string,
+    tone: CameraTone,
+  ): { state: EditState; from: string | null } | null {
+    const row = this.row(photoId);
+    if (row != null && (row.source === 'user' || !this.parseDoc(row.doc).awaitsCameraMatch)) {
+      return null;
+    }
+    const state = this.write(
       photoId,
-      0,
-      (_current, history, cursor) => ({ doc: cameraMatched(tone), history, cursor }),
+      row?.rev ?? 0,
+      (current, history, cursor) => ({ doc: withCameraMatch(current, tone), history, cursor }),
       undefined,
       'auto',
     );
+    return { state, from: row?.stamp ?? null };
   }
 
   undo(photoId: string, rev: number): EditState {
@@ -181,7 +206,7 @@ export class PhotoEditsRepository {
       cursor: number,
     ) => { doc: EditDoc; history: EditDelta[]; cursor: number } | null,
     session?: string,
-    source: 'user' | 'auto' = 'user',
+    writer: EditSource = 'user',
   ): EditState {
     return this.db.transaction(() => {
       const row = this.row(photoId);
@@ -204,6 +229,7 @@ export class PhotoEditsRepository {
       const at = new Date().toISOString();
       const mark = stamp(this.db);
       const lineage = this.lineage(row, session);
+      const source: EditSource = row?.source === 'user' ? 'user' : writer;
       this.db
         .query(
           `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp, session_id, chain, source)
@@ -262,7 +288,7 @@ export class PhotoEditsRepository {
   private row(photoId: string): Row | null {
     return this.db
       .query(
-        'SELECT doc, cursor, rev, session_id, chain, stamp FROM photo_edits WHERE photo_id = ?',
+        'SELECT doc, cursor, rev, session_id, chain, stamp, source FROM photo_edits WHERE photo_id = ?',
       )
       .get(photoId) as Row | null;
   }
