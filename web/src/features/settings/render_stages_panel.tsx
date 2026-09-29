@@ -13,7 +13,7 @@ import {
 } from '../../../../src/schemas/render_stages';
 import { useAppSettingsStore, usePresenters } from '../../app/stores_context';
 import { renditionLabel } from '../photos/renditions';
-import { DENOISERS } from '../raw_edit/raw_edit_panel';
+import { DENOISERS } from '../raw_edit/denoisers';
 import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';

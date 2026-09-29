@@ -24,6 +24,7 @@ import {
 } from '../../schemas/replication';
 import { assertNoDataDirectoryOverlap, isWritable } from '../libraries/libraries_service';
 import { DEFAULT_BIN_NAME } from '../../schemas/libraries';
+import type { Denoiser } from '../../schemas/photo_edits';
 import { PathSegment, route } from '../../schemas/route';
 import { libraryMutex } from '../sync/coordination/library_mutex';
 import {
@@ -112,6 +113,7 @@ export function addReplica(
   rootPath: string,
   syncOriginals = true,
   autoTransferOriginals = false,
+  denoiser: Denoiser = 'galosh',
 ): Promise<ClonedLibrary> {
   return libraryMutex.run(libraryId, async () => {
     if (db.query('SELECT 1 FROM libraries WHERE id = ?').get(libraryId) != null) {
@@ -170,7 +172,9 @@ export function addReplica(
         // catalogue inside it. Anything dropped into the folder in that window
         // would be imported as this library's own and replicated to every peer.
         assertEmptyRoot(rootPath);
-        db.query('INSERT INTO libraries (id, root_path, name, bin_name) VALUES (?, ?, ?, ?)').run(
+        db.query(
+          'INSERT INTO libraries (id, root_path, name, bin_name, denoiser) VALUES (?, ?, ?, ?, ?)',
+        ).run(
           libraryId,
           rootPath,
           paired.library_name,
@@ -179,6 +183,7 @@ export function addReplica(
           // replicate that to peers as though they had moved. The real name
           // arrives with the library unit on the first page and overwrites this.
           DEFAULT_BIN_NAME,
+          denoiser,
         );
         // Linked bare, without the genesis walk the server ran when it paired: a
         // clone is born holding nothing, and genesis-stamping its default-valued

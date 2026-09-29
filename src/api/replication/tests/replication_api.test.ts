@@ -610,12 +610,16 @@ describe('browse, then add (§9.1)', () => {
       root_path: cloneRoot(),
       sync_originals: false,
       auto_transfer_originals: false,
+      denoiser: 'pmrid',
     });
     expect(added.status).toBe(201);
     expect(await added.json()).toMatchObject({ library_id: LIB });
     // The body's own field, rather than the default, decides what this keeps.
     expect(syncsOriginals(clone.db, LIB)).toBe(false);
     expect(autoTransfersOriginals(clone.db, LIB)).toBe(false);
+    expect(clone.db.query('SELECT denoiser FROM libraries WHERE id = ?').get(LIB)).toEqual({
+      denoiser: 'pmrid',
+    });
   });
 
   // A replica is created under the remote's library id, verbatim, so deleting one
@@ -721,6 +725,7 @@ describe('browse, then add (§9.1)', () => {
       root_path: cloneRoot(),
       sync_originals: true,
       auto_transfer_originals: false,
+      denoiser: 'galosh',
     });
 
     expect(announced).toEqual([LIB]);
@@ -762,6 +767,7 @@ describe('browse, then add (§9.1)', () => {
         root_path: cloneRoot(),
         sync_originals: true,
         auto_transfer_originals: true,
+        denoiser: 'galosh',
       }),
     ).rejects.toThrow('already running');
 
@@ -795,6 +801,7 @@ describe('browse, then add (§9.1)', () => {
       root_path: cloneRoot(),
       sync_originals: true,
       auto_transfer_originals: false,
+      denoiser: 'galosh',
     });
 
     expect(summary.library_id).toBe(LIB);
@@ -945,6 +952,7 @@ describe('originals moved by a session', () => {
         root_path: cloneRoot(),
         sync_originals: keepOriginals,
         auto_transfer_originals: true,
+        denoiser: 'galosh',
       });
 
       expect(asked).toEqual([
@@ -966,6 +974,7 @@ describe('originals moved by a session', () => {
       root_path: cloneRoot(),
       sync_originals: true,
       auto_transfer_originals: false,
+      denoiser: 'galosh',
     });
 
     expect(asked).toEqual([`pull ${LIB} ${peerIdOf(origin.db)}`]);
@@ -983,6 +992,7 @@ describe('originals moved by a session', () => {
       root_path: cloneRoot(),
       sync_originals: false,
       auto_transfer_originals: false,
+      denoiser: 'galosh',
     });
 
     expect(asked).toEqual([]);
@@ -1000,6 +1010,7 @@ describe('originals moved by a session', () => {
       root_path: cloneRoot(),
       sync_originals: true,
       auto_transfer_originals: false,
+      denoiser: 'galosh',
     });
 
     asked.length = 0;
@@ -1059,6 +1070,7 @@ describe('originals moved by a session', () => {
       root_path: cloneRoot(),
       sync_originals: false,
       auto_transfer_originals: false,
+      denoiser: 'galosh',
     });
     setAutoTransfersOriginals(clone.db, LIB, true);
 

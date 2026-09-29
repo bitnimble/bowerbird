@@ -1,6 +1,7 @@
 import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useRef, useState } from 'react';
+import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import { type BrowsedRemote, type RemoteLibrary } from '../../../../src/schemas/replication';
 import { usePresenters, useReplicationStore } from '../../app/stores_context';
 import { Button } from '../../ui/button';
@@ -11,12 +12,15 @@ import { Field } from '../../ui/field';
 import { Modal } from '../../ui/modal';
 import { Row } from '../../ui/row';
 import { ModalStrings } from '../../ui/modal.strings';
+import { Select } from '../../ui/select';
 import { Text } from '../../ui/text';
 import { TextField } from '../../ui/text_field';
 import { FolderBrowser } from '../browse/folder_browser';
 import { FolderBrowserPresenter } from '../browse/folder_browser_presenter';
 import { FolderBrowserStore } from '../browse/folder_browser_store';
 import { AddLibraryStrings } from '../libraries/add_library_dialog.strings';
+import { DENOISERS } from '../raw_edit/denoisers';
+import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
 import { AddReplicaStrings } from './add_replica_dialog.strings';
 import { SyncedDevicesStrings } from './synced_devices_panel.strings';
 
@@ -50,6 +54,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
   const [path, setPath] = useState('');
   const [keepOriginals, setKeepOriginals] = useState(true);
   const [autoTransferOriginals, setAutoTransferOriginals] = useState(true);
+  const [denoiser, setDenoiser] = useState<Denoiser>('galosh');
   const [busy, setBusy] = useState(false);
 
   // This dialog is always mounted and only toggled open, so nothing here unmounts
@@ -66,6 +71,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
     setPicked(null);
     setKeepOriginals(true);
     setAutoTransferOriginals(true);
+    setDenoiser('galosh');
     setBusy(false);
     const next = newBrowser();
     setBrowser(next);
@@ -95,6 +101,7 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
       root_path: root,
       sync_originals: keepOriginals,
       auto_transfer_originals: autoTransferOriginals,
+      denoiser,
     });
     if (mine !== opening.current) return;
     setBusy(false);
@@ -244,6 +251,18 @@ export const AddReplicaDialog = observer(function AddReplicaDialog({
                 />
                 <Text as="span">{SyncedDevicesStrings.autoTransferOriginals()}</Text>
               </Row>
+            </Field>
+
+            <Field>
+              <Text variant="label" as="span">
+                {RawEditPanelStrings.denoiser()}
+              </Text>
+              <Select
+                label={RawEditPanelStrings.denoiser()}
+                options={DENOISERS}
+                value={denoiser}
+                onChange={setDenoiser}
+              />
             </Field>
 
             {store.linkError != null && <ErrorBanner>{store.linkError}</ErrorBanner>}

@@ -82,13 +82,14 @@ export class LibrariesRepository {
       | 'auto_stack'
       | 'include_subfolders'
       | 'include_non_raw'
+      | 'denoiser'
     > & { identity?: BinIdentity },
   ): void {
     this.db
       .query(
         `INSERT INTO libraries (id, root_path, bin_name, read_only, name, ordering, rendition_source, auto_stack,
-           include_subfolders, include_non_raw, bin_dev, bin_ino, bin_birthtime, stamp)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           include_subfolders, include_non_raw, denoiser, bin_dev, bin_ino, bin_birthtime, stamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         library.id,
@@ -101,6 +102,7 @@ export class LibrariesRepository {
         library.auto_stack ? 1 : 0,
         library.include_subfolders ? 1 : 0,
         library.include_non_raw ? 1 : 0,
+        library.denoiser,
         library.identity?.dev ?? null,
         library.identity?.ino ?? null,
         library.identity?.birthtime ?? null,

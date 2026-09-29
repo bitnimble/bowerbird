@@ -448,6 +448,7 @@ test.each([true, false])(
       root_path: '/fixture/trip',
       sync_originals: false,
       auto_transfer_originals: autoTransferOriginals,
+      denoiser: 'pmrid',
     });
 
     expect(added).toBe(true);
@@ -458,6 +459,7 @@ test.each([true, false])(
         root_path: '/fixture/trip',
         sync_originals: false,
         auto_transfer_originals: autoTransferOriginals,
+        denoiser: 'pmrid',
       },
     ]);
     expect(toasts[0]).toBe('Synced library added with 240 changes so far.');
@@ -476,6 +478,7 @@ test('an add that failed still re-reads the library list', async () => {
     root_path: '/fixture/trip',
     sync_originals: true,
     auto_transfer_originals: true,
+    denoiser: 'galosh',
   });
 
   expect(added).toBe(false);

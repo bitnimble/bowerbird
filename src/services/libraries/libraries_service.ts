@@ -191,6 +191,7 @@ export class LibrariesService {
       auto_stack: request.auto_stack,
       include_subfolders: request.include_subfolders,
       include_non_raw: request.include_non_raw,
+      denoiser: request.denoiser,
       last_synced_at: null,
       photo_count: 0,
       missing_photo_count: 0,
