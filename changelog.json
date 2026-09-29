@@ -1,1 +1,3 @@
-{}
+{
+  "v0.1.11": "### New\n\n- Draws its own title bar on Windows with Windows 11 buttons\n- Shows logs from your server, synced devices, and app in Settings\n\n### Improved\n\n- Shares one set of processing workers across all libraries"
+}
