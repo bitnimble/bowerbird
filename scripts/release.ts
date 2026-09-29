@@ -1,4 +1,5 @@
-// Writes the next version into `VERSION`, commits it, and tags the commit `v<version>`.
+// Writes the next version into `VERSION` and its changelog into `changelog.json`, commits both,
+// and tags the commit `v<version>`.
 //
 //   bun run release            the patch after the current version
 //   bun run release 1.2.0      that version
@@ -6,9 +7,10 @@
 //
 // Pushing the commit to `main` (`git push --follow-tags`) is what starts the release workflow.
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { VERSION } from '../src/version.ts';
+import { changelog } from './changelog.ts';
 
 const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
 const HASH = /^[0-9a-f]{7,40}$/;
@@ -52,10 +54,16 @@ const version = nextVersion(process.argv[2]);
 const tag = `v${version}`;
 if (git('tag', '--list', tag) !== '') fail(`${tag} already exists`);
 
+console.log('[release] writing the changelog');
+const notes = changelog(git('describe', '--tags', '--abbrev=0', '--match', 'v*'), 'HEAD');
+const changelogPath = join(ROOT, 'changelog.json');
+const changelogs = JSON.parse(readFileSync(changelogPath, 'utf8'));
+writeFileSync(changelogPath, `${JSON.stringify({ ...changelogs, [tag]: notes }, null, 2)}\n`);
 writeFileSync(join(ROOT, 'VERSION'), `${version}\n`);
-git('commit', '--quiet', '-m', `chore(release): ${version}`, '--', 'VERSION');
+git('commit', '--quiet', '-m', `chore(release): ${version}`, '--', 'VERSION', 'changelog.json');
 // Annotated, because `git push --follow-tags` pushes only annotated tags.
 git('tag', '--annotate', tag, '-m', tag);
 
 console.log(`[release] ${VERSION} -> ${version}, committed and tagged ${tag}`);
+console.log(`[release] changelog:\n${notes}`);
 console.log('[release] git push --follow-tags   to build it');
