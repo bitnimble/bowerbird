@@ -160,27 +160,22 @@ describe('a slider reaching the picture', () => {
     expect(edit.doc?.sharpening).toBe(80);
   });
 
-  test('writes the camera match once, keeping what was set, as what the open started from', async () => {
+  test('writes the camera match into an unedited photo once, as what the open started from', async () => {
     const tone = { exposure: 0.35, saturation: 17, toneCurve: IDENTITY_TONE_CURVE };
-    const saved: EditOpening = {
-      doc: { ...neutralEdits(), saturation: -20 },
-      rev: 1,
+    const unedited: EditOpening = {
+      doc: neutralEdits(),
+      rev: 0,
       canUndo: false,
       canRedo: false,
       cursor: 0,
       history: [],
-      stamp: 'saved',
+      stamp: null,
       library_denoiser: 'galosh',
     };
     const matched: EditOpening = {
-      ...saved,
-      doc: {
-        ...saved.doc,
-        exposure: 0.35,
-        toneCurve: IDENTITY_TONE_CURVE,
-        cameraMatchApplied: true,
-      },
-      rev: 2,
+      ...unedited,
+      doc: { ...unedited.doc, exposure: 0.35, saturation: 17, cameraMatchApplied: true },
+      rev: 1,
       stamp: 'matched',
     };
     const applied: unknown[] = [];
@@ -191,17 +186,25 @@ describe('a slider reaching the picture', () => {
     };
     try {
       presenter.edit.begin('a-photo-id');
-      presenter.edit.opened(saved);
-      presenter.edit.applyState(saved);
+      presenter.edit.opened(unedited);
+      presenter.edit.applyState(unedited);
 
       await presenter.edit.applyCameraMatch(tone);
       expect(applied).toEqual([tone]);
-      expect(edit.doc).toMatchObject({ exposure: 0.35, saturation: -20, cameraMatchApplied: true });
+      expect(edit.doc).toMatchObject({ exposure: 0.35, saturation: 17, cameraMatchApplied: true });
       // Nothing to put back, so no restore reaches the server.
       expect(await presenter.edit.cancel()).toBe(true);
 
       await presenter.edit.applyCameraMatch(tone);
       expect(applied).toHaveLength(1);
+
+      const edited = { ...unedited, doc: { ...neutralEdits(), exposure: 1.5 }, rev: 3 };
+      presenter.edit.begin('a-photo-id');
+      presenter.edit.opened(edited);
+      presenter.edit.applyState(edited);
+      await presenter.edit.applyCameraMatch(tone);
+      expect(applied).toHaveLength(1);
+      expect(edit.doc).toMatchObject({ exposure: 1.5, cameraMatchApplied: false });
     } finally {
       photoEditsApi.applyCameraMatch = applyCameraMatch;
     }

@@ -89,14 +89,13 @@ export class PhotoEditsService {
   }
 
   /**
-   * Writes the camera match into a document that has not had it yet (`cameraMatchedEdits`).
+   * Writes the camera match as the photo's first document, where it has none yet.
    *
    * Answers the checkpoint after it, which an editor open on the photo takes as what it opened on.
    */
   applyCameraMatch(photoId: string, tone: CameraTone): EditOpening {
     this.require(photoId);
-    const applied = this.edits.applyCameraMatch(photoId, tone);
-    if (applied != null) this.vouch(photoId, applied.from);
+    if (this.edits.applyCameraMatch(photoId, tone) != null) this.vouch(photoId, null);
     return this.checkpoint(photoId);
   }
 

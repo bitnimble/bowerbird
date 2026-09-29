@@ -107,23 +107,35 @@ describe('PhotoEditsRepository.applyCameraMatch', () => {
     },
   };
 
-  it('fills what is still at its default, as a starting point rather than an undo step', () => {
-    save({ exposure: 1.5 });
+  const source = (): string | undefined =>
+    (
+      db.query('SELECT source FROM photo_edits WHERE photo_id = ?').get(PHOTO) as {
+        source: string;
+      } | null
+    )?.source;
+
+  it('writes the first document, with no step to undo, as nobody in particular', () => {
     const applied = repo.applyCameraMatch(PHOTO, tone);
 
-    expect(applied?.state.doc).toMatchObject({
-      exposure: 1.5,
+    expect(applied?.doc).toMatchObject({
+      exposure: 0.35,
       saturation: 17,
       toneCurve: tone.toneCurve,
       cameraMatchApplied: true,
     });
-    expect(applied?.state.rev).toBe(2);
-    // Only the reader's own step is there to undo, and it lands on the camera's exposure, which
-    // is what its 0 stood for when it was taken.
-    const undone = repo.undo(PHOTO, 2);
-    expect(undone.doc).toMatchObject({ exposure: 0.35, saturation: 17, cameraMatchApplied: true });
-    expect(undone.canUndo).toBe(false);
-    expect(repo.redo(PHOTO, undone.rev).doc.exposure).toBe(1.5);
+    expect(applied?.canUndo).toBe(false);
+    expect(source()).toBe('auto');
+
+    save({ exposure: 0 });
+    expect(source()).toBe('user');
+  });
+
+  it('never writes over a document a person wrote', () => {
+    save({ exposure: 1.5 });
+
+    expect(repo.applyCameraMatch(PHOTO, tone)).toBeNull();
+    expect(repo.get(PHOTO).doc).toMatchObject({ exposure: 1.5, cameraMatchApplied: false });
+    expect(source()).toBe('user');
   });
 
   it('writes once, so a reset to 0 afterwards is kept', () => {

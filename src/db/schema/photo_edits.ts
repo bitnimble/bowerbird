@@ -1,4 +1,5 @@
-import { integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { check, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { oneOf } from './checks';
 import { photos } from './photos';
 
 // One photo's develop settings as they stand, plus the two small values that move on every undo.
@@ -11,26 +12,32 @@ import { photos } from './photos';
 // detection preserves the id.
 //
 // No row until the first edit, so an untouched library pays nothing for this.
-export const photoEdits = sqliteTable('photo_edits', {
-  photoId: text('photo_id')
-    .primaryKey()
-    .references(() => photos.id, { onDelete: 'cascade' }),
-  doc: text('doc').notNull(), // EditDocSchema, JSON
-  // How far into photo_edit_history.deltas the undo cursor stands. Here rather than beside the
-  // deltas because an undo moves this and the doc and touches neither the array nor its overflow
-  // pages; welded to that blob, stepping one integer would rewrite tens of kilobytes.
-  cursor: integer('cursor').notNull(),
-  // Bumped by every write, and required by the next one. Without it two tabs do not merely lose an
-  // edit: the server diffs a stale document against the stored one and invents a delta for a
-  // change nobody made, which undo then walks back through.
-  rev: integer('rev').notNull(),
-  updatedAt: text('updated_at').notNull(),
-  stamp: text('stamp'),
-  // Which editor open wrote the current document, and the hops behind it back to the root
-  // (docs/replication.md §5.3). NULL reads as plain last-write-wins.
-  sessionId: text('session_id'),
-  chain: text('chain'),
-});
+export const photoEdits = sqliteTable(
+  'photo_edits',
+  {
+    photoId: text('photo_id')
+      .primaryKey()
+      .references(() => photos.id, { onDelete: 'cascade' }),
+    doc: text('doc').notNull(), // EditDocSchema, JSON
+    // How far into photo_edit_history.deltas the undo cursor stands. Here rather than beside the
+    // deltas because an undo moves this and the doc and touches neither the array nor its overflow
+    // pages; welded to that blob, stepping one integer would rewrite tens of kilobytes.
+    cursor: integer('cursor').notNull(),
+    // Bumped by every write, and required by the next one. Without it two tabs do not merely lose an
+    // edit: the server diffs a stale document against the stored one and invents a delta for a
+    // change nobody made, which undo then walks back through.
+    rev: integer('rev').notNull(),
+    updatedAt: text('updated_at').notNull(),
+    stamp: text('stamp'),
+    // Which editor open wrote the current document, and the hops behind it back to the root
+    // (docs/replication.md §5.3). NULL reads as plain last-write-wins.
+    sessionId: text('session_id'),
+    chain: text('chain'),
+    // `auto` where only the camera match has written the row; a replica of it never beats `user`.
+    source: text('source').notNull().default('user'),
+  },
+  (t) => [check('photo_edits_source', oneOf(t.source, ['user', 'auto']))],
+);
 
 // The undo stack, as one JSON array per photo rather than a row per step: a single step is never
 // read without the rest of its history, because undo walks the array.

@@ -389,8 +389,7 @@ processingService.onDescribed((photoId, descriptor) =>
   stacksService.storeDescriptor(photoId, descriptor),
 );
 
-// Inside a worker's result handler, where nothing catches: a write that loses a race with the
-// editor is written by the next render instead.
+// Inside a worker's result handler, where nothing catches.
 processingService.onCameraMatched((photoId, tone) => {
   try {
     photoEditsService.applyCameraMatch(photoId, tone);

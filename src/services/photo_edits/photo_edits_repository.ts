@@ -2,7 +2,7 @@ import type { Database } from '../../db/driver';
 import { AppError } from '../../errors';
 import { stamp } from '../replication/stamps';
 import { MAX_CHAIN_HOPS, parseChain, type SessionHop } from './edit_sessions';
-import { cameraMatchedEdits, cameraMatchedHistory } from '../../schemas/edit_adjust';
+import { cameraMatched } from '../../schemas/edit_adjust';
 import {
   EditDocSchema,
   EditHistorySchema,
@@ -106,27 +106,18 @@ export class PhotoEditsRepository {
   }
 
   /**
-   * Writes the camera match into a document that has not had it yet, beneath its undo history.
-   *
-   * Null where the document already has it; otherwise the new state and the stamp the document
-   * was written from.
+   * Writes the camera match as the photo's first document. Null where it already has one, whoever
+   * wrote it: nothing automatic overwrites an edit.
    */
-  applyCameraMatch(
-    photoId: string,
-    tone: CameraTone,
-  ): { state: EditState; from: string | null } | null {
-    const row = this.row(photoId);
-    let written = false;
-    const state = this.write(photoId, row?.rev ?? 0, (current, history, cursor) => {
-      if (current.cameraMatchApplied) return null;
-      written = true;
-      return {
-        doc: cameraMatchedEdits(current, tone),
-        history: cameraMatchedHistory(history, tone),
-        cursor,
-      };
-    });
-    return written ? { state, from: row?.stamp ?? null } : null;
+  applyCameraMatch(photoId: string, tone: CameraTone): EditState | null {
+    if (this.row(photoId) != null) return null;
+    return this.write(
+      photoId,
+      0,
+      (_current, history, cursor) => ({ doc: cameraMatched(tone), history, cursor }),
+      undefined,
+      'auto',
+    );
   }
 
   undo(photoId: string, rev: number): EditState {
@@ -190,6 +181,7 @@ export class PhotoEditsRepository {
       cursor: number,
     ) => { doc: EditDoc; history: EditDelta[]; cursor: number } | null,
     session?: string,
+    source: 'user' | 'auto' = 'user',
   ): EditState {
     return this.db.transaction(() => {
       const row = this.row(photoId);
@@ -214,11 +206,11 @@ export class PhotoEditsRepository {
       const lineage = this.lineage(row, session);
       this.db
         .query(
-          `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp, session_id, chain)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO photo_edits (photo_id, doc, cursor, rev, updated_at, stamp, session_id, chain, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(photo_id) DO UPDATE SET doc = excluded.doc, cursor = excluded.cursor,
              rev = excluded.rev, updated_at = excluded.updated_at, stamp = excluded.stamp,
-             session_id = excluded.session_id, chain = excluded.chain`,
+             session_id = excluded.session_id, chain = excluded.chain, source = excluded.source`,
         )
         .run(
           photoId,
@@ -229,6 +221,7 @@ export class PhotoEditsRepository {
           mark,
           lineage.session,
           JSON.stringify(lineage.chain),
+          source,
         );
       this.db
         .query(

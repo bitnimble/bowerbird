@@ -20,6 +20,7 @@ import { ShootsRepository } from '../../shoots/shoots_repository';
 import { StacksRepository } from '../../stacks/stacks_repository';
 import { BlobLocations } from '../../blobs/blob_locations';
 import { LabelsRepository } from '../../labels/labels_repository';
+import { IDENTITY_TONE_CURVE } from '../../../schemas/photo_edits';
 import { PushPageRequestSchema } from '../../../schemas/replication';
 import { ReplicationService } from '../replication_service';
 import { pull, pushTo, replicate, type ChangeSink } from '../session';
@@ -218,6 +219,17 @@ const ACTIONS: ((peer: Peer, rng: Rng) => void)[] = [
       state.rev,
       `session${rng.int(4)}`,
     );
+  },
+  // The camera match a render writes, from a fit that differs by device, and only into a photograph
+  // nobody has edited. A person's edit has to win over it wherever the two meet, stamps regardless.
+  (peer, rng) => {
+    const id = rng.pick(PHOTOS);
+    if (peer.db.query('SELECT 1 FROM photos WHERE id = ?').get(id) == null) return;
+    new PhotoEditsRepository(peer.db).applyCameraMatch(id, {
+      exposure: rng.int(20) / 10 - 1,
+      saturation: rng.int(20),
+      toneCurve: IDENTITY_TONE_CURVE,
+    });
   },
   // A folder leaving the library: the one thing that removes a photograph's row
   // outright rather than binning it, and the one that cascades - taking its
@@ -899,6 +911,44 @@ describe('convergence', () => {
     expect(mine.doc).toBe(theirs.doc);
     expect(mine.updated_at).toBe(theirs.updated_at);
     expect(mine.updated_at).not.toBe(BEFORE);
+  });
+
+  it("keeps a person's edit over a camera match written later elsewhere, and rebuilds the match's copy", () => {
+    const server = makePeer('server');
+    const laptop = makePeer('laptop');
+    seed(server);
+    replicate(server, laptop);
+
+    new PhotoEditsRepository(server.db).save('p1', { exposure: 0.5 } as never, 0, 'sessionone');
+    laptop.advance(60_000);
+    new PhotoEditsRepository(laptop.db).applyCameraMatch('p1', {
+      exposure: 1,
+      saturation: 10,
+      toneCurve: IDENTITY_TONE_CURVE,
+    });
+    laptop.db
+      .query(
+        `INSERT INTO renditions (photo_id, variant, needs_build, built_at, built_from)
+           VALUES ('p1', 'full', 0, '2026-01-01T00:00:00.000Z',
+                   (SELECT stamp FROM photo_edits WHERE photo_id = 'p1'))
+         ON CONFLICT (photo_id, variant) DO UPDATE SET built_from = excluded.built_from`,
+      )
+      .run();
+
+    replicate(server, laptop);
+
+    for (const peer of [server, laptop]) {
+      expect(new PhotoEditsRepository(peer.db).get('p1').doc).toMatchObject({
+        exposure: 0.5,
+        cameraMatchApplied: false,
+      });
+    }
+    expect(replicatedState(laptop.db)).toBe(replicatedState(server.db));
+    expect(
+      laptop.db
+        .query("SELECT built_from FROM renditions WHERE photo_id = 'p1' AND variant = 'full'")
+        .get(),
+    ).toEqual({ built_from: null });
   });
 
   /**

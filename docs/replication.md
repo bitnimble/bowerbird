@@ -443,6 +443,18 @@ Candidate rows still replicate where deliverable, including to peers knowing nei
 Accepted asymmetry, by design: a two-hour session loses _provisional rendering_ to a one-slider
 tweak made later on another device; nothing is lost, both candidates sit in the conflict entry.
 
+**A person's edit beats the camera match, whatever the stamps.** A render writes the camera
+match only as a photo's first document, with `source = 'auto'` and no session; every other write
+is `source = 'user'`. Merge compares `source` before stamps: `user` over `auto` in either
+direction, the same source by last-write-wins as above. An `auto` row has no session, so it never
+parks a conflict. The order `(source, stamp)` is total, so peers converge.
+
+Displacing a newer `auto` row with an older `user` one moves the row's stamp backwards. The log
+only moves forward on its own, and would go on advertising the match's stamp, which every peer
+holding the match already covers; so the apply points the log entry at the edit's stamp itself.
+It also clears `built_from` on the photo's copies and its composites', since a copy counts as
+current against any document no newer than the one it was built from (`renditionCurrent`).
+
 ### 5.4 Derived writes happen only when the value differs
 
 Repairs and collapses are machine writes. **A derived write happens only when the value actually

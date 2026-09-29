@@ -251,7 +251,7 @@ export const REPLICATED_ENTITIES: readonly ReplicatedEntity[] = [
     // picture to peers that cannot build their own, and nothing comes to correct
     // it, because nothing is looking at anything that changed.
     units: unitsOf('photo_edits', {
-      photo_edits: ['doc', 'cursor', 'session_id', 'chain', 'updated_at'],
+      photo_edits: ['doc', 'cursor', 'session_id', 'chain', 'updated_at', 'source'],
     }),
     // The undo stack travels with the document rather than as a fact of its own.
     // A history spliced from two peers is a history of a session that never

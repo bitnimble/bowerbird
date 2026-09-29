@@ -440,7 +440,8 @@ describe('PhotoEditsService', () => {
 
     expect(photos.queueEditedSince([PHOTO])).toBe(0);
 
-    repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, matched?.state.rev ?? 0);
+    expect(matched).not.toBeNull();
+    repo.save(PHOTO, { ...neutralEdits(), exposure: 1.5 }, matched?.rev ?? 0);
     expect(photos.queueEditedSince([PHOTO])).toBe(1);
     expect(owingRenditions()).toEqual([PHOTO]);
   });

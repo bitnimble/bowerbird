@@ -149,9 +149,9 @@ export const EditDocSchema = z
     saturation: z.number().int().min(-100).max(100).default(0),
     colourProfile: ColourProfileSchema.default('matched'),
     /**
-     * Whether the camera match's exposure, saturation and curve have been written into this
-     * document (`cameraMatchedEdits`). Until then each of the three still at its default renders
-     * as the camera's, so a photograph looks the same before and after the write.
+     * Whether the camera match's exposure, saturation and curve are written into this document
+     * (`cameraMatched`). Where not, each of the three still at its default renders as the
+     * camera's, so a photograph looks the same either way.
      */
     cameraMatchApplied: z.boolean().default(false),
 

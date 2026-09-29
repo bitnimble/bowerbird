@@ -13,7 +13,7 @@ import {
   type ColourProfile,
   type Denoiser,
 } from '../../../../../src/schemas/photo_edits';
-import { cameraMatchedEdits, cameraMatchReset } from '../../../../../src/schemas/edit_adjust';
+import { cameraMatched, cameraMatchReset } from '../../../../../src/schemas/edit_adjust';
 import type { AsShot } from '../../../../../src/schemas/prepared';
 import type { RepairPresenter } from '../repair/repair_presenter';
 import type { RawEditPresenter } from '../stage/raw_edit_presenter';
@@ -198,13 +198,12 @@ export class EditPresenter {
     this.settle(cameraMatchReset(tone));
   }
 
-  /** Writes the camera match into a document no render has written it into yet. */
+  /** Writes the camera match as the photo's first document, where it opened with none. */
   async applyCameraMatch(tone: CameraTone): Promise<void> {
     const photoId = this.photoId;
-    const doc = this.store.doc;
-    if (photoId == null || doc == null || doc.cameraMatchApplied) return;
+    if (photoId == null || this.store.doc == null || this.openedAt?.rev !== 0) return;
     // Locally first, or a slider moved during the write is saved over the unmatched document.
-    this.adopt(cameraMatchedEdits(doc, tone));
+    this.adopt(cameraMatched(tone));
     await this.exclusively(async () => {
       try {
         const matched = await photoEditsApi.applyCameraMatch(photoId, tone);

@@ -1,10 +1,10 @@
 import type { JobAdjust } from './jobs';
 import {
   IDENTITY_TONE_CURVE,
+  neutralEdits,
   sameEditValue,
   type CameraTone,
   type EditDoc,
-  type EditHistory,
 } from './photo_edits';
 
 /** The exposure a grade is handed: null is the camera match's (`EditDoc.cameraMatchApplied`). */
@@ -31,31 +31,9 @@ export function adjustOf(doc: EditDoc): JobAdjust {
   };
 }
 
-/**
- * `doc` with the camera match written in: each of the three still at its default takes the
- * camera's, so a value the reader or an imported sidecar set survives.
- */
-export function cameraMatchedEdits(doc: EditDoc, tone: CameraTone): EditDoc {
-  const camera = asEdits(tone);
-  return {
-    ...doc,
-    exposure: doc.exposure === 0 ? camera.exposure : doc.exposure,
-    saturation: doc.saturation === 0 ? camera.saturation : doc.saturation,
-    toneCurve: doc.toneCurve ?? camera.toneCurve,
-    cameraMatchApplied: true,
-  };
-}
-
-/** Undo steps recorded before the match, whose defaults stood for the camera's as the document's did. */
-export function cameraMatchedHistory(history: EditHistory, tone: CameraTone): EditHistory {
-  const camera = asEdits(tone);
-  const matched = (values: Record<string, unknown>): Record<string, unknown> => ({
-    ...values,
-    ...(values.exposure === 0 ? { exposure: camera.exposure } : {}),
-    ...(values.saturation === 0 ? { saturation: camera.saturation } : {}),
-    ...('toneCurve' in values && values.toneCurve == null ? { toneCurve: camera.toneCurve } : {}),
-  });
-  return history.map((step) => ({ from: matched(step.from), to: matched(step.to) }));
+/** A photo's first document, where the camera match is what writes it. */
+export function cameraMatched(tone: CameraTone): EditDoc {
+  return { ...neutralEdits(), ...asEdits(tone), cameraMatchApplied: true };
 }
 
 const CAMERA_MATCH_FIELDS = [

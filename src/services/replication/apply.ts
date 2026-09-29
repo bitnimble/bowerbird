@@ -438,6 +438,23 @@ function applyRow(
     return;
   }
 
+  const outranks = entity.kind === 'photo_edits' ? editsOutrank(db, change, where) : null;
+  if (outranks === 'held') return;
+  // The arriving stamp may be older than the camera match's it replaces. The log only moves a
+  // row's stamp forward, so left alone it keeps advertising the match's, which every peer that
+  // wrote or took the match already covers: the edit would never be sent on. And a copy counts
+  // as current against any document no newer than the one it was built from.
+  const displacing = outranks === 'arriving' ? stamps['photo_edits'] : undefined;
+  if (displacing != null) {
+    db.query(
+      `UPDATE replication_log SET stamp = ?, deleted = 0
+        WHERE library_id = ? AND entity = 'photo_edits' AND row_id = ?`,
+    ).run(displacing, libraryId, change.rowId);
+    db.query(
+      `UPDATE renditions SET built_from = NULL
+        WHERE photo_id = ?1 OR photo_id IN (SELECT composed_id FROM photo_sources WHERE photo_id = ?1)`,
+    ).run(change.rowId);
+  }
   // Sessions decide what a diverged pair of edits means before LWW decides which
   // one shows (docs/replication.md §5.3). Only the parking is extra: a descendant
   // is always the newer stamp, so the unit comparison below already applies it,
@@ -453,7 +470,7 @@ function applyRow(
   for (const unit of entity.units) {
     const arriving = stamps[unit.entity];
     const held = local[unit.stamp];
-    if (arriving == null || (held != null && held >= arriving)) continue;
+    if (arriving == null || (outranks !== 'arriving' && held != null && held >= arriving)) continue;
     if (unit.entity === 'photo.placement' || unit.entity === 'photo.bin') placement = true;
     for (const column of unit.columns) {
       // **A column the sender never mentioned keeps this peer's own value.** A peer on an older
@@ -549,6 +566,26 @@ function applyRow(
   }
   if (wasAt != null) queueMaterialisation(db, libraryId, change.rowId, wasAt);
   afterWrite(db, entity, change, where);
+}
+
+/**
+ * Which of two develop documents wins on provenance alone: a person's edit beats one only the
+ * camera match wrote, whatever the stamps (§5.3). Null where both have the same source.
+ */
+function editsOutrank(
+  db: Database,
+  change: LiveChange,
+  where: { sql: string; params: string[] },
+): 'held' | 'arriving' | null {
+  const local = db
+    .query(`SELECT source FROM photo_edits WHERE ${where.sql}`)
+    .get(...where.params) as {
+    source: string;
+  } | null;
+  // A peer on a build without the column sends none, and every document it wrote is a person's.
+  const arriving = change.row['source'] === 'auto' ? 'auto' : 'user';
+  if (local == null || local.source === arriving) return null;
+  return local.source === 'user' ? 'held' : 'arriving';
 }
 
 // Not "is this one of the kinds that compose": a kind this build has never heard of composes
