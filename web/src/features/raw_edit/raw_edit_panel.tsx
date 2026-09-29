@@ -24,12 +24,8 @@ import {
 } from './edit_sliders';
 import type { RawEditPresenter } from './stage/raw_edit_presenter';
 import { RawEditPanelStrings } from './raw_edit_panel.strings';
-import {
-  TEMPERATURE_KELVIN,
-  TINT,
-  type ColourProfile,
-  type Denoiser,
-} from '../../../../src/schemas/photo_edits';
+import { TEMPERATURE_KELVIN, TINT, type ColourProfile } from '../../../../src/schemas/photo_edits';
+import { DENOISERS } from './denoisers';
 import { KeystonePanel } from './keystone/keystone_panel';
 import type { KeystoneStore } from './keystone/keystone_store';
 import { styles } from './raw_edit_panel.stylex';
@@ -45,11 +41,6 @@ import { ToneCurveEditor } from './tone_curve/tone_curve_editor';
 const COLOUR_PROFILES: Option<ColourProfile>[] = [
   { value: 'none', label: RawEditPanelStrings.colourProfileNone() },
   { value: 'matched', label: RawEditPanelStrings.colourProfileMatched() },
-];
-
-export const DENOISERS: Option<Denoiser>[] = [
-  { value: 'galosh', label: RawEditPanelStrings.denoiserGalosh() },
-  { value: 'pmrid', label: RawEditPanelStrings.denoiserPmrid() },
 ];
 
 /**

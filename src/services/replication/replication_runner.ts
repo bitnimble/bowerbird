@@ -91,6 +91,7 @@ export class ReplicationRunner {
       request.root_path,
       request.sync_originals,
       request.auto_transfer_originals,
+      request.denoiser,
     );
     try {
       const result = await this.replicate(cloned.libraryId);

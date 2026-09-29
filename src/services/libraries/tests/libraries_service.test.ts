@@ -81,6 +81,7 @@ describe('LibrariesService.create', () => {
         include_non_raw: false,
         rendition_source: 'render',
         auto_stack: true,
+        denoiser: 'galosh',
       }),
     ).rejects.toThrow(/does not exist or is not a directory/);
   });
@@ -99,6 +100,7 @@ describe('LibrariesService.create', () => {
           include_non_raw: false,
           rendition_source: 'render',
           auto_stack: true,
+          denoiser: 'galosh',
         }),
       ).rejects.toThrow(/already registered/);
     } finally {
@@ -125,6 +127,7 @@ describe('LibrariesService.create', () => {
           include_non_raw: false,
           rendition_source: 'render',
           auto_stack: true,
+          denoiser: 'galosh',
         }),
       ).rejects.toMatchObject({
         code: 'CONFLICT',
@@ -153,6 +156,7 @@ describe('LibrariesService.create', () => {
           include_non_raw: false,
           rendition_source: 'render',
           auto_stack: true,
+          denoiser: 'galosh',
         }),
       ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     } finally {
@@ -174,6 +178,7 @@ describe('LibrariesService.create', () => {
         include_non_raw: false,
         rendition_source: 'render',
         auto_stack: true,
+        denoiser: 'galosh',
       });
       expect(library.bin_name).toBeNull();
       expect(existsSync(path.join(root, 'Bin'))).toBe(false);
@@ -197,6 +202,7 @@ describe('LibrariesService.create', () => {
         include_non_raw: false,
         rendition_source: 'render',
         auto_stack: true,
+        denoiser: 'galosh',
       });
 
       expect(library.root_path).toBe(root);
@@ -241,11 +247,17 @@ describe('LibrariesService.create', () => {
         include_non_raw: false,
         rendition_source: 'embedded',
         auto_stack: false,
+        denoiser: 'pmrid',
       });
       expect(library.rendition_source).toBe('embedded');
       expect(library.auto_stack).toBe(false);
+      expect(library.denoiser).toBe('pmrid');
       expect(insert).toHaveBeenCalledWith(
-        expect.objectContaining({ rendition_source: 'embedded', auto_stack: false }),
+        expect.objectContaining({
+          rendition_source: 'embedded',
+          auto_stack: false,
+          denoiser: 'pmrid',
+        }),
       );
       rmSync(getDataPath(library), { recursive: true, force: true });
     } finally {
@@ -269,6 +281,7 @@ describe('LibrariesService.create', () => {
         include_non_raw: false,
         rendition_source: 'render',
         auto_stack: true,
+        denoiser: 'galosh',
       });
       expect(library.name).toBe(`${path.basename(parent)} 2025`);
     } finally {
@@ -291,6 +304,7 @@ describe('LibrariesService.create', () => {
         include_non_raw: false,
         rendition_source: 'render',
         auto_stack: true,
+        denoiser: 'galosh',
       });
       expect(library.name).toBe('My Catalogue');
     } finally {
@@ -319,6 +333,7 @@ describe('LibrariesService.create', () => {
           include_non_raw: false,
           rendition_source: 'render',
           auto_stack: true,
+          denoiser: 'galosh',
         }),
       ).rejects.toMatchObject({
         code: 'VALIDATION_ERROR',
@@ -351,6 +366,7 @@ describe('LibrariesService.create', () => {
           include_non_raw: false,
           rendition_source: 'render',
           auto_stack: true,
+          denoiser: 'galosh',
         }),
       ).rejects.toThrow('nope');
       expect(existsSync(path.join(root, 'Bin'))).toBe(true);
@@ -376,6 +392,7 @@ describe('LibrariesService.create', () => {
           include_non_raw: false,
           rendition_source: 'render',
           auto_stack: true,
+          denoiser: 'galosh',
         }),
       ).rejects.toThrow(/inside DATA_DIR/);
 

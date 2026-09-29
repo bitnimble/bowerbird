@@ -2,6 +2,7 @@ import * as stylex from '@stylexjs/stylex';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState } from 'react';
 import { type Ordering, type RenditionSource } from '../../../../src/schemas/common';
+import { type Denoiser } from '../../../../src/schemas/photo_edits';
 import { useLibrariesStore, usePresenters } from '../../app/stores_context';
 import { Button } from '../../ui/button';
 import { focusRing } from '../../ui/focus_ring';
@@ -18,6 +19,8 @@ import { FolderBrowser } from '../browse/folder_browser';
 import { FolderBrowserPresenter } from '../browse/folder_browser_presenter';
 import { FolderBrowserStore } from '../browse/folder_browser_store';
 import { ORDERINGS } from '../photos/grid/grid_controls';
+import { DENOISERS } from '../raw_edit/denoisers';
+import { RawEditPanelStrings } from '../raw_edit/raw_edit_panel.strings';
 import { SettingsStrings } from '../settings/settings_page.strings';
 import { AddLibraryStrings } from './add_library_dialog.strings';
 import { inferredLibraryName } from './inferred_library_name';
@@ -54,6 +57,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
   const [includeNonRaw, setIncludeNonRaw] = useState(false);
   const [renditionSource, setRenditionSource] = useState<RenditionSource>('render');
   const [autoStack, setAutoStack] = useState(true);
+  const [denoiser, setDenoiser] = useState<Denoiser>('galosh');
   const [saving, setSaving] = useState(false);
 
   // Reopening starts over rather than resuming wherever the last attempt was
@@ -71,6 +75,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
     setIncludeNonRaw(false);
     setRenditionSource('render');
     setAutoStack(true);
+    setDenoiser('galosh');
     // Including whatever the last attempt failed with, which is answered by
     // this attempt rather than still standing over it.
     libraries.clearError();
@@ -116,6 +121,7 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
       include_non_raw: includeNonRaw,
       rendition_source: renditionSource,
       auto_stack: autoStack,
+      denoiser,
     });
     setSaving(false);
     // The server found the root unwritable after all - `access(2)` can be wrong,
@@ -176,6 +182,18 @@ export const AddLibraryDialog = observer(function AddLibraryDialog({
                 options={ORDERINGS}
                 value={ordering}
                 onChange={setOrdering}
+              />
+            </Field>
+
+            <Field>
+              <Text variant="label" as="span">
+                {RawEditPanelStrings.denoiser()}
+              </Text>
+              <Select
+                label={RawEditPanelStrings.denoiser()}
+                options={DENOISERS}
+                value={denoiser}
+                onChange={setDenoiser}
               />
             </Field>
 

@@ -99,6 +99,7 @@ test('creating a library imports its photographs without a second request', asyn
     include_non_raw: false,
     rendition_source: 'render',
     auto_stack: true,
+    denoiser: 'pmrid',
   });
   libraryId = library.id;
   await settled;
@@ -108,6 +109,7 @@ test('creating a library imports its photographs without a second request', asyn
     .get(library.id) as { file_path: string } | null;
   expect(photo?.file_path).toBe('photo.arw');
   expect(new LibrariesRepository(db).getById(library.id)?.last_synced_at).not.toBeNull();
+  expect(new LibrariesRepository(db).getById(library.id)?.denoiser).toBe('pmrid');
 });
 
 // A root that already keeps a folder of the bin name has it adopted (§12.3), and
@@ -130,6 +132,7 @@ test('creating a library over a folder already at the bin name imports its photo
     include_non_raw: false,
     rendition_source: 'render',
     auto_stack: true,
+    denoiser: 'galosh',
   });
   libraryId = library.id;
   await settled;

@@ -44,6 +44,7 @@ export const CreateLibraryRequestSchema = z.object({
   include_non_raw: z.boolean().default(false),
   rendition_source: RenditionSourceSchema.default('render'),
   auto_stack: z.boolean().default(true),
+  denoiser: DenoiserSchema.default('galosh'),
 });
 export type CreateLibraryRequest = z.infer<typeof CreateLibraryRequestSchema>;
 

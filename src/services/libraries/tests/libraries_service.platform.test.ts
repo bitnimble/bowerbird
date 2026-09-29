@@ -24,6 +24,7 @@ describe('LibrariesService.create', () => {
         include_non_raw: false,
         rendition_source: 'render',
         auto_stack: true,
+        denoiser: 'galosh',
       });
 
       expect(library.bin_name).toBe('Bin');

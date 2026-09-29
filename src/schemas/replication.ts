@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { REPLICATED_ENTITIES, type ReplicatedKind } from '../services/replication/entities';
 import { IdSchema } from './common';
+import { DenoiserSchema } from './photo_edits';
 
 export const PAGE_ROWS = 500;
 
@@ -434,6 +435,7 @@ export const AddReplicaRequestSchema = z.object({
     .refine((path) => path.trim() !== ''),
   sync_originals: WantsOriginalsSchema,
   auto_transfer_originals: z.boolean().default(true),
+  denoiser: DenoiserSchema.default('galosh'),
 });
 export type AddReplicaRequest = z.infer<typeof AddReplicaRequestSchema>;
 

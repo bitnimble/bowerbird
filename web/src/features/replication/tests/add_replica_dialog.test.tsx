@@ -122,6 +122,7 @@ test('automatic original transfers start enabled and reset when connect reopens'
       .getByRole('checkbox', { name: 'Automatically send and fetch originals' })
       .matches(':checked'),
   ).toBe(true);
+  expect(screen.getByRole('combobox', { name: 'Denoiser' }).textContent).toContain('Fast (GALOSH)');
 });
 
 test.each([
@@ -171,6 +172,7 @@ test.each([
         root_path: '/fixture/trip',
         sync_originals: keepOriginals,
         auto_transfer_originals: autoTransfer,
+        denoiser: 'galosh',
       },
     ]);
   },
