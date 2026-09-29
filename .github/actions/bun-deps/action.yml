@@ -1,12 +1,12 @@
 name: bun-deps
-description: Bun at the workflow's `BUN_VERSION`, and the packages of both lockfiles, through the cache.
+description: Bun at `.bun-version`, and the packages of both lockfiles, through the cache.
 
 runs:
   using: composite
   steps:
     - uses: oven-sh/setup-bun@v2
       with:
-        bun-version: ${{ env.BUN_VERSION }}
+        bun-version-file: .bun-version
     - shell: bash
       run: echo "BUN_INSTALL_CACHE_DIR=$RUNNER_TEMP/bun-install-cache" >> "$GITHUB_ENV"
     - id: cache

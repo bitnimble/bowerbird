@@ -7,8 +7,20 @@
 # write an AVIF, which stopped mattering when the encode moved to libavif and then
 # libvips left entirely - so this is now inertia rather than a constraint. Alpine is
 # untested; musl against the codecs below is the part to check before trying it.
-ARG BUN_VERSION=1.4.2
-FROM oven/bun:${BUN_VERSION}-debian AS bun
+FROM debian:trixie-slim AS bun
+ARG TARGETARCH
+RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  rm /etc/apt/apt.conf.d/docker-clean \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl unzip
+COPY .bun-version ./
+# baseline: the amd64 build oven/bun's own image ships, for CPUs without AVX2
+RUN case "$TARGETARCH" in amd64) build=x64-baseline ;; arm64) build=aarch64 ;; *) exit 1 ;; esac \
+  && release="https://github.com/oven-sh/bun/releases/download/bun-v$(tr -d '[:space:]' < .bun-version)" \
+  && curl -fsSL -O "$release/bun-linux-$build.zip" -O "$release/SHASUMS256.txt" \
+  && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c \
+  && unzip -j "bun-linux-$build.zip" "*/bun" -d /usr/local/bin
 
 FROM debian:trixie-slim AS base
 WORKDIR /app
@@ -257,7 +269,6 @@ RUN --mount=type=cache,id=bowerbird-bun,target=/root/.bun/install/cache,sharing=
 # the wasm package after it. What the crate needs from apt is a linker and libclang-dev,
 # without which bindgen cannot parse the codecs' headers.
 FROM base AS rust
-ARG RUST_VERSION=1.98.1
 RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=bowerbird-apt-lists,target=/var/lib/apt/lists,sharing=locked \
   apt-get update \
@@ -266,10 +277,12 @@ RUN --mount=type=cache,id=bowerbird-apt-archives,target=/var/cache/apt,sharing=l
 # Downloaded to a file rather than piped into sh: in a pipeline the exit status is
 # the *last* command's, so `curl ... | sh` reports success when curl fails and leaves
 # a stage with no toolchain that only fails several steps later.
-RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
-  && sh /tmp/rustup.sh -y --profile minimal --default-toolchain "$RUST_VERSION" \
-  && rm /tmp/rustup.sh
 ENV PATH="/root/.cargo/bin:${PATH}"
+COPY rust-toolchain.toml ./
+RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
+  && sh /tmp/rustup.sh -y --profile minimal --default-toolchain none \
+  && rustup toolchain install --profile minimal \
+  && rm /tmp/rustup.sh
 COPY native ./native
 # The shaders, and the compiler that turns them into the WGSL `build.rs` `include_str!`s. **The
 # crate does not compile without both** - not "renders differently", does not build - because every

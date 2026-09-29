@@ -282,13 +282,14 @@ on a push to `main` that changes `VERSION`. GitHub restores caches from the curr
 `main`; distinct release tags cannot share entries they save. Running on `main` lets each
 release reuse caches saved by earlier releases.
 
-**Nothing third-party is fetched twice at one pin.** Bun, Rust and the NDK are named versions
-in the workflow, and every download sits behind a cache: the toolchains, both lockfiles'
-packages, crates, the pinned trees, vcpkg's port builds, Gradle, the Windows bundler's NSIS,
-wasm-pack and wasm-bindgen, and the one LFS file a job reads. A cache holding several pins
-(packages, crates, pinned trees, Gradle) restores its last save when its key misses, so a moved
-pin fetches what moved and nothing else. The image's cache mounts
-travel through the same cache (`buildkit-cache-dance`), apt's downloads among them.
+**Nothing third-party is fetched twice at one pin.** Bun, Rust and the NDK are pinned once each,
+by `.bun-version`, `rust-toolchain.toml` and `.android-ndk-version`, which the workflow, both
+Dockerfiles and `android-build.ts` all read. Every download sits behind a cache: the toolchains,
+both lockfiles' packages, crates, the pinned trees, vcpkg's port builds, Gradle, the Windows
+bundler's NSIS, wasm-pack and wasm-bindgen, and the one LFS file a job reads. A cache holding
+several pins (packages, crates, pinned trees, Gradle) restores its last save when its key misses,
+so a moved pin fetches what moved and nothing else. The image's cache mounts travel through the
+same cache (`buildkit-cache-dance`), apt's downloads among them.
 
 The workflow's first job refuses a `v<VERSION>` tag on any commit but the one it built, because a build that
 ships calling itself something other than its tag is the failure that leaves an update check

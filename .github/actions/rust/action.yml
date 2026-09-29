@@ -1,5 +1,5 @@
 name: rust
-description: Rust at the workflow's `RUST_VERSION`, with `targets`, through the cache.
+description: Rust at `rust-toolchain.toml`'s channel, with `targets`, through the cache.
 
 inputs:
   targets:
@@ -15,23 +15,26 @@ runs:
         TARGETS: ${{ inputs.targets }}
       run: |
         set -euo pipefail
-        toolchain=$(echo "$RUST_VERSION $TARGETS" | git hash-object --stdin)
+        version=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+        test -n "$version"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        toolchain=$(echo "$version $TARGETS" | git hash-object --stdin)
         echo "key=rustup-${{ github.job }}-$RUNNER_OS-$toolchain" >> "$GITHUB_OUTPUT"
     - id: cache
       uses: actions/cache/restore@v6
       with:
         path: |
-          ~/.rustup/toolchains/${{ env.RUST_VERSION }}-*
-          ~/.rustup/update-hashes/${{ env.RUST_VERSION }}-*
+          ~/.rustup/toolchains/${{ steps.key.outputs.version }}-*
+          ~/.rustup/update-hashes/${{ steps.key.outputs.version }}-*
         key: ${{ steps.key.outputs.key }}
     - uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: ${{ env.RUST_VERSION }}
+        toolchain: ${{ steps.key.outputs.version }}
         targets: ${{ inputs.targets }}
     - if: env.SAVE_CACHES == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v6
       with:
         path: |
-          ~/.rustup/toolchains/${{ env.RUST_VERSION }}-*
-          ~/.rustup/update-hashes/${{ env.RUST_VERSION }}-*
+          ~/.rustup/toolchains/${{ steps.key.outputs.version }}-*
+          ~/.rustup/update-hashes/${{ steps.key.outputs.version }}-*
         key: ${{ steps.key.outputs.key }}

@@ -7,17 +7,20 @@
 // `bun run build:app --target aarch64-linux-android` runs this after everything it needs.
 //
 // One-time host prereqs: `rustup target add aarch64-linux-android`, an Android SDK with the
-// NDK `NDK_VERSION` names, and a JDK 17. `ANDROID_HOME` and `ANDROID_SDK_ROOT` must agree -
-// Gradle refuses to guess when they disagree, which is its way of saying the build would be
-// irreproducible.
+// NDK `.android-ndk-version` names, and a JDK 17. `ANDROID_HOME` and `ANDROID_SDK_ROOT` must
+// agree - Gradle refuses to guess when they disagree, which is its way of saying the build
+// would be irreproducible.
 import { spawnSync } from 'node:child_process';
 import { ensureIcons } from './make-icons.ts';
 import { VERSION } from '../src/version.ts';
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const TARGET = 'aarch64-linux-android';
-const NDK_VERSION = '27.2.12479018';
+const NDK_VERSION = readFileSync(
+  resolve(import.meta.dir, '../.android-ndk-version'),
+  'utf8',
+).trim();
 const under = TARGET.replaceAll('-', '_');
 
 const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
